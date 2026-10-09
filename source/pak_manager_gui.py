@@ -164,8 +164,16 @@ class Manager:
         self.log_button.configure(text=self.t('details_hide' if show else 'details_show'))
 
     def draw_edit(self, parent):
-        select = ttk.LabelFrame(parent, text=self.t('choose_group'), padding=8)
-        select.pack(fill='x')
+        # The activity log has its own window. Give unused space to the PAK list
+        # and let the user resize it without hiding the editing controls.
+        self.edit_split = tk.PanedWindow(
+            parent, orient=tk.VERTICAL, background='#34343b', borderwidth=0,
+            sashwidth=9, sashpad=4, sashrelief=tk.RAISED,
+            showhandle=True, handlesize=12, handlepad=16,
+            opaqueresize=True, cursor='sb_v_double_arrow')
+        self.edit_split.pack(fill='both', expand=True)
+        select = ttk.LabelFrame(self.edit_split, text=self.t('choose_group'), padding=8)
+        self.edit_split.add(select, minsize=135, stretch='always')
         line = ttk.Frame(select)
         line.pack(fill='x')
         ttk.Label(line, text=self.t('search_label')).pack(side='left')
@@ -173,16 +181,24 @@ class Manager:
         ttk.Button(line, text=self.t('refresh_list'), command=self.reload_archives).pack(side='left')
         ttk.Button(line, text=self.t('browse_pak'), command=self.browse_pak).pack(side='left', padx=(5, 0))
         self.search.trace_add('write', lambda *_: self.refresh_list())
-        self.archives = tk.Listbox(select, height=3, exportselection=False, font=('Consolas', 10))
-        self.archives.pack(fill='x', pady=(5, 0))
+        archive_area = ttk.Frame(select)
+        archive_area.pack(fill='both', expand=True, pady=(5, 0))
+        self.archives = tk.Listbox(archive_area, height=9, exportselection=False, font=('Consolas', 10))
+        self.archives.pack(side='left', fill='both', expand=True)
+        archive_scroll = ttk.Scrollbar(archive_area, orient='vertical', command=self.archives.yview)
+        archive_scroll.pack(side='right', fill='y')
+        self.archives.configure(yscrollcommand=archive_scroll.set)
         self.archives.bind('<<ListboxSelect>>', self.select_archive)
         self.archives.bind('<Double-Button-1>', lambda *_: self.extract())
         status_line = ttk.Frame(select)
-        status_line.pack(fill='x', pady=(3, 0))
+        status_line.pack(fill='x', pady=(4, 0))
         ttk.Label(status_line, textvariable=self.archive_count, foreground='#b5b5bf').pack(side='left')
+        ttk.Label(status_line, text='↕ Drag divider below to resize', foreground='#b5b5bf').pack(side='left', padx=16)
         ttk.Label(status_line, textvariable=self.archive_label, foreground='#ff6370').pack(side='right')
-        actions = ttk.LabelFrame(parent, text=self.t('edit_group'), padding=8)
-        actions.pack(fill='x', pady=(7, 0))
+        lower = ttk.Frame(self.edit_split)
+        self.edit_split.add(lower, minsize=185, stretch='never')
+        actions = ttk.LabelFrame(lower, text=self.t('edit_group'), padding=8)
+        actions.pack(fill='x')
         ttk.Label(actions, text=self.t('edit_instructions')).pack(anchor='w')
         row = ttk.Frame(actions)
         row.pack(fill='x', pady=(5, 0))
@@ -190,7 +206,7 @@ class Manager:
         ttk.Button(row, text=self.t('edit_button'), command=self.open_editable).pack(side='left', fill='x', expand=True, padx=(0, 5))
         ttk.Button(row, text=self.t('review_button'), command=self.diff).pack(side='left', fill='x', expand=True)
         ttk.Label(actions, text=self.t('edit_note'), foreground='#b5b5bf').pack(anchor='w', pady=(4, 0))
-        finish = ttk.LabelFrame(parent, text=self.t('build_group'), padding=8)
+        finish = ttk.LabelFrame(lower, text=self.t('build_group'), padding=8)
         finish.pack(fill='x', pady=(7, 0))
         ttk.Label(finish, text=self.t('build_instructions')).pack(anchor='w')
         row = ttk.Frame(finish)
