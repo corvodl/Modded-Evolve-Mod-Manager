@@ -46,3 +46,10 @@ a non-blocking explanation in the preview panel rather than a popup during selec
 
 Main window: drag the horizontal divider below the PAK list to resize it.
 Maximizing the manager expands the list; the Activity Log is separate.
+
+CryEngine Goliath character compatibility:
+- .skin/.skinm and .chr/.chrm companion model files are recognized in Models.
+- CrChF v7 mesh streams expose vertex/index counts for inspection.
+- .cdf/.animevents/.lmg/.bspace/.comb are XML text under Files/Text.
+- Blender mesh round-trip and arbitrary geometry editing are NOT supported.
+- Keep companion files beside one another when exporting for external tools.
