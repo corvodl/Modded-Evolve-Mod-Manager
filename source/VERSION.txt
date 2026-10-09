@@ -1,1 +1,1 @@
-2.8 - Split DDS Streaming & Experimental Model Tools
+2.9 - Tabbed Asset Explorer and PNG-to-DDS Import (Experimental)
