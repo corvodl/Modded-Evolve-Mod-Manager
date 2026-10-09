@@ -11,8 +11,7 @@ The manager has three main areas: **Make a Mod**, **Play & Restore**, and **Sett
 
 - **One-time setup from an existing installation:** Reads the installed game, checks supported PAKs and `inject.dll`, and creates local game-file snapshots, custom signing keys, a matching injector, and mod-ready PAKs.
 - **PAK browser and extractor:** Search available PAKs, unpack supported entries, and create separate editing projects.
-- **DDS texture workflow:** Preview standalone DDS or compatible CryEngine split DDS streaming sets, export PNG images for external editing, and import a complete matching DDS with automatic backups. PNG files cannot be imported directly.
-- **Experimental model inspection:** Read recognized CryTek chunk tables, export native `.cgf`, `.cga`, `.chr`, and `.skin` files, and attempt tightly restricted same-layout binary replacements. No built-in 3D viewer, Blender conversion, or skeleton editor.
+- **DDS texture workflow:** Preview standalone DDS files, export PNG images for external editing, and import matching replacement DDS textures with automatic backups. Split `.dds.N` streaming pieces are not supported, and PNG files cannot be imported directly.
 - **Built-in file editor:** Browse and edit supported text files and exported CryXmlB (binary XML) values. Open project folders to use other editors when needed.
 - **Review, build, and add mods:** Check changed files, rebuild and sign a PAK, and add it to the prepared mod set.
 - **Guided game launch:** Prepare the modified files, open the normal client, and start a modded session.
@@ -80,23 +79,13 @@ During setup, the manager verifies compatible original files, generates your own
 | CryXmlB (binary XML) | Export to editable XML and rebuild with checks intended to preserve the original structure |
 | Text files | Built-in editing for `.xml`, `.txt`, `.cfg`, `.ini`, `.lua`, `.json`, and `.csv` when they contain readable UTF-8 text |
 | Standalone DDS textures (`.dds`) | Preview and PNG export; replacement DDS must match the original dimensions, encoding, mip count and size |
-| Split CryEngine DDS (`.dds.0` etc.) | Experimental: preview/recombine sets found together in one workspace; a compatible full DDS may be split back into parts and backed up |
-| CryTek model files (`.cgf`, `.cga`, `.chr`, `.skin`) | Experimental metadata inspection and native export; reimport is restricted to recognized same-length, same-chunk-layout files |
-| Materials (`.mtl`) and character parameter text (`.chrparams`) | Edit as UTF-8 text where readable |
+| Split CryEngine DDS (`.dds.0`, etc.) | **Not supported** by this DDS editing workflow |
 | Other binary assets | May be extracted, but require an appropriate external editor; not all formats can be rebuilt successfully |
 | Adding, deleting, or renaming files inside PAKs | **Not supported** by the current PAK writer |
 | Structural XML changes | **Not supported**; modify existing values only |
 | Online multiplayer/profile services | **Disabled while using mods**; bypassing the restriction risks account penalties |
 
 The built-in text editor has a **5 MiB per-file limit**. CryXmlB edits involving shared strings or changed string lengths use experimental handling and need in-game testing. The tool is **not** a general-purpose CryEngine PAK editor and does not support every archive or injector layout.
-
-## Editing split DDS textures and models (experimental)
-
-**Split DDS texture workflow:** Unpack a PAK containing all of a texture's `.dds.0` through `.dds.N` parts. Choose any part in **Edit Files** to preview the reconstructed DDS, or use **Export PNG** to edit the top mip externally. Save your replacement as a **complete DDS** with the same compression format, dimensions, mip count, and total size, then use **Import DDS**. The manager backs up every fragment and redistributes replacement mipmaps to the existing parts. Incomplete streaming sets and unsupported compression/layouts are rejected. Only specific BC3/DXT5 and ATI2 samples have been checked; game rendering must be tested.
-
-**Model workflow:** Unpack a model, then select a `.cgf`, `.cga`, `.chr`, or `.skin` file in **Edit Files**. **Export Model** saves the unchanged native binary. For recognized CryTek chunked models, **Import Model** allows an experimental replacement only when its file length, header, and chunk table match. An unrecognized model can still be exported, but not imported through this UI. This does **not** create Blender-ready models, render 3D previews, edit rigs, or guarantee that a modified model works in Evolve.
-
-**Safety:** Keep backups and test a single change at a time. The editor's PAK writer replaces existing archive entries; it does not add new filenames. Offline-only restrictions still apply.
 
 ## Keeping your game and projects safe
 

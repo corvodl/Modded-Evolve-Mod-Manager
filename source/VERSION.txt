@@ -1,1 +1,1 @@
-2.9.3 - Resizable PAK Search Panel (Experimental)
+2.7 - DDS Preview, PNG Export & DDS Import

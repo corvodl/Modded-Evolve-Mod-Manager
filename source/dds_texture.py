@@ -152,15 +152,8 @@ def _path_in_workspace(workspace: Path, relative: str) -> Path:
     path = (root / relative).resolve()
     if not path.is_relative_to(root) or not path.is_file():
         raise ValueError('Texture file is missing or outside this project.')
-    if is_split_dds(path):
-        # Allow a complete single-mip .dds.0, but never a missing streaming piece.
-        from dds_streaming import inspect_whole_part0
-        try:
-            inspect_whole_part0(workspace, relative)
-        except ValueError as error:
-            raise ValueError('Only whole DDS textures or complete standalone .dds.0 files may be replaced: ' + str(error)) from error
-    elif not is_dds(path):
-        raise ValueError('Only whole DDS textures support replacement.')
+    if not is_dds(path) or is_split_dds(path):
+        raise ValueError('Only whole .dds textures support replacement; split .dds.N streaming pieces are not supported.')
     return path
 
 

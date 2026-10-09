@@ -11,7 +11,7 @@ if errorlevel 1 goto failed
 set "TEMP=%CD%\.build\temp"
 set "TMP=%CD%\.build\temp"
 pushd source
-"%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" -m unittest test_unified_integration test_packaging test_preserve test_editor_refresh test_portable_bundle test_first_run_setup test_ui_copy test_branding test_dds_texture test_asset_streaming_models test_theme test_editor_tabs_png test_dds0_selection test_resizable_pak_list
+"%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" -m unittest test_unified_integration test_packaging test_preserve test_editor_refresh test_portable_bundle test_first_run_setup test_ui_copy test_branding test_dds_texture
 if errorlevel 1 goto failed_source
 "%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" Test-CryXML-Namespace-Fix.py
 if errorlevel 1 goto failed_source
