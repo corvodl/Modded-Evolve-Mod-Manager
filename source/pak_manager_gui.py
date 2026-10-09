@@ -592,15 +592,27 @@ class Manager:
                 if not preserve_old:
                     self.write('Setup cancelled. Previously prepared mod files left unchanged.\n')
                     return
+            backup_choice=messagebox.askyesnocancel('Keep full original PAK copies?',
+                'YES — Keep a separate full snapshot of every original PAK (uses more disk space).\n\n'
+                'NO — Space-saving setup: read the installed originals directly and keep only custom-signed PAKs.\n\n'
+                'Both modes protect the original files during live swaps and allow normal restoration.\n'
+                'No does not remove any previously saved snapshots.\n\n'
+                'Cancel — Exit setup without changes.')
+            if backup_choice is None:return
+            keep_original_snapshots=bool(backup_choice)
             destination=DATA_HOME/'GameSets'/('Setup_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
             if not messagebox.askyesno(self.t('setup_confirm_title'),
                 'Close Evolve and the normal client first.\n\n'
-                'The manager will copy your original PAKs, generate signing keys and build a local signed set. '
-                'Allow up to twice the PAK size plus 1 GiB free space here. Preparing a later game launch needs additional game-drive space.\n\n'
+                'The manager will verify your original PAKs, generate signing keys and build a local signed set. '
+                + ('It will also keep complete original snapshots. Allow up to twice the PAK size plus 1 GiB here.'
+                   if keep_original_snapshots else
+                   'Space-saving mode: no permanent original PAK copies. Allow up to the PAK size plus 1 GiB here.')
+                + ' Preparing a later game launch needs additional game-drive space.\n\n'
                 'Storage: '+str(destination)+'\n\nCreate setup now?'):return
             cmd=[sys.executable,'-u',str(ROOT/'first_run_setup.py'),'--game',game,'--launcher',launcher,
                  '--destination',str(destination),'--seed-parent',str(DATA_HOME/'SetupSeeds')]
             if preserve_old:cmd.append('--preserve-old-prepared')
+            if not keep_original_snapshots:cmd.append('--skip-original-snapshots')
             self.run_steps([('Creating mod setup from installed game',cmd)],'Set up from game',lambda:self.after_initial_setup(destination))
         except Exception as e:self.fail(e)
 
@@ -663,16 +675,27 @@ class Manager:
             game=filedialog.askdirectory(title='Choose updated EvolveGame folder',initialdir=st.game or None)
             if not game:return
             storage=DATA_HOME/'GameSets';storage.mkdir(parents=True,exist_ok=True)
-            folder=filedialog.askdirectory(title='Choose storage folder for the NEW originals and signed PAK set',initialdir=str(storage))
+            folder=filedialog.askdirectory(title='Choose storage folder for the NEW signed PAK set',initialdir=str(storage))
             if not folder:return
+            backup_choice=messagebox.askyesnocancel('Keep full original PAK copies for this update?',
+                'YES — Store full original PAK snapshots with the new stage (more space).\n\n'
+                'NO — Use installed originals without permanent snapshots (saves space).\n\n'
+                'Both choices retain safe live-swap restoration backups and earlier game sets.\n'
+                'Cancel — Do not refresh.')
+            if backup_choice is None:return
+            keep_original_snapshots=bool(backup_choice)
             destination=Path(folder)/('EvolveRefresh_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
             if not messagebox.askyesno('Refresh originals from updated game?',
                 'First restore originals, update or repair the game in the normal client, then close the game and client.\n\n'
-                'This copies the installed PAKs and builds a fresh signed set. It may need twice the PAK size in free space. '
-                'Previous sets and edits are kept. Old mods must be reviewed and reapplied to freshly unpacked files.\n\n'
+                'This verifies installed PAKs and builds a fresh signed set. '
+                + ('Full original snapshots are also kept; allow twice the PAK size plus 1 GiB.'
+                   if keep_original_snapshots else
+                   'Space-saving mode skips extra originals; allow PAK size plus 1 GiB.')
+                + ' Previous sets and edits are kept. Old mods must be reviewed and reapplied.\n\n'
                 'New set: '+str(destination)+'\n\nContinue?'):return
             cmd=[sys.executable,'-u',str(ROOT/'refresh_originals.py'),'--game',game,'--stage',self.stage.get(),
                  '--swap',self.swap.get(),'--destination',str(destination)]
+            if not keep_original_snapshots:cmd.append('--skip-original-snapshots')
             self.run_steps([('Refreshing original PAKs and signing new set',cmd)],'Refresh Original PAKs',lambda:self.after_refresh(destination))
         except Exception as e:self.fail(e)
 
@@ -682,7 +705,7 @@ class Manager:
         self.stage.set(report['stage']);self.swap.set(report['swap'])
         self.current_workspace.set('');self.output_pak.set('');self.archive_label.set('');self.external_pak.set('')
         self.persist();self.reload_archives();self.update_launch_state()
-        messagebox.showinfo('Originals refreshed','The new set is selected. Previous originals, stages and editing projects were kept.\n\nUnpack the updated PAKs and review/reapply your edits. Old projects cannot be built against the new set.')
+        messagebox.showinfo('Originals refreshed','The new set is selected. Existing data and editing projects were retained.\n\nUnpack the updated PAKs and review/reapply your edits. Old projects cannot be built against the new set.')
 
     def after_restore(self):
         self.update_launch_state()

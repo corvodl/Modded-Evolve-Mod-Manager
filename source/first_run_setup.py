@@ -38,7 +38,7 @@ def public_key_from_shim(path):
     return key
 
 
-def setup_from_game(game, launcher, destination, seed_parent, archive_ready=False):
+def setup_from_game(game, launcher, destination, seed_parent, archive_ready=False, keep_original_snapshots=True):
     game,launcher,destination,seed_parent=[Path(p).resolve() for p in (game,launcher,destination,seed_parent)]
     ensure_closed()
     if not (game/'bin64_SteamRetail'/'Evolve.exe').is_file():raise ValueError('Choose EvolveGame, containing bin64_SteamRetail/Evolve.exe.')
@@ -62,9 +62,9 @@ def setup_from_game(game, launcher, destination, seed_parent, archive_ready=Fals
     save_json(swap/'launcher_config.json',{'launcher':str(launcher)})
     print('Generating local signing keys. The installed game remains unchanged.',flush=True)
     cmd_keygen(SimpleNamespace(output_dir=stage/'mykeys'))
-    # Copies originals, verifies their signatures, creates a custom stage and
-    # prepares fresh local helper/config files using the same verified workflow.
-    report=refresh(game,stage,swap,destination)
+    # Validate the installed originals and create signed PAKs, optionally
+    # keeping full copies. Never modify the originals or skip live swap backups.
+    report=refresh(game,stage,swap,destination,keep_original_snapshots=keep_original_snapshots)
     report.pop('previous_stage',None);report.pop('previous_swap',None)
     report['initial_setup']=True;report['launcher']=str(launcher)
     report['preserved_old_prepared']=preserved
@@ -73,7 +73,8 @@ def setup_from_game(game, launcher, destination, seed_parent, archive_ready=Fals
     # the completed stage. No existing user setup is removed.
     shutil.rmtree(seed)
     print('INITIAL SETUP COMPLETE:',destination,flush=True)
-    print('Original snapshots, signing keys, staged PAKs and helpers were generated locally.')
+    print(('Original snapshots, ' if keep_original_snapshots else 'No permanent original PAK snapshots; ')
+          + 'signing keys, staged PAKs and helpers were generated locally.')
     return report
 
 
@@ -81,8 +82,12 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('game','launcher','destination','seed-parent'):p.add_argument('--'+name,required=True,type=Path)
     p.add_argument('--preserve-old-prepared',action='store_true',help='User approved renaming prepared copies in place, without changing original PAKs.')
+    p.add_argument('--skip-original-snapshots',action='store_true',
+                   help='Do not store extra original game PAK copies. Installed originals and temporary restore backups remain protected.')
     a=p.parse_args()
-    try:setup_from_game(a.game,a.launcher,a.destination,a.seed_parent,archive_ready=a.preserve_old_prepared)
+    try:setup_from_game(a.game,a.launcher,a.destination,a.seed_parent,
+                        archive_ready=a.preserve_old_prepared,
+                        keep_original_snapshots=not a.skip_original_snapshots)
     except Exception as e:print('INITIAL SETUP STOPPED:',e,file=sys.stderr);return 1
     return 0
 
