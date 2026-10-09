@@ -1,1 +1,1 @@
-2.7 - DDS Preview, PNG Export & DDS Import
+2.8 - Split DDS Streaming & Experimental Model Tools
