@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from evolve_gameplay_editor import parse_cryxml_text
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
-from dds_streaming import inspect_stream, replace_stream
+from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
 from model_asset import is_model, inspect_model, export_model, replace_model
 from dds_png_import import encode_png_as_dds, compression_for_dds
 
@@ -79,7 +79,19 @@ class WorkspaceEditor:
         """Select matching file entries; show one row for each split DDS set."""
         candidates = (r for r in records if WorkspaceEditor.category(r) == tab)
         if tab == 'images':
-            candidates = (r for r in candidates if not is_split_dds(r) or r.casefold().endswith('.dds.0'))
+            # Display one row per stream set. Missing .dds.0 remains visible
+            # via its earliest available fragment to aid troubleshooting.
+            images = list(candidates)
+            first_part = {}
+            for name in images:
+                if is_split_dds(name):
+                    base, index = name.rsplit('.', 1)
+                    key = base.casefold()
+                    number = int(index)
+                    if key not in first_part or number < first_part[key]:
+                        first_part[key] = number
+            candidates = (name for name in images if not is_split_dds(name)
+                          or int(name.rsplit('.', 1)[1]) == first_part[name.rsplit('.', 1)[0].casefold()])
         return sorted((r for r in candidates if query.casefold() in r.casefold()), key=str.casefold)
 
     def __init__(self, manager, workspace):
@@ -281,6 +293,14 @@ class WorkspaceEditor:
             if not file.is_relative_to(root):raise ValueError('File resolves outside project.')
             if self.category(rel) != self.active_tab:raise ValueError('Selected file belongs to a different tab.')
             if is_split_dds(rel):
+                if rel.casefold().endswith('.dds.0'):
+                    try:
+                        standalone = inspect_whole_part0(self.workspace, rel)
+                    except ValueError:
+                        pass  # Inspect full streaming set if it is not standalone.
+                    else:
+                        self.show_texture(rel, standalone)
+                        return
                 stream = inspect_stream(self.workspace, rel)
                 self.show_texture(rel, stream.merged, stream=stream)
                 return
@@ -301,7 +321,28 @@ class WorkspaceEditor:
             self.path=rel;self.raw=raw;self.loaded_text=text;self.view_mode='text'
             self.text.configure(state='normal');self.text.delete('1.0','end');self.text.insert('1.0',text);self.text.edit_reset()
             self.info.set(rel+' | UTF-8 | '+('CryXmlB: edit existing values only' if self.records[rel]['format']=='cryxml' else 'Text file'))
-        except Exception as e:messagebox.showerror('Cannot open as text',str(e),parent=self.window)
+        except Exception as e:
+            # Browse without a modal popup for unsupported/missing parts.
+            # Import/export actions still report their failures explicitly.
+            self.reset_views()
+            self.path = rel
+            self.raw = b''
+            self.loaded_text = ''
+            self.view_mode = 'unavailable'
+            detail = str(e)
+            if self.active_tab == 'images':
+                tip = ('\n\nFor split streaming textures, extract all parts '
+                       '(.dds.0 through .dds.N) from the same PAK. '
+                       'Single-file .dds.0 textures work when complete.')
+                self.image_label.configure(image='', text='Texture preview unavailable\n\n' + detail + tip)
+            elif self.active_tab == 'models':
+                self.model_label.configure(text='Model preview unavailable\n\n' + detail)
+            else:
+                self.text.configure(state='normal')
+                self.text.delete('1.0', 'end')
+                self.text.insert('1.0', 'Cannot open this file as text.\n\n' + detail)
+                self.text.configure(state='disabled')
+            self.info.set(rel + ' | ' + detail)
 
     def show_texture(self, rel, raw, stream=None):
         from PIL import ImageTk
@@ -313,7 +354,8 @@ class WorkspaceEditor:
         self.raw = raw
         self.streaming = stream
         self.loaded_text = ''
-        self.view_mode = 'dds_stream' if stream is not None else 'dds'
+        self.view_mode = ('dds_stream' if stream is not None else
+                          'dds0_whole' if is_split_dds(rel) else 'dds')
         self.image_label.configure(image=photo, text=info.description + '\nPreview shows the largest mip level only')
         self.preview_photo = photo  # Tk images must remain referenced.
         self.import_button.configure(state='normal')
@@ -327,7 +369,7 @@ class WorkspaceEditor:
         self.info.set(('Streaming DDS: ' + str(stream.count) + ' files | ' if stream else 'DDS texture: ') + rel + ' | ' + info.description)
 
     def export_texture(self):
-        if self.view_mode not in ('dds', 'dds_stream') or not self.path:return
+        if self.view_mode not in ('dds', 'dds_stream', 'dds0_whole') or not self.path:return
         from tkinter import filedialog
         basename = re.sub(r'\.dds(?:\.\d+)?$', '', Path(self.path).name, flags=re.I)
         dest = filedialog.asksaveasfilename(parent=self.window, title='Export DDS as PNG',
@@ -340,7 +382,7 @@ class WorkspaceEditor:
         except Exception as e:messagebox.showerror('PNG export failed',str(e),parent=self.window)
 
     def import_texture(self):
-        if self.view_mode not in ('dds', 'dds_stream') or not self.path:return
+        if self.view_mode not in ('dds', 'dds_stream', 'dds0_whole') or not self.path:return
         if self.manager.busy:
             messagebox.showerror('Wait for current task','A manager operation is still running.',parent=self.window);return
         from tkinter import filedialog
@@ -359,7 +401,7 @@ class WorkspaceEditor:
         except Exception as e:messagebox.showerror('DDS import rejected',str(e),parent=self.window)
 
     def import_png(self):
-        if self.active_tab != 'images' or self.view_mode not in ('dds', 'dds_stream') or not self.path:
+        if self.active_tab != 'images' or self.view_mode not in ('dds', 'dds_stream', 'dds0_whole') or not self.path:
             return
         if self.manager.busy:
             messagebox.showerror('Wait for current task', 'A manager operation is still running.', parent=self.window)
