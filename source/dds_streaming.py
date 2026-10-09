@@ -104,6 +104,39 @@ def inspect_stream(workspace, relative):
                      len(files) - 1, tail_count)
 
 
+def inspect_whole_part0(workspace, relative):
+    """Recognize a complete single-mip DDS stored with a .dds.0 filename.
+
+    Some Evolve textures have a .dds.0 suffix but no streaming siblings.
+    True multi-part textures must still go through inspect_stream.
+    """
+    _, selected = _whole_path(workspace, relative)
+    match = PART.fullmatch(selected.name)
+    if not match or int(match.group(2)) != 0:
+        raise ValueError('Select a complete .dds.0 texture file.')
+    for other in selected.parent.iterdir():
+        if other == selected:
+            continue
+        part = PART.fullmatch(other.name)
+        if part and part.group(1).casefold() == match.group(1).casefold():
+            raise ValueError('This texture has other streaming fragments; use the complete split DDS set.')
+    data = selected.read_bytes()
+    info = parse_dds(data)
+    if info.mipmaps != 1 or info.depth != 1 or info.array_size != 1 or info.caps2:
+        raise ValueError('This .dds.0 is not a complete single-mip texture; other streaming parts may be required.')
+    if data[84:88] == b'DX10':
+        block = DXGI_BLOCK_BYTES.get(int.from_bytes(data[128:132], 'little'))
+    else:
+        block = BLOCK_BYTES.get(data[84:88])
+    if block is None:
+        raise ValueError('This .dds.0 uses an unsupported compression format.')
+    expected = ((info.width + 3) // 4) * ((info.height + 3) // 4) * block
+    if len(data) != info.data_offset + expected:
+        raise ValueError('This .dds.0 is missing texture payload data or contains an unsupported layout.')
+    preview_dds(data)
+    return data
+
+
 def replace_stream(workspace, relative, replacement_dds, expected_hashes):
     """Split a compatible whole DDS, backup all fragments, and roll back on failure."""
     stream = inspect_stream(workspace, relative)
