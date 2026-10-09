@@ -43,3 +43,6 @@ File Explorer tabs (v2.9 experimental):
 Note: Some .dds.0 files are complete single-mip DDS textures, even if no .dds.1 exists.
 The Images tab can preview and import those files directly. Missing/unsupported streams display
 a non-blocking explanation in the preview panel rather than a popup during selection.
+
+Main window: drag the horizontal divider below the PAK list to resize it.
+Maximizing the manager expands the list; the Activity Log is separate.
