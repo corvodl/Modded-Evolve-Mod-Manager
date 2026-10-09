@@ -7,6 +7,7 @@ on:
     paths:
       - "source/**"
       - "Build-Windows-EXE.cmd"
+      - "DEVELOPER-UI-TEXT.txt"
       - ".github/workflows/windows-release.yml"
 
 permissions:
