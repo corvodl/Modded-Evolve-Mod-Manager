@@ -1,1 +1,1 @@
-2.9 - Tabbed Asset Explorer and PNG-to-DDS Import (Experimental)
+2.9.1 - Standalone DDS.0 Selection and Import Fix (Experimental)
