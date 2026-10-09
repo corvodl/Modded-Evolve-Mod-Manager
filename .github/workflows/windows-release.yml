@@ -1,0 +1,67 @@
+name: Build Windows EXE and update release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "source/**"
+      - "Build-Windows-EXE.cmd"
+      - ".github/workflows/windows-release.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build portable Windows app
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      - name: Build and test EXE
+        shell: cmd
+        run: call Build-Windows-EXE.cmd
+
+      - name: Verify release ZIP
+        shell: pwsh
+        run: |
+          $file = "dist/EvolveModManager-Windows.zip"
+          if (!(Test-Path $file)) { throw "Portable Windows ZIP was not generated." }
+          Add-Type -AssemblyName System.IO.Compression
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $file))
+          try {
+            $names = @($zip.Entries | ForEach-Object { $_.FullName })
+            foreach ($required in @("EvolveModManager/EvolveModManager.exe", "EvolveModManager/EvolveModWorker.exe")) {
+              if ($names -notcontains $required) { throw "Missing application file: $required" }
+            }
+            if (!($names | Where-Object { $_ -like "EvolveModManager/_internal/*" })) {
+              throw "Bundled runtime folder is missing."
+            }
+            if ($names | Where-Object { $_ -match "(^|/)(Data/|private_key[.]pem$)|[.]pak$" }) {
+              throw "Release contains private game data or generated keys."
+            }
+          }
+          finally { $zip.Dispose() }
+          Write-Host "Windows portable release verified."
+
+      - name: Save downloadable workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EvolveModManager-Windows
+          path: dist/EvolveModManager-Windows.zip
+          if-no-files-found: error
+
+      - name: Update existing Main release with Windows download
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload Main "dist/EvolveModManager-Windows.zip" --clobber
