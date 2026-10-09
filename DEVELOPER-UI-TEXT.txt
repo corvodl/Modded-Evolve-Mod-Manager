@@ -1,0 +1,12 @@
+DEVELOPER ONLY - CHANGE INTERFACE WORDING
+=========================================
+
+Edit: source\ui_text.json
+
+Change the text on the RIGHT of each key, keeping key names, JSON quotes and commas unchanged.
+Example: "play_button": "Play With Mods" -> "play_button": "Launch My Mods"
+
+Rebuild by running Build-Windows-EXE.cmd. The new wording is bundled into the app.
+Users will not see an Edit Button Text option or separate ui_text.json in the published ZIP.
+The developer-only instructions in this file are NOT included in the player release.
+The app's UI still uses normal JSON parsing and prints an error to its log if source/ui_text.json is invalid.
