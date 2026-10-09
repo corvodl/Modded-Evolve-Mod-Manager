@@ -39,3 +39,7 @@ File Explorer tabs (v2.9 experimental):
 - Import PNG converts the edited PNG back into DXT1/DXT3/DXT5/ATI2/BC5 compressed DDS and creates mipmaps using Pillow. Image dimensions must match. Unsupported layouts are rejected, not silently changed. The conversion is lossy; check your textures in game.
 - Models: inspect and Export Model as the original CryTek file, or experimentally Import Model with an identical chunk-table layout and file length. No full 3D viewer or Blender conversion exists.
 - Review Changes, Build Mod and Add Mod after editing. Keep EditorBackups and test offline.
+
+Note: Some .dds.0 files are complete single-mip DDS textures, even if no .dds.1 exists.
+The Images tab can preview and import those files directly. Missing/unsupported streams display
+a non-blocking explanation in the preview panel rather than a popup during selection.
