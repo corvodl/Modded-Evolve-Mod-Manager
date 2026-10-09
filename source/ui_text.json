@@ -95,5 +95,13 @@
   "texture_export": "Export PNG",
   "texture_import": "Import DDS",
   "model_import": "Import Model",
-  "model_export": "Export Model"
+  "model_export": "Export Model",
+  "editor_tab_files": "Files / Text",
+  "editor_tab_images": "Images / Textures",
+  "editor_tab_models": "Models",
+  "editor_files_help": "Edit text and XML files; use Ctrl+S to save.",
+  "editor_images_help": "DDS previews and imports; PNG conversion supports DXT1/3/5 and BC5.",
+  "editor_models_help": "Native export and experimental same-layout import.",
+  "editor_select_file": "Choose an item on the left.",
+  "texture_import_png": "Import PNG"
 }
