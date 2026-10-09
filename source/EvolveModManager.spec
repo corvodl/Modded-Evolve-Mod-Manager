@@ -12,8 +12,8 @@ datas += [(str(root/'reference'), 'reference')]
 datas += [(str(root/'ui_text.json'), '.')] 
 binaries = []
 hidden = ['evolve_pak_workspace', 'evolve_pak_rekey', 'evolve_gameplay_editor',
-          'evolve_video_pak_tool_fixed', 'decode_cryxml', 'universal_stage', 'refresh_originals', 'workspace_editor', 'portable_bundle', 'first_run_setup', 'old_prepared']
-for package in ('cryptography', 'frida', 'twofish'):
+          'evolve_video_pak_tool_fixed', 'dds_texture', 'decode_cryxml', 'universal_stage', 'refresh_originals', 'workspace_editor', 'portable_bundle', 'first_run_setup', 'old_prepared']
+for package in ('cryptography', 'frida', 'twofish', 'PIL'):
     d, b, h = collect_all(package)
     datas += d
     binaries += b
