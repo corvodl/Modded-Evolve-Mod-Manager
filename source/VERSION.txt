@@ -1,1 +1,1 @@
-2.9.4 - Goliath CrChF Model Inspection (Experimental)
+2.9.5 - Interactive CryEngine Goliath 3D Mesh Preview (Experimental)

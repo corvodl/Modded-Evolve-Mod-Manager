@@ -44,12 +44,42 @@ Note: Some .dds.0 files are complete single-mip DDS textures, even if no .dds.1 
 The Images tab can preview and import those files directly. Missing/unsupported streams display
 a non-blocking explanation in the preview panel rather than a popup during selection.
 
-Main window: drag the horizontal divider below the PAK list to resize it.
-Maximizing the manager expands the list; the Activity Log is separate.
 
-CryEngine Goliath character compatibility:
-- .skin/.skinm and .chr/.chrm companion model files are recognized in Models.
-- CrChF v7 mesh streams expose vertex/index counts for inspection.
-- .cdf/.animevents/.lmg/.bspace/.comb are XML text under Files/Text.
-- Blender mesh round-trip and arbitrary geometry editing are NOT supported.
-- Keep companion files beside one another when exporting for external tools.
+SPACE-SAVING SETUP (OPTIONAL)
+-----------------------------
+During first-time Set Up Manager and Update Base PAKs, choose whether to keep a
+second permanent copy of the game's original PAKs:
+  YES: Keep a full original snapshot (extra disk use).
+  NO:  Build signed PAKs directly from the installed game; do not store a
+       duplicate permanent original snapshot (less disk use).
+The tool verifies and never overwrites installed originals during setup.
+This choice does NOT turn off the temporary .customkey-original recovery files
+created during a live modded launch. These are rename-based swap backups, not
+additional copies, and are required for safe automatic restoration.
+
+Selective loading limitation: the custom injector contains a new RSA public
+signing key. Consequently every signed/encrypted PAK that Evolve loads must
+match that key; it is not safe to swap only PAKs whose gameplay values changed.
+Plain unsigned ZIP PAKs are already left untouched. The manager could adopt
+changed-only swaps later only if a verified dual-key loader becomes available.
+
+A temporary .customkey-ready file is copied next to each original PAK for
+prelaunch swapping, so the game drive still needs free space for those files.
+The current setup option also does not delete earlier saved full snapshots.
+
+Main window layout: drag the horizontal divider directly below the PAK search list
+to give the list more or less room. Maximizing/resizing the main window
+expands the list; the activity log remains in its separate window.
+
+CryEngine skinned character models (Goliath sample):
+- .skin/.skinm and .chr/.chrm companion model files can be inspected in Models.
+- CrChF v7 chunk and mesh stream metadata (vertices/indices/LODs) is shown where available.
+- .cdf/.animevents/.lmg/.bspace/.comb are XML text and appear in Files/Text.
+- Import Model remains same-layout experimental binary replacement; Blender mesh round-trip is not supported.
+- If exporting for external tools, keep each model beside its matching .skinm/.chrm companion.
+
+Models tab: 3D model preview supports CrChF v7 .skinm mesh companions (including Goliath).
+Select .skinm or its .skin file when the .skinm is present in the same extracted folder.
+Drag to rotate, scroll to zoom, switch wireframe on/off, Reset view to recenter.
+This is an untextured, read-only 3D preview; .chr/.chrm skeleton rigging and Blender export
+are not yet visualized. The preview never modifies the PAK or model.

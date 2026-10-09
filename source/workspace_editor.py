@@ -12,6 +12,7 @@ from evolve_gameplay_editor import parse_cryxml_text
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
 from model_asset import is_model, inspect_model, export_model, replace_model
+from model_preview import ModelPreview, find_preview_mesh
 from dds_png_import import encode_png_as_dds, compression_for_dds
 
 MAX_TEXT = 5 * 1024 * 1024
@@ -79,8 +80,8 @@ class WorkspaceEditor:
         """Select matching file entries; show one row for each split DDS set."""
         candidates = (r for r in records if WorkspaceEditor.category(r) == tab)
         if tab == 'images':
-            # Display one row per stream set. Missing .dds.0 remains visible
-            # via its earliest available fragment to aid troubleshooting.
+            # Collapse each fragment family to one entry. If its .dds.0 is
+            # missing, show the earliest available part with a helpful error.
             images = list(candidates)
             first_part = {}
             for name in images:
@@ -185,9 +186,10 @@ class WorkspaceEditor:
                 self.viewers[tab] = self.image_label
             else:
                 self.model_label = tk.Label(right, background='#18181f', foreground='#eeeeef',
-                                            text='Select a CryEngine model or mesh companion to inspect.', justify='left',
+                                            text='Select a CryTek model to inspect.', justify='left',
                                             anchor='nw', padx=16, pady=12)
                 self.model_label.pack(fill='both', expand=True)
+                self.model_preview = ModelPreview(right)
                 self.viewers[tab] = self.model_label
 
         self.info = tk.StringVar(value=manager.t('editor_hint'))
@@ -280,6 +282,10 @@ class WorkspaceEditor:
         self.preview_photo = None
         self.streaming = None
         self.image_label.configure(image='', text='Select a DDS texture to preview.')
+        self.model_preview.clear()
+        self.model_preview.frame.pack_forget()
+        if not self.model_label.winfo_manager():
+            self.model_label.pack(fill='both', expand=True)
         self.model_label.configure(text='Select a CryEngine model or mesh companion to inspect.')
         self.import_button.configure(state='disabled')
         self.import_png_button.configure(state='disabled')
@@ -297,7 +303,7 @@ class WorkspaceEditor:
                     try:
                         standalone = inspect_whole_part0(self.workspace, rel)
                     except ValueError:
-                        pass  # Inspect full streaming set if it is not standalone.
+                        pass  # Real split DDS: inspect_stream checks every required part.
                     else:
                         self.show_texture(rel, standalone)
                         return
@@ -322,8 +328,9 @@ class WorkspaceEditor:
             self.text.configure(state='normal');self.text.delete('1.0','end');self.text.insert('1.0',text);self.text.edit_reset()
             self.info.set(rel+' | UTF-8 | '+('CryXmlB: edit existing values only' if self.records[rel]['format']=='cryxml' else 'Text file'))
         except Exception as e:
-            # Browse without a modal popup for unsupported/missing parts.
-            # Import/export actions still report their failures explicitly.
+            # File browsing should never present a modal error on each click.
+            # Unsupported/missing streams instead show their problem in the
+            # preview area; explicit Import/Export actions still show dialogs.
             self.reset_views()
             self.path = rel
             self.raw = b''
@@ -333,7 +340,7 @@ class WorkspaceEditor:
             if self.active_tab == 'images':
                 tip = ('\n\nFor split streaming textures, extract all parts '
                        '(.dds.0 through .dds.N) from the same PAK. '
-                       'Single-file .dds.0 textures work when complete.')
+                       'Single-file .dds.0 textures are also supported when complete.')
                 self.image_label.configure(image='', text='Texture preview unavailable\n\n' + detail + tip)
             elif self.active_tab == 'models':
                 self.model_label.configure(text='Model preview unavailable\n\n' + detail)
@@ -437,11 +444,20 @@ class WorkspaceEditor:
         self.model_export_button.configure(state='normal')
         try:
             info = inspect_model(raw)
-            report = info.description + '\nNative CryEngine model recognized.\nImport requires identical chunk table, stream headers and binary length.'
+            report = info.description + '\nNative CryEngine chunked model recognized.\nImport requires identical chunk table, stream descriptors, and binary length.'
             self.model_import_button.configure(state='normal')
         except ValueError as error:
             report = 'Experimental model support\n' + str(error) + '\nExport the native file to inspect it with an external application.'
-        self.model_label.configure(text=rel + '\n\n' + report + '\n\nThere is no built-in 3D mesh preview or Blender converter.')
+        try:
+            mesh = find_preview_mesh(self.workspace, rel, raw)
+        except ValueError as error:
+            self.model_label.configure(text=rel + '\n\n' + report +
+                                       '\n\n3D preview unavailable: ' + str(error) +
+                                       '\nThis viewer does not convert meshes for Blender.')
+        else:
+            self.model_label.pack_forget()
+            self.model_preview.frame.pack(fill='both', expand=True)
+            self.model_preview.set_mesh(mesh)
         self.info.set('Model: ' + rel + ' | Native export available; replacement is experimental')
 
     def export_model(self):
