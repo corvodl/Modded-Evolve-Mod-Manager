@@ -11,6 +11,7 @@ The manager has three main areas: **Make a Mod**, **Play & Restore**, and **Sett
 
 - **One-time setup from an existing installation:** Reads the installed game, checks supported PAKs and `inject.dll`, and creates local game-file snapshots, custom signing keys, a matching injector, and mod-ready PAKs.
 - **PAK browser and extractor:** Search available PAKs, unpack supported entries, and create separate editing projects.
+- **DDS texture workflow:** Preview standalone DDS files, export PNG images for external editing, and import matching replacement DDS textures with automatic backups. Split `.dds.N` streaming pieces are not supported, and PNG files cannot be imported directly.
 - **Built-in file editor:** Browse and edit supported text files and exported CryXmlB (binary XML) values. Open project folders to use other editors when needed.
 - **Review, build, and add mods:** Check changed files, rebuild and sign a PAK, and add it to the prepared mod set.
 - **Guided game launch:** Prepare the modified files, open the normal client, and start a modded session.
@@ -77,6 +78,8 @@ During setup, the manager verifies compatible original files, generates your own
 | Evolve Stage 2 signed/encrypted PAKs | Supported formats used by this manager, including supported CryPak entry methods **13 and 14** |
 | CryXmlB (binary XML) | Export to editable XML and rebuild with checks intended to preserve the original structure |
 | Text files | Built-in editing for `.xml`, `.txt`, `.cfg`, `.ini`, `.lua`, `.json`, and `.csv` when they contain readable UTF-8 text |
+| Standalone DDS textures (`.dds`) | Preview and PNG export; replacement DDS must match the original dimensions, encoding, mip count and size |
+| Split CryEngine DDS (`.dds.0`, etc.) | **Not supported** by this DDS editing workflow |
 | Other binary assets | May be extracted, but require an appropriate external editor; not all formats can be rebuilt successfully |
 | Adding, deleting, or renaming files inside PAKs | **Not supported** by the current PAK writer |
 | Structural XML changes | **Not supported**; modify existing values only |
