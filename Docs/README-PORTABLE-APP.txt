@@ -32,3 +32,10 @@ Experimental CryTek model tools:
 - Import Model only accepts recognized same-size CryTek files with identical header and chunk table. Other model layouts are export-only.
 - This is not a full model editor; skeletons, new geometry layout, Blender roundtrip and animations are unverified.
 - Material .mtl and character .chrparams text files can be edited using the existing editor.
+
+File Explorer tabs (v2.9 experimental):
+- Files / Text: edit XML, CryXML and other readable text; Save File changes to the project.
+- Images / Textures: select a complete DDS or a .dds.0 streaming set to preview, Export PNG, Import PNG, or Import DDS. The streaming set must include all fragments.
+- Import PNG converts the edited PNG back into DXT1/DXT3/DXT5/ATI2/BC5 compressed DDS and creates mipmaps using Pillow. Image dimensions must match. Unsupported layouts are rejected, not silently changed. The conversion is lossy; check your textures in game.
+- Models: inspect and Export Model as the original CryTek file, or experimentally Import Model with an identical chunk-table layout and file length. No full 3D viewer or Blender conversion exists.
+- Review Changes, Build Mod and Add Mod after editing. Keep EditorBackups and test offline.
