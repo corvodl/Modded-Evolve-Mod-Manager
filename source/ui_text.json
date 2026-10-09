@@ -93,5 +93,15 @@
   "old_ready_body": "Found {count} prepared mod file(s) from an earlier setup.\n\nYou can preserve them by renaming them in place, then continue creating a fresh setup. This does not change installed PAKs, but the earlier manager will need to prepare its mod files again if you return to it.\n\nPreserve the old prepared files and continue?",
   "old_ready_complete": "Saved {count} previously prepared mod file(s) alongside your installation. Their original names are recorded in Data/ArchivedPrepared.",
   "texture_export": "Export PNG",
-  "texture_import": "Import DDS"
+  "texture_import": "Import DDS",
+  "model_import": "Import Model",
+  "model_export": "Export Model",
+  "editor_tab_files": "Files / Text",
+  "editor_tab_images": "Images / Textures",
+  "editor_tab_models": "Models",
+  "editor_files_help": "Edit text and XML files; use Ctrl+S to save.",
+  "editor_images_help": "DDS previews and imports; PNG conversion supports DXT1/3/5 and BC5.",
+  "editor_models_help": "Native export and experimental same-layout import.",
+  "editor_select_file": "Choose an item on the left.",
+  "texture_import_png": "Import PNG"
 }

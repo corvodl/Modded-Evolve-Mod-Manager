@@ -9,6 +9,9 @@ import first_run_setup
 import old_prepared
 import workspace_editor
 import dds_texture
+import dds_png_import
+import dds_streaming
+import model_asset
 from PIL import Image, ImageTk
 from app_runtime import BUNDLE
 assert (BUNDLE/"assets"/"hunt.ico").is_file()
@@ -18,6 +21,6 @@ assert (BUNDLE/"reference"/"inject.dll").is_file()
 assert (BUNDLE/"reference"/"inject.dll").read_bytes()[0x870:0x8fc] == (BUNDLE/"reference"/"RSAKeyData.bin").read_bytes()
 assert Twofish(bytes(16)).decrypt(Twofish(bytes(16)).encrypt(bytes(16))) == bytes(16)
 assert rsa.generate_private_key(public_exponent=65537, key_size=2048).key_size == 2048
-assert Image and ImageTk and dds_texture.parse_dds
+assert Image and ImageTk and dds_texture.parse_dds and dds_png_import.encode_png_as_dds and dds_streaming.inspect_stream and model_asset.inspect_model
 assert frida.__version__
 print('Bundled crypto, Twofish, Frida, Pillow DDS and PAK workspace imports passed.')

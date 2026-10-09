@@ -1,5 +1,6 @@
-"""Build a verified new original snapshot and signing stage after a game update.
-No installed PAK or injector is replaced. Previous stages/projects are retained.
+"""Build a verified signing stage after a game update.
+Full-size original snapshots are optional. The installed game remains unchanged;
+previous signing stages, projects, and swap recovery backups are always retained.
 """
 import argparse
 from datetime import datetime
@@ -62,7 +63,7 @@ def preflight(game, stage, swap):
     return old,ready
 
 
-def refresh(game, stage, swap, destination):
+def refresh(game, stage, swap, destination, keep_original_snapshots=True):
     game,stage,swap,destination=[Path(p).resolve() for p in (game,stage,swap,destination)]
     old,ready=preflight(game,stage,swap)
     if destination.exists():raise ValueError('Refresh output must be a new folder.')
@@ -82,24 +83,30 @@ def refresh(game, stage, swap, destination):
     shim_bytes=shim.read_bytes()
     if len(key)!=140 or len(shim_bytes)!=4096 or shim_bytes[0x870:0x8fc]!=key:
         raise ValueError('Installed inject.dll no longer matches the supported original shim/key. Stop: an updated shim needs separate review.')
-    required=sum(p.stat().st_size for _,p in files)*2+1024**3
+    # The signed stage is always required; copying a second archival snapshot is optional.
+    required=sum(p.stat().st_size for _,p in files)*(2 if keep_original_snapshots else 1)+1024**3
     destination.parent.mkdir(parents=True,exist_ok=True)
     if shutil.disk_usage(destination.parent).free<required:
-        raise ValueError(f'Refresh needs up to {required/1024**3:.1f} GiB free for originals plus the signed stage.')
+        raise ValueError(f'Refresh needs up to {required/1024**3:.1f} GiB free for the signed stage' + (' and original snapshots.' if keep_original_snapshots else ' (without permanent original snapshots).'))
     destination.mkdir()
-    report={'status':'building','game':str(game),'previous_stage':str(stage),'previous_swap':str(swap),'entries':[],'ready_moves':[]}
+    report={'status':'building','game':str(game),'previous_stage':str(stage),'previous_swap':str(swap),
+            'keep_original_snapshots':bool(keep_original_snapshots),'entries':[],'ready_moves':[]}
     save_json(destination/'refresh_report.json',report)
     new_stage=destination/'staged';new_swap=destination/'swap';originals=destination/'originals'
-    new_stage.mkdir();new_swap.mkdir();originals.mkdir()
+    new_stage.mkdir();new_swap.mkdir()
+    if keep_original_snapshots: originals.mkdir()
     shutil.copytree(stage/'mykeys',new_stage/'mykeys')
     (destination/'RSAKeyData.bin').write_bytes(key)
     count=0
     for index,(rel,source) in enumerate(files,1):
-        print(f'[{index}/{len(files)}] Copying and verifying {rel}',flush=True)
+        print(f'[{index}/{len(files)}] Checking and signing {rel}',flush=True)
         before=digest(source)
-        original=originals/rel;original.parent.mkdir(parents=True,exist_ok=True)
-        shutil.copyfile(source,original)
-        if digest(original)!=before or digest(source)!=before:raise ValueError('Source changed during copy: '+rel)
+        original=source
+        if keep_original_snapshots:
+            original=originals/rel;original.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(source,original)
+            if digest(original)!=before:raise ValueError('Original snapshot hash mismatch: '+rel)
+        if digest(source)!=before:raise ValueError('Source changed during setup: '+rel)
         with original.open('rb') as stream:_,_,comment=get_eocd_tail(stream)
         if len(comment)==2320 and comment[:6]==b'\x06\x00\x00\x00\x01\x03':
             # Refuses custom-key/modded archives in the original snapshot.
@@ -112,11 +119,16 @@ def refresh(game, stage, swap, destination):
             # Plain archives remain installed as-is and are not used by the swap.
             kind='plain-zip'
         else:raise ValueError('Unsupported archive trailer; previous setup retained: '+rel)
+        if digest(source)!=before:raise ValueError('Installed PAK changed during signing: '+rel)
         report['entries'].append({'path':rel,'kind':kind,'sha256':before,'bytes':source.stat().st_size})
         save_json(destination/'refresh_report.json',report)
     if not count:raise ValueError('No supported signed archives found.')
-    shim_copy=originals/'bin64_SteamRetail'/'inject.dll';shim_copy.parent.mkdir(parents=True,exist_ok=True);shim_copy.write_bytes(shim_bytes)
-    cmd_patch_shim(SimpleNamespace(shim=shim_copy,output=new_stage/'inject-custom.dll',
+    shim_input=shim
+    if keep_original_snapshots:
+        shim_copy=originals/'bin64_SteamRetail'/'inject.dll'
+        shim_copy.parent.mkdir(parents=True,exist_ok=True);shim_copy.write_bytes(shim_bytes)
+        shim_input=shim_copy
+    cmd_patch_shim(SimpleNamespace(shim=shim_input,output=new_stage/'inject-custom.dll',
         original_public_key=destination/'RSAKeyData.bin',public_key=new_stage/'mykeys'/'public_key.bin',offset='0x870'))
     save_json(new_stage/'rekey_plan.json',{'source_root':str(game),'blocked':[],'entries':report['entries']})
     save_json(new_stage/'stage_status.json',{'status':'fully-staged-offline','count':count,'shim_sha256':digest(new_stage/'inject-custom.dll')})
@@ -180,8 +192,10 @@ def refresh(game, stage, swap, destination):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('game','stage','swap','destination'):p.add_argument('--'+name,type=Path,required=True)
+    p.add_argument('--skip-original-snapshots',action='store_true',
+                   help='Save disk space: sign directly from installed game PAKs without keeping extra original copies.')
     a=p.parse_args()
-    try:refresh(a.game,a.stage,a.swap,a.destination)
+    try:refresh(a.game,a.stage,a.swap,a.destination,keep_original_snapshots=not a.skip_original_snapshots)
     except Exception as e:
         print('REFRESH STOPPED:',e,file=sys.stderr);return 1
     return 0
