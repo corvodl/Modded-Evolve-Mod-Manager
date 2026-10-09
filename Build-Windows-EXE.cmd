@@ -34,6 +34,7 @@ echo.
 echo SUCCESS: Share dist\EvolveModManager-Windows.zip
 echo Each recipient creates their own PAK setup from their installed game.
 echo Your existing initialized app folders have not been replaced.
+if /i "%GITHUB_ACTIONS%"=="true" exit /b 0
 explorer "dist"
 pause
 exit /b 0
@@ -44,5 +45,6 @@ echo.
 echo BUILD FAILED. Copy the error above; no completed app is claimed.
 echo If twofish needs a compiler, install Microsoft C++ Build Tools with
  echo Desktop development with C++, then retry.
+if /i "%GITHUB_ACTIONS%"=="true" exit /b 1
 pause
 exit /b 1
