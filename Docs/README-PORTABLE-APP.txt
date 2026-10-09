@@ -11,3 +11,10 @@ The release includes required executables/runtime libraries, not game PAKs.
 Existing custom keys and projects must stay in the recipient's Data folder.
 Do not send that Data folder in public releases.
 Private/offline testing; normal online services may reject modified assets.
+
+Texture editing (standalone DDS only):
+- Unpack a PAK, open Edit Files, and select a .dds file.
+- Export PNG saves the full-size top mip for editing in an image editor.
+- To replace a texture, encode your edit as a DDS with matching format, dimensions, mip levels, and total file size; use Import DDS.
+- Review Changes, Build Mod, and Add Mod to apply the new texture.
+- PNG cannot be imported directly; .dds.N streaming texture parts are not supported.
