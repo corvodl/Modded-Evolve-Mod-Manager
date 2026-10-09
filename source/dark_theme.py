@@ -32,5 +32,18 @@ def apply_theme(root):
     style.configure('TNotebook.Tab', background=panel, foreground=muted, padding=(10,9))
     style.map('TNotebook.Tab', background=[('selected',red),('active','#352027')],
               foreground=[('selected','#ffffff'),('active','#ffffff')])
+    # Treeview needs its own fieldbackground: generic light text on the native
+    # white field otherwise makes the file browser nearly unreadable on Windows.
+    tree_bg = '#1b1b20'
+    tree_selected = '#40576d'
+    style.configure('Treeview', background=tree_bg, fieldbackground=tree_bg,
+                    foreground=text, bordercolor='#34343b', rowheight=24,
+                    font=('Segoe UI', 10))
+    style.map('Treeview',
+              background=[('selected', tree_selected)],
+              foreground=[('disabled', '#8f8f99'), ('selected', '#ffffff')])
+    style.configure('Treeview.Heading', background=panel, foreground=text)
+    style.map('Treeview.Heading', background=[('active', '#303039')],
+              foreground=[('active', '#ffffff')])
     style.configure('Vertical.TScrollbar', background='#393940', arrowcolor=text)
     style.configure('TSeparator', background='#472630')
