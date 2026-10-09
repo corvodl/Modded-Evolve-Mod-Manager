@@ -1,0 +1,37 @@
+EVOLVE STAGE 2 MOD MANAGER v2.6 - BUILD KIT
+==========================================
+
+BUILD COMPUTER (Windows x64):
+  1. Extract this ZIP to a new folder.
+  2. Run Build-Windows-EXE.cmd with Python 3.11 x64 installed.
+  3. Share dist\EvolveModManager-Windows.zip from a successful build.
+
+PLAYER (Windows x64, with Modded Evolve client and Evolve game installed):
+  1. Extract the whole app ZIP somewhere writable (e.g. Documents).
+  2. Open EvolveModManager.exe.
+  3. Click Set Up Manager; select EvolveGame and ModdedEvolveLauncher.exe.
+  4. If old prepared PAK copies exist, choose whether to preserve them first.
+     The manager never automatically deletes them. Restore any original backups
+     using the previous setup before trying again.
+  5. The app reads original PAKs and inject.dll from the installed game,
+     creates unique local signing keys, patches a matching inject-custom.dll,
+     and creates the mod-ready PAKs inside the manager's Data folder.
+  6. Go to Make a Mod: Unpack PAK > Edit Files > Build Mod > Add Mod.
+  7. Use Play & Restore to play or restore original game files afterward.
+
+You do NOT distribute original or generated game PAKs in the app ZIP.
+The built app includes Python, required libraries, and launch tools.
+The app includes a known ORIGINAL public-key/injector reference for checking.
+Actual custom signing keys and the custom injector are generated per player.
+Keep the app's Data folder afterward; it contains that player's keys and mods.
+Private/offline testing; server compatibility is not guaranteed.
+
+
+TROUBLESHOOTING THE OLD ERROR "Untracked prepared files exist":
+  - v2.6 now detects old *.customkey-ready files before setup.
+  - After your approval it renames the prepared copies to *.saved-<id>
+    in the SAME game folder, without deleting them or changing original PAKs.
+  - It records their previous names in Data/ArchivedPrepared/.../preserved_files.json.
+  - If *.customkey-original backups or *.customkey-ready.partial exist,
+    setup stops: restore/inspect with the original mod helper first.
+  - Do not distribute Data/ -- contains game snapshots and private keys.

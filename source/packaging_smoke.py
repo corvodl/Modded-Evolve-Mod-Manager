@@ -1,0 +1,20 @@
+"""Dependency smoke check run by the bundled worker after building."""
+from twofish import Twofish
+from cryptography.hazmat.primitives.asymmetric import rsa
+import frida
+import evolve_pak_workspace
+import refresh_originals
+import portable_bundle
+import first_run_setup
+import old_prepared
+import workspace_editor
+from app_runtime import BUNDLE
+assert (BUNDLE/"assets"/"hunt.ico").is_file()
+assert (BUNDLE/"assets"/"hunt.png").is_file()
+assert (BUNDLE/"reference"/"RSAKeyData.bin").is_file()
+assert (BUNDLE/"reference"/"inject.dll").is_file()
+assert (BUNDLE/"reference"/"inject.dll").read_bytes()[0x870:0x8fc] == (BUNDLE/"reference"/"RSAKeyData.bin").read_bytes()
+assert Twofish(bytes(16)).decrypt(Twofish(bytes(16)).encrypt(bytes(16))) == bytes(16)
+assert rsa.generate_private_key(public_exponent=65537, key_size=2048).key_size == 2048
+assert frida.__version__
+print('Bundled crypto, Twofish, Frida and PAK workspace imports passed.')
