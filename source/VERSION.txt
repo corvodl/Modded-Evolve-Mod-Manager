@@ -1,1 +1,1 @@
-2.6 - Hunt Icon & Developer-Only Wording
+2.7 - DDS Preview, PNG Export & DDS Import
