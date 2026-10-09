@@ -15,7 +15,7 @@ from model_asset import is_model, inspect_model, export_model, replace_model
 from dds_png_import import encode_png_as_dds, compression_for_dds
 
 MAX_TEXT = 5 * 1024 * 1024
-TEXT_SUFFIXES = {'.xml', '.txt', '.cfg', '.ini', '.lua', '.json', '.csv', '.mtl', '.chrparams'}
+TEXT_SUFFIXES = {'.xml', '.txt', '.cfg', '.ini', '.lua', '.json', '.csv', '.mtl', '.chrparams', '.cdf', '.animevents', '.lmg', '.bspace', '.comb'}
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -185,7 +185,7 @@ class WorkspaceEditor:
                 self.viewers[tab] = self.image_label
             else:
                 self.model_label = tk.Label(right, background='#18181f', foreground='#eeeeef',
-                                            text='Select a CryTek model to inspect.', justify='left',
+                                            text='Select a CryEngine model or mesh companion to inspect.', justify='left',
                                             anchor='nw', padx=16, pady=12)
                 self.model_label.pack(fill='both', expand=True)
                 self.viewers[tab] = self.model_label
@@ -280,7 +280,7 @@ class WorkspaceEditor:
         self.preview_photo = None
         self.streaming = None
         self.image_label.configure(image='', text='Select a DDS texture to preview.')
-        self.model_label.configure(text='Select a CryTek model to inspect.')
+        self.model_label.configure(text='Select a CryEngine model or mesh companion to inspect.')
         self.import_button.configure(state='disabled')
         self.import_png_button.configure(state='disabled')
         self.export_button.configure(state='disabled')
@@ -437,7 +437,7 @@ class WorkspaceEditor:
         self.model_export_button.configure(state='normal')
         try:
             info = inspect_model(raw)
-            report = info.description + '\nChunked CryTek model recognized.\nImport requires identical chunk table and binary length.'
+            report = info.description + '\nNative CryEngine model recognized.\nImport requires identical chunk table, stream headers and binary length.'
             self.model_import_button.configure(state='normal')
         except ValueError as error:
             report = 'Experimental model support\n' + str(error) + '\nExport the native file to inspect it with an external application.'
@@ -468,7 +468,7 @@ class WorkspaceEditor:
                        filetypes=[('Native model', '*' + ext)])
         if not path:return
         if not messagebox.askyesno('Experimental model import',
-                  'Only same-layout CryTek model files are accepted. This cannot guarantee in-game compatibility.\n\nImport and keep an original backup?',
+                  'Only same-layout CryEngine model files are accepted. This cannot guarantee in-game compatibility.\n\nImport and keep an original backup?',
                   parent=self.window):return
         try:
             rel = self.path
