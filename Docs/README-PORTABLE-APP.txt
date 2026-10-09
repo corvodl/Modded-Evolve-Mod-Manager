@@ -83,3 +83,15 @@ Select .skinm or its .skin file when the .skinm is present in the same extracted
 Drag to rotate, scroll to zoom, switch wireframe on/off, Reset view to recenter.
 This is an untextured, read-only 3D preview; .chr/.chrm skeleton rigging and Blender export
 are not yet visualized. The preview never modifies the PAK or model.
+
+Multi-PAK asset extraction (experimental):
+- In Make a Mod, Ctrl/Shift-click 2-30 staged PAKs and click Unpack Selected PAKs.
+- Each signed PAK gets its own independent workspace. No conflicting files are merged.
+- After extraction, select any of those PAKs and choose Edit Files to open its workspace.
+- Under Models, select a model and click Find Model Textures to locate its material
+  and referenced DDS/.dds.0 files across the batch collection. Missing/ambiguous
+  resources are reported rather than automatically replaced.
+- Material .tif references are checked against cooked .dds and .dds.0 names.
+- Rebuild/Install ONE PAK at a time. Batch extraction does NOT automatically make
+  the 3D preview textured: actual material UV mapping/shading is future work.
+- Batch extraction can consume significant disk space. Originals remain unchanged.

@@ -13,6 +13,7 @@ from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
 from model_asset import is_model, inspect_model, export_model, replace_model
 from model_preview import ModelPreview, find_preview_mesh
+from multi_pak_assets import model_material_links
 from dds_png_import import encode_png_as_dds, compression_for_dds
 
 MAX_TEXT = 5 * 1024 * 1024
@@ -149,6 +150,7 @@ class WorkspaceEditor:
                 self.model_export_button.pack(side='left', padx=(0, 6))
                 self.model_import_button = ttk.Button(tools, text=manager.t('model_import'), command=self.import_model)
                 self.model_import_button.pack(side='left', padx=(0, 6))
+                ttk.Button(tools, text='Find Model Textures', command=self.show_model_textures).pack(side='left', padx=(0, 6))
                 ttk.Label(tools, text=manager.t('editor_models_help')).pack(side='left', padx=8)
 
             pane = ttk.Panedwindow(page, orient='horizontal')
@@ -459,6 +461,39 @@ class WorkspaceEditor:
             self.model_preview.frame.pack(fill='both', expand=True)
             self.model_preview.set_mesh(mesh)
         self.info.set('Model: ' + rel + ' | Native export available; replacement is experimental')
+
+    def show_model_textures(self):
+        """Show material-to-texture links across the unpacked PAK collection."""
+        if self.active_tab != 'models' or self.view_mode != 'model' or not self.path:
+            return
+        try:
+            report = model_material_links(self.workspace, self.path)
+            lines = ['Model: ' + self.path, 'Material: ' + report['material'],
+                     'Material status: ' + report['status'],
+                     'Batch links: ' + ('yes' if report['collection'] else 'no (current PAK only)'), '']
+            for item in report['textures']:
+                lines.append(f"{item['map']}: {item['reference']}")
+                lines.append('  ' + item['status'] +
+                             ('  |  ' + '; '.join(item['archives']) if item['archives'] else ''))
+                if item['paths']:
+                    lines.append('  Extracted file: ' + ', '.join(item['paths']))
+            if not report['textures']:
+                lines.append('No texture references found; try unpacking the PAK containing its .mtl file.')
+            lines += ['', 'CryEngine .tif references can correspond to cooked .dds/.dds.0 assets.',
+                      'This finds texture locations; 3D UV/material rendering is not implemented yet.',
+                      'To edit a texture, choose its PAK in the main list and open the Images tab.']
+            view = tk.Toplevel(self.window)
+            view.title('Model material and texture locations')
+            view.geometry('900x560')
+            panel = tk.Text(view, wrap='word', background='#18181f', foreground='#eeeeef',
+                            font=('Consolas', 10), padx=12, pady=12)
+            panel.pack(fill='both', expand=True)
+            panel.insert('1.0', '\n'.join(lines))
+            panel.configure(state='disabled')
+            found=sum(t['status']=='found' for t in report['textures'])
+            self.info.set(f'{self.path} | Material texture matches: {found}/{len(report["textures"])}')
+        except Exception as error:
+            messagebox.showerror('Could not find model textures',str(error),parent=self.window)
 
     def export_model(self):
         if self.view_mode != 'model' or not self.path:return

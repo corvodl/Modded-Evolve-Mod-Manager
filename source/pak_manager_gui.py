@@ -27,6 +27,7 @@ from ui_copy import load_text
 from workspace_editor import WorkspaceEditor
 from portable_bundle import bind_home, MARKER
 from old_prepared import scan_prepared
+from multi_pak_assets import load_collection, create_batch
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_STAGE = str(DATA_HOME/'Setup'/'staged')
@@ -59,6 +60,8 @@ class Manager:
         self.busy = False
         self.editors = []
         self.archive_entries = []
+        self.batch_workspaces = {}
+        self.batch_root = tk.StringVar()
         self.visible = []
         self.stage = tk.StringVar(value=DEFAULT_STAGE)
         self.swap = tk.StringVar(value=DEFAULT_SWAP)
@@ -75,6 +78,7 @@ class Manager:
         self.bundle_error = ''
         self.bundle = None
         self.read_settings()
+        self.load_batch_mapping()
         self.draw()
         if self.ui_warning:self.write('UI TEXT: '+self.ui_warning+'\n')
         self.reload_archives()
@@ -92,7 +96,7 @@ class Manager:
         if source.is_file():
             try:
                 data=json.loads(source.read_text(encoding='utf-8'))
-                for name in ('stage','swap','projects','current_workspace','output_pak','archive_label'):
+                for name in ('stage','swap','projects','current_workspace','output_pak','archive_label','batch_root'):
                     if name in data and isinstance(data[name],str):
                         getattr(self,name).set(data[name])
             except (OSError, ValueError):
@@ -100,7 +104,7 @@ class Manager:
 
     def persist(self):
         data={name:getattr(self,name).get() for name in (
-            'stage','swap','projects','current_workspace','output_pak','archive_label')}
+            'stage','swap','projects','current_workspace','output_pak','archive_label','batch_root')}
         save_settings(data)
 
     def t(self, name):
@@ -183,7 +187,7 @@ class Manager:
         self.search.trace_add('write', lambda *_: self.refresh_list())
         archive_area = ttk.Frame(select)
         archive_area.pack(fill='both', expand=True, pady=(5, 0))
-        self.archives = tk.Listbox(archive_area, height=9, exportselection=False, font=('Consolas', 10))
+        self.archives = tk.Listbox(archive_area, height=9, selectmode=tk.EXTENDED, exportselection=False, font=('Consolas', 10))
         self.archives.pack(side='left', fill='both', expand=True)
         archive_scroll = ttk.Scrollbar(archive_area, orient='vertical', command=self.archives.yview)
         archive_scroll.pack(side='right', fill='y')
@@ -203,9 +207,11 @@ class Manager:
         row = ttk.Frame(actions)
         row.pack(fill='x', pady=(5, 0))
         ttk.Button(row, text=self.t('unpack_button'), command=self.extract).pack(side='left', fill='x', expand=True, padx=(0, 5))
+        ttk.Button(row, text=self.t('batch_unpack_button'), command=self.extract_batch).pack(side='left', fill='x', expand=True, padx=(0, 5))
         ttk.Button(row, text=self.t('edit_button'), command=self.open_editable).pack(side='left', fill='x', expand=True, padx=(0, 5))
         ttk.Button(row, text=self.t('review_button'), command=self.diff).pack(side='left', fill='x', expand=True)
         ttk.Label(actions, text=self.t('edit_note'), foreground='#b5b5bf').pack(anchor='w', pady=(4, 0))
+        ttk.Label(actions, text=self.t('batch_help'), foreground='#b5b5bf').pack(anchor='w', pady=(2, 0))
         finish = ttk.LabelFrame(lower, text=self.t('build_group'), padding=8)
         finish.pack(fill='x', pady=(7, 0))
         ttk.Label(finish, text=self.t('build_instructions')).pack(anchor='w')
@@ -320,6 +326,25 @@ class Manager:
             self.archives.selection_clear(0,tk.END)
             self.write('Selected external file: '+p+'\n')
 
+    def load_batch_mapping(self):
+        """Reattach completed batch projects after restarting the manager."""
+        self.batch_workspaces = {}
+        if not self.batch_root.get():
+            return
+        batch = Path(self.batch_root.get()).resolve()
+        try:
+            data = load_collection(batch)
+            if Path(data['stage']).resolve() != Path(self.stage.get()).resolve():
+                return
+            for row in data['archives']:
+                self.batch_workspaces[row['archive']] = batch / row['workspace']
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+
+    def selected_archive_relatives(self):
+        """Return exactly the staged PAKs visibly selected by the user."""
+        return [self.visible[int(i)] for i in self.archives.curselection()]
+
     def reload_archives(self):
         try:
             stage=Path(self.stage.get())
@@ -327,6 +352,7 @@ class Manager:
                 self.archive_entries=sorted(allowed_paks(stage).values(),key=str.casefold)
             else:
                 self.archive_entries=sorted([p.relative_to(stage/'paks').as_posix() for p in (stage/'paks').rglob('*.pak')],key=str.casefold)
+            self.load_batch_mapping()
             self.write(f'Found {len(self.archive_entries)} custom-signed PAK archives.\n')
         except Exception as e:
             self.archive_entries=[]
@@ -350,7 +376,9 @@ class Manager:
         if not ix:return
         rel=self.visible[ix[0]]
         if self.archive_label.get()!=rel:
-            self.current_workspace.set('');self.output_pak.set('')
+            ws=self.batch_workspaces.get(rel)
+            self.current_workspace.set(str(ws) if ws and (ws/'.evolve-pak-workspace.json').is_file() else '')
+            self.output_pak.set('')
         self.external_pak.set('')
         self.archive_label.set(rel)
 
@@ -397,6 +425,48 @@ class Manager:
             if self.filter.get().strip():cmd += ['--filter',self.filter.get().strip()]
             self.run_steps([('Unpacking archive',cmd)], 'Unpack archive',lambda:self.after_extract(ws))
         except Exception as e:self.fail(e)
+
+    def extract_batch(self):
+        try:
+            if self.busy:
+                raise RuntimeError('Wait for the current task to finish.')
+            selected=self.selected_archive_relatives()
+            if not 2 <= len(selected) <= 30:
+                raise ValueError('Use Ctrl/Shift-click to select 2–30 PAKs in the list first.')
+            if self.external_pak.get():
+                raise ValueError('Batch extraction is for the verified staged PAK list only.')
+            if self.filter.get().strip():
+                raise ValueError('Clear the extraction filter for batch asset linking; complete texture paths are required.')
+            pub,_=self.keys()
+            if not messagebox.askyesno('Unpack multiple PAKs?',
+                    f'Unpack {len(selected)} signed PAKs into separate workspaces?\n\n'
+                    'This can use substantial disk space. Identical asset names are kept separate, '
+                    'and each PAK must still be built and installed individually.\n\n'
+                    'Continue?',parent=self.window):
+                return
+            batch=self.new_directory('Batch_Assets')
+            cmd=[sys.executable,'-u',str(ROOT/'multi_pak_assets.py'),
+                 '--stage',self.stage.get(),'--public-key',str(pub),
+                 '--destination',str(batch)]
+            for rel in selected:cmd += ['--pak',rel]
+            self.run_steps([('Unpacking selected PAKs',cmd)],'Batch unpack',
+                           lambda:self.after_extract_batch(batch))
+        except Exception as e:self.fail(e)
+
+    def after_extract_batch(self, batch):
+        data=load_collection(batch)
+        self.batch_root.set(str(batch))
+        self.load_batch_mapping()
+        first=data['archives'][0]
+        self.archive_label.set(first['archive'])
+        self.external_pak.set('')
+        self.current_workspace.set(str(self.batch_workspaces[first['archive']]))
+        self.output_pak.set('')
+        self.persist()
+        self.write('BATCH UNPACK COMPLETE: '+str(batch)+'\n')
+        self.write('Select another unpacked PAK in the list, then choose Edit Files.\n')
+        self.write('Find textures from the Models tab; archives remain independent for rebuilds.\n')
+        self.open_editable()
 
     def after_extract(self,ws):
         self.current_workspace.set(str(ws));self.output_pak.set('')

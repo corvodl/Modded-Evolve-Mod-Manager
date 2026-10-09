@@ -103,5 +103,7 @@
   "editor_images_help": "DDS previews and imports; PNG conversion supports DXT1/3/5 and BC5.",
   "editor_models_help": "Native export and experimental same-layout import.",
   "editor_select_file": "Choose an item on the left.",
-  "texture_import_png": "Import PNG"
+  "texture_import_png": "Import PNG",
+  "batch_unpack_button": "Unpack Selected PAKs",
+  "batch_help": "Ctrl/Shift-click to select multiple PAKs. Batch extraction keeps each archive in its own editable workspace."
 }

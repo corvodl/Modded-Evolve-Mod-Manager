@@ -87,6 +87,11 @@ def find_preview_mesh(workspace, relative, raw):
         file = (root / companion_rel).resolve()
         if file.is_relative_to(root) and file.is_file() and not file.is_symlink():
             return read_preview_mesh(file.read_bytes(), companion_rel)
+        # Companion assets can live in another extracted PAK from the same batch.
+        from multi_pak_assets import locate_batch_asset
+        linked = locate_batch_asset(workspace, companion_rel)
+        if linked is not None:
+            return read_preview_mesh(linked.read_bytes(), companion_rel)
         raise ValueError('This character file stores skeleton/metadata. A .skinm or .chrm render-mesh companion is needed for preview.')
     return read_preview_mesh(raw, relative)
 

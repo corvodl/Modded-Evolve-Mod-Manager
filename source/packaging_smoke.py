@@ -13,6 +13,7 @@ import dds_png_import
 import dds_streaming
 import model_asset
 import model_preview
+import multi_pak_assets
 from PIL import Image, ImageTk
 from app_runtime import BUNDLE
 assert (BUNDLE/"assets"/"hunt.ico").is_file()

@@ -1,1 +1,1 @@
-2.9.5 - Interactive CryEngine Goliath 3D Mesh Preview (Experimental)
+2.9.6 - Multi-PAK Asset Collections and Material Texture Lookup (Experimental)
