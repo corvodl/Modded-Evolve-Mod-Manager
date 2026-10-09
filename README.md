@@ -20,20 +20,24 @@ The manager has three main areas: **Make a Mod**, **Play & Restore**, and **Sett
 
 ## Requirements
 
-**To use the built Windows application:**
+**To use the Windows application:**
 
 - Windows **64-bit**.
 - An installed copy of **Evolve Stage 2** and the **Modded Evolve client**.
 - Access to the game's `EvolveGame` folder (containing `bin64_SteamRetail/Evolve.exe`) and the normal client launcher executable (usually `ModdedEvolveLauncher.exe`).
 - Plenty of free disk space. Initial setup may need **at least twice the total size of your installed PAKs, plus approximately 1 GiB**, in the manager's storage location. Preparing a game launch may require additional space on the game drive.
 
-Players using the **built application** do **not** need to install Python or its packages separately.
+The Windows download already includes its required runtime. **You do not need to install Python, pip, or any build tools.**
 
-## Install the manager
+## Download and install (Windows)
 
-1. Download **`EvolveModManager-Windows.zip`** from a published release, if one is available. If the project currently provides only the source/build kit, see [Building from source](#building-from-source).
-2. Extract the entire ZIP to a **writable folder**, such as `Documents/EvolveModManager`. Do not run it directly from the ZIP or place it inside the game folder.
-3. Open **`EvolveModManager.exe`**. Keep `EvolveModWorker.exe` and the `_internal` folder alongside it; they are required parts of the application.
+1. Open the **[latest GitHub release](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Main)** and download **[EvolveModManager-Windows.zip](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/download/Main/EvolveModManager-Windows.zip)** under **Assets**.
+2. Right-click the downloaded ZIP and choose **Extract All**. Extract it to a **writable location**, such as `Documents\EvolveModManager`. Don't open the app directly from inside the ZIP or put the manager inside the game folder.
+3. Open the extracted **`EvolveModManager`** folder and double-click **`EvolveModManager.exe`**.
+4. Keep **`EvolveModWorker.exe`** and the **`_internal`** folder in the same extracted application folder. **Do not move or run the EXE by itself.**
+5. On first launch, follow **First-time setup** below to select your Evolve installation and prepare the necessary game files.
+
+**No Python installation or manual compiling is required.** Keep the entire extracted application folder together when moving it to another drive or computer.
 
 ### First-time setup
 
@@ -87,7 +91,7 @@ The built-in text editor has a **5 MiB per-file limit**. CryXmlB edits involving
 - If setup finds leftover `*.customkey-ready` files, it may offer to **preserve them under new names** before continuing. This requires your approval.
 - If setup reports `*.customkey-original` backups or partially prepared files, **stop** and recover the previous setup first. Do not force setup or erase those files.
 - The manager stores generated game snapshots, signing keys, and projects under its **`Data/`** folder. **Keep this folder** if you want to retain your mods and setup.
-- **Do not publish `Data/`**, generated private keys, game PAKs, or full setup exports in the public source repository. The normal app-only release is designed to exclude these items.
+- **Do not publicly share `Data/`**, generated private keys, game PAKs, or full setup exports. The Windows release is designed to exclude these items.
 
 ## Updating after a game update
 
@@ -111,20 +115,6 @@ If the Modded Evolve client updates or repairs your installed game:
 | Restore is blocked | Close the game and launcher. Check the activity log and preserve all recovery files; do not delete them to bypass the safety check. |
 
 Use **Show Activity Log** to see detailed steps and errors. When reporting a problem, include the relevant error message and what you were doing, but **do not share private keys or full game-file snapshots**.
-
-## Building from source
-
-The repository's **build kit is not a precompiled Windows EXE**. To produce the portable app:
-
-1. Use **Windows x64** with **Python 3.11 x64** installed and available through the `py` launcher.
-2. Download or clone the source/build kit and extract it to a writable directory.
-3. Run **`Build-Windows-EXE.cmd`** from the project root.
-4. The script creates a local `.build/` environment, installs dependencies, runs automated checks, and packages the executables with PyInstaller. **Internet access is needed** to fetch build dependencies.
-5. After a successful build, distribute **`dist/EvolveModManager-Windows.zip`**. Recipients extract it and run `EvolveModManager.exe`—they do not need Python.
-
-If the `twofish` dependency cannot build, you may need **Microsoft C++ Build Tools** with **Desktop development with C++** installed on the build computer.
-
-**Do not distribute your `.build/` folder, initialized `Data/` folder, private keys, game PAKs, or personal project backups as part of the normal player release.** The automated tests check the packaging and many file-handling paths, but testing against an actual Windows game installation is still necessary.
 
 ## Disclaimer
 
