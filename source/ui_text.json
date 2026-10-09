@@ -91,5 +91,7 @@
   "old_partial_body": "A partially prepared mod file exists. Use the previous manager to inspect or recover it before setting up again. No files were changed.",
   "old_ready_title": "Previously prepared mods found",
   "old_ready_body": "Found {count} prepared mod file(s) from an earlier setup.\n\nYou can preserve them by renaming them in place, then continue creating a fresh setup. This does not change installed PAKs, but the earlier manager will need to prepare its mod files again if you return to it.\n\nPreserve the old prepared files and continue?",
-  "old_ready_complete": "Saved {count} previously prepared mod file(s) alongside your installation. Their original names are recorded in Data/ArchivedPrepared."
+  "old_ready_complete": "Saved {count} previously prepared mod file(s) alongside your installation. Their original names are recorded in Data/ArchivedPrepared.",
+  "texture_export": "Export PNG",
+  "texture_import": "Import DDS"
 }
