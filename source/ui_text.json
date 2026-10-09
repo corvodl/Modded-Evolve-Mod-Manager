@@ -93,5 +93,7 @@
   "old_ready_body": "Found {count} prepared mod file(s) from an earlier setup.\n\nYou can preserve them by renaming them in place, then continue creating a fresh setup. This does not change installed PAKs, but the earlier manager will need to prepare its mod files again if you return to it.\n\nPreserve the old prepared files and continue?",
   "old_ready_complete": "Saved {count} previously prepared mod file(s) alongside your installation. Their original names are recorded in Data/ArchivedPrepared.",
   "texture_export": "Export PNG",
-  "texture_import": "Import DDS"
+  "texture_import": "Import DDS",
+  "model_import": "Import Model",
+  "model_export": "Export Model"
 }
