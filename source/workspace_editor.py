@@ -4,6 +4,7 @@ from datetime import datetime
 import hashlib
 import json
 import os
+import re
 import tempfile
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -11,6 +12,7 @@ from evolve_gameplay_editor import parse_cryxml_text
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, replace_stream
 from model_asset import is_model, inspect_model, export_model, replace_model
+from dds_png_import import encode_png_as_dds, compression_for_dds
 
 MAX_TEXT = 5 * 1024 * 1024
 TEXT_SUFFIXES = {'.xml', '.txt', '.cfg', '.ini', '.lua', '.json', '.csv', '.mtl', '.chrparams'}
@@ -61,6 +63,25 @@ def save_text(workspace, relative, text, expected_hash, original, cryxml=False):
     return data
 
 class WorkspaceEditor:
+    """Tabbed workspace explorer: Files, Images, and Models each own their actions."""
+    TABS = ('files', 'images', 'models')
+
+    @staticmethod
+    def category(relative):
+        if is_dds(relative) or is_split_dds(relative):
+            return 'images'
+        if is_model(relative):
+            return 'models'
+        return 'files'
+
+    @staticmethod
+    def visible_entries(records, tab, query=''):
+        """Select matching file entries; show one row for each split DDS set."""
+        candidates = (r for r in records if WorkspaceEditor.category(r) == tab)
+        if tab == 'images':
+            candidates = (r for r in candidates if not is_split_dds(r) or r.casefold().endswith('.dds.0'))
+        return sorted((r for r in candidates if query.casefold() in r.casefold()), key=str.casefold)
+
     def __init__(self, manager, workspace):
         self.manager = manager
         self.workspace = Path(workspace)
@@ -71,50 +92,128 @@ class WorkspaceEditor:
         self.view_mode = None
         self.preview_photo = None
         self.streaming = None
+        self.active_tab = 'files'
+        self._changing_tab = False
         self.window = tk.Toplevel(manager.window)
         self.window.title(manager.t('editor_title'))
-        self.window.geometry('1120x730'); self.window.minsize(800, 500)
+        self.window.geometry('1140x740'); self.window.minsize(800, 540)
         self.window.protocol('WM_DELETE_WINDOW', self.close)
         self.query = tk.StringVar()
         bar = ttk.Frame(self.window, padding=8); bar.pack(fill='x')
         ttk.Label(bar, text=manager.t('editor_search')).pack(side='left')
-        ttk.Entry(bar, textvariable=self.query, width=40).pack(side='left', padx=8)
-        ttk.Button(bar, text=manager.t('editor_open_folder'), command=self.explore).pack(side='left')
-        ttk.Button(bar, text=manager.t('editor_save'), command=self.save).pack(side='right')
-        self.import_button = ttk.Button(bar, text=manager.t('texture_import'), command=self.import_texture)
-        self.import_button.pack(side='right', padx=(0, 8))
-        self.export_button = ttk.Button(bar, text=manager.t('texture_export'), command=self.export_texture)
-        self.export_button.pack(side='right', padx=(0, 8))
-        self.import_button.configure(state='disabled')
-        self.export_button.configure(state='disabled')
-        self.model_import_button = ttk.Button(bar, text=manager.t('model_import'), command=self.import_model)
-        self.model_import_button.pack(side='right', padx=(0, 8))
-        self.model_export_button = ttk.Button(bar, text=manager.t('model_export'), command=self.export_model)
-        self.model_export_button.pack(side='right', padx=(0, 8))
-        self.model_import_button.configure(state='disabled')
-        self.model_export_button.configure(state='disabled')
-        ttk.Button(bar, text=manager.t('editor_reload'), command=self.reload).pack(side='right', padx=8)
-        pane = ttk.Panedwindow(self.window, orient='horizontal'); pane.pack(fill='both', expand=True, padx=8)
-        left=ttk.Frame(pane); right=ttk.Frame(pane); pane.add(left, weight=1); pane.add(right, weight=4)
-        self.tree=ttk.Treeview(left, show='tree', selectmode='browse')
-        self.tree.pack(side='left', fill='both', expand=True)
-        sc=ttk.Scrollbar(left, command=self.tree.yview); sc.pack(side='right', fill='y'); self.tree.configure(yscrollcommand=sc.set)
-        self.text=tk.Text(right, wrap='none', undo=True, font=('Consolas',11), background='#18181f', foreground='#eeeeef', insertbackground='white')
-        self.text.grid(row=0,column=0,sticky='nsew'); right.rowconfigure(0,weight=1);right.columnconfigure(0,weight=1)
-        self.model_label = tk.Label(right, background='#18181f', foreground='#eeeeef', justify='left', anchor='nw', padx=16, pady=12)
-        self.image_label = tk.Label(right, background='#18181f', foreground='#eeeeef', compound='top')
-        ys=ttk.Scrollbar(right,command=self.text.yview); ys.grid(row=0,column=1,sticky='ns')
-        xs=ttk.Scrollbar(right,orient='horizontal',command=self.text.xview);xs.grid(row=1,column=0,sticky='ew')
-        self.text.configure(yscrollcommand=ys.set,xscrollcommand=xs.set)
-        self.info=tk.StringVar(value=manager.t('editor_hint'))
-        ttk.Label(self.window,textvariable=self.info,wraplength=1050,padding=8).pack(fill='x')
-        ttk.Label(self.window,text=manager.t('editor_footer'),padding=(8,0,8,8)).pack(fill='x')
-        self.query.trace_add('write',lambda *_:self.populate())
-        self.tree.bind('<<TreeviewSelect>>',self.select)
-        self.window.bind('<Control-s>',lambda _:self.save())
-        self.window.bind('<Control-f>',lambda _:self.find_text())
-        self.text.configure(state='disabled')
+        ttk.Entry(bar, textvariable=self.query, width=44).pack(side='left', padx=8, fill='x', expand=True)
+        ttk.Button(bar, text=manager.t('editor_open_folder'), command=self.explore).pack(side='left', padx=(0, 6))
+        ttk.Button(bar, text=manager.t('editor_reload'), command=self.reload).pack(side='left')
+
+        self.tabs = ttk.Notebook(self.window)
+        self.tabs.pack(fill='both', expand=True, padx=8, pady=(0, 6))
+        self.tab_frames = {}
+        self.trees = {}
+        self.tree_nodes = {}
+        self.tree_paths = {}
+        self.path_items = {}
+        self.viewers = {}
+
+        for tab in self.TABS:
+            page = ttk.Frame(self.tabs, padding=8)
+            self.tabs.add(page, text=manager.t('editor_tab_' + tab))
+            self.tab_frames[tab] = page
+            tools = ttk.Frame(page)
+            tools.pack(fill='x', pady=(0, 7))
+            if tab == 'files':
+                ttk.Button(tools, text=manager.t('editor_save'), command=self.save).pack(side='left')
+                ttk.Label(tools, text=manager.t('editor_files_help')).pack(side='left', padx=10)
+            elif tab == 'images':
+                self.export_button = ttk.Button(tools, text=manager.t('texture_export'), command=self.export_texture)
+                self.export_button.pack(side='left', padx=(0, 6))
+                self.import_png_button = ttk.Button(tools, text=manager.t('texture_import_png'), command=self.import_png)
+                self.import_png_button.pack(side='left', padx=(0, 6))
+                self.import_button = ttk.Button(tools, text=manager.t('texture_import'), command=self.import_texture)
+                self.import_button.pack(side='left', padx=(0, 6))
+                ttk.Label(tools, text=manager.t('editor_images_help')).pack(side='left', padx=8)
+            else:
+                self.model_export_button = ttk.Button(tools, text=manager.t('model_export'), command=self.export_model)
+                self.model_export_button.pack(side='left', padx=(0, 6))
+                self.model_import_button = ttk.Button(tools, text=manager.t('model_import'), command=self.import_model)
+                self.model_import_button.pack(side='left', padx=(0, 6))
+                ttk.Label(tools, text=manager.t('editor_models_help')).pack(side='left', padx=8)
+
+            pane = ttk.Panedwindow(page, orient='horizontal')
+            pane.pack(fill='both', expand=True)
+            left = ttk.Frame(pane)
+            right = ttk.Frame(pane)
+            pane.add(left, weight=1)
+            pane.add(right, weight=4)
+            tree = ttk.Treeview(left, show='tree', selectmode='browse')
+            tree.pack(side='left', fill='both', expand=True)
+            scroll = ttk.Scrollbar(left, command=tree.yview)
+            scroll.pack(side='right', fill='y')
+            tree.configure(yscrollcommand=scroll.set)
+            tree.bind('<<TreeviewSelect>>', lambda event, name=tab: self.select(name))
+            self.trees[tab] = tree
+            self.tree_nodes[tab] = {}
+            self.tree_paths[tab] = {}
+            self.path_items[tab] = {}
+            if tab == 'files':
+                self.text = tk.Text(right, wrap='none', undo=True, font=('Consolas', 11),
+                                    background='#18181f', foreground='#eeeeef', insertbackground='white')
+                self.text.grid(row=0, column=0, sticky='nsew')
+                right.rowconfigure(0, weight=1)
+                right.columnconfigure(0, weight=1)
+                ys = ttk.Scrollbar(right, command=self.text.yview)
+                ys.grid(row=0, column=1, sticky='ns')
+                xs = ttk.Scrollbar(right, orient='horizontal', command=self.text.xview)
+                xs.grid(row=1, column=0, sticky='ew')
+                self.text.configure(yscrollcommand=ys.set, xscrollcommand=xs.set, state='disabled')
+                self.viewers[tab] = self.text
+            elif tab == 'images':
+                self.image_label = tk.Label(right, background='#18181f', foreground='#eeeeef',
+                                            text='Select a DDS texture to preview.', compound='top')
+                self.image_label.pack(fill='both', expand=True)
+                self.viewers[tab] = self.image_label
+            else:
+                self.model_label = tk.Label(right, background='#18181f', foreground='#eeeeef',
+                                            text='Select a CryTek model to inspect.', justify='left',
+                                            anchor='nw', padx=16, pady=12)
+                self.model_label.pack(fill='both', expand=True)
+                self.viewers[tab] = self.model_label
+
+        self.info = tk.StringVar(value=manager.t('editor_hint'))
+        ttk.Label(self.window, textvariable=self.info, wraplength=1080, padding=8).pack(fill='x')
+        ttk.Label(self.window, text=manager.t('editor_footer'), padding=(8, 0, 8, 8)).pack(fill='x')
+        self.query.trace_add('write', lambda *_: self.populate())
+        self.tabs.bind('<<NotebookTabChanged>>', self.on_tab_changed)
+        self.window.bind('<Control-s>', lambda _: self.save())
+        self.window.bind('<Control-f>', lambda _: self.find_text())
+        self.reset_views()
         self.populate()
+
+    def on_tab_changed(self, _=None):
+        if self._changing_tab:
+            return
+        new_tab = self.TABS[self.tabs.index(self.tabs.select())]
+        if new_tab == self.active_tab:
+            return
+        if not self.confirm():
+            self._changing_tab = True
+            try:
+                self.tabs.select(self.tab_frames[self.active_tab])
+            finally:
+                self._changing_tab = False
+            return
+        self.active_tab = new_tab
+        self.path = None
+        self.view_mode = None
+        self.raw = b''
+        self.loaded_text = ''
+        self.reset_views()
+        selection = self.trees[new_tab].selection()
+        rel = self.tree_nodes[new_tab].get(selection[0]) if selection else None
+        if rel:
+            self.load(rel)
+        else:
+            self.info.set(self.manager.t('editor_tab_' + new_tab) + ' | ' +
+                          self.manager.t('editor_select_file'))
 
     def dirty(self):
         return self.path is not None and self.view_mode == 'text' and self.text.get('1.0','end-1c') != self.loaded_text
@@ -126,32 +225,52 @@ class WorkspaceEditor:
         return self.save() if answer else True
 
     def populate(self):
-        self.tree.delete(*self.tree.get_children())
-        self.node_paths={}
-        dirs={'' : ''}; self.nodes={}
-        for rel in sorted(self.records,key=str.casefold):
-            if self.query.get().casefold() not in rel.casefold():continue
-            parts=rel.split('/'); parent=''
-            for i,part in enumerate(parts[:-1]):
-                folder='/'.join(parts[:i+1])
-                if folder not in dirs:
-                    dirs[folder]=self.tree.insert(parent,'end',text=part,open=bool(self.query.get()))
-                    self.node_paths[dirs[folder]]=folder
-                parent=dirs[folder]
-            node=self.tree.insert(parent,'end',text=parts[-1]);self.nodes[node]=rel;self.node_paths[node]=rel
+        needle = self.query.get()
+        for tab in self.TABS:
+            tree = self.trees[tab]
+            selected_path = self.tree_nodes[tab].get(tree.selection()[0]) if tree.selection() else None
+            tree.delete(*tree.get_children())
+            paths, files, reverse = {}, {}, {}
+            dirs = {'': ''}
+            for rel in self.visible_entries(self.records, tab, needle):
+                parts = rel.split('/')
+                parent = ''
+                for index, part in enumerate(parts[:-1]):
+                    folder = '/'.join(parts[:index + 1])
+                    if folder not in dirs:
+                        dirs[folder] = tree.insert(parent, 'end', text=part, open=bool(needle))
+                        paths[dirs[folder]] = folder
+                    parent = dirs[folder]
+                name = parts[-1] + (' (stream)' if is_split_dds(rel) else '')
+                node = tree.insert(parent, 'end', text=name)
+                files[node] = rel
+                paths[node] = rel
+                reverse[rel] = node
+            self.tree_nodes[tab] = files
+            self.tree_paths[tab] = paths
+            self.path_items[tab] = reverse
+            if selected_path in reverse:
+                tree.selection_set(reverse[selected_path])
 
-    def select(self, _=None):
-        chosen=self.tree.selection()
-        rel=self.nodes.get(chosen[0]) if chosen else None
-        if rel and rel!=self.path and self.confirm():self.load(rel)
+    def select(self, tab):
+        if tab != self.active_tab:
+            return
+        tree = self.trees[tab]
+        selection = tree.selection()
+        rel = self.tree_nodes[tab].get(selection[0]) if selection else None
+        if rel and rel != self.path:
+            if self.confirm():
+                self.load(rel)
+            elif self.path in self.path_items[tab]:
+                tree.selection_set(self.path_items[tab][self.path])
 
     def reset_views(self):
-        self.image_label.grid_remove()
-        self.model_label.grid_remove()
-        self.text.grid_remove()
         self.preview_photo = None
         self.streaming = None
+        self.image_label.configure(image='', text='Select a DDS texture to preview.')
+        self.model_label.configure(text='Select a CryTek model to inspect.')
         self.import_button.configure(state='disabled')
+        self.import_png_button.configure(state='disabled')
         self.export_button.configure(state='disabled')
         self.model_import_button.configure(state='disabled')
         self.model_export_button.configure(state='disabled')
@@ -160,6 +279,7 @@ class WorkspaceEditor:
         try:
             root=(self.workspace/'files').resolve(); file=(root/rel).resolve()
             if not file.is_relative_to(root):raise ValueError('File resolves outside project.')
+            if self.category(rel) != self.active_tab:raise ValueError('Selected file belongs to a different tab.')
             if is_split_dds(rel):
                 stream = inspect_stream(self.workspace, rel)
                 self.show_texture(rel, stream.merged, stream=stream)
@@ -178,7 +298,6 @@ class WorkspaceEditor:
             text=raw.decode('utf-8-sig').replace('\r\n','\n').replace('\r','\n')
             if '\x00' in text:raise ValueError('Binary file cannot be edited as text.')
             self.reset_views()
-            self.text.grid()
             self.path=rel;self.raw=raw;self.loaded_text=text;self.view_mode='text'
             self.text.configure(state='normal');self.text.delete('1.0','end');self.text.insert('1.0',text);self.text.edit_reset()
             self.info.set(rel+' | UTF-8 | '+('CryXmlB: edit existing values only' if self.records[rel]['format']=='cryxml' else 'Text file'))
@@ -195,19 +314,24 @@ class WorkspaceEditor:
         self.streaming = stream
         self.loaded_text = ''
         self.view_mode = 'dds_stream' if stream is not None else 'dds'
-        self.text.grid_remove()
         self.image_label.configure(image=photo, text=info.description + '\nPreview shows the largest mip level only')
         self.preview_photo = photo  # Tk images must remain referenced.
-        self.image_label.grid(row=0, column=0, sticky='nsew')
         self.import_button.configure(state='normal')
         self.export_button.configure(state='normal')
+        try:
+            compression_for_dds(raw)
+        except ValueError:
+            self.import_png_button.configure(state='disabled')
+        else:
+            self.import_png_button.configure(state='normal')
         self.info.set(('Streaming DDS: ' + str(stream.count) + ' files | ' if stream else 'DDS texture: ') + rel + ' | ' + info.description)
 
     def export_texture(self):
         if self.view_mode not in ('dds', 'dds_stream') or not self.path:return
         from tkinter import filedialog
+        basename = re.sub(r'\.dds(?:\.\d+)?$', '', Path(self.path).name, flags=re.I)
         dest = filedialog.asksaveasfilename(parent=self.window, title='Export DDS as PNG',
-                    initialfile=Path(self.path).stem + '.png', defaultextension='.png',
+                    initialfile=basename + '.png', defaultextension='.png',
                     filetypes=[('PNG image', '*.png')])
         if not dest:return
         try:
@@ -234,6 +358,34 @@ class WorkspaceEditor:
             self.info.set('Imported compatible DDS: ' + rel + ' | Original kept in EditorBackups')
         except Exception as e:messagebox.showerror('DDS import rejected',str(e),parent=self.window)
 
+    def import_png(self):
+        if self.active_tab != 'images' or self.view_mode not in ('dds', 'dds_stream') or not self.path:
+            return
+        if self.manager.busy:
+            messagebox.showerror('Wait for current task', 'A manager operation is still running.', parent=self.window)
+            return
+        from tkinter import filedialog
+        png_path = filedialog.askopenfilename(parent=self.window, title='Import an edited PNG',
+                                              filetypes=[('PNG images', '*.png')])
+        if not png_path:
+            return
+        try:
+            converted = encode_png_as_dds(self.raw, png_path)
+            # Keep the existing transactional DDS/stream import logic and backups.
+            with tempfile.TemporaryDirectory(prefix='evolve-dds-import-') as temp:
+                candidate = Path(temp) / 'converted.dds'
+                candidate.write_bytes(converted)
+                rel = self.path
+                if self.streaming is not None:
+                    new_stream = replace_stream(self.workspace, rel, candidate, self.streaming.hashes)
+                    self.show_texture(rel, new_stream.merged, stream=new_stream)
+                else:
+                    updated = replace_dds(self.workspace, rel, candidate, digest(self.raw))
+                    self.show_texture(rel, updated)
+            self.info.set('Imported PNG as compatible DDS: ' + rel + ' | Backups kept in EditorBackups')
+        except Exception as error:
+            messagebox.showerror('PNG import rejected', str(error), parent=self.window)
+
     def show_model(self, rel, raw):
         self.reset_views()
         self.path = rel
@@ -248,7 +400,6 @@ class WorkspaceEditor:
         except ValueError as error:
             report = 'Experimental model support\n' + str(error) + '\nExport the native file to inspect it with an external application.'
         self.model_label.configure(text=rel + '\n\n' + report + '\n\nThere is no built-in 3D mesh preview or Blender converter.')
-        self.model_label.grid(row=0, column=0, sticky='nsew')
         self.info.set('Model: ' + rel + ' | Native export available; replacement is experimental')
 
     def export_model(self):
@@ -301,7 +452,7 @@ class WorkspaceEditor:
         if self.path and self.confirm():self.load(self.path)
 
     def find_text(self):
-        if self.path is None:return
+        if self.path is None or self.view_mode != 'text':return
         needle=simpledialog.askstring('Find text','Text to find (case-insensitive):',parent=self.window)
         if not needle:return
         start=self.text.index('insert+1c')
@@ -315,8 +466,9 @@ class WorkspaceEditor:
     def explore(self):
         from pak_manager_gui import open_folder
         try:
-            selection=self.tree.selection()
-            rel=self.node_paths.get(selection[0],'') if selection else ''
+            tree=self.trees[self.active_tab]
+            selection=tree.selection()
+            rel=self.tree_paths[self.active_tab].get(selection[0],'') if selection else ''
             root=(self.workspace/'files').resolve();path=(root/rel).resolve()
             if not path.is_relative_to(root):raise ValueError('Path is outside project.')
             open_folder(path if path.is_dir() else path.parent)
