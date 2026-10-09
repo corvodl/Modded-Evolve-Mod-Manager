@@ -43,8 +43,8 @@ popd
 :failed
 echo.
 echo BUILD FAILED. Copy the error above; no completed app is claimed.
-echo If twofish needs a compiler, install Microsoft C++ Build Tools with
- echo Desktop development with C++, then retry.
+echo Check the error above for the actual cause: tests, dependencies, or packaging.
+echo Install C++ Build Tools only if the dependency installation specifically requires a compiler.
 if /i "%GITHUB_ACTIONS%"=="true" exit /b 1
 pause
 exit /b 1
