@@ -8,6 +8,7 @@ import tempfile
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from evolve_gameplay_editor import parse_cryxml_text
+from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 
 MAX_TEXT = 5 * 1024 * 1024
 TEXT_SUFFIXES = {'.xml', '.txt', '.cfg', '.ini', '.lua', '.json', '.csv'}
@@ -65,6 +66,8 @@ class WorkspaceEditor:
         self.path = None
         self.raw = b''
         self.loaded_text = ''
+        self.view_mode = None
+        self.preview_photo = None
         self.window = tk.Toplevel(manager.window)
         self.window.title(manager.t('editor_title'))
         self.window.geometry('1120x730'); self.window.minsize(800, 500)
@@ -75,6 +78,12 @@ class WorkspaceEditor:
         ttk.Entry(bar, textvariable=self.query, width=40).pack(side='left', padx=8)
         ttk.Button(bar, text=manager.t('editor_open_folder'), command=self.explore).pack(side='left')
         ttk.Button(bar, text=manager.t('editor_save'), command=self.save).pack(side='right')
+        self.import_button = ttk.Button(bar, text=manager.t('texture_import'), command=self.import_texture)
+        self.import_button.pack(side='right', padx=(0, 8))
+        self.export_button = ttk.Button(bar, text=manager.t('texture_export'), command=self.export_texture)
+        self.export_button.pack(side='right', padx=(0, 8))
+        self.import_button.configure(state='disabled')
+        self.export_button.configure(state='disabled')
         ttk.Button(bar, text=manager.t('editor_reload'), command=self.reload).pack(side='right', padx=8)
         pane = ttk.Panedwindow(self.window, orient='horizontal'); pane.pack(fill='both', expand=True, padx=8)
         left=ttk.Frame(pane); right=ttk.Frame(pane); pane.add(left, weight=1); pane.add(right, weight=4)
@@ -83,6 +92,7 @@ class WorkspaceEditor:
         sc=ttk.Scrollbar(left, command=self.tree.yview); sc.pack(side='right', fill='y'); self.tree.configure(yscrollcommand=sc.set)
         self.text=tk.Text(right, wrap='none', undo=True, font=('Consolas',11), background='#18181f', foreground='#eeeeef', insertbackground='white')
         self.text.grid(row=0,column=0,sticky='nsew'); right.rowconfigure(0,weight=1);right.columnconfigure(0,weight=1)
+        self.image_label = tk.Label(right, background='#18181f', foreground='#eeeeef', compound='top')
         ys=ttk.Scrollbar(right,command=self.text.yview); ys.grid(row=0,column=1,sticky='ns')
         xs=ttk.Scrollbar(right,orient='horizontal',command=self.text.xview);xs.grid(row=1,column=0,sticky='ew')
         self.text.configure(yscrollcommand=ys.set,xscrollcommand=xs.set)
@@ -97,7 +107,7 @@ class WorkspaceEditor:
         self.populate()
 
     def dirty(self):
-        return self.path is not None and self.text.get('1.0','end-1c') != self.loaded_text
+        return self.path is not None and self.view_mode == 'text' and self.text.get('1.0','end-1c') != self.loaded_text
 
     def confirm(self):
         if not self.dirty(): return True
@@ -129,19 +139,74 @@ class WorkspaceEditor:
         try:
             root=(self.workspace/'files').resolve(); file=(root/rel).resolve()
             if not file.is_relative_to(root):raise ValueError('File resolves outside project.')
+            if is_split_dds(rel):
+                raise ValueError('Split DDS streaming pieces (.dds.0, .dds.1, ...) cannot be previewed or replaced independently.')
+            if is_dds(rel):
+                raw=file.read_bytes()
+                self.show_texture(rel, raw)
+                return
             if file.stat().st_size>MAX_TEXT:raise ValueError('File exceeds the 5 MiB text editor limit. Use an external editor.')
             raw=file.read_bytes()
             if self.records[rel]['format']!='cryxml' and file.suffix.lower() not in TEXT_SUFFIXES:
                 raise ValueError('Binary/unsupported file. Open its folder to use a suitable editor.')
             text=raw.decode('utf-8-sig').replace('\r\n','\n').replace('\r','\n')
             if '\x00' in text:raise ValueError('Binary file cannot be edited as text.')
-            self.path=rel;self.raw=raw;self.loaded_text=text
+            self.image_label.grid_remove()
+            self.text.grid()
+            self.preview_photo = None
+            self.import_button.configure(state='disabled')
+            self.export_button.configure(state='disabled')
+            self.path=rel;self.raw=raw;self.loaded_text=text;self.view_mode='text'
             self.text.configure(state='normal');self.text.delete('1.0','end');self.text.insert('1.0',text);self.text.edit_reset()
             self.info.set(rel+' | UTF-8 | '+('CryXmlB: edit existing values only' if self.records[rel]['format']=='cryxml' else 'Text file'))
         except Exception as e:messagebox.showerror('Cannot open as text',str(e),parent=self.window)
 
+    def show_texture(self, rel, raw):
+        from PIL import ImageTk
+        info = parse_dds(raw)
+        image = preview_dds(raw)
+        photo = ImageTk.PhotoImage(image, master=self.window)
+        self.path = rel
+        self.raw = raw
+        self.loaded_text = ''
+        self.view_mode = 'dds'
+        self.text.grid_remove()
+        self.image_label.configure(image=photo, text=info.description + '\nPreview shows the largest mip level only')
+        self.preview_photo = photo  # Tk images must remain referenced.
+        self.image_label.grid(row=0, column=0, sticky='nsew')
+        self.import_button.configure(state='normal')
+        self.export_button.configure(state='normal')
+        self.info.set('DDS texture: ' + rel + ' | ' + info.description)
+
+    def export_texture(self):
+        if self.view_mode != 'dds' or not self.path:return
+        from tkinter import filedialog
+        dest = filedialog.asksaveasfilename(parent=self.window, title='Export DDS as PNG',
+                    initialfile=Path(self.path).stem + '.png', defaultextension='.png',
+                    filetypes=[('PNG image', '*.png')])
+        if not dest:return
+        try:
+            export_png(self.raw, Path(dest))
+            self.info.set('Exported PNG (top mip only): ' + dest)
+        except Exception as e:messagebox.showerror('PNG export failed',str(e),parent=self.window)
+
+    def import_texture(self):
+        if self.view_mode != 'dds' or not self.path:return
+        if self.manager.busy:
+            messagebox.showerror('Wait for current task','A manager operation is still running.',parent=self.window);return
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(parent=self.window, title='Select replacement DDS',
+                     filetypes=[('DDS textures', '*.dds')])
+        if not path:return
+        try:
+            result = replace_dds(self.workspace, self.path, path, digest(self.raw))
+            rel = self.path
+            self.show_texture(rel, result)
+            self.info.set('Imported compatible DDS: ' + rel + ' | Original kept in EditorBackups')
+        except Exception as e:messagebox.showerror('DDS import rejected',str(e),parent=self.window)
+
     def save(self):
-        if self.path is None:return True
+        if self.path is None or self.view_mode == 'dds':return True
         try:
             if self.manager.busy:raise RuntimeError('Wait for the current manager task before saving.')
             text=self.text.get('1.0','end-1c')
