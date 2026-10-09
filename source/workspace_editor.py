@@ -9,9 +9,11 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from evolve_gameplay_editor import parse_cryxml_text
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
+from dds_streaming import inspect_stream, replace_stream
+from model_asset import is_model, inspect_model, export_model, replace_model
 
 MAX_TEXT = 5 * 1024 * 1024
-TEXT_SUFFIXES = {'.xml', '.txt', '.cfg', '.ini', '.lua', '.json', '.csv'}
+TEXT_SUFFIXES = {'.xml', '.txt', '.cfg', '.ini', '.lua', '.json', '.csv', '.mtl', '.chrparams'}
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -68,6 +70,7 @@ class WorkspaceEditor:
         self.loaded_text = ''
         self.view_mode = None
         self.preview_photo = None
+        self.streaming = None
         self.window = tk.Toplevel(manager.window)
         self.window.title(manager.t('editor_title'))
         self.window.geometry('1120x730'); self.window.minsize(800, 500)
@@ -84,6 +87,12 @@ class WorkspaceEditor:
         self.export_button.pack(side='right', padx=(0, 8))
         self.import_button.configure(state='disabled')
         self.export_button.configure(state='disabled')
+        self.model_import_button = ttk.Button(bar, text=manager.t('model_import'), command=self.import_model)
+        self.model_import_button.pack(side='right', padx=(0, 8))
+        self.model_export_button = ttk.Button(bar, text=manager.t('model_export'), command=self.export_model)
+        self.model_export_button.pack(side='right', padx=(0, 8))
+        self.model_import_button.configure(state='disabled')
+        self.model_export_button.configure(state='disabled')
         ttk.Button(bar, text=manager.t('editor_reload'), command=self.reload).pack(side='right', padx=8)
         pane = ttk.Panedwindow(self.window, orient='horizontal'); pane.pack(fill='both', expand=True, padx=8)
         left=ttk.Frame(pane); right=ttk.Frame(pane); pane.add(left, weight=1); pane.add(right, weight=4)
@@ -92,6 +101,7 @@ class WorkspaceEditor:
         sc=ttk.Scrollbar(left, command=self.tree.yview); sc.pack(side='right', fill='y'); self.tree.configure(yscrollcommand=sc.set)
         self.text=tk.Text(right, wrap='none', undo=True, font=('Consolas',11), background='#18181f', foreground='#eeeeef', insertbackground='white')
         self.text.grid(row=0,column=0,sticky='nsew'); right.rowconfigure(0,weight=1);right.columnconfigure(0,weight=1)
+        self.model_label = tk.Label(right, background='#18181f', foreground='#eeeeef', justify='left', anchor='nw', padx=16, pady=12)
         self.image_label = tk.Label(right, background='#18181f', foreground='#eeeeef', compound='top')
         ys=ttk.Scrollbar(right,command=self.text.yview); ys.grid(row=0,column=1,sticky='ns')
         xs=ttk.Scrollbar(right,orient='horizontal',command=self.text.xview);xs.grid(row=1,column=0,sticky='ew')
@@ -135,12 +145,28 @@ class WorkspaceEditor:
         rel=self.nodes.get(chosen[0]) if chosen else None
         if rel and rel!=self.path and self.confirm():self.load(rel)
 
+    def reset_views(self):
+        self.image_label.grid_remove()
+        self.model_label.grid_remove()
+        self.text.grid_remove()
+        self.preview_photo = None
+        self.streaming = None
+        self.import_button.configure(state='disabled')
+        self.export_button.configure(state='disabled')
+        self.model_import_button.configure(state='disabled')
+        self.model_export_button.configure(state='disabled')
+
     def load(self,rel):
         try:
             root=(self.workspace/'files').resolve(); file=(root/rel).resolve()
             if not file.is_relative_to(root):raise ValueError('File resolves outside project.')
             if is_split_dds(rel):
-                raise ValueError('Split DDS streaming pieces (.dds.0, .dds.1, ...) cannot be previewed or replaced independently.')
+                stream = inspect_stream(self.workspace, rel)
+                self.show_texture(rel, stream.merged, stream=stream)
+                return
+            if is_model(rel):
+                self.show_model(rel, file.read_bytes())
+                return
             if is_dds(rel):
                 raw=file.read_bytes()
                 self.show_texture(rel, raw)
@@ -151,35 +177,34 @@ class WorkspaceEditor:
                 raise ValueError('Binary/unsupported file. Open its folder to use a suitable editor.')
             text=raw.decode('utf-8-sig').replace('\r\n','\n').replace('\r','\n')
             if '\x00' in text:raise ValueError('Binary file cannot be edited as text.')
-            self.image_label.grid_remove()
+            self.reset_views()
             self.text.grid()
-            self.preview_photo = None
-            self.import_button.configure(state='disabled')
-            self.export_button.configure(state='disabled')
             self.path=rel;self.raw=raw;self.loaded_text=text;self.view_mode='text'
             self.text.configure(state='normal');self.text.delete('1.0','end');self.text.insert('1.0',text);self.text.edit_reset()
             self.info.set(rel+' | UTF-8 | '+('CryXmlB: edit existing values only' if self.records[rel]['format']=='cryxml' else 'Text file'))
         except Exception as e:messagebox.showerror('Cannot open as text',str(e),parent=self.window)
 
-    def show_texture(self, rel, raw):
+    def show_texture(self, rel, raw, stream=None):
         from PIL import ImageTk
         info = parse_dds(raw)
         image = preview_dds(raw)
         photo = ImageTk.PhotoImage(image, master=self.window)
+        self.reset_views()
         self.path = rel
         self.raw = raw
+        self.streaming = stream
         self.loaded_text = ''
-        self.view_mode = 'dds'
+        self.view_mode = 'dds_stream' if stream is not None else 'dds'
         self.text.grid_remove()
         self.image_label.configure(image=photo, text=info.description + '\nPreview shows the largest mip level only')
         self.preview_photo = photo  # Tk images must remain referenced.
         self.image_label.grid(row=0, column=0, sticky='nsew')
         self.import_button.configure(state='normal')
         self.export_button.configure(state='normal')
-        self.info.set('DDS texture: ' + rel + ' | ' + info.description)
+        self.info.set(('Streaming DDS: ' + str(stream.count) + ' files | ' if stream else 'DDS texture: ') + rel + ' | ' + info.description)
 
     def export_texture(self):
-        if self.view_mode != 'dds' or not self.path:return
+        if self.view_mode not in ('dds', 'dds_stream') or not self.path:return
         from tkinter import filedialog
         dest = filedialog.asksaveasfilename(parent=self.window, title='Export DDS as PNG',
                     initialfile=Path(self.path).stem + '.png', defaultextension='.png',
@@ -191,7 +216,7 @@ class WorkspaceEditor:
         except Exception as e:messagebox.showerror('PNG export failed',str(e),parent=self.window)
 
     def import_texture(self):
-        if self.view_mode != 'dds' or not self.path:return
+        if self.view_mode not in ('dds', 'dds_stream') or not self.path:return
         if self.manager.busy:
             messagebox.showerror('Wait for current task','A manager operation is still running.',parent=self.window);return
         from tkinter import filedialog
@@ -199,14 +224,69 @@ class WorkspaceEditor:
                      filetypes=[('DDS textures', '*.dds')])
         if not path:return
         try:
-            result = replace_dds(self.workspace, self.path, path, digest(self.raw))
             rel = self.path
-            self.show_texture(rel, result)
+            if self.streaming is not None:
+                stream = replace_stream(self.workspace, rel, path, self.streaming.hashes)
+                self.show_texture(rel, stream.merged, stream=stream)
+            else:
+                result = replace_dds(self.workspace, rel, path, digest(self.raw))
+                self.show_texture(rel, result)
             self.info.set('Imported compatible DDS: ' + rel + ' | Original kept in EditorBackups')
         except Exception as e:messagebox.showerror('DDS import rejected',str(e),parent=self.window)
 
+    def show_model(self, rel, raw):
+        self.reset_views()
+        self.path = rel
+        self.raw = raw
+        self.loaded_text = ''
+        self.view_mode = 'model'
+        self.model_export_button.configure(state='normal')
+        try:
+            info = inspect_model(raw)
+            report = info.description + '\nChunked CryTek model recognized.\nImport requires identical chunk table and binary length.'
+            self.model_import_button.configure(state='normal')
+        except ValueError as error:
+            report = 'Experimental model support\n' + str(error) + '\nExport the native file to inspect it with an external application.'
+        self.model_label.configure(text=rel + '\n\n' + report + '\n\nThere is no built-in 3D mesh preview or Blender converter.')
+        self.model_label.grid(row=0, column=0, sticky='nsew')
+        self.info.set('Model: ' + rel + ' | Native export available; replacement is experimental')
+
+    def export_model(self):
+        if self.view_mode != 'model' or not self.path:return
+        from tkinter import filedialog
+        dest = filedialog.asksaveasfilename(parent=self.window, title='Export native model',
+                         initialfile=Path(self.path).name,
+                         defaultextension=Path(self.path).suffix,
+                         filetypes=[('Native model file', '*' + Path(self.path).suffix)])
+        if not dest:return
+        try:
+            export_model(self.workspace, self.path, dest)
+            self.info.set('Exported native model: ' + dest)
+        except Exception as error:
+            messagebox.showerror('Model export failed',str(error),parent=self.window)
+
+    def import_model(self):
+        if self.view_mode != 'model' or not self.path:return
+        if self.manager.busy:
+            messagebox.showerror('Wait for current task','A manager operation is still running.',parent=self.window);return
+        from tkinter import filedialog
+        ext=Path(self.path).suffix
+        path=filedialog.askopenfilename(parent=self.window, title='Select edited native model',
+                       filetypes=[('Native model', '*' + ext)])
+        if not path:return
+        if not messagebox.askyesno('Experimental model import',
+                  'Only same-layout CryTek model files are accepted. This cannot guarantee in-game compatibility.\n\nImport and keep an original backup?',
+                  parent=self.window):return
+        try:
+            rel = self.path
+            changed=replace_model(self.workspace, rel, path, digest(self.raw))
+            self.show_model(rel,changed)
+            self.info.set('Imported model (experimental): ' + rel + ' | Original in EditorBackups')
+        except Exception as error:
+            messagebox.showerror('Model import rejected',str(error),parent=self.window)
+
     def save(self):
-        if self.path is None or self.view_mode == 'dds':return True
+        if self.path is None or self.view_mode != 'text':return True
         try:
             if self.manager.busy:raise RuntimeError('Wait for the current manager task before saving.')
             text=self.text.get('1.0','end-1c')
