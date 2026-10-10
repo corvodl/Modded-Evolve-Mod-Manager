@@ -39,7 +39,13 @@ jobs:
           $env:QT_QPA_PLATFORM = "offscreen"
           $env:QT_DEBUG_PLUGINS = "1"
           & $exe --capture-screenshot $png
-          if ($LASTEXITCODE -ne 0) { throw "Compiled Qt app failed to capture a screenshot." }
+          $exit = $LASTEXITCODE
+          $startupLog = Join-Path $env:LOCALAPPDATA "EvolveModManagerQtPreview/startup.log"
+          if (Test-Path -LiteralPath $startupLog) {
+            Write-Host 'Qt frozen app startup diagnostics:'
+            Get-Content -LiteralPath $startupLog | Select-Object -Last 65
+          }
+          if ($exit -ne 0) { throw "Compiled Qt app failed to capture a screenshot." }
           if (!(Test-Path $png -PathType Leaf)) { throw "No real Qt screenshot was captured." }
           & ".build/venv/Scripts/python.exe" -c "from PIL import Image; i=Image.open(r'dist/EvolveModManagerQt-compiled-screenshot.png'); print('Compiled Qt window:',i.size); assert i.width >= 850 and i.height >= 600"
           if ($LASTEXITCODE -ne 0) { throw "Qt screenshot validation failed." }

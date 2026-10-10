@@ -13,6 +13,27 @@ import subprocess
 import sys
 import threading
 import webbrowser
+import traceback
+
+# PyInstaller's windowed bootloader does not provide sys.stdout/stderr.
+# Third-party imports or Windows native callbacks may still write there.
+# Record preview errors privately rather than exiting without diagnostics.
+_QT_STARTUP_LOG = None
+if os.name == 'nt' and getattr(sys, 'frozen', False):
+    try:
+        _QT_LOG_DIR = Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or '.') / 'EvolveModManagerQtPreview'
+        _QT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        _QT_STARTUP_LOG = open(_QT_LOG_DIR / 'startup.log', 'a',
+                               encoding='utf-8', buffering=1)
+        if sys.stdout is None:
+            sys.stdout = _QT_STARTUP_LOG
+        if sys.stderr is None:
+            sys.stderr = _QT_STARTUP_LOG
+        _QT_STARTUP_LOG.write('Qt preview startup, Windows frozen executable.\n')
+    except OSError:
+        sys.stdout = sys.stdout or open(os.devnull, 'w')
+        sys.stderr = sys.stderr or open(os.devnull, 'w')
+
 
 from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QUrl
 from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices
@@ -1483,4 +1504,9 @@ def main():
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except BaseException:
+        if _QT_STARTUP_LOG is not None:
+            _QT_STARTUP_LOG.write(traceback.format_exc() + '\n')
+        raise
