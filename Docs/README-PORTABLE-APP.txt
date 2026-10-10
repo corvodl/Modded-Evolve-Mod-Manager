@@ -135,3 +135,9 @@ Add Mod after first setup:
 - Play with Mods generates the prepared swap journal when necessary.
 - Existing prepared swaps still require verified matching records and backups.
 - If recovery files are detected, restore your game instead of deleting the journal.
+
+Model texture lookup: repeated extractions of identical .mtl/DDS assets no longer
+cause false ambiguity. The model's own PAK material is used first. Different
+unrelated material versions remain ambiguous (see Find Model Textures for paths).
+If you have made multiple copies of the same PAK project, removing outdated
+project copies from the Projects folder can help. Never remove live swap backups.

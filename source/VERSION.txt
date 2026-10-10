@@ -1,1 +1,1 @@
-2.9.10 - Fix Add Mod Before First Launch (Experimental)
+2.9.11 - Resolve Duplicate Unpacked Materials and DDS Assets (Experimental)

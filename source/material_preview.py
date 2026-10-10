@@ -50,10 +50,10 @@ def _workspace_index(workspace, projects_root=None, stage_root=None):
     return index
 
 
-def _find_unique(index, virtual):
-    hits, status = _resolve(index, virtual)
+def _find_unique(index, virtual, *, preferred_workspace=None):
+    hits, status = _resolve(index, virtual, preferred_workspace=preferred_workspace)
     if status == 'ambiguous':
-        raise ValueError('Material lookup is ambiguous across PAKs: ' + virtual)
+        raise ValueError('Different versions of this asset exist in multiple unpacked PAKs: ' + virtual + '. Select its owning PAK or remove outdated duplicate projects.')
     return hits[0] if status == 'found' else None
 
 
@@ -136,7 +136,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
     index = _workspace_index(workspace, projects_root, stage_root)
     stem = Path(model_relative).with_suffix('').as_posix()
     bases = [stem, re.sub(r'_lod\d+$', '', stem, flags=re.IGNORECASE)]
-    material = next((item for b in bases if (item := _find_unique(index, b+'.mtl')) is not None), None)
+    material = next((item for b in bases if (item := _find_unique(index, b+'.mtl', preferred_workspace=workspace)) is not None), None)
     if material is None:
         raise ValueError('Model .mtl not found. Unpack the material PAK alongside this model.')
     raw = material['file'].read_bytes()
@@ -158,7 +158,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         if not diffuse or item.get('Shader','').casefold()=='nodraw':
             result.append(None)
             continue
-        found = _find_unique(index, diffuse)
+        found = _find_unique(index, diffuse, preferred_workspace=material['workspace'])
         if found is None:
             found = _external_lookup(texture_folder, diffuse)
         if found is None:

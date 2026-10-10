@@ -626,8 +626,17 @@ class WorkspaceEditor:
                              ('  |  ' + '; '.join(item['archives']) if item['archives'] else ''))
                 if item['paths']:
                     lines.append('  Extracted file: ' + ', '.join(item['paths']))
-            if not report['textures']:
-                lines.append('No texture references found; try unpacking the PAK containing its .mtl file.')
+            if report['status'] == 'ambiguous':
+                lines.append('Multiple DIFFERENT versions of the material were found.')
+                lines.append('Select the model from the PAK containing its matching .mtl,')
+                lines.append('or move old/duplicate extracted projects out of the Projects folder.')
+                lines.append('Conflicting material workspaces:')
+                for candidate in report.get('candidates', []):
+                    lines.append('  ' + candidate['archive'] + ' | ' + candidate['workspace'])
+            elif report['status'] == 'missing':
+                lines.append('Material file not found. Unpack the PAK containing its .mtl file.')
+            elif not report['textures']:
+                lines.append('This material contains no texture references.')
             lines += ['', 'CryEngine .tif references can correspond to cooked .dds/.dds.0 assets.',
                       'When diffuse DDS files are found, the 3D preview uses their UVs with approximate lighting.',
                       'To edit a texture, choose its PAK in the main list and open the Images tab.']

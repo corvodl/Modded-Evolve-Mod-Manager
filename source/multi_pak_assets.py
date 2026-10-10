@@ -4,6 +4,7 @@ Never merges PAK contents, changes the game, or changes how an individual PAK
 is built/signed. The batch manifest only points to verified workspaces.
 """
 import argparse
+import hashlib
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -152,19 +153,52 @@ def _candidates(ref):
     return opts
 
 
-def _resolve(index, ref):
+def _content_fingerprint(path):
+    """Hash colliding extracted assets only. Never assume repeated names are equal."""
+    path = Path(path)
+    result = hashlib.sha256()
+    with path.open('rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            result.update(chunk)
+    return (path.stat().st_size, result.digest())
+
+
+def _resolve(index, ref, *, preferred_workspace=None):
+    """Resolve a virtual asset without conflating copies with real conflicts.
+
+    The model's own workspace has an explicit, verifiable association with
+    its material. Otherwise, independent workspaces with the *same bytes* are
+    equivalent, even when the same PAK was extracted several times. Different
+    versions from unrelated workspaces are still ambiguous and never guessed.
+    """
     try:
         candidates = _candidates(ref)
     except ValueError:
         return [], 'unsafe-path'
+    preferred = Path(preferred_workspace).resolve() if preferred_workspace is not None else None
     for name in candidates:
         hits = index.get(name.casefold(), [])
-        if len(hits) > 1:
-            return hits, 'ambiguous'
-        if hits:
-            return hits, 'found'
+        if not hits:
+            continue
+        # The project currently being edited is a stronger association than
+        # duplicate material paths in older batch projects.
+        if preferred is not None:
+            local = [hit for hit in hits if Path(hit['workspace']).resolve() == preferred]
+            if len(local) == 1:
+                return local, 'found'
+        # The same workspace may occur twice in the discovery catalog.
+        unique = list({str(Path(hit['file']).resolve()): hit for hit in hits}.values())
+        if len(unique) == 1:
+            return unique, 'found'
+        # Do not silently pick a different asset just because its name matches.
+        # Equal hashes are equivalent; differing bytes remain a real conflict.
+        try:
+            if len({_content_fingerprint(hit['file']) for hit in unique}) == 1:
+                return [unique[0]], 'found'
+        except OSError:
+            return unique, 'ambiguous'
+        return unique, 'ambiguous'
     return [], 'missing'
-
 
 MAX_DISCOVERY_PROJECTS = 200
 MAX_DISCOVERY_WORKSPACES = 256
@@ -272,7 +306,7 @@ def locate_related_asset(workspace, virtual_path, projects_root=None, stage_root
     index = related_asset_index(workspace, projects_root, stage_root)
     if index is None:
         return None
-    hits, status = _resolve(index, virtual_path)
+    hits, status = _resolve(index, virtual_path, preferred_workspace=workspace)
     if status == 'ambiguous':
         raise ValueError('Companion asset is ambiguous across extracted PAKs: ' + virtual_path)
     return hits[0]['file'] if status == 'found' else None
@@ -326,12 +360,13 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
         possible.append(base+'.mtl')
     material=None; state='missing'
     for path in possible:
-        hits,state=_resolve(index,path)
+        hits,state=_resolve(index,path, preferred_workspace=workspace)
         if state == 'found':
             material=hits[0]
             break
         if state=='ambiguous':
-            return {'material':path,'status':'ambiguous','textures':[],'collection':has_links}
+            return {'material':path,'status':'ambiguous','textures':[], 'collection':has_links,
+                    'candidates':[{'archive':h['archive'], 'workspace':str(h['workspace'])} for h in hits]}
     if material is None:
         return {'material':', '.join(possible), 'status':'missing', 'textures':[], 'collection':has_links}
     raw=material['file'].read_bytes()
@@ -354,7 +389,7 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
         if signature in seen:
             continue
         seen.add(signature)
-        matches,resolution = _resolve(index, ref)
+        matches,resolution = _resolve(index, ref, preferred_workspace=material['workspace'])
         textures.append({'map':kind, 'reference':ref, 'status':resolution,
                          'archives':[m['archive'] for m in matches],
                          'paths':[m['relative'] for m in matches]})

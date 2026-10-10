@@ -108,10 +108,63 @@ class CrossProjectTests(unittest.TestCase):
             load_preview_materials(self.models, MODEL, projects_root=self.projects,
                                    stage_root=self.stage)
 
-    def test_duplicate_paths_rejected_without_guessing(self):
+    def test_duplicate_identical_texture_is_one_asset(self):
+        # A previously unpacked PAK and a batch may contain the same file.
         other = self._workspace('duplicated', 'duplicates.pak')
-        self._write(other, TEXTURE, fixture_dds('DXT5', (16, 16), 1))
-        with self.assertRaisesRegex(ValueError, 'ambiguous'):
+        texture = (self.textures / 'files' / TEXTURE).read_bytes()
+        self._write(other, TEXTURE, texture)
+        got = load_preview_materials(self.models, MODEL,
+                                     projects_root=self.projects, stage_root=self.stage)
+        self.assertEqual(got.count, 1)
+        report = model_material_links(self.models, MODEL, projects_root=self.projects,
+                                      stage_root=self.stage)
+        self.assertEqual(report['textures'][0]['status'], 'found')
+
+    def test_different_texture_bytes_from_other_pak_stay_ambiguous(self):
+        other = self._workspace('duplicated', 'duplicates.pak')
+        self._write(other, TEXTURE, fixture_dds('DXT5', (16, 16), 1)[:-1] + b'\x01')
+        with self.assertRaisesRegex(ValueError, 'Different versions'):
+            load_preview_materials(self.models, MODEL,
+                                   projects_root=self.projects, stage_root=self.stage)
+        report = model_material_links(self.models, MODEL, projects_root=self.projects,
+                                      stage_root=self.stage)
+        self.assertEqual(report['textures'][0]['status'], 'ambiguous')
+
+    def test_identical_material_in_two_extractions_is_not_ambiguous(self):
+        other = self._workspace('duplicate-material', 'duplicated-mtl.pak')
+        self._write(other, MTL, (self.models / 'files' / MTL).read_bytes())
+        self.assertEqual(load_preview_materials(self.models, MODEL,
+                                                projects_root=self.projects, stage_root=self.stage).count, 1)
+        report = model_material_links(self.models, MODEL, projects_root=self.projects,
+                                      stage_root=self.stage)
+        self.assertEqual(report['status'], 'found')
+
+    def test_prefer_model_workspace_when_material_differs(self):
+        other = self._workspace('duplicate-material', 'duplicated-mtl.pak')
+        self._write(other, MTL, b'<Material><SubMaterials><Material Name="Other" /></SubMaterials></Material>')
+        report = model_material_links(self.models, MODEL, projects_root=self.projects,
+                                      stage_root=self.stage)
+        self.assertEqual(report['status'], 'found')
+        self.assertEqual(report['material_archive'], 'objects.pak')
+        self.assertEqual(load_preview_materials(self.models, MODEL,
+                                                projects_root=self.projects, stage_root=self.stage).count, 1)
+
+    def test_conflicting_external_materials_remain_visible_as_ambiguous(self):
+        original = self.models / 'files' / MTL
+        original.unlink()
+        manifest = self.models / '.evolve-pak-workspace.json'
+        d = json.loads(manifest.read_text())
+        d['entries'] = [e for e in d['entries'] if e['path'] != MTL]
+        manifest.write_text(json.dumps(d))
+        extra = self._workspace('extra-mtl', 'extra-mtl.pak')
+        self._write(extra, MTL, b'<Material><SubMaterials><Material Name="Other" /></SubMaterials></Material>')
+        other = self._workspace('other-mtl', 'other-mtl.pak')
+        self._write(other, MTL, b'<Material><SubMaterials><Material Name="Yet Another" /></SubMaterials></Material>')
+        report = model_material_links(self.models, MODEL, projects_root=self.projects,
+                                      stage_root=self.stage)
+        self.assertEqual(report['status'], 'ambiguous')
+        self.assertEqual(len(report['candidates']), 2)
+        with self.assertRaisesRegex(ValueError, 'Different versions'):
             load_preview_materials(self.models, MODEL,
                                    projects_root=self.projects, stage_root=self.stage)
 
