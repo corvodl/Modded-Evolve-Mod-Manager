@@ -141,16 +141,15 @@ class AssetBatchTests(unittest.TestCase):
             apply_theme(root)
             manager=Manager.__new__(Manager)
             manager.window=root;manager.copy,_=load_text()
-            for name in ('search','archive_count','archive_label'):
+            for name in ('search','archive_count','archive_label','current_workspace','external_pak','output_pak'):
                 setattr(manager,name,tk.StringVar(master=root))
             manager.archive_entries=['Game/props.pak','Game/texture.pak','Game/other.pak']
             manager.visible=[]
             container=ttk.Frame(root);container.pack(fill='both',expand=True)
             manager.draw_edit(container);root.update()
             manager.refresh_list()
-            manager.archives.selection_set(0)
-            manager.archives.selection_set(2)
-            self.assertEqual(manager.selected_archive_relatives(),['Game/props.pak','Game/other.pak'])
+            manager.archives.selection_set(['Game/props.pak', 'Game/other.pak'])
+            self.assertEqual(set(manager.selected_archive_relatives()),{'Game/props.pak','Game/other.pak'})
         finally: root.destroy()
 
 

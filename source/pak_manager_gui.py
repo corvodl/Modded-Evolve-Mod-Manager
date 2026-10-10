@@ -31,6 +31,7 @@ from workspace_editor import WorkspaceEditor
 from portable_bundle import bind_home, MARKER
 from old_prepared import scan_prepared
 from multi_pak_assets import load_collection, create_batch
+from pak_browser import describe_archive, matching_archives, import_target
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_STAGE = str(DATA_HOME/'Setup'/'staged')
@@ -325,21 +326,37 @@ class Manager:
         self.search.trace_add('write', lambda *_: self.refresh_list())
         archive_area = ttk.Frame(select)
         archive_area.pack(fill='both', expand=True)
-        self.archives = tk.Listbox(archive_area, height=9, selectmode=tk.EXTENDED,
-                                   exportselection=False, font=('Consolas', 10),
-                                   borderwidth=0, relief='flat', activestyle='none',
-                                   selectbackground='#9c2635', selectforeground='#ffffff')
+        # An actual file table: archive name first, with folder and project
+        # state separated into legible columns. Exact relative paths remain the
+        # Treeview item IDs, so selection is never inferred from display text.
+        self.archive_sort = ('name', False)
+        self.archives = ttk.Treeview(archive_area, columns=('name', 'location', 'project'),
+                                     show='headings', selectmode='extended', height=9,
+                                     style='Archive.Treeview')
+        for column, label, width, anchor in (
+            ('name', 'PAK file', 325, 'w'),
+            ('location', 'Folder', 250, 'w'),
+            ('project', 'Project', 120, 'center'),
+        ):
+            self.archives.heading(column, text=label,
+                                  command=lambda col=column: self.sort_archives(col))
+            self.archives.column(column, width=width, minwidth=85,
+                                 stretch=column != 'project', anchor=anchor)
         self.archives.pack(side='left', fill='both', expand=True)
         archive_scroll = ttk.Scrollbar(archive_area, orient='vertical', command=self.archives.yview)
         archive_scroll.pack(side='right', fill='y')
         self.archives.configure(yscrollcommand=archive_scroll.set)
-        self.archives.bind('<<ListboxSelect>>', self.select_archive)
+        self.archives.bind('<<TreeviewSelect>>', self.select_archive)
         self.archives.bind('<Double-Button-1>', lambda *_: self.extract())
+        self.archives.bind('<Control-a>', self.select_all_archives)
+        self.archives.bind('<Control-A>', self.select_all_archives)
         status_line = ttk.Frame(select)
         status_line.pack(fill='x', pady=(7, 0))
         ttk.Label(status_line, textvariable=self.archive_count, style='Muted.TLabel').pack(side='left')
         ttk.Label(status_line, text=self.t('resize_hint'), style='Muted.TLabel').pack(side='left', padx=14)
-        ttk.Label(status_line, textvariable=self.archive_label, style='AccentText.TLabel').pack(side='right')
+        self.browser_selection = tk.StringVar(master=self.window, value='')
+        ttk.Label(status_line, textvariable=self.browser_selection,
+                  style='AccentText.TLabel').pack(side='right')
 
         lower = ttk.Frame(self.edit_split)
         self.edit_split.add(lower, minsize=160, stretch='never')
@@ -358,6 +375,8 @@ class Manager:
         row.pack(fill='x')
         ttk.Button(row, text=self.t('build_button'), style='Accent.TButton', command=self.build).pack(side='left', fill='x', expand=True, padx=(0, 7))
         ttk.Button(row, text=self.t('add_button'), command=self.install).pack(side='left', fill='x', expand=True, padx=(0, 7))
+        ttk.Button(row, text='Import Modified PAK…', style='Quiet.TButton',
+                   command=self.import_modified_pak).pack(side='left', fill='x', expand=True, padx=(0, 7))
         ttk.Button(row, text=self.t('undo_button'), style='Quiet.TButton', command=self.rollback).pack(side='left')
 
     def draw_play(self, parent):
@@ -468,7 +487,8 @@ class Manager:
             self.external_pak.set(p)
             self.archive_label.set('External archive: '+p)
             self.current_workspace.set('');self.output_pak.set('')
-            self.archives.selection_clear(0,tk.END)
+            self.archives.selection_remove(self.archives.selection())
+            if hasattr(self, "browser_selection"): self.browser_selection.set("External archive")
             self.write('Selected external file: '+p+'\n')
 
     def load_batch_mapping(self):
@@ -488,7 +508,10 @@ class Manager:
 
     def selected_archive_relatives(self):
         """Return exactly the staged PAKs visibly selected by the user."""
-        return [self.visible[int(i)] for i in self.archives.curselection()]
+        # Only return visible rows in screen order, not the Treeview's focus
+        # or any stale selection kept before a filter was applied.
+        selected = set(self.archives.selection())
+        return [rel for rel in self.visible if rel in selected]
 
     def reload_archives(self):
         try:
@@ -504,24 +527,65 @@ class Manager:
             self.write(f'Could not list archives: {e}\n')
         self.refresh_list()
 
+    def select_all_archives(self, event=None):
+        if self.visible:
+            self.archives.selection_set(self.visible)
+            self.archives.focus(self.visible[0])
+            self.select_archive()
+        return 'break'
+
+    def sort_archives(self, column):
+        sort_by = 'location' if column == 'location' else 'name'
+        name, reverse = self.archive_sort
+        self.archive_sort = (sort_by, not reverse if name == sort_by else False)
+        self.refresh_list()
+
     def refresh_list(self):
-        if not hasattr(self,'archives'):return
-        needle=self.search.get().casefold()
-        self.visible=[x for x in self.archive_entries if needle in x.casefold()]
-        self.archives.delete(0,tk.END)
-        for rel in self.visible:self.archives.insert(tk.END,rel)
-        self.archive_count.set(self.t('pak_count').replace('{count}', str(len(self.visible))) if self.archive_entries else self.t('no_paks'))
-        if self.archive_label.get() in self.visible:
-            pos=self.visible.index(self.archive_label.get())
-            self.archives.selection_set(pos)
-            self.archives.see(pos)
+        if not hasattr(self, 'archives'): return
+        sort_by, reverse = self.archive_sort
+        previous_selection = set(self.archives.selection())
+        self.visible = matching_archives(self.archive_entries, self.search.get(), sort_by, reverse)
+        self.archives.delete(*self.archives.get_children())
+        for index, rel in enumerate(self.visible):
+            name, folder = describe_archive(rel)
+            unpacked = (rel in getattr(self, 'batch_workspaces', {})
+                        or (self.archive_label.get() == rel
+                            and bool(self.current_workspace.get())
+                            and (Path(self.current_workspace.get()) / '.evolve-pak-workspace.json').is_file()))
+            self.archives.insert('', 'end', iid=rel,
+                                 values=(name, folder, 'Unpacked' if unpacked else '—'),
+                                 tags=('odd' if index % 2 else 'even',))
+        restored = [rel for rel in self.visible if rel in previous_selection]
+        if restored:
+            self.archives.selection_set(restored)
+        elif self.archive_label.get() in self.visible:
+            self.archives.selection_set(self.archive_label.get())
+        if self.archives.selection():
+            self.archives.see(self.archives.selection()[0])
+        self.archive_count.set(f'{len(self.visible)} of {len(self.archive_entries)} PAKs' if self.archive_entries
+                               else self.t('no_paks'))
+        self.update_browser_selection()
+
+    def update_browser_selection(self):
+        if not hasattr(self, 'browser_selection'): return
+        chosen = self.selected_archive_relatives()
+        if len(chosen) > 1:
+            self.browser_selection.set(f'{len(chosen)} selected')
+        elif len(chosen) == 1:
+            self.browser_selection.set(describe_archive(chosen[0])[0])
+        else:
+            self.browser_selection.set('')
 
     def select_archive(self,event=None):
-        ix=self.archives.curselection()
-        if not ix:return
-        rel=self.visible[ix[0]]
-        if self.archive_label.get()!=rel:
-            ws=self.batch_workspaces.get(rel)
+        chosen = self.selected_archive_relatives()
+        self.update_browser_selection()
+        if not chosen:return
+        # Treeview selection order is not click order; focus tracks the row
+        # actually clicked, including with Ctrl/Shift multiselection.
+        focused = self.archives.focus()
+        rel = focused if focused in chosen else chosen[0]
+        if self.archive_label.get() != rel:
+            ws = self.batch_workspaces.get(rel)
             self.current_workspace.set(str(ws) if ws and (ws/'.evolve-pak-workspace.json').is_file() else '')
             self.output_pak.set('')
         self.external_pak.set('')
@@ -714,6 +778,64 @@ class Manager:
                  '--relative',rel,'--mod',str(mod)]
             self.run_steps([('Adding modified PAK to staged mods',cmd)],'Add PAK',self.after_install)
         except Exception as e:self.fail(e)
+
+    def import_modified_pak(self):
+        """Safely stage a user-supplied, already custom-signed PAK.
+
+        The existing universal_stage.install worker performs full RSA and
+        archive-record verification and keeps a rollback backup. Importing
+        never writes to the installed game, and does not require an editor
+        workspace or rebuild.
+        """
+        try:
+            if self.busy:
+                raise RuntimeError('Wait until the current operation finishes.')
+            self.archive_entries = sorted(allowed_paks(Path(self.stage.get())).values(), key=str.casefold)
+            built = Path(self.projects.get()) / 'Built'
+            source = filedialog.askopenfilename(
+                title='Import a compatible, modified PAK',
+                initialdir=str(built if built.is_dir() else Path(self.projects.get())),
+                filetypes=[('PAK archives', '*.pak')])
+            if not source:return
+            source = Path(source).resolve()
+            if not source.is_file() or source.suffix.casefold() != '.pak':
+                raise ValueError('Choose an existing .pak archive.')
+            selected = self.archive_label.get() if self.archive_label.get() in self.archive_entries else None
+            relative = import_target(source.name, self.archive_entries, selected)
+            staged = (Path(self.stage.get())/'paks'/Path(*relative.split('/'))).resolve()
+            if source == staged:
+                raise ValueError('This is the original staged PAK. Choose an independently modified archive.')
+            if not messagebox.askyesno('Import modified PAK?',
+                    f'Add {source.name} to your prepared mods as {relative}?\n\n'
+                    'The archive must be signed with this manager\'s current key '
+                    'and retain the original entries and filename.\n\n'
+                    'A rollback backup will be saved. Installed game files will '
+                    'NOT be changed. Close Evolve and its launcher first.',
+                    parent=self.window):
+                return
+            self.archive_label.set(relative)
+            self.external_pak.set('')
+            if relative in self.visible:
+                self.archives.selection_set(relative)
+                self.archives.focus(relative)
+                self.archives.see(relative)
+            command = [sys.executable, '-u', str(ROOT/'universal_stage.py'), 'install',
+                       '--stage', self.stage.get(), '--swap-dir', self.swap.get(),
+                       '--backup-root', str(Path(self.projects.get())/'Backups'),
+                       '--relative', relative, '--mod', str(source)]
+            self.run_steps([('Verifying RSA and importing modified PAK', command)],
+                           'Import Modified PAK', self.after_import)
+        except Exception as exc:
+            self.fail(exc)
+
+    def after_import(self):
+        # Any previously extracted workspace was based on the older staged PAK.
+        # Keep the files and backups on disk, but never present it as current.
+        self.current_workspace.set('')
+        self.output_pak.set('')
+        self.persist()
+        self.refresh_list()
+        self.after_install()
 
     def after_install(self):
         self.update_launch_state()

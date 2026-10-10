@@ -182,3 +182,5 @@ UI: Help (?) contains detailed instructions; Activity shows full logs. The main 
 
 UPDATES
 Main Windows builds check GitHub for newer verified releases. In Settings, use Check for Updates to download and apply an update. Close Evolve before updating. The updater replaces only application files, preserves Data (projects, PAKs, keys, backups, settings), and keeps a recovery backup if replacement fails. Updates are offered only after the matching main commit has passed Windows packaging. Experimental builds do not automatically switch to main.
+
+Import Modified PAK: from Make a Mod, choose Import Modified PAK. The file must be signed with this setup's current RSA key and have the same basename and archive entry layout. The manager checks and backs up the current staged PAK, leaving the installed game alone.

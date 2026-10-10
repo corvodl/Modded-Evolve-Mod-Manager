@@ -37,3 +37,6 @@ assert workspace_file_actions.checked_path
 
 import app_updater
 assert app_updater.discover and app_updater.download_and_prepare and app_updater.launch_apply
+
+import pak_browser
+assert pak_browser.import_target('libs.pak', ['Game/libs.pak']) == 'Game/libs.pak'

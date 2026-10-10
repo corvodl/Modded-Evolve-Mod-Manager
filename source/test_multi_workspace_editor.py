@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 import tkinter as tk
+from tkinter import ttk
 
 from workspace_editor import WorkspaceEditor
 from pak_manager_gui import Manager
@@ -112,9 +113,9 @@ class BatchEditorTests(unittest.TestCase):
         manager.archive_label=tk.StringVar(root,value=self.names[0])
         manager.batch_workspaces={}
         manager.visible=self.names[:]
-        manager.archives=tk.Listbox(root,selectmode=tk.EXTENDED)
-        manager.archives.insert(tk.END,*self.names)
-        manager.archives.selection_set(0,1)
+        manager.archives=ttk.Treeview(root, columns=('name',), selectmode='extended')
+        for item in self.names:manager.archives.insert('', 'end', iid=item, values=(item,))
+        manager.archives.selection_set(self.names)
         with self.assertRaisesRegex(ValueError,'Unpack Selected PAKs'):
             # A second PAK selected without a valid completed batch must
             # produce guidance, not silently open only the first PAK.

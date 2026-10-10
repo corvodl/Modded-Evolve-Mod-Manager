@@ -63,6 +63,14 @@ def apply_theme(root):
                     font=('Segoe UI', 10))
     style.map('Treeview', background=[('selected', tree_selected)],
               foreground=[('disabled', '#8f8f99'), ('selected', '#ffffff')])
+    style.configure('Archive.Treeview', background='#141417', fieldbackground='#141417',
+                    foreground=TEXT, rowheight=30, font=('Segoe UI', 10),
+                    bordercolor='#34343b', relief='flat')
+    style.map('Archive.Treeview', background=[('selected', '#9c2635')],
+              foreground=[('selected', '#ffffff')])
+    style.configure('Archive.Treeview.Heading', background='#252328', foreground='#f2f2f4',
+                    font=('Segoe UI Semibold', 10, 'bold'), padding=(9, 9))
+    style.map('Archive.Treeview.Heading', background=[('active', '#40242c')])
     style.configure('Treeview.Heading', background=CARD, foreground=TEXT)
     style.map('Treeview.Heading', background=[('active', '#303039')],
               foreground=[('active', '#ffffff')])

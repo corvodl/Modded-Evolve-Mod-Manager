@@ -57,6 +57,7 @@ class ModernThemeTests(unittest.TestCase):
             setattr(manager, name, tk.StringVar(master=self.root, value=value))
         manager.archive_entries = []
         manager.visible = []
+        manager.batch_workspaces = {}
         manager.draw()
         self.root.update()
         try:

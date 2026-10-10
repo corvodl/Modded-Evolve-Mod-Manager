@@ -36,6 +36,8 @@ class PakListResizeTests(unittest.TestCase):
             manager.archive_label = tk.StringVar(master=root, value='Game/libs.pak')
             manager.archive_entries = ['Game/libs.pak', 'Game/objects.pak']
             manager.visible = []
+            manager.current_workspace = tk.StringVar(master=root)
+            manager.batch_workspaces = {}
             frame = ttk.Frame(root)
             frame.pack(fill='both', expand=True)
             manager.draw_edit(frame)

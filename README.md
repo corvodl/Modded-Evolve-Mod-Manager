@@ -57,3 +57,7 @@ materials, animation, or edited-model conversion is implied.
 ### Streamlined interface (experimental 2.9.15)
 
 A black/red modernized layout keeps Make a Mod, Play & Restore, Settings and Credits uncluttered. Click **Help ?** in the manager or editor for full instructions; **Activity** opens the detailed log. The log stays closed on initial startup and opens when operations begin. All existing PAK, backup and recovery workflows are unchanged.
+
+## Importing an existing modified PAK
+
+On **Make a Mod**, click **Import Modified PAK…**, choose the edited `.pak`, and confirm its matching staged filename. The manager verifies the archive's RSA signature against your **current local signing key**, exact archive entry order and count, and that some entries changed. A separate original-signed or differently keyed archive is not automatically compatible; it must first be rebuilt and signed with this manager. Only after verification does the existing guarded Add Mod workflow stage the PAK and save an undo backup. **Import never modifies installed game files.** The PAK browser now shows separate name, folder and unpacked-project columns with searchable, resizable rows.
