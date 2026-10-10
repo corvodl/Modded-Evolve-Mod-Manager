@@ -31,7 +31,9 @@ from workspace_editor import WorkspaceEditor
 from portable_bundle import bind_home, MARKER
 from old_prepared import scan_prepared
 from multi_pak_assets import load_collection, create_batch
-from pak_browser import describe_archive, matching_archives, import_target
+from pak_browser import describe_archive, matching_archives, import_target, format_size
+from loose_game_files import scan_loose_files, LooseFile
+from loose_file_editor import LooseFileEditor
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_STAGE = str(DATA_HOME/'Setup'/'staged')
@@ -64,6 +66,9 @@ class Manager:
         self.busy = False
         self.editors = []
         self.archive_entries = []
+        self.loose_entries = []
+        self.loose_selected = ''
+        self.game_root = None
         self.batch_workspaces = {}
         self.batch_root = tk.StringVar()
         self.visible = []
@@ -395,31 +400,35 @@ class Manager:
         ttk.Entry(line, textvariable=self.search).pack(side='left', fill='x', expand=True, padx=(10, 12))
         ttk.Button(line, text=self.t('refresh_list'), style='Quiet.TButton', command=self.reload_archives).pack(side='left')
         ttk.Button(line, text=self.t('browse_pak'), style='Quiet.TButton', command=self.browse_pak).pack(side='left', padx=(7, 0))
+        self.file_filter = tk.StringVar(master=self.window, value='All files')
+        ttk.Combobox(line, textvariable=self.file_filter, state='readonly', width=15,
+                     values=('All files', 'PAK archives', 'Game files')).pack(side='left', padx=(8, 0))
+        self.file_filter.trace_add('write', lambda *_: self.refresh_list())
         self.search.trace_add('write', lambda *_: self.refresh_list())
         archive_area = ttk.Frame(select)
         archive_area.pack(fill='both', expand=True)
-        # An actual file table: archive name first, with folder and project
-        # state separated into legible columns. Exact relative paths remain the
-        # Treeview item IDs, so selection is never inferred from display text.
-        self.archive_sort = ('name', False)
-        self.archives = ttk.Treeview(archive_area, columns=('name', 'location', 'project'),
+        # Folder first, filename second and right-aligned size last.
+        # Loose files use distinct item IDs and never enter the signed-PAK flow.
+        self.archive_sort = ('folder', False)
+        self.archives = ttk.Treeview(archive_area, columns=('folder', 'name', 'project', 'size'),
                                      show='headings', selectmode='extended', height=9,
                                      style='Archive.Treeview')
         for column, label, width, anchor in (
-            ('name', 'PAK file', 325, 'w'),
-            ('location', 'Folder', 250, 'w'),
-            ('project', 'Project', 120, 'center'),
+            ('folder', 'Folder', 270, 'w'),
+            ('name', 'File', 325, 'w'),
+            ('project', 'Type / Project', 140, 'center'),
+            ('size', 'Size', 105, 'e'),
         ):
             self.archives.heading(column, text=label,
                                   command=lambda col=column: self.sort_archives(col))
-            self.archives.column(column, width=width, minwidth=85,
-                                 stretch=column != 'project', anchor=anchor)
+            self.archives.column(column, width=width, minwidth=75,
+                                 stretch=column in ('folder', 'name'), anchor=anchor)
         self.archives.pack(side='left', fill='both', expand=True)
         archive_scroll = ttk.Scrollbar(archive_area, orient='vertical', command=self.archives.yview)
         archive_scroll.pack(side='right', fill='y')
         self.archives.configure(yscrollcommand=archive_scroll.set)
         self.archives.bind('<<TreeviewSelect>>', self.select_archive)
-        self.archives.bind('<Double-Button-1>', lambda *_: self.extract())
+        self.archives.bind('<Double-Button-1>', self.open_browser_selection)
         self.archives.bind('<Control-a>', self.select_all_archives)
         self.archives.bind('<Control-A>', self.select_all_archives)
         status_line = ttk.Frame(select)
@@ -560,6 +569,7 @@ class Manager:
             self.archive_label.set('External archive: '+p)
             self.current_workspace.set('');self.output_pak.set('')
             self.archives.selection_remove(self.archives.selection())
+            self.loose_selected = ''
             if hasattr(self, "browser_selection"): self.browser_selection.set("External archive")
             self.write('Selected external file: '+p+'\n')
 
@@ -585,6 +595,18 @@ class Manager:
         selected = set(self.archives.selection())
         return [rel for rel in self.visible if rel in selected]
 
+    def _find_game_root(self):
+        # Only discover files in the actual installed game recorded by stage setup.
+        # Never scan arbitrary directories, the manager's private Data, or staged PAKs.
+        try:
+            plan = json.loads((Path(self.stage.get())/'rekey_plan.json').read_text(encoding='utf-8'))
+            candidate = Path(plan['source_root']).resolve(strict=True)
+            if (candidate/'bin64_SteamRetail'/'Evolve.exe').is_file():
+                return candidate
+        except (KeyError, ValueError, OSError, TypeError):
+            pass
+        return None
+
     def reload_archives(self):
         try:
             stage=Path(self.stage.get())
@@ -592,14 +614,19 @@ class Manager:
                 self.archive_entries=sorted(allowed_paks(stage).values(),key=str.casefold)
             else:
                 self.archive_entries=sorted([p.relative_to(stage/'paks').as_posix() for p in (stage/'paks').rglob('*.pak')],key=str.casefold)
+            self.game_root = self._find_game_root()
+            self.loose_entries = scan_loose_files(self.game_root) if self.game_root else []
             self.load_batch_mapping()
-            self.write(f'Found {len(self.archive_entries)} custom-signed PAK archives.\n')
+            self.write(f'Found {len(self.archive_entries)} PAK archives and {len(self.loose_entries)} loose files.\n')
         except Exception as e:
             self.archive_entries=[]
+            self.loose_entries=[]
+            self.game_root=None
             self.write(f'Could not list archives: {e}\n')
         self.refresh_list()
 
     def select_all_archives(self, event=None):
+        # Ctrl+A selects PAKs only, so batch operations never see loose assets.
         if self.visible:
             self.archives.selection_set(self.visible)
             self.archives.focus(self.visible[0])
@@ -607,54 +634,103 @@ class Manager:
         return 'break'
 
     def sort_archives(self, column):
-        sort_by = 'location' if column == 'location' else 'name'
+        sort_by = column if column in ('folder', 'name', 'size', 'project') else 'folder'
         name, reverse = self.archive_sort
         self.archive_sort = (sort_by, not reverse if name == sort_by else False)
         self.refresh_list()
+
+    @staticmethod
+    def _loose_iid(relative):
+        return 'loose-file:' + relative
 
     def refresh_list(self):
         if not hasattr(self, 'archives'): return
         sort_by, reverse = self.archive_sort
         previous_selection = set(self.archives.selection())
-        self.visible = matching_archives(self.archive_entries, self.search.get(), sort_by, reverse)
-        self.archives.delete(*self.archives.get_children())
-        for index, rel in enumerate(self.visible):
+        mode = self.file_filter.get() if hasattr(self, 'file_filter') else 'All files'
+        text = self.search.get().casefold().strip()
+        self.visible = (matching_archives(self.archive_entries, self.search.get())
+                        if mode != 'Game files' else [])
+        loose = ([item for item in getattr(self, 'loose_entries', [])
+                  if text in item.relative.casefold()]
+                 if mode != 'PAK archives' else [])
+        rows = []
+        stage_paks = Path(self.stage.get())/'paks' if hasattr(self, 'stage') else None
+        for rel in self.visible:
             name, folder = describe_archive(rel)
             unpacked = (rel in getattr(self, 'batch_workspaces', {})
                         or (self.archive_label.get() == rel
                             and bool(self.current_workspace.get())
                             and (Path(self.current_workspace.get()) / '.evolve-pak-workspace.json').is_file()))
-            self.archives.insert('', 'end', iid=rel,
-                                 values=(name, folder, 'Unpacked' if unpacked else '—'),
-                                 tags=('odd' if index % 2 else 'even',))
-        restored = [rel for rel in self.visible if rel in previous_selection]
+            path = stage_paks.joinpath(*rel.split('/')) if stage_paks else None
+            try: size = path.stat().st_size if path and path.is_file() else -1
+            except OSError: size = -1
+            rows.append((rel, folder, name, 'Unpacked' if unpacked else 'PAK', size, False))
+        for item in loose:
+            name, folder = describe_archive(item.relative)
+            rows.append((self._loose_iid(item.relative), folder, name,
+                         'Game file', item.size, True))
+        def sort_key(row):
+            iid, folder, name, label, size, is_loose = row
+            if sort_by == 'size': return (size, folder.casefold(), name.casefold(), iid.casefold())
+            if sort_by == 'name': return (name.casefold(), folder.casefold(), iid.casefold())
+            if sort_by == 'project': return (label.casefold(), folder.casefold(), name.casefold())
+            return (folder.casefold(), name.casefold(), iid.casefold())
+        rows.sort(key=sort_key, reverse=reverse)
+        self.archives.delete(*self.archives.get_children())
+        for index, (iid, folder, name, state, size, is_loose) in enumerate(rows):
+            self.archives.insert('', 'end', iid=iid,
+                                 values=(folder, name, state, format_size(size)),
+                                 tags=('game-file' if is_loose else 'odd' if index%2 else 'even',))
+        self.browser_visible = [r[0] for r in rows]
+        restored = [iid for iid in self.browser_visible if iid in previous_selection]
         if restored:
             self.archives.selection_set(restored)
-        elif self.archive_label.get() in self.visible:
+        elif self.archive_label.get() in self.browser_visible:
             self.archives.selection_set(self.archive_label.get())
+        elif self._loose_iid(getattr(self, 'loose_selected','')) in self.browser_visible:
+            self.archives.selection_set(self._loose_iid(self.loose_selected))
         if self.archives.selection():
             self.archives.see(self.archives.selection()[0])
-        self.archive_count.set(f'{len(self.visible)} of {len(self.archive_entries)} PAKs' if self.archive_entries
+        self.archive_count.set(f'{len(rows)} files ({len(self.visible)} PAKs, {len(loose)} game files)' if rows
                                else self.t('no_paks'))
         self.update_browser_selection()
 
     def update_browser_selection(self):
         if not hasattr(self, 'browser_selection'): return
         chosen = self.selected_archive_relatives()
-        if len(chosen) > 1:
-            self.browser_selection.set(f'{len(chosen)} selected')
+        selection = self.archives.selection()
+        if len(selection) > 1:
+            self.browser_selection.set(f'{len(selection)} selected')
         elif len(chosen) == 1:
             self.browser_selection.set(describe_archive(chosen[0])[0])
+        elif len(selection) == 1 and selection[0].startswith('loose-file:'):
+            self.browser_selection.set('Game file copy')
         else:
             self.browser_selection.set('')
 
+    def open_browser_selection(self, event=None):
+        if getattr(self, 'loose_selected', ''):
+            self.open_editable()
+        else:
+            self.extract()
+
     def select_archive(self,event=None):
+        selected = self.archives.selection()
+        focused = self.archives.focus()
+        chosen_iid = focused if focused in selected else (selected[0] if selected else '')
+        if chosen_iid.startswith('loose-file:'):
+            self.loose_selected = chosen_iid[len('loose-file:'):]
+            self.archive_label.set('')
+            self.external_pak.set('')
+            self.current_workspace.set('')
+            self.output_pak.set('')
+            self.update_browser_selection()
+            return
+        self.loose_selected = ''
         chosen = self.selected_archive_relatives()
         self.update_browser_selection()
-        if not chosen:return
-        # Treeview selection order is not click order; focus tracks the row
-        # actually clicked, including with Ctrl/Shift multiselection.
-        focused = self.archives.focus()
+        if not chosen: return
         rel = focused if focused in chosen else chosen[0]
         if self.archive_label.get() != rel:
             ws = self.batch_workspaces.get(rel)
@@ -774,12 +850,19 @@ class Manager:
 
     def open_editable(self):
         try:
+            if getattr(self, 'loose_selected', ''):
+                if self.busy: raise RuntimeError('Wait until the current task finishes.')
+                if not self.game_root: raise ValueError('Installed game location is unavailable.')
+                editor = LooseFileEditor(self.window, self.game_root, self.loose_selected,
+                                         Path(self.projects.get()))
+                self.editors.append(editor)
+                return
             ws = self.workspace().resolve()
             if not (ws/'files').is_dir():
                 raise FileNotFoundError('Unpacked file folder missing: '+str(ws/'files'))
             archive_map = self.editor_archive_map()
             for editor in self.editors:
-                if editor.window.winfo_exists() and (editor.workspace == ws or ws in editor.archive_map.values()):
+                if editor.window.winfo_exists() and (getattr(editor, 'workspace', None) == ws or ws in getattr(editor, 'archive_map', {}).values()):
                     editor.window.lift()
                     if editor.workspace != ws and archive_map:
                         label = next((key for key, path in editor.archive_map.items() if Path(path).resolve() == ws), None)
@@ -791,7 +874,7 @@ class Manager:
 
     def flush_editors(self):
         for editor in self.editors:
-            if editor.window.winfo_exists() and not editor.confirm():return False
+            if editor.window.winfo_exists() and hasattr(editor, 'confirm') and not editor.confirm():return False
         return True
 
     def diff(self):

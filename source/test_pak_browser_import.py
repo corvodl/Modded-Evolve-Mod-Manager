@@ -74,9 +74,9 @@ class BrowserInterfaceTests(unittest.TestCase):
         tree = self.manager.archives
         self.assertIsInstance(tree, ttk.Treeview)
         self.assertEqual(str(tree['selectmode']), 'extended')
-        self.assertEqual(tuple(tree['columns']), ('name','location','project'))
+        self.assertEqual(tuple(tree['columns']), ('folder','name','project','size'))
         self.assertEqual(tree.item('Game/goliath.pak')['values'][:2],
-                         ['goliath.pak', 'Game'])
+                         ['Game', 'goliath.pak'])
         self.manager.search.set('goliath')
         self.root.update()
         self.assertEqual(self.manager.visible, ['Game/goliath.pak'])

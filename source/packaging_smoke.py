@@ -40,3 +40,6 @@ assert app_updater.discover and app_updater.download_and_prepare and app_updater
 
 import pak_browser
 assert pak_browser.import_target('libs.pak', ['Game/libs.pak']) == 'Game/libs.pak'
+
+import loose_game_files, loose_file_editor
+assert loose_game_files.scan_loose_files and loose_file_editor.LooseFileEditor

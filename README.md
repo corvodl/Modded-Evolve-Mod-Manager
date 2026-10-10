@@ -1,8 +1,14 @@
 > **REQUIRED BEFORE USING THIS MANAGER:** Install **Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** using its official client installer. This manager requires the game files installed by that client; it does **not** download or install Evolve itself. A separate Steam or Legacy installation is not a substitute.
 
-# Evolve Stage 2 Mod Manager v2.9.15 (experimental)
+# Evolve Stage 2 Mod Manager v2.10.3
 
 A portable Windows modding manager for Evolve Stage 2, with PAK editing, a three-tab asset explorer, backup/restore, and offline-only modded launching.
+
+## Browser and loose game files (v2.10.3)
+
+The main file table now shows **Folder → File → Type / Project → Size** in that order. File size is on the right, folders are grouped together when sorting by Folder, and filters let you choose **All files**, **PAK archives**, or **Game files**. PAK archives still support Ctrl/Shift multiselection and isolated batch extraction.
+
+The manager also discovers *loose editable files* in the installed EvolveGame directory referenced by the verified setup (for example `.xml`, `.cfg`, `.ini`, `.lua`, `.mtl`, `.cdf`, `.dds`, `.dds.N`, `.png`, `.skinm`, `.chr`, and other known asset types). Select a **Game file** row and click **Edit Files** or double-click the row. It creates a private file copy under `Data/Projects/LooseGameFiles/`; readable UTF-8 text can be edited directly, while textures and binary models can be opened in external tools. **The installed game file never changes**, and the copy is **not** silently added to a PAK. Loose-file changes are kept separate from the PAK signing/Build Mod/Add Mod workflows; they do not automatically change the game.
 
 ## New in this experimental build
 
@@ -60,4 +66,4 @@ A black/red modernized layout keeps Make a Mod, Play & Restore, Settings and Cre
 
 ## Importing an existing modified PAK
 
-On **Make a Mod**, click **Import Modified PAK…**, choose the edited `.pak`, and confirm its matching staged filename. The manager verifies the archive's RSA signature against your **current local signing key**, exact archive entry order and count, and that some entries changed. A separate original-signed or differently keyed archive is not automatically compatible; it must first be rebuilt and signed with this manager. Only after verification does the existing guarded Add Mod workflow stage the PAK and save an undo backup. **Import never modifies installed game files.** The PAK browser now shows separate name, folder and unpacked-project columns with searchable, resizable rows.
+On **Make a Mod**, click **Import Modified PAK…**, choose the edited `.pak`, and confirm its matching staged filename. The manager verifies the archive's RSA signature against your **current local signing key**, exact archive entry order and count, and that some entries changed. A separate original-signed or differently keyed archive is not automatically compatible; it must first be rebuilt and signed with this manager. Only after verification does the existing guarded Add Mod workflow stage the PAK and save an undo backup. **Import never modifies installed game files.** The main browser has folder, filename, project/type and right-aligned size columns, with an All/PAK/Game-files filter.

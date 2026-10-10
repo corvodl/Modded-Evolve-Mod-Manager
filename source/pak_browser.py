@@ -39,3 +39,12 @@ def import_target(file_name: str, archives, selected=None):
         raise ValueError('Multiple staged PAKs share this filename. Select the correct '
                          'archive in the list before importing: ' + ', '.join(matches[:6]))
     return matches[0]
+
+
+def format_size(byte_count: int) -> str:
+    """Compact, consistent right-aligned file sizes."""
+    if byte_count < 0: return '—'
+    if byte_count < 1024: return f'{byte_count} B'
+    for units, size in (('GB', 1024**3), ('MB', 1024**2), ('KB', 1024)):
+        if byte_count >= size: return f'{byte_count / size:.1f} {units}'
+    return f'{byte_count} B'

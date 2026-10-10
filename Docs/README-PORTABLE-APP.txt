@@ -186,3 +186,13 @@ Main Windows builds check GitHub for newer verified releases. In Settings, use C
 Import Modified PAK: from Make a Mod, choose Import Modified PAK. The file must be signed with this setup's current RSA key and have the same basename and archive entry layout. The manager checks and backs up the current staged PAK, leaving the installed game alone.
 
 UPDATING: A verified new Main release prompts automatically when the manager starts. Approve it to see download/extraction progress, then installation progress in a separate window. The manager restarts when the update finishes. The Data folder is not replaced.
+
+MAIN GAME FILE BROWSER (v2.10.3)
+--------------------------------
+Columns: Folder | File | Type / Project | Size, with Size right-aligned.
+Use the filter for All files, PAK archives, or loose Game files.
+Loose files are discovered from the installed game folder recorded by setup.
+Use Edit Files (or double-click) to create an editable copy in
+Data/Projects/LooseGameFiles. Text can be edited internally and binary files
+with external tools. The installed game is NEVER overwritten when saving a
+loose file. Loose-file copies cannot be staged as signed PAK mods.
