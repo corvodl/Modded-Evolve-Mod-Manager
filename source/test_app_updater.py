@@ -120,6 +120,8 @@ class UpdateTests(unittest.TestCase):
         self.assertIn('EVOLVE_MANAGER_UPDATE_ACK', script)
         self.assertIn('ROLLBACK COMPLETE', script)
         self.assertIn('Progress UI warning', script)
+        self.assertIn('if (-not $Headless)', script)
+        self.assertNotIn('MessageBox]::Show', script)
         self.assertIn('restoring previous version', script)
         self.assertNotIn("'Data'", script)
         self.assertIn('CREATE_NO_WINDOW', Path(u.__file__).read_text(encoding='utf-8'))
@@ -204,7 +206,8 @@ class UpdateTests(unittest.TestCase):
                 ['powershell.exe', '-NoProfile', '-NonInteractive', '-STA',
                  '-ExecutionPolicy', 'Bypass', '-File', str(script),
                  '-TargetDir', str(target), '-SourceDir', str(staged),
-                 '-ManagerPid', '2147483647', '-ExpectedCommit', COMMIT],
+                 '-ManagerPid', '2147483647', '-ExpectedCommit', COMMIT,
+                 '-Headless'],
                 capture_output=True, text=True, timeout=90)
             self.assertNotEqual(done.returncode, 0, done.stdout + done.stderr)
             self.assertIn('ROLLBACK COMPLETE', done.stdout + done.stderr)

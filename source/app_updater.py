@@ -201,7 +201,8 @@ APPLY_PS1 = r'''param(
   [Parameter(Mandatory=$true)][string]$TargetDir,
   [Parameter(Mandatory=$true)][string]$SourceDir,
   [Parameter(Mandatory=$true)][int]$ManagerPid,
-  [Parameter(Mandatory=$true)][string]$ExpectedCommit
+  [Parameter(Mandatory=$true)][string]$ExpectedCommit,
+  [switch]$Headless
 )
 $ErrorActionPreference = 'Stop'
 $Names = @('EvolveModManager.exe','EvolveModWorker.exe','_internal','Docs','START-HERE.txt','BUILD_COMMIT.txt','BUILD_CHANNEL.txt')
@@ -227,6 +228,7 @@ function Set-UpdateProgress([string]$Stage, [int]$Value) {
     $script:ProgressWindow = $null
   }
 }
+if (-not $Headless) {
 try {
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
@@ -264,6 +266,7 @@ try {
 } catch {
   Write-Output ("Progress window unavailable (installation continues): " + $_.Exception.Message)
   $script:ProgressWindow = $null
+}
 }
 try {
   $proc = Get-Process -Id $ManagerPid -ErrorAction SilentlyContinue
@@ -381,9 +384,7 @@ try {
     Write-Output ('ROLLBACK INCOMPLETE: ' + ($RollbackErrors -join ' | '))
   }
   Write-Output "Recovery backup location (if present): $Backup"
-  try {
-    [System.Windows.Forms.MessageBox]::Show("Update failed: $Failure" + [Environment]::NewLine + "See update.log. Backup: $Backup", 'Evolve Mod Manager', 'OK', 'Error') | Out-Null
-  } catch { Write-Output ("Unable to display failure dialog: " + $_.Exception.Message) }
+  Write-Output 'The detached updater will not show a blocking error dialog. Details are in update.log.'
   exit 1
 } finally {
   if ($null -ne $script:ProgressWindow) {
