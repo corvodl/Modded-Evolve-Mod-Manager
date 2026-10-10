@@ -154,13 +154,17 @@ class ContextMenuGuiTests(unittest.TestCase):
         self._tab('files','misc/config.txt')
         replacement=Path(self.temp.name)/'replacement.txt'
         replacement.write_text('edited text')
-        with patch('tkinter.filedialog.askopenfilename',return_value=str(replacement)):
+        def unexpected_dialog(title, message, **kwargs):
+            raise AssertionError(f'Unexpected blocking dialog in file replacement test: {title}: {message}')
+        with patch('tkinter.filedialog.askopenfilename',return_value=str(replacement)), \
+             patch('workspace_editor.messagebox.showerror',side_effect=unexpected_dialog), \
+             patch('workspace_editor.messagebox.askyesnocancel',side_effect=unexpected_dialog):
             self.editor.import_generic_file()
-        self.assertEqual((self.workspace/'files'/'misc'/'config.txt').read_text(),'edited text')
-        self.assertIsNotNone(extracted_original_backup(self.workspace,'misc/config.txt',hashlib.sha256(b'initial text').hexdigest()))
-        with patch('workspace_editor.messagebox.askyesno',return_value=True):
-            self.editor.restore_original('misc/config.txt')
-        self.assertEqual((self.workspace/'files'/'misc'/'config.txt').read_text(),'initial text')
+            self.assertEqual((self.workspace/'files'/'misc'/'config.txt').read_text(),'edited text')
+            self.assertIsNotNone(extracted_original_backup(self.workspace,'misc/config.txt',hashlib.sha256(b'initial text').hexdigest()))
+            with patch('workspace_editor.messagebox.askyesno',return_value=True):
+                self.editor.restore_original('misc/config.txt')
+            self.assertEqual((self.workspace/'files'/'misc'/'config.txt').read_text(),'initial text')
 
     def test_context_preview_keeps_unsaved_changes_on_cancel(self):
         self._tab('files','misc/config.txt')
