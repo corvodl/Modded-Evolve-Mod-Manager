@@ -49,12 +49,12 @@ class UpdateProgressUITests(unittest.TestCase):
             offer.assert_called_once()
 
     def test_manual_check_offers_installation_without_second_button(self):
-        with patch.object(self.manager, 'offer_update') as offer:
+        # Tk callbacks scheduled with after(100) do not execute during an
+        # immediate root.update(). Advance them deterministically instead.
+        with patch.object(self.manager, 'offer_update') as offer, \
+             patch.object(self.root, 'after', side_effect=lambda delay, callback: callback()) as after:
             self.manager.on_update_check(self.version, None, False)
-            self.root.update_idletasks()
-            # The scheduled prompt is exactly the action previously offered by
-            # the redundant "Install Update" button.
-            self.root.update()
+            after.assert_called_once()
             offer.assert_called_once_with()
         self.assertIn('2.10.2', self.manager.update_status.get())
 

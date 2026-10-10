@@ -131,6 +131,7 @@ class ModernThemeTests(unittest.TestCase):
         from pathlib import Path
         from tempfile import TemporaryDirectory
         with TemporaryDirectory() as folder, \
+             patch.object(self.root, 'after', return_value='no-pending-callback'), \
              patch('pak_manager_gui.bind_home', return_value={'configured': False}), \
              patch('pak_manager_gui.settings_source', return_value=Path(folder)/'missing.json'), \
              patch.object(Manager, 'load_batch_mapping', return_value=None), \
