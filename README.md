@@ -1,11 +1,17 @@
 # Evolve Stage 2 Mod Manager
 
+> **Required: install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/) before using this manager.** Use the Modded Evolve client installer and download the game through that client. The Mod Manager does not provide game files; Steam/Legacy installations are not a substitute.
+
 A Windows modding tool for **Evolve Stage 2** that helps you unpack game PAK archives, edit supported files, build mods, and test them with the Modded Evolve client—without having to run the individual tools yourself.
 
-The manager has three main areas: **Make a Mod**, **Play & Restore**, and **Settings**. It prepares its own working PAKs from **your installed game**, so the normal application download does **not** include Evolve or its game files.
+The manager has four main areas: **Make a Mod**, **Play & Restore**, **Settings**, and **Credits**. It prepares its own working PAKs from **your installed game**, so the normal application download does **not** include Evolve or its game files.
 
 > [!IMPORTANT]
 > **Experimental software — offline use only.** Using mods through this manager disables online play. A successfully rebuilt PAK does **not** guarantee that edits will function correctly in-game. If you bypass the online-play restriction and connect with modified game files, your account may be suspended or banned. **The project maintainers and contributors are not responsible for account bans or other consequences of bypassing this restriction.** This is an independent modding utility, not an official Evolve release.
+
+## Experimental texture discovery and credits
+
+On the experimental v2.9.8 branch, unpack the model and texture PAKs either together or separately into **Settings → Editing projects**. The Models tab automatically searches compatible workspaces from the current setup for matching `.mtl` material definitions and diffuse DDS textures. Re-select a model after extracting another PAK. Missing, ambiguous, or unsupported resources fall back to untextured preview; no guesswork or game-file changes occur. The Credits tab lists **@CorvoDL on Discord**, the [GitHub repository](https://github.com/corvodl/Modded-Evolve-Mod-Manager), and the [Modded Evolve website](https://modded-evolve.com/).
 
 ## Features
 
