@@ -1,1 +1,1 @@
-2.9.15 - Modern Black & Red Interface, On-Demand Help (Experimental)
+2.10.0 - Verified GitHub Main Auto-Updater and Modern UI

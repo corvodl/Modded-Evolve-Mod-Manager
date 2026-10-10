@@ -179,3 +179,6 @@ File context menus (v2.9.15):
 - The context menu also works with Shift+F10 for selected files/folders.
 
 UI: Help (?) contains detailed instructions; Activity shows full logs. The main tabs use compact controls.
+
+UPDATES
+Main Windows builds check GitHub for newer verified releases. In Settings, use Check for Updates to download and apply an update. Close Evolve before updating. The updater replaces only application files, preserves Data (projects, PAKs, keys, backups, settings), and keeps a recovery backup if replacement fails. Updates are offered only after the matching main commit has passed Windows packaging. Experimental builds do not automatically switch to main.

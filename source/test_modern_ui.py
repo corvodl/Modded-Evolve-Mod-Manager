@@ -53,7 +53,7 @@ class ModernThemeTests(unittest.TestCase):
         manager.copy, _ = load_text()
         for name, value in dict(search='', archive_count='', archive_label='', status='Ready',
                                 launch_state='Ready', stage='', swap='', projects='', filter='',
-                                current_workspace='', output_pak='').items():
+                                current_workspace='', output_pak='', update_status='Not checked').items():
             setattr(manager, name, tk.StringVar(master=self.root, value=value))
         manager.archive_entries = []
         manager.visible = []

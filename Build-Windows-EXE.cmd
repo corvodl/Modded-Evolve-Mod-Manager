@@ -12,9 +12,9 @@ set "TEMP=%CD%\.build\temp"
 set "TMP=%CD%\.build\temp"
 pushd source
 if /i "%GITHUB_ACTIONS%"=="true" (
-    "%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" -u ci_test_runner.py --timeout-seconds 90 test_unified_integration test_packaging test_preserve test_editor_refresh test_portable_bundle test_first_run_setup test_ui_copy test_branding test_dds_texture test_asset_streaming_models test_theme test_editor_tabs_png test_dds0_selection test_storage_options test_resizable_pak_list test_crchf_models test_model_preview test_multi_pak_assets test_material_preview test_auto_texture_credits test_multi_workspace_editor test_add_mod_restored test_preview_performance test_gpu_preview test_file_context_menu test_modern_ui
+    "%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" -u ci_test_runner.py --timeout-seconds 90 test_unified_integration test_packaging test_preserve test_editor_refresh test_portable_bundle test_first_run_setup test_ui_copy test_branding test_dds_texture test_asset_streaming_models test_theme test_editor_tabs_png test_dds0_selection test_storage_options test_resizable_pak_list test_crchf_models test_model_preview test_multi_pak_assets test_material_preview test_auto_texture_credits test_multi_workspace_editor test_add_mod_restored test_preview_performance test_gpu_preview test_file_context_menu test_modern_ui test_app_updater
 ) else (
-    "%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" -m unittest test_unified_integration test_packaging test_preserve test_editor_refresh test_portable_bundle test_first_run_setup test_ui_copy test_branding test_dds_texture test_asset_streaming_models test_theme test_editor_tabs_png test_dds0_selection test_storage_options test_resizable_pak_list test_crchf_models test_model_preview test_multi_pak_assets test_material_preview test_auto_texture_credits test_multi_workspace_editor test_add_mod_restored test_preview_performance test_gpu_preview test_file_context_menu test_modern_ui
+    "%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" -m unittest test_unified_integration test_packaging test_preserve test_editor_refresh test_portable_bundle test_first_run_setup test_ui_copy test_branding test_dds_texture test_asset_streaming_models test_theme test_editor_tabs_png test_dds0_selection test_storage_options test_resizable_pak_list test_crchf_models test_model_preview test_multi_pak_assets test_material_preview test_auto_texture_credits test_multi_workspace_editor test_add_mod_restored test_preview_performance test_gpu_preview test_file_context_menu test_modern_ui test_app_updater
 )
 if errorlevel 1 goto failed_source
 "%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" Test-CryXML-Namespace-Fix.py
@@ -27,6 +27,15 @@ if exist ".build\app-dist\EvolveModManager\ui_text.json" del /q ".build\app-dist
 if exist ".build\app-dist\EvolveModManager\ui_text.json" goto failed
 ".build\app-dist\EvolveModManager\EvolveModWorker.exe" "%PACKAGE_ROOT%\source\packaging_smoke.py"
 if errorlevel 1 goto failed
+rem Record the exact tested source commit/channel inside the finished portable app.
+if not defined GITHUB_SHA set "GITHUB_SHA=0000000000000000000000000000000000000000"
+if not defined GITHUB_REF_NAME set "GITHUB_REF_NAME=local"
+> ".build\app-dist\EvolveModManager\BUILD_COMMIT.txt" echo %GITHUB_SHA%
+if /i "%GITHUB_REF_NAME%"=="main" (
+  > ".build\app-dist\EvolveModManager\BUILD_CHANNEL.txt" echo main
+) else (
+  > ".build\app-dist\EvolveModManager\BUILD_CHANNEL.txt" echo experimental
+)
 if not exist ".build\app-dist\EvolveModManager\Docs" mkdir ".build\app-dist\EvolveModManager\Docs"
 copy /y "Docs\*.txt" ".build\app-dist\EvolveModManager\Docs\" >nul
 if errorlevel 1 goto failed

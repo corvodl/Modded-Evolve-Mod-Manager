@@ -134,6 +134,8 @@ class PublishTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);built=root/'built';built.mkdir();(built/'_internal').mkdir()
             for name in ('EvolveModManager.exe','EvolveModWorker.exe'):(built/name).write_bytes(b'fixture')
+            (built/'BUILD_COMMIT.txt').write_text('a'*40)
+            (built/'BUILD_CHANNEL.txt').write_text('main')
             dist=root/'dist';previous=dist/'ExistingApp'/'Data';previous.mkdir(parents=True)
             (previous/'private_key.pem').write_text('DO NOT TOUCH')
             release,archive=publish(built,dist)

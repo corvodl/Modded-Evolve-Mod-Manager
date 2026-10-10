@@ -25,6 +25,7 @@ from universal_stage import allowed_paks
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
 from dark_theme import apply_theme
 from ui_help import open_help_window
+from app_updater import discover as discover_update, download_and_prepare, launch_apply, installed_commit
 from ui_copy import load_text
 from workspace_editor import WorkspaceEditor
 from portable_bundle import bind_home, MARKER
@@ -77,6 +78,9 @@ class Manager:
         self.status = tk.StringVar(value=self.t('status_welcome'))
         self.launch_state = tk.StringVar(value=self.t('status_launch_check'))
         self.archive_count = tk.StringVar()
+        self.update_status = tk.StringVar(value='Updates: not checked')
+        self.available_update = None
+        self.update_in_progress = False
         self.bundle_error = ''
         self.bundle = None
         self.read_settings()
@@ -88,6 +92,8 @@ class Manager:
         self.update_launch_state()
         self.window.after(120, self.poll)
         self.window.protocol('WM_DELETE_WINDOW',self.on_close)
+        if self.build_channel() == 'main':
+            self.window.after(2500, lambda: self.check_updates(silent=True))
         if self.bundle_error:self.window.after(300,lambda:self.fail(RuntimeError(self.bundle_error)))
         elif self.bundle and not self.bundle.get('configured'):self.window.after(300,self.configure_bundle)
         elif not (Path(self.stage.get())/'stage_status.json').is_file():self.window.after(300,self.offer_initial_setup)
@@ -113,6 +119,84 @@ class Manager:
     def t(self, name):
         """Lookup a developer-configured label (unknown keys remain visible)."""
         return self.copy.get(name, name.replace('_', ' ').capitalize())
+
+    @staticmethod
+    def build_channel():
+        try:
+            return (APP_HOME / 'BUILD_CHANNEL.txt').read_text(encoding='ascii').strip().lower()
+        except OSError:
+            return ''
+
+    def check_updates(self, silent=False):
+        if self.update_in_progress or self.busy:
+            if not silent: messagebox.showinfo('Updates', 'Finish the current operation first.', parent=self.window)
+            return
+        if self.build_channel() != 'main' or not (APP_HOME / 'EvolveModManager.exe').is_file():
+            self.update_status.set('Automatic updates are available in the main Windows release.')
+            if not silent:messagebox.showinfo('Updates', self.update_status.get(), parent=self.window)
+            return
+        self.update_in_progress = True
+        self.update_status.set('Checking for updates…')
+        self.update_button.configure(state='disabled')
+        def background():
+            try: self.events.put(('update-check', (discover_update(installed_commit(APP_HOME)), None, silent)))
+            except Exception as exc: self.events.put(('update-check', (None, str(exc), silent)))
+        threading.Thread(target=background, daemon=True).start()
+
+    def on_update_check(self, candidate, error, silent):
+        self.update_in_progress = False
+        self.update_button.configure(state='normal')
+        self.available_update = candidate
+        if error:
+            self.update_status.set('Update check unavailable')
+            if not silent:messagebox.showwarning('Updates', f'Could not check GitHub: {error}', parent=self.window)
+        elif candidate is None:
+            self.update_status.set('No verified newer build available')
+            if not silent: messagebox.showinfo('Updates', 'You have the latest released build, or the new build is still being verified.', parent=self.window)
+        else:
+            self.update_status.set('Update available: ' + candidate.version)
+            if not silent: self.offer_update()
+
+    def offer_update(self):
+        candidate = self.available_update
+        if candidate is None or self.update_in_progress: return
+        if self.busy:
+            messagebox.showinfo('Updates', 'Finish your current operation before updating.', parent=self.window)
+            return
+        if not messagebox.askyesno('Update available',
+                f'{candidate.version} is ready to install.\n\n'
+                'The manager will download and verify the release, then restart. '
+                'Your Data folder (projects, keys and backups) is preserved.\n\n'
+                'Update now?', parent=self.window): return
+        self.update_in_progress = True
+        self.update_status.set('Downloading verified update…')
+        self.update_button.configure(state='disabled')
+        def download():
+            try: self.events.put(('update-download', (candidate, download_and_prepare(candidate), None)))
+            except Exception as exc: self.events.put(('update-download', (candidate, None, str(exc))))
+        threading.Thread(target=download, daemon=True).start()
+
+    def on_update_download(self, candidate, staged, error):
+        self.update_in_progress = False
+        self.update_button.configure(state='normal')
+        if error:
+            self.update_status.set('Update download failed')
+            messagebox.showerror('Update failed', str(error) + '\n\nThe current installation is unchanged.', parent=self.window)
+            return
+        if self.busy or not self.flush_editors():
+            self.update_status.set('Update downloaded; install postponed')
+            messagebox.showinfo('Update postponed', 'Finish operations and save edits first. Recheck updates when ready.', parent=self.window)
+            return
+        try:
+            self.persist()
+            log = launch_apply(candidate, staged, APP_HOME, os.getpid())
+        except Exception as exc:
+            self.update_status.set('Could not start updater')
+            messagebox.showerror('Update failed', f'{exc}\n\nThe current installation is unchanged.', parent=self.window)
+            return
+        # The detached Windows updater waits for this process to exit and then
+        # performs the replacement. Never edit running EXEs or user Data here.
+        self.window.destroy()
 
     def draw(self):
         root = self.window
@@ -320,6 +404,12 @@ class Manager:
         ttk.Button(row, text=self.t('check_setup'), command=self.check_setup).pack(side='left')
         ttk.Button(row, text=self.t('open_projects'), style='Quiet.TButton', command=self.open_projects).pack(side='left', padx=(8, 0))
         ttk.Button(row, text=self.t('save_settings'), command=self.save_settings).pack(side='right')
+        update_row = ttk.Frame(parent)
+        update_row.pack(fill='x', pady=(4, 8))
+        ttk.Label(update_row, textvariable=self.update_status, style='Muted.TLabel').pack(side='left', fill='x', expand=True)
+        self.update_button = ttk.Button(update_row, text='Check for Updates', style='Quiet.TButton', command=self.check_updates)
+        self.update_button.pack(side='right')
+        ttk.Button(update_row, text='Install Update', style='Accent.TButton', command=self.offer_update).pack(side='right', padx=(0, 8))
         ttk.Separator(parent).pack(fill='x', pady=(8, 12))
         self.advanced_button = ttk.Button(parent, text=self.t('advanced_toggle_show'),
                                           style='Quiet.TButton', command=self.toggle_advanced)
@@ -926,7 +1016,11 @@ class Manager:
         try:
             while True:
                 kind,val=self.events.get_nowait()
-                if kind=='text':
+                if kind == 'update-check':
+                    self.on_update_check(*val)
+                elif kind == 'update-download':
+                    self.on_update_download(*val)
+                elif kind=='text':
                     self.write(val)
                     if 'Automatic CreateProcessW hook ready' in val:
                         self.status.set('Launcher is ready — press Play in the Evolve window now.')
@@ -955,7 +1049,7 @@ class Manager:
         self.window.after(120,self.poll)
 
     def on_close(self):
-        if self.busy:
+        if self.busy or self.update_in_progress:
             messagebox.showwarning('Still running','Wait for the current operation to complete. Closing now could interrupt your swap or rebuild.')
             return
         if not self.flush_editors():return

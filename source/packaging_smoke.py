@@ -34,3 +34,6 @@ print('Bundled crypto, Twofish, Frida, GPU preview, Pillow DDS and PAK workspace
 # File context-menu helpers must be bundled for all three editor tabs.
 import workspace_file_actions
 assert workspace_file_actions.checked_path
+
+import app_updater
+assert app_updater.discover and app_updater.download_and_prepare and app_updater.launch_apply
