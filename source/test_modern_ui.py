@@ -33,6 +33,32 @@ class ModernThemeTests(unittest.TestCase):
         self.assertEqual(style.layout('Accent.TButton')[0][0], 'AccentPill')
         self.assertEqual(style.layout('Quiet.TButton')[0][0], 'QuietPill')
 
+    def test_compact_navigation_and_buttons_at_windows_window_size(self):
+        """Regression: no huge 70px buttons from large image style elements."""
+        style = ttk.Style(self.root)
+        # Dynamic style geometry is more robust than comparing screenshot crops.
+        examples = [
+            ttk.Button(self.root, text='Help ?', style='Quiet.TButton'),
+            ttk.Button(self.root, text='Set Up Manager'),
+            ttk.Button(self.root, text='Get Evolve Stage 2', style='Accent.TButton'),
+        ]
+        for button in examples:
+            button.pack()
+        tabbook = ttk.Notebook(self.root)
+        tabbook.pack(fill='x')
+        for label in ('Instructions', 'Modding', 'Play & Restore',
+                      'Settings', 'Credits'):
+            tabbook.add(ttk.Frame(tabbook), text='  ' + label + '  ')
+        self.root.update()
+        for button in examples:
+            self.assertLessEqual(
+                button.winfo_height(), 48,
+                f'{button.cget("text")} exceeds compact Windows button height')
+        bbox = tabbook.bbox(0)
+        self.assertTrue(bbox)
+        self.assertLessEqual(bbox[3], 51, 'Navigation tabs must not be giant tiles')
+        self.assertEqual(style.layout('TNotebook.Tab')[0][0], 'RoundedTabSurface')
+
     def test_rounded_card_reflows_and_has_real_ttk_content(self):
         from modern_surfaces import RoundedPanel
         card = RoundedPanel(self.root, padding=(18, 14), radius=17)
@@ -44,7 +70,9 @@ class ModernThemeTests(unittest.TestCase):
         self.root.update()
         self.assertGreater(card.winfo_height(), 45)
         self.assertGreater(card.winfo_width(), 400)
-        self.assertEqual(card.itemcget(card._shape, 'fill'), '#18181e')
+        self.assertEqual(card.type(card._shape), 'image')
+        self.assertTrue(card._background_image.width() > 400)
+        self.assertEqual(card._background_image.height(), card.winfo_height())
         self.root.geometry('760x700')
         self.root.update()
         self.assertGreater(card.winfo_height(), 45)
@@ -95,7 +123,7 @@ class ModernThemeTests(unittest.TestCase):
             toolbar_buttons = [x.cget('text') for x in header.winfo_children()
                                if isinstance(x, ttk.Button)]
             self.assertNotIn('Set Up Manager', toolbar_buttons)
-            self.assertEqual(manager.version_label.cget('text'), 'v1.0.2')
+            self.assertEqual(manager.version_label.cget('text'), 'v1.0.3')
             self.assertTrue(manager.header_icon)
             self.assertGreater(manager.header_icon.width(), 0)
             self.assertLessEqual(manager.header_icon.width(), 36)

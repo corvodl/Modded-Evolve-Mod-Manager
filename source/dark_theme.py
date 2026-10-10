@@ -105,7 +105,9 @@ def apply_theme(root):
     # Image-backed ttk elements provide genuine antialiased rounded corners
     # even under the Windows clam theme; their text/commands stay native ttk.
     images = []
-    def surface(color, width=48, height=42, radius=17):
+    # The pixel size sets the minimum ttk element height. The previous
+    # 48x42 image plus 20px+ padding produced 70px buttons on Windows.
+    def surface(color, width=22, height=20, radius=9):
         im = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         ImageDraw.Draw(im).rounded_rectangle(
             (0, 0, width-1, height-1), radius=radius, fill=color)
@@ -123,7 +125,7 @@ def apply_theme(root):
             ('disabled', surface(disabled)),
             ('pressed', surface(pressed)),
             ('active', surface(hover)),
-            border=(17, 17, 17, 17), sticky='nsew')
+            border=(9, 9, 9, 9), sticky='nsew')
         style.layout(
             {'SoftPill': 'TButton', 'QuietPill': 'Quiet.TButton',
              'AccentPill': 'Accent.TButton'}[name],
@@ -133,19 +135,20 @@ def apply_theme(root):
     # Keep the existing red-on-dark navigation, but turn the active tab into a
     # smooth pill and use muted charcoal for inactive states.
     style.element_create(
-        'RoundedTabSurface', 'image', surface('#1d1c22', radius=18),
-        ('selected', surface('#ad2d40', radius=18)),
-        ('active', surface('#30242c', radius=18)),
-        border=(18, 17, 18, 17), sticky='nsew')
+        'RoundedTabSurface', 'image', surface('#1d1c22', radius=9),
+        ('selected', surface('#ad2d40', radius=9)),
+        ('active', surface('#30242c', radius=9)),
+        border=(9, 9, 9, 9), sticky='nsew')
     style.layout('TNotebook.Tab', [
         ('RoundedTabSurface', {'sticky': 'nswe', 'children': [
             ('Notebook.padding', {'sticky': 'nswe', 'children': [
                 ('Notebook.focus', {'sticky': 'nswe', 'children': [
                     ('Notebook.label', {'sticky': ''})]})]})]})])
-    style.configure('TNotebook.Tab', padding=(20, 12))
-    style.configure('Accent.TButton', padding=(16, 11))
-    style.configure('Quiet.TButton', padding=(13, 10))
-    style.configure('TButton', padding=(14, 10))
+    # At 100% DPI these produce ~35-40px tall controls, not 70px tiles.
+    style.configure('TNotebook.Tab', padding=(13, 7))
+    style.configure('Accent.TButton', padding=(12, 6))
+    style.configure('Quiet.TButton', padding=(10, 5))
+    style.configure('TButton', padding=(10, 5))
     # Prevent PhotoImage garbage collection before Tk destroys the root.
     root._evolve_style_images = images
 

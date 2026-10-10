@@ -264,3 +264,11 @@ The build regenerates 16/32/48/256 ICO frames from the tracked hunt.png.
 Native Tk notebook tabs and action buttons have antialiased rounded capsules,
 and onboarding/Play & Restore/Credits use rounded charcoal panels.
 The established offline modding, safe PAK handling and recovery behavior is unchanged.
+
+COMPACT CONTROLS v1.0.3
+------------------------
+The actual compiled Windows v1.0.2 screenshot showed oversized controls and
+notched/blank card rendering. v1.0.3 shrinks the native ttk pill element
+images, border slices and widget padding, reduces the Play button extra pady,
+and draws stable antialiased rounded cards. A Windows executable screenshot is
+captured as a tested release artifact. All game/mod/restore logic is unchanged.

@@ -7,7 +7,7 @@ from version_info import app_version
 
 class VersionManifestTests(unittest.TestCase):
     def test_release_manifest_controls_the_ui(self):
-        self.assertEqual(app_version(), 'v1.0.2')
+        self.assertEqual(app_version(), 'v1.0.3')
         with TemporaryDirectory() as folder:
             path = Path(folder) / 'VERSION.txt'
             path.write_text('1.0.1 - Maintenance Release\n', encoding='utf-8')

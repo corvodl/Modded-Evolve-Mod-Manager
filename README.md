@@ -1,10 +1,16 @@
-# Evolve Stage 2 Mod Manager — v1.0.2
+# Evolve Stage 2 Mod Manager — v1.0.3
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.0.2 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.0.3 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.0.3
+
+- **Corrected Windows control sizing:** The real compiled screenshot revealed oversized button/tab background images. Their intrinsic size, padding and border-slice metrics are reduced, bringing tab and button heights back to compact desktop dimensions.
+- **Fixed rounded card rendering:** Replaced notched/uneven Canvas polygons with a reliable rounded image surface, eliminating the blank bands and sharp right-side gaps seen in the actual Windows capture.
+- **Gameplay tools unchanged:** PAK editor, offline launch, verified updates and original-backup recovery still use the same code. A Windows screenshot capture is included with each verified release to catch future layout regressions.
 
 ## What's new in v1.0.2
 
