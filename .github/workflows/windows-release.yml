@@ -4,11 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - "source/**"
-      - "Build-Windows-EXE.cmd"
-      - "DEVELOPER-UI-TEXT.txt"
-      - ".github/workflows/windows-release.yml"
 
 permissions:
   contents: write
