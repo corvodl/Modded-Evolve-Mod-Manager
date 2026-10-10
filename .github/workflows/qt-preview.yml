@@ -1,0 +1,93 @@
+name: Build experimental PySide6 Qt preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [qt-migration]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qt-migration-preview
+  cancel-in-progress: true
+
+jobs:
+  qt-preview:
+    name: Test and package Qt preview (no Main release upload)
+    runs-on: windows-2022
+    timeout-minutes: 65
+    steps:
+      - name: Check out Qt branch
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+      - name: Qt parity tests and portable preview EXE
+        shell: cmd
+        run: call Build-Windows-Qt-Preview.cmd
+      - name: Capture actual compiled Qt GUI
+        shell: pwsh
+        run: |
+          $exe = ".build/qt-preview-dist/EvolveModManagerQt/EvolveModManagerQt.exe"
+          $png = "dist/EvolveModManagerQt-compiled-screenshot.png"
+          # Qt Windows services run without an interactive desktop on CI.
+          # Render the actual compiled Qt Widgets window using the offscreen
+          # platform plugin, then capture via QWidget.grab().
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QT_DEBUG_PLUGINS = "1"
+          & $exe --capture-screenshot $png
+          $exit = $LASTEXITCODE
+          $startupLog = Join-Path $env:LOCALAPPDATA "EvolveModManagerQtPreview/startup.log"
+          Write-Host "Frozen Qt exit code: $exit"
+          $runtimeLog = Join-Path $env:LOCALAPPDATA "EvolveModManagerQtPreview/runtime.log"
+          if (Test-Path -LiteralPath $runtimeLog) {
+            Write-Host 'Qt bootloader / runtime hook diagnostics:'
+            Get-Content -LiteralPath $runtimeLog | Select-Object -Last 120
+          }
+          if (Test-Path -LiteralPath $startupLog) {
+            Write-Host 'Qt frozen app startup diagnostics:'
+            Get-Content -LiteralPath $startupLog | Select-Object -Last 65
+          }
+          if ($exit -ne 0) { throw "Compiled Qt app failed to capture a screenshot (exit code $exit)." }
+          if (!(Test-Path $png -PathType Leaf)) { throw "No real Qt screenshot was captured." }
+          & ".build/venv/Scripts/python.exe" -c "from PIL import Image; i=Image.open(r'dist/EvolveModManagerQt-compiled-screenshot.png'); print('Compiled Qt window:',i.size); assert i.width >= 850 and i.height >= 600"
+          if ($LASTEXITCODE -ne 0) { throw "Qt screenshot validation failed." }
+      - name: Verify Qt preview is isolated from Main and user data
+        shell: pwsh
+        run: |
+          $path = "dist/EvolveModManagerQt-Preview-Windows.zip"
+          if (!(Test-Path $path)) { throw "Qt preview ZIP was not generated." }
+          Add-Type -AssemblyName System.IO.Compression
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $path))
+          try {
+            $items = @($zip.Entries | ForEach-Object { $_.FullName })
+            foreach ($required in @(
+              "EvolveModManagerQt/EvolveModManagerQt.exe",
+              "EvolveModManagerQt/EvolveModWorker.exe",
+              "EvolveModManagerQt/EvolveModLegacyEditor.exe",
+              "EvolveModManagerQt/BUILD_COMMIT.txt",
+              "EvolveModManagerQt/BUILD_CHANNEL.txt"
+            )) {
+              if ($required -notin $items) { throw "Missing Qt runtime file: $required" }
+            }
+            if ($items | Where-Object { $_ -match "(?i)(^|/)Data/|\.pak$|private_key\.pem$" }) {
+              throw "Qt preview accidentally contains user game data."
+            }
+            $reader = [System.IO.StreamReader]::new($zip.GetEntry(
+              "EvolveModManagerQt/BUILD_CHANNEL.txt").Open())
+            try { $channel = $reader.ReadToEnd().Trim() } finally { $reader.Dispose() }
+            if ($channel -ne "qt-preview") { throw "Preview build incorrectly uses stable Main channel." }
+          }
+          finally { $zip.Dispose() }
+      - name: Upload experimental Qt ZIP and compiled screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: EvolveModManagerQt-Preview-Windows
+          path: |
+            dist/EvolveModManagerQt-Preview-Windows.zip
+            dist/EvolveModManagerQt-compiled-screenshot.png
+          if-no-files-found: error
+          retention-days: 30

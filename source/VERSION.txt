@@ -1,1 +1,1 @@
-1.0.7 - Optional Experimental Update Discovery
+1.1.0 - Native Qt Interface and OpenGL Model Viewer
