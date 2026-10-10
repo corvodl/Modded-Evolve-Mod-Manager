@@ -44,12 +44,12 @@ entrypoints = ('qt_manager', 'worker_entry', 'qt_legacy_editor_bridge')
 a = Analysis([str(root / (entry + '.py')) for entry in entrypoints],
              pathex=[str(root)], binaries=binaries, datas=datas,
              hiddenimports=sorted(set(hidden)), hookspath=[],
-             runtime_hooks=[], excludes=[], noarchive=False)
+             runtime_hooks=['qt_streams_hook.py'], excludes=[], noarchive=False)
 pyz = PYZ(a.pure)
 shared = [script for script in a.scripts if script[0] not in entrypoints]
 executables = []
 for entry, name, console in (
-    ('qt_manager', 'EvolveModManagerQt', True),  # verified Qt preview; console-free bootloader pending
+    ('qt_manager', 'EvolveModManagerQt', False),
     ('worker_entry', 'EvolveModWorker', True),
     ('qt_legacy_editor_bridge', 'EvolveModLegacyEditor', False),
 ):
