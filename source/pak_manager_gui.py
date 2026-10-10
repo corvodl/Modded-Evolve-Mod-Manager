@@ -494,7 +494,7 @@ class Manager:
         self.output_pak.set('')
         self.persist()
         self.write('BATCH UNPACK COMPLETE: '+str(batch)+'\n')
-        self.write('Select another unpacked PAK in the list, then choose Edit Files.\n')
+        self.write('Edit Files lists ALL unpacked PAKs above the file tabs; select the one you want to edit.\n')
         self.write('Find textures from the Models tab; archives remain independent for rebuilds.\n')
         self.open_editable()
 
@@ -504,14 +504,38 @@ class Manager:
         self.write('EDITABLE FILES: '+str(ws/'files')+'\n')
         self.open_editable()
 
+    def editor_archive_map(self):
+        """Archives in a completed batch, never a merged or editable fake PAK."""
+        self.load_batch_mapping()
+        selected = self.selected_archive_relatives()
+        if len(selected) > 1:
+            missing = [name for name in selected if name not in self.batch_workspaces]
+            if missing:
+                raise ValueError('You selected multiple PAKs, but not all were unpacked in a batch. '
+                                 'Click "Unpack Selected PAKs" first, wait for it to finish, then choose Edit Files. '
+                                 'Missing: ' + ', '.join(missing[:4]))
+        # A batch collection is browsable even if the main list has since been
+        # narrowed to one PAK. This is also how the editor opens after a batch.
+        current = self.workspace().resolve()
+        if current in (Path(p).resolve() for p in self.batch_workspaces.values()):
+            return {name: path for name, path in self.batch_workspaces.items()}
+        return {}
+
     def open_editable(self):
         try:
-            p=self.workspace()/'files'
-            if not p.is_dir():raise FileNotFoundError('Unpacked file folder missing: '+str(p))
+            ws = self.workspace().resolve()
+            if not (ws/'files').is_dir():
+                raise FileNotFoundError('Unpacked file folder missing: '+str(ws/'files'))
+            archive_map = self.editor_archive_map()
             for editor in self.editors:
-                if editor.window.winfo_exists() and editor.workspace == self.workspace():
-                    editor.window.lift(); return
-            self.editors.append(WorkspaceEditor(self,self.workspace()))
+                if editor.window.winfo_exists() and (editor.workspace == ws or ws in editor.archive_map.values()):
+                    editor.window.lift()
+                    if editor.workspace != ws and archive_map:
+                        label = next((key for key, path in editor.archive_map.items() if Path(path).resolve() == ws), None)
+                        if label:
+                            editor.switch_archive(label)
+                    return
+            self.editors.append(WorkspaceEditor(self, ws, archive_map=archive_map))
         except Exception as e:self.fail(e)
 
     def flush_editors(self):

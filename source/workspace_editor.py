@@ -96,10 +96,16 @@ class WorkspaceEditor:
                           or int(name.rsplit('.', 1)[1]) == first_part[name.rsplit('.', 1)[0].casefold()])
         return sorted((r for r in candidates if query.casefold() in r.casefold()), key=str.casefold)
 
-    def __init__(self, manager, workspace):
+    def __init__(self, manager, workspace, archive_map=None):
         self.manager = manager
-        self.workspace = Path(workspace)
-        self.records = {r['path']: r for r in json.loads((self.workspace/'.evolve-pak-workspace.json').read_text(encoding='utf-8'))['entries']}
+        self.workspace = Path(workspace).resolve()
+        # Archive selectors are browsing-only; each PAK retains its own isolated
+        # workspace, signing manifest, backups, and independent Build Mod step.
+        self.archive_map = {name: Path(path).resolve() for name, path in (archive_map or {}).items()}
+        self.current_archive = next((name for name, path in self.archive_map.items()
+                                     if path == self.workspace), '')
+        self._switching_archive = False
+        self.records = self._read_records(self.workspace)
         self.path = None
         self.raw = b''
         self.loaded_text = ''
@@ -119,6 +125,26 @@ class WorkspaceEditor:
         ttk.Entry(bar, textvariable=self.query, width=44).pack(side='left', padx=8, fill='x', expand=True)
         ttk.Button(bar, text=manager.t('editor_open_folder'), command=self.explore).pack(side='left', padx=(0, 6))
         ttk.Button(bar, text=manager.t('editor_reload'), command=self.reload).pack(side='left')
+
+        # Show every unpacked PAK in the SAME editor popup; clicking one changes
+        # the file trees below without mixing or overwriting archive entries.
+        self.archive_list = None
+        if len(self.archive_map) > 1:
+            archives = ttk.LabelFrame(self.window, text=manager.t('editor_archive_selector'), padding=(8, 5))
+            archives.pack(fill='x', padx=8, pady=(0, 5))
+            self.archive_list = tk.Listbox(archives, height=min(5, len(self.archive_map)),
+                                           exportselection=False, selectmode='browse',
+                                           background='#1b1b20', foreground='#f2f2f4',
+                                           selectbackground='#40576d', selectforeground='white',
+                                           font=('Consolas', 10))
+            self.archive_list.pack(side='left', fill='x', expand=True)
+            scroll = ttk.Scrollbar(archives, orient='vertical', command=self.archive_list.yview)
+            scroll.pack(side='right', fill='y')
+            self.archive_list.configure(yscrollcommand=scroll.set)
+            for archive in self.archive_map:
+                self.archive_list.insert(tk.END, archive)
+            self._highlight_archive()
+            self.archive_list.bind('<<ListboxSelect>>', self.select_archive)
 
         self.tabs = ttk.Notebook(self.window)
         self.tabs.pack(fill='both', expand=True, padx=8, pady=(0, 6))
@@ -205,6 +231,96 @@ class WorkspaceEditor:
         self.window.bind('<Control-f>', lambda _: self.find_text())
         self.reset_views()
         self.populate()
+
+    @staticmethod
+    def _read_records(workspace):
+        # The editor historically accepts minimal workspace manifests in unit
+        # tests and older projects. Validate file paths without requiring a
+        # new manifest version or changing existing editing behavior.
+        from evolve_pak_workspace import normalized_name
+        data = json.loads((Path(workspace)/'.evolve-pak-workspace.json').read_text(encoding='utf-8'))
+        entries = data['entries']
+        if not isinstance(entries, list):
+            raise ValueError('Invalid workspace file inventory.')
+        records = {}
+        folded = set()
+        for row in entries:
+            rel = normalized_name(row['path'])
+            if rel != row['path'] or rel.casefold() in folded:
+                raise ValueError('Invalid or duplicate workspace file path: ' + rel)
+            folded.add(rel.casefold())
+            records[rel] = row
+        return records
+
+    def _highlight_archive(self):
+        if self.archive_list is None:
+            return
+        self._switching_archive = True
+        try:
+            self.archive_list.selection_clear(0, tk.END)
+            if self.current_archive in self.archive_map:
+                index = list(self.archive_map).index(self.current_archive)
+                self.archive_list.selection_set(index)
+                self.archive_list.see(index)
+        finally:
+            self._switching_archive = False
+
+    def select_archive(self, _event=None):
+        if self._switching_archive or self.archive_list is None:
+            return
+        selected = self.archive_list.curselection()
+        if selected:
+            self.switch_archive(list(self.archive_map)[selected[0]])
+
+    def switch_archive(self, name):
+        """Switch workspace safely while keeping PAK files and builds isolated."""
+        if name not in self.archive_map:
+            raise ValueError('This PAK is not in the extracted archive collection.')
+        target = self.archive_map[name]
+        if target == self.workspace:
+            self._highlight_archive()
+            return True
+        if self.manager.busy:
+            self.info.set('Wait for the current operation before changing PAKs.')
+            self._highlight_archive()
+            return False
+        if not self.confirm():
+            self._highlight_archive()
+            return False
+        # Validate before committing a switch so a corrupted workspace cannot
+        # leave the editor pointing at a partial or nonexistent archive.
+        try:
+            records = self._read_records(target)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            messagebox.showerror('Cannot open unpacked PAK', str(error), parent=self.window)
+            self._highlight_archive()
+            return False
+        self._switching_archive = True
+        try:
+            for tree in self.trees.values():
+                tree.selection_remove(tree.selection())
+            self.workspace = target
+            self.current_archive = name
+            self.records = records
+            self.path = None
+            self.raw = b''
+            self.loaded_text = ''
+            self.view_mode = None
+            self.reset_views()
+            self.text.configure(state='normal')
+            self.text.delete('1.0', 'end')
+            self.text.configure(state='disabled')
+            self.populate()
+            self.manager.current_workspace.set(str(target))
+            self.manager.archive_label.set(name)
+            self.manager.output_pak.set('')
+            self.manager.persist()
+            self.window.title(self.manager.t('editor_title') + ' — ' + name)
+            self.info.set('Browsing ' + name + ' | Build Mod applies only to this PAK.')
+            self._highlight_archive()
+        finally:
+            self._switching_archive = False
+        return True
 
     def on_tab_changed(self, _=None):
         if self._changing_tab:

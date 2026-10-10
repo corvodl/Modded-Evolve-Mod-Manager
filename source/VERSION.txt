@@ -1,1 +1,1 @@
-2.9.8 - Automatic Cross-PAK Texture Discovery and Credits (Experimental)
+2.9.9 - Combined Multi-PAK Explorer (Experimental)

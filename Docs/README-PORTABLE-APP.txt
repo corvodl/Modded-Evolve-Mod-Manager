@@ -121,3 +121,9 @@ Automatic model texture lookup:
 - If two workspaces contain the same texture path, lookup stops as ambiguous rather than guessing.
 - The Credits tab lists @CorvoDL, the GitHub repository and the Modded Evolve website.
 - Install Evolve Stage 2 through https://modded-evolve.com/ before using the manager.
+
+Batch PAK editor: Use Ctrl/Shift to choose 2-30 PAKs, click Unpack Selected PAKs,
+and wait for completion. Edit Files then shows an Unpacked PAKs list at the top.
+Click an archive name to switch its Files/Text, Images and Models trees in the SAME
+window. Every workspace remains separate; Build Mod works on the currently selected
+archive only. The editor prompts before leaving unsaved text changes.

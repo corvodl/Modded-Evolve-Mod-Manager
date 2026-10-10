@@ -111,5 +111,6 @@
   "credits_discord": "@CorvoDL on Discord",
   "credits_github_label": "GitHub repository",
   "credits_website_label": "Modded Evolve website (install Evolve Stage 2 here)",
-  "credits_install_note": "Install Evolve Stage 2 through the Modded Evolve website before using this manager. The mod manager does not install the game."
+  "credits_install_note": "Install Evolve Stage 2 through the Modded Evolve website before using this manager. The mod manager does not install the game.",
+  "editor_archive_selector": "Unpacked PAKs — select an archive below to browse its files (Build Mod works on one PAK at a time)"
 }
