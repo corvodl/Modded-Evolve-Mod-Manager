@@ -112,12 +112,11 @@ class QtLooseFileEditor(QDialog):
 class QtWorkspaceEditor(QDialog):
     TABS = ('files', 'images', 'models')
 
-    def __init__(self, manager, workspace, archive_map=None, advanced=None):
+    def __init__(self, manager, workspace, archive_map=None):
         super().__init__(manager)
         self.manager = manager
         self.workspace = Path(workspace).resolve(strict=True)
         self.archive_map = {name: Path(p).resolve() for name, p in (archive_map or {}).items()}
-        self.advanced = advanced
         self.records = self._read_records(self.workspace)
         self.current = None
         self.raw = b''
@@ -141,7 +140,6 @@ class QtWorkspaceEditor(QDialog):
         tools.addWidget(self._button('Open File Folder', self.explore))
         tools.addWidget(self._button('Reload', self.reload))
         tools.addWidget(self._button('Help', self.help))
-        tools.addWidget(self._button('Advanced compatibility editor', self.open_advanced))
         main.addLayout(tools)
 
         self.archive_select = None
@@ -677,10 +675,6 @@ class QtWorkspaceEditor(QDialog):
         except Exception as exc:
             QMessageBox.critical(self,'Model textures',str(exc))
 
-    def open_advanced(self):
-        if self.advanced:
-            self.advanced()
-
     def help(self):
         QMessageBox.information(
             self,'Editor help',
@@ -690,9 +684,8 @@ class QtWorkspaceEditor(QDialog):
             'Streaming .dds.0/.1 files are reassembled and replaced together.\n\n'
             'Models: inspect CryEngine structure, export native files, import only '
             'same-layout replacements, find linked textures and preview supported meshes.\n\n'
-            'Open GPU Viewer uses a Qt OpenGL window with rotate, zoom, wireframe '
-            'and approximate diffuse UV textures. The optional Advanced compatibility '
-            'editor remains available while final workflow parity is verified.')
+            'Open GPU Viewer uses a native Qt OpenGL window with rotate, zoom, '
+            'wireframe, lighting and approximate diffuse UV textures.')
 
     def closeEvent(self, event):
         if not self._confirm_buffer():

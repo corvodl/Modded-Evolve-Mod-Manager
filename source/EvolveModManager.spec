@@ -1,52 +1,62 @@
-# Build on Windows with 64-bit Python 3.11.
+# Native Qt production candidate, built only after full Windows regression suite.
 from pathlib import Path
 from importlib.util import find_spec
 from PyInstaller.utils.hooks import collect_all
 import ast
 
 root = Path(SPECPATH)
-datas = [(str(p), '.') for p in root.glob('*.py') if not p.name.startswith(('test_', 'Test-', 'build_'))]
-datas += [(str(root/'launcher_support'), 'launcher_support')]
-datas += [(str(root/'assets'), 'assets')]
-datas += [(str(root/'reference'), 'reference')]
-datas += [(str(root/'ui_text.json'), '.')]
-datas += [(str(root/'VERSION.txt'), '.')] 
+datas = [(str(p), '.') for p in root.glob('*.py')
+         if not p.name.startswith(('test_', 'Test-', 'build_'))]
+datas += [(str(root/'launcher_support'), 'launcher_support'),
+          (str(root/'assets'), 'assets'),
+          (str(root/'reference'), 'reference'),
+          (str(root/'ui_text.json'), '.'),
+          (str(root/'VERSION.txt'), '.')]
 binaries = []
-hidden = ['evolve_pak_workspace', 'evolve_pak_rekey', 'evolve_gameplay_editor',
-          'evolve_video_pak_tool_fixed', 'dds_texture', 'dds_png_import', 'dds_streaming', 'model_asset', 'model_preview', 'gpu_model_preview', 'material_preview', 'multi_pak_assets', 'decode_cryxml', 'universal_stage', 'refresh_originals', 'workspace_editor', 'workspace_file_actions', 'pak_browser', 'portable_bundle', 'first_run_setup', 'old_prepared', 'loose_game_files', 'loose_file_editor']
+hidden = [
+    'evolve_pak_workspace', 'evolve_pak_rekey', 'evolve_gameplay_editor',
+    'evolve_video_pak_tool_fixed', 'dds_texture', 'dds_png_import',
+    'dds_streaming', 'model_asset', 'model_preview', 'gpu_model_preview',
+    'material_preview', 'multi_pak_assets', 'decode_cryxml',
+    'universal_stage', 'refresh_originals', 'workspace_editor',
+    'workspace_file_actions', 'pak_browser', 'portable_bundle',
+    'first_run_setup', 'old_prepared', 'loose_game_files',
+    'loose_file_editor', 'qt_manager', 'qt_workspace_editor',
+    'qt_gpu_viewer', 'desktop_shortcut', 'orphaned_swap_recovery',
+]
 for package in ('cryptography', 'frida', 'twofish', 'PIL'):
     d, b, h = collect_all(package)
     datas += d
     binaries += b
     hidden += h
-# NumPy's official PyInstaller hook handles native DLLs. Avoid collect_all()
-# for NumPy, which would bundle unnecessary typing/tests/data fixtures.
 hidden.append('numpy')
-# twofish loads its extension with ctypes; include it as a native library.
 twofish_native = find_spec('_twofish')
 if twofish_native and twofish_native.origin:
     binaries.append((twofish_native.origin, '.'))
-# Existing swap scripts execute from the user's folder. Bundle their dependencies,
-# but do not freeze controlled_swap: its __file__ locates the user's journal.
 for script in (root/'launcher_support').glob('*.py'):
     for node in ast.walk(ast.parse(script.read_text(encoding='utf-8'))):
         if isinstance(node, ast.Import):
             hidden += [n.name for n in node.names if n.name != 'controlled_swap']
         elif isinstance(node, ast.ImportFrom) and node.module and node.module != 'controlled_swap':
             hidden.append(node.module)
-a = Analysis(['pak_manager_gui.py', 'worker_entry.py'], pathex=[str(root)],
-             binaries=binaries, datas=datas, hiddenimports=sorted(set(hidden)),
-             hookspath=[], runtime_hooks=[], excludes=[], noarchive=False)
+
+entrypoints = ('qt_manager', 'worker_entry')
+a = Analysis([str(root / (entry + '.py')) for entry in entrypoints],
+             pathex=[str(root)], binaries=binaries, datas=datas,
+             hiddenimports=sorted(set(hidden)), hookspath=[],
+             runtime_hooks=['qt_streams_hook.py'], excludes=[], noarchive=False)
 pyz = PYZ(a.pure)
-# Preserve PyInstaller runtime hooks in both executables.
-common_scripts = [s for s in a.scripts if s[0] not in ('pak_manager_gui', 'worker_entry')]
-gui_scripts = common_scripts + [s for s in a.scripts if s[0] == 'pak_manager_gui']
-worker_scripts = common_scripts + [s for s in a.scripts if s[0] == 'worker_entry']
-assert len(gui_scripts) == len(common_scripts) + 1
-assert len(worker_scripts) == len(common_scripts) + 1
-gui = EXE(pyz, gui_scripts, [], exclude_binaries=True, name='EvolveModManager',
-          debug=False, strip=False, upx=False, console=False, icon=str(root/'assets'/'hunt.ico'))
-worker = EXE(pyz, worker_scripts, [], exclude_binaries=True, name='EvolveModWorker',
-             debug=False, strip=False, upx=False, console=True, icon=str(root/'assets'/'hunt.ico'))
-coll = COLLECT(gui, worker, a.binaries, a.datas, strip=False, upx=False,
-               name='EvolveModManager')
+shared = [script for script in a.scripts if script[0] not in entrypoints]
+executables = []
+for entry, name, console in (
+    ('qt_manager', 'EvolveModManager', True),
+    ('worker_entry', 'EvolveModWorker', True),
+):
+    scripts = shared + [script for script in a.scripts if script[0] == entry]
+    assert len(scripts) == len(shared) + 1
+    executables.append(EXE(
+        pyz, scripts, [], exclude_binaries=True, name=name,
+        debug=False, strip=False, upx=False, console=console,
+        icon=str(root/'assets'/'hunt.ico')))
+coll = COLLECT(*executables, a.binaries, a.datas, strip=False,
+               upx=False, name='EvolveModManager')

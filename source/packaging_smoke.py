@@ -25,7 +25,7 @@ assert (BUNDLE/"assets"/"hunt.ico").is_file()
 assert (BUNDLE/"assets"/"hunt.png").is_file()
 assert (BUNDLE/"VERSION.txt").is_file()
 from version_info import app_version
-assert app_version() == "v1.0.6"
+assert app_version() == "v1.1.0"
 assert (BUNDLE/"reference"/"RSAKeyData.bin").is_file()
 assert (BUNDLE/"reference"/"inject.dll").is_file()
 assert (BUNDLE/"reference"/"inject.dll").read_bytes()[0x870:0x8fc] == (BUNDLE/"reference"/"RSAKeyData.bin").read_bytes()
@@ -50,3 +50,10 @@ assert pak_browser.import_target('libs.pak', ['Game/libs.pak']) == 'Game/libs.pa
 
 import loose_game_files, loose_file_editor
 assert loose_game_files.scan_loose_files and loose_file_editor.LooseFileEditor
+
+from qt_manager import QtManager, SECTIONS
+from qt_workspace_editor import QtWorkspaceEditor, QtLooseFileEditor
+from qt_gpu_viewer import QtGPUModelDialog, QtGLModelCanvas
+from OpenGL import GL
+assert QtManager and QtWorkspaceEditor and QtLooseFileEditor and QtGPUModelDialog and QtGLModelCanvas and GL
+print('Bundled native Qt Widgets and OpenGL model rendering imports passed.')

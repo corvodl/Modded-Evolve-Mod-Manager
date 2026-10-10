@@ -1,10 +1,23 @@
-# Evolve Stage 2 Mod Manager — v1.0.6
+# Evolve Stage 2 Mod Manager — v1.1.0
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.0.6 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.0 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.0
+
+- **Native Qt interface:** All five manager pages, PAK browser and controls use PySide6. The left Menu is a true smooth Qt animation over the content.
+- **Native Qt editors:** Extracted text/CryXML, DDS and streaming DDS, loose game-file copies and native CryEngine model inspection/import use Qt dialogs.
+- **OpenGL GPU viewer:** Rotate/zoom supported models, view wireframe and approximate diffuse textures in a Qt OpenGL window. The legacy Tk UI is not used by the main executable.
+- **Existing safety preserved:** Original game files, Data, signing keys, PAK backup journals, and restoration workflows are handled by the same guarded backend.
+- **Update channels:** Automatic checks remain stable-only; manual Check for Updates may offer optional experimental Qt builds with a separate download link.
+
+## What's new in v1.0.7
+
+- **Manual experimental previews:** Settings > Check for Updates now checks the latest verified stable Main release **and** the newest successful, unexpired Qt preview Actions artifact, then asks whether to open its GitHub download page. Experimental previews are downloaded separately, never installed over your existing manager.
+- **Stable-only startup updater:** Startup checks remain exclusively on the Main release channel. No experimental build is checked, recommended or applied automatically.
 
 ## What's new in v1.0.6
 

@@ -1,1 +1,1 @@
-1.0.6 - Animated Overlay Menu and Desktop Shortcut
+1.1.0 - Native Qt Interface and OpenGL Model Viewer

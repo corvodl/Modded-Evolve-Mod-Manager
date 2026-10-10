@@ -143,7 +143,6 @@ class QtMigrationTests(unittest.TestCase):
             'Export PNG','Import DDS','Import PNG','Export Native Model',
             'Import Same-Layout Model','Find Model Textures',
             'Choose Texture Folder','Open GPU Viewer',
-            'Advanced compatibility editor',
         ):
             self.assertIn(expected,button_labels)
         editor.load('Game/settings.txt')
@@ -170,13 +169,13 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIn("glTexImage2D", code)
         self.assertNotIn("tkinter", code)
 
-    def test_advanced_bridge_is_explicit_and_separate_from_qt(self):
-        source = Path(__file__).with_name('qt_legacy_editor_bridge.py').read_text('utf-8')
-        self.assertIn('WorkspaceEditor(manager, ws, archive_map=mapping)',source)
-        self.assertIn('LooseFileEditor(app, args.game',source)
-        self.assertIn('editor.window.winfo_exists()',source)
-        self.assertIn('EvolveModLegacyEditor.exe',
-            Path(__file__).with_name('qt_manager.py').read_text('utf-8'))
+    def test_native_qt_editor_does_not_launch_tk_compatibility_ui(self):
+        manager = Path(__file__).with_name('qt_manager.py').read_text('utf-8')
+        editor = Path(__file__).with_name('qt_workspace_editor.py').read_text('utf-8')
+        self.assertNotIn('EvolveModLegacyEditor.exe', manager)
+        self.assertNotIn('qt_legacy_editor_bridge', manager)
+        self.assertNotIn('Advanced compatibility editor', editor)
+        self.assertIn('Open GPU Viewer', editor)
 
     def test_preview_never_packages_keys_or_claims_stable_main(self):
         src = self.base/'EvolveModManagerQt'

@@ -1089,46 +1089,11 @@ class QtManager(QMainWindow):
                         editor.activateWindow()
                         return
                 editor = QtWorkspaceEditor(
-                    self, ws, archive_map=self._editor_collection(),
-                    advanced=self.open_advanced_editor)
+                    self, ws, archive_map=self._editor_collection())
             editor.setAttribute(Qt.WA_DeleteOnClose, False)
             self.editors.append(editor)
             editor.show()
             editor.raise_()
-        except Exception as exc:
-            self.failure(exc)
-
-    def open_advanced_editor(self):
-        # Full GPU model preview and experimental CryEngine features remain
-        # accessible via an isolated compatibility process until native Qt
-        # editor feature tests cover them.
-        try:
-            if self.busy:
-                raise RuntimeError('Wait until current operation finishes.')
-            loose = next((name[11:] for name in self.selected_archives()
-                          if name.startswith('loose-file:')), None)
-            frozen = getattr(sys, 'frozen', False)
-            if frozen:
-                editor_exe = APP_HOME / 'EvolveModLegacyEditor.exe'
-                if not editor_exe.is_file():
-                    raise FileNotFoundError('Qt preview is missing EvolveModLegacyEditor.exe.')
-                args = [str(editor_exe)]
-            else:
-                args = [sys.executable, str(ROOT/'qt_legacy_editor_bridge.py')]
-            if loose:
-                game = self.game_root or self._find_game_root()
-                if not game:
-                    raise ValueError('Installed game folder not known.')
-                args += ['--loose-file', loose, '--game', str(game),
-                         '--projects', self.projects_path]
-            else:
-                ws = self._workspace()
-                args += ['--workspace', str(ws), '--stage', self.stage_path,
-                         '--projects', self.projects_path]
-                if self.batch_root:
-                    args += ['--batch-root', self.batch_root]
-            self._log('Opening advanced editor with compatibility bridge.')
-            subprocess.Popen(args, cwd=str(APP_HOME if frozen else ROOT))
         except Exception as exc:
             self.failure(exc)
 

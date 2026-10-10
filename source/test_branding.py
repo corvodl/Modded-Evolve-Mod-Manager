@@ -43,13 +43,16 @@ class BrandingTests(unittest.TestCase):
 
     def test_branded_gui_and_worker(self):
         spec = (ROOT / 'EvolveModManager.spec').read_text(encoding='utf-8')
-        self.assertEqual(spec.count("icon=str(root/'assets'/'hunt.ico')"), 2)
-        gui = (ROOT / 'pak_manager_gui.py').read_text(encoding='utf-8')
-        self.assertIn("ROOT/'assets'/'hunt.png'", gui)
-        self.assertIn("image=self.header_icon", gui)
+        gui = (ROOT / 'qt_manager.py').read_text(encoding='utf-8')
+        self.assertIn("icon=str(root/'assets'/'hunt.ico')", spec)
+        self.assertIn("'EvolveModManager'", spec)
+        self.assertIn("'EvolveModWorker'", spec)
+        self.assertIn("ROOT / 'assets' / 'hunt.png'", gui)
+        self.assertIn("ROOT / 'assets' / 'hunt.ico'", gui)
         self.assertIn("app_version()", gui)
-        self.assertIn("datas += [(str(root/'VERSION.txt'), '.')]", spec)
-        self.assertIn('SetCurrentProcessExplicitAppUserModelID', gui)
+        self.assertIn("str(root/'VERSION.txt')", spec)
+        self.assertIn("QPropertyAnimation", gui)
+        self.assertIn("report_startup_ready(APP_HOME)", gui)
 
     def test_no_player_text_editor(self):
         gui = (ROOT / 'pak_manager_gui.py').read_text(encoding='utf-8')
