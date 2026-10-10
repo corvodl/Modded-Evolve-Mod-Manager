@@ -1,4 +1,4 @@
-EVOLVE MOD MANAGER v1.0.1 - PORTABLE APP
+EVOLVE MOD MANAGER v1.0.2 - PORTABLE APP
 ==========================================
 Build with Build-Windows-EXE.cmd, then share dist\EvolveModManager-Windows.zip.
 Each recipient extracts the whole folder and opens EvolveModManager.exe.
@@ -255,3 +255,12 @@ whether to install immediately when an update is available.
 Existing initialized Main builds still check for updates on startup.
 The tabs, spacing, fonts and archive table have been refreshed; Instructions
 now uses a scrollable card layout on smaller displays. Footer shows v1.0.1.
+
+VISUAL UPDATE v1.0.2
+--------------------
+The user's supplied icon is the black claw/sword mark on a red background.
+Both the header PNG and taskbar/Windows EXE icon use this artwork without blue.
+The build regenerates 16/32/48/256 ICO frames from the tracked hunt.png.
+Native Tk notebook tabs and action buttons have antialiased rounded capsules,
+and onboarding/Play & Restore/Credits use rounded charcoal panels.
+The established offline modding, safe PAK handling and recovery behavior is unchanged.

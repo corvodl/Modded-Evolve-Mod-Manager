@@ -28,6 +28,27 @@ class ModernThemeTests(unittest.TestCase):
         self.assertEqual(style.lookup('Brand.TLabel', 'foreground'), '#fa4557')
         self.assertEqual(style.lookup('Accent.TButton', 'foreground'), '#ffffff')
         self.assertNotEqual(style.lookup('Quiet.TButton', 'background'), '#ffffff')
+        # Image-backed Tk/ttk surfaces are truly rounded, not merely recolored.
+        self.assertEqual(style.layout('TNotebook.Tab')[0][0], 'RoundedTabSurface')
+        self.assertEqual(style.layout('Accent.TButton')[0][0], 'AccentPill')
+        self.assertEqual(style.layout('Quiet.TButton')[0][0], 'QuietPill')
+
+    def test_rounded_card_reflows_and_has_real_ttk_content(self):
+        from modern_surfaces import RoundedPanel
+        card = RoundedPanel(self.root, padding=(18, 14), radius=17)
+        card.pack(fill='x', padx=20)
+        ttk.Label(card.content, text='Prepare an Evolve mod',
+                  style='GuideStep.TLabel').pack(anchor='w')
+        ttk.Label(card.content, text='Select an archive and then edit it.',
+                  style='GuideBody.TLabel').pack(anchor='w')
+        self.root.update()
+        self.assertGreater(card.winfo_height(), 45)
+        self.assertGreater(card.winfo_width(), 400)
+        self.assertEqual(card.itemcget(card._shape, 'fill'), '#18181e')
+        self.root.geometry('760x700')
+        self.root.update()
+        self.assertGreater(card.winfo_height(), 45)
+        self.assertGreater(card.content.winfo_width(), 150)
 
     def test_help_is_on_demand_and_sections_are_navigable(self):
         popup = open_help_window(self.root, 'Info', [('Edit', 'Steps'), ('Play', 'Restore')], selected=1)

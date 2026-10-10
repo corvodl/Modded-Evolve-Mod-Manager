@@ -1,8 +1,9 @@
 """High-contrast black/charcoal UI with restrained Evolve-red accents."""
 from tkinter import ttk
+from PIL import Image, ImageDraw, ImageTk
 
 BG = '#0b0b0d'
-CARD = '#18181c'
+CARD = '#18181e'
 FIELD = '#101013'
 TEXT = '#f2f2f4'
 MUTED = '#a9a9b3'
@@ -39,7 +40,7 @@ def apply_theme(root):
     style.configure('GuideBody.TLabel', background=CARD, foreground='#c5c4cd',
                     font=('Segoe UI', 10))
     style.configure('CardMuted.TLabel', background=CARD, foreground=MUTED, font=('Segoe UI', 10))
-    style.configure('Brand.TLabel', background=BG, foreground='#fa4557', font=('Segoe UI Semibold', 19, 'bold'))
+    style.configure('Brand.TLabel', background=BG, foreground='#fa4557', font=('Segoe UI Semibold', 18, 'bold'))
     style.configure('Section.TLabel', background=BG, foreground=TEXT, font=('Segoe UI Semibold', 15, 'bold'))
     style.configure('Muted.TLabel', background=BG, foreground=MUTED)
     style.configure('Status.TLabel', background=BG, foreground=TEXT, font=('Segoe UI', 9))
@@ -93,3 +94,52 @@ def apply_theme(root):
               foreground=[('active', '#ffffff')])
     style.configure('Vertical.TScrollbar', background='#393940', arrowcolor=TEXT)
     style.configure('TSeparator', background='#472630')
+
+    # iOS-inspired capsules (built from bundled Pillow, not system theme APIs).
+    # Image-backed ttk elements provide genuine antialiased rounded corners
+    # even under the Windows clam theme; their text/commands stay native ttk.
+    images = []
+    def surface(color, width=48, height=42, radius=17):
+        im = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        ImageDraw.Draw(im).rounded_rectangle(
+            (0, 0, width-1, height-1), radius=radius, fill=color)
+        photo = ImageTk.PhotoImage(im, master=root)
+        images.append(photo)
+        return photo
+
+    for name, normal, hover, pressed, disabled in (
+        ('SoftPill', '#28262d', '#36313a', '#211c23', '#232229'),
+        ('QuietPill', '#222128', '#343039', '#1b1a20', '#202026'),
+        ('AccentPill', '#bc3345', '#d64758', '#942436', '#52232b'),
+    ):
+        style.element_create(
+            name, 'image', surface(normal),
+            ('disabled', surface(disabled)),
+            ('pressed', surface(pressed)),
+            ('active', surface(hover)),
+            border=(17, 17, 17, 17), sticky='nsew')
+        style.layout(
+            {'SoftPill': 'TButton', 'QuietPill': 'Quiet.TButton',
+             'AccentPill': 'Accent.TButton'}[name],
+            [(name, {'sticky': 'nswe', 'children': [
+                ('Button.padding', {'sticky': 'nswe', 'children': [
+                    ('Button.label', {'sticky': 'nswe'})]})]})])
+    # Keep the existing red-on-dark navigation, but turn the active tab into a
+    # smooth pill and use muted charcoal for inactive states.
+    style.element_create(
+        'RoundedTabSurface', 'image', surface('#1d1c22', radius=18),
+        ('selected', surface('#ad2d40', radius=18)),
+        ('active', surface('#30242c', radius=18)),
+        border=(18, 17, 18, 17), sticky='nsew')
+    style.layout('TNotebook.Tab', [
+        ('RoundedTabSurface', {'sticky': 'nswe', 'children': [
+            ('Notebook.padding', {'sticky': 'nswe', 'children': [
+                ('Notebook.focus', {'sticky': 'nswe', 'children': [
+                    ('Notebook.label', {'sticky': ''})]})]})]})])
+    style.configure('TNotebook.Tab', padding=(20, 12))
+    style.configure('Accent.TButton', padding=(16, 11))
+    style.configure('Quiet.TButton', padding=(13, 10))
+    style.configure('TButton', padding=(14, 10))
+    # Prevent PhotoImage garbage collection before Tk destroys the root.
+    root._evolve_style_images = images
+

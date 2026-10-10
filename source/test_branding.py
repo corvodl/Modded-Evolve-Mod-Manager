@@ -4,6 +4,7 @@ import struct
 import tempfile
 import unittest
 import zipfile
+from PIL import Image
 from publish_release import publish
 
 ROOT = Path(__file__).resolve().parent
@@ -22,6 +23,23 @@ class BrandingTests(unittest.TestCase):
             self.assertEqual(width, height)
             sizes.add(width or 256)
         self.assertTrue({16, 32, 48, 256}.issubset(sizes), sizes)
+
+    def test_supplied_black_red_mark_has_no_blue_branding(self):
+        png = ROOT / 'assets' / 'hunt.png'
+        with Image.open(png) as image:
+            rgba = image.convert('RGB')
+            background = rgba.getpixel((5, 5))
+            dark = rgba.getpixel((115, 115))
+            self.assertGreater(background[0], 175)
+            self.assertLess(background[1], 90)
+            self.assertLess(background[2], 90)
+            # This is the supplied black-on-red icon, not the old blue variant.
+            self.assertLess(dark[0] + dark[1] + dark[2], 200)
+        with Image.open(ROOT / 'assets' / 'hunt.ico') as ico:
+            self.assertTrue({(16, 16), (32, 32), (48, 48), (256, 256)}
+                            .issubset(ico.ico.sizes()))
+            square = ico.ico.getimage((256, 256)).convert('RGB')
+            self.assertGreater(square.getpixel((5, 5))[0], 175)
 
     def test_branded_gui_and_worker(self):
         spec = (ROOT / 'EvolveModManager.spec').read_text(encoding='utf-8')

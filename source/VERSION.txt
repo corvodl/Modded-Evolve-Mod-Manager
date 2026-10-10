@@ -1,1 +1,1 @@
-1.0.1 - Streamlined Onboarding and Modern UI
+1.0.2 - Red/Black Icon and iOS-Inspired Interface

@@ -16,6 +16,7 @@ import threading
 import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from PIL import Image, ImageDraw, ImageTk
 
 from launch_integration import (
     add_missing_scripts, launcher_commands, missing_scripts,
@@ -24,6 +25,7 @@ from launch_integration import (
 from universal_stage import allowed_paks
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
 from dark_theme import apply_theme
+from modern_surfaces import RoundedPanel
 from ui_help import open_help_window
 from version_info import app_version
 from app_updater import discover as discover_update, download_and_prepare, launch_apply, installed_commit, report_startup_ready
@@ -304,13 +306,17 @@ class Manager:
         brand.pack(side='left', fill='x', expand=True)
         brand_line = ttk.Frame(brand)
         brand_line.pack(anchor='w')
-        # Native Tk image handling keeps the icon bundled and DPI independent.
+        # Clip the supplied red-and-black icon into a small rounded square,
+        # matching the updated app resource while preserving its mark.
         try:
-            icon = tk.PhotoImage(file=str(ROOT/'assets'/'hunt.png'))
-            ratio = max(1, (max(icon.width(), icon.height()) + 35) // 36)
-            self.header_icon = icon.subsample(ratio, ratio) if ratio > 1 else icon
-            ttk.Label(brand_line, image=self.header_icon).pack(side='left', padx=(0, 10))
-        except (tk.TclError, OSError):
+            with Image.open(ROOT/'assets'/'hunt.png') as asset:
+                icon = asset.convert('RGBA').resize((36, 36), Image.Resampling.LANCZOS)
+            mask = Image.new('L', icon.size)
+            ImageDraw.Draw(mask).rounded_rectangle((0, 0, 35, 35), radius=9, fill=255)
+            icon.putalpha(mask)
+            self.header_icon = ImageTk.PhotoImage(icon, master=root)
+            ttk.Label(brand_line, image=self.header_icon).pack(side='left', padx=(0, 11))
+        except (OSError, ValueError, tk.TclError):
             self.header_icon = None
         ttk.Label(brand_line, text=self.t('header'), style='Brand.TLabel').pack(side='left')
         # Set Up Manager lives only on Instructions and Settings.
@@ -399,8 +405,9 @@ class Manager:
                   style='Muted.TLabel', wraplength=800,
                   justify='left').pack(anchor='w', pady=(0, 17))
 
-        required = ttk.Frame(body, style='Card.TFrame', padding=(20, 17))
-        required.pack(fill='x', pady=(0, 15))
+        required_surface = RoundedPanel(body, padding=(19, 16), radius=18)
+        required_surface.pack(fill='x', pady=(0, 15))
+        required = required_surface.content
         ttk.Label(required, text=self.t('instructions_required_title'),
                   style='GuideKicker.TLabel').pack(anchor='w', pady=(0, 8))
         ttk.Label(required, text=self.t('instructions_required_body'),
@@ -423,8 +430,9 @@ class Manager:
                 ('instructions_step_mod', 'instructions_step_mod_body'),
                 ('instructions_step_play', 'instructions_step_play_body'),
                 ('instructions_step_restore', 'instructions_step_restore_body')):
-            step = ttk.Frame(body, style='Card.TFrame', padding=(17, 12))
-            step.pack(fill='x', pady=(0, 8))
+            step_surface = RoundedPanel(body, padding=(18, 11), radius=16)
+            step_surface.pack(fill='x', pady=(0, 9))
+            step = step_surface.content
             ttk.Label(step, text=self.t(title_key),
                       style='GuideStep.TLabel').pack(anchor='w', pady=(0, 5))
             ttk.Label(step, text=self.t(body_key),
@@ -454,8 +462,9 @@ class Manager:
         github = 'https://github.com/corvodl/Modded-Evolve-Mod-Manager'
         website = 'https://modded-evolve.com/'
         ttk.Label(parent, text=self.t('credits_heading'), style='Section.TLabel').pack(anchor='w', pady=(5, 13))
-        card = ttk.Frame(parent, style='Card.TFrame', padding=20)
-        card.pack(fill='x')
+        credits_surface = RoundedPanel(parent, padding=(19, 17), radius=18)
+        credits_surface.pack(fill='x')
+        card = credits_surface.content
         ttk.Label(card, text=self.t('credits_discord'), style='CardTitle.TLabel').pack(anchor='w')
         ttk.Label(card, text=self.t('credits_author_role'), style='CardMuted.TLabel').pack(anchor='w', pady=(3, 18))
         ttk.Separator(card).pack(fill='x', pady=(0, 15))
@@ -569,8 +578,9 @@ class Manager:
     def draw_play(self, parent):
         ttk.Label(parent, text=self.t('play_title'), style='Section.TLabel').pack(anchor='w', pady=(5, 3))
         ttk.Label(parent, text=self.t('play_hint'), style='Muted.TLabel').pack(anchor='w', pady=(0, 17))
-        panel = ttk.Frame(parent, style='Card.TFrame', padding=17)
-        panel.pack(fill='x')
+        panel_surface = RoundedPanel(parent, padding=(18, 15), radius=18)
+        panel_surface.pack(fill='x')
+        panel = panel_surface.content
         ttk.Label(panel, text=self.t('play_group'), style='CardMuted.TLabel').pack(anchor='w')
         ttk.Label(panel, textvariable=self.launch_state, style='CardTitle.TLabel').pack(anchor='w', pady=(5, 13))
         btns = ttk.Frame(panel, style='Card.TFrame')

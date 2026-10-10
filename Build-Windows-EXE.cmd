@@ -8,6 +8,9 @@ echo Building the portable Evolve Mod Manager...
 echo Build computer needs Python 3.11 x64. The finished app includes Python.
 call source\Setup-Environment.cmd
 if errorlevel 1 goto failed
+rem Always derive the Windows taskbar/EXE icon from the tracked black/red PNG.
+"%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" source\build_brand_icons.py
+if errorlevel 1 goto failed
 set "TEMP=%CD%\.build\temp"
 set "TMP=%CD%\.build\temp"
 pushd source

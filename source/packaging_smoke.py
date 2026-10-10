@@ -8,6 +8,7 @@ import portable_bundle
 import first_run_setup
 import old_prepared
 import workspace_editor
+import modern_surfaces
 import dds_texture
 import dds_png_import
 import dds_streaming
@@ -23,7 +24,7 @@ assert (BUNDLE/"assets"/"hunt.ico").is_file()
 assert (BUNDLE/"assets"/"hunt.png").is_file()
 assert (BUNDLE/"VERSION.txt").is_file()
 from version_info import app_version
-assert app_version() == "v1.0.1"
+assert app_version() == "v1.0.2"
 assert (BUNDLE/"reference"/"RSAKeyData.bin").is_file()
 assert (BUNDLE/"reference"/"inject.dll").is_file()
 assert (BUNDLE/"reference"/"inject.dll").read_bytes()[0x870:0x8fc] == (BUNDLE/"reference"/"RSAKeyData.bin").read_bytes()
@@ -37,6 +38,7 @@ print('Bundled crypto, Twofish, Frida, GPU preview, Pillow DDS and PAK workspace
 # File context-menu helpers must be bundled for all three editor tabs.
 import workspace_file_actions
 assert workspace_file_actions.checked_path
+assert modern_surfaces.RoundedPanel
 
 import app_updater
 assert app_updater.discover and app_updater.download_and_prepare and app_updater.launch_apply
