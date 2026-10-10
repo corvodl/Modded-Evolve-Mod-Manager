@@ -93,6 +93,33 @@ class SnapshotFreeSetupTests(unittest.TestCase):
             self.assertEqual(shim.read_bytes(),before_shim)
             self.assertFalse(Path(str(self.pak)+'.customkey-original').exists())
 
+    def test_initial_preparation_avoids_redundant_third_hash_read(self):
+        report = setup_from_game(self.game, self.client, self.destination, self.seed,
+                                 keep_original_snapshots=False)
+        spec = importlib.util.spec_from_file_location(
+            'fast_prepare_swap', Path(report['swap'])/'controlled_swap.py')
+        worker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(worker)
+        actual_sha = worker.sha
+        hashed_paths = []
+        def traced_hash(path):
+            hashed_paths.append(str(path))
+            return actual_sha(path)
+        with patch.object(worker,'all_closed'), \
+             patch.object(worker,'sha',side_effect=traced_hash):
+            worker.prepare(SimpleNamespace(game_root=self.game,
+                                           stage_dir=Path(report['stage'])))
+        state = worker.require_state()
+        self.assertEqual(state['phase'],'prepared')
+        for item in state['files']:
+            ready = Path(item['ready'])
+            self.assertTrue(ready.is_file())
+            self.assertEqual(item['sha256'], actual_sha(ready))
+            self.assertIn(str(ready)+'.partial', hashed_paths)
+            # Files have already been verified via sha(partial), so hashing
+            # READY again would add another full sequential disk read.
+            self.assertNotIn(str(ready), hashed_paths)
+
     def test_first_time_default_retains_snapshots(self):
         report=setup_from_game(self.game,self.client,self.destination,self.seed)
         self.assertTrue(report['keep_original_snapshots'])

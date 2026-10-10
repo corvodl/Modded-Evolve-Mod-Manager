@@ -167,7 +167,12 @@ def prepare(args):
     for i, item in enumerate(files, 1):
         source = Path(item['source']); ready = Path(item['ready'])
         if ready.exists():
-            if source.stat().st_size != ready.stat().st_size or sha(source) != sha(ready):
+            if source.stat().st_size != ready.stat().st_size:
+                stop(f'Existing prepared file differs from staged source: {ready}')
+            # Both copies are fully rehashed before any existing cache is
+            # trusted. Keep the verified digest; do not read READY a second time.
+            verified_digest = sha(source)
+            if verified_digest != sha(ready):
                 stop(f'Existing prepared file differs from staged source: {ready}')
         else:
             ready.parent.mkdir(parents=True, exist_ok=True)
@@ -179,10 +184,12 @@ def prepare(args):
                 for b in iter(lambda: inp.read(BLOCK), b''):
                     source_digest.update(b); out.write(b)
                 out.flush(); os.fsync(out.fileno())
-            if source_digest.hexdigest() != sha(partial):
+            # Verify bytes from disk, not just the stream used for copying.
+            verified_digest = source_digest.hexdigest()
+            if verified_digest != sha(partial):
                 stop(f'Prepared file hash mismatch: {item["name"]}')
             os.replace(partial, ready)
-        item['sha256'] = sha(ready)
+        item['sha256'] = verified_digest
         item['bytes'] = ready.stat().st_size
         if i % 25 == 0 or i == len(files):print(f'Prepared {i}/{len(files)}')
     # Specific key check: custom shim must contain the staged public key at 0x870

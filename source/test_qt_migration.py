@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QPushButton, QLabel, QTableWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox
 
 from launch_integration import SwapStatus
 from qt_manager import QtManager, SECTIONS, qt_style
@@ -111,6 +111,93 @@ class QtMigrationTests(unittest.TestCase):
         self.assertEqual(self.win.stack.currentIndex(),1)
         self.assertFalse(self.win._drawer_open)
         self.assertEqual(self.win.stack.width(),width)
+
+    def test_settings_sections_are_internal_and_original_menu_is_unchanged(self):
+        self.assertEqual(self.win.settings_sections, (
+            'GENERAL', 'GAME & FILES', 'BACKUPS & RECOVERY',
+            'LAUNCH PREFERENCES', 'UPDATES & ADVANCED'))
+        self.assertEqual(len(self.win.nav_buttons), 5)
+        self.assertEqual(self.win.stack.count(), 5)
+        self.assertEqual([btn.text() for btn in self.win.nav_buttons], list(SECTIONS))
+        dividers = self.win.pages['settings'].findChildren(QFrame, 'settingsDivider')
+        self.assertEqual(len(dividers), 5)
+        section_headings = [
+            label.text() for label in self.win.pages['settings'].findChildren(QLabel)
+            if label.objectName() == 'settingsHeading'
+        ]
+        self.assertEqual(section_headings, list(self.win.settings_sections))
+        buttons = {button.text() for button in
+                   self.win.pages['settings'].findChildren(QPushButton)}
+        for expected in ('Create Desktop Shortcut', 'Set Up Manager',
+                         'Check Setup', 'Open Projects', 'Save Settings',
+                         'Client Verification & Recovery Guide',
+                         'Prepare Mod Files Now', 'Check for Updates',
+                         'Export Complete Manager ZIP',
+                         'Configure Bundled Setup', 'Settings Help'):
+            self.assertIn(expected, buttons)
+
+    def test_ui_preferences_save_and_change_appearance_without_game_changes(self):
+        self.win.density_combo.setCurrentText('Compact')
+        self.win.motion_checkbox.setChecked(True)
+        self.win.snapshots_checkbox.setChecked(False)
+        self.win.activity_checkbox.setChecked(False)
+        self.assertEqual(self.win.settings['ui_density'], 'Compact')
+        self.assertTrue(self.win.settings['reduce_motion'])
+        self.assertFalse(self.win.settings['keep_original_snapshots'])
+        self.assertFalse(self.win.settings['show_activity_on_tasks'])
+        self.assertEqual(self.win.menu_animation.duration(), 0)
+        self.assertIn('padding:5px 10px', self.win.styleSheet())
+        self.win.motion_checkbox.setChecked(False)
+        self.assertEqual(self.win.menu_animation.duration(), 205)
+        self.assertTrue(self.win.motion_checkbox in self.win.pages['settings'].findChildren(QCheckBox))
+
+    def test_prepare_mods_now_never_starts_game_or_swaps_originals(self):
+        ready = SwapStatus('prepared', 'Ready', count=2, ready=2)
+        with patch.object(self.win, 'refresh_swap_status', return_value=ready), \
+             patch.object(self.win, 'info') as info, \
+             patch.object(self.win, 'run_steps') as run:
+            self.win.prepare_mods_now()
+            info.assert_called_once()
+            run.assert_not_called()
+        restored = SwapStatus('restored', 'Needs preparation', count=2, ready=0,
+                              stage=self.win.stage_path)
+        steps = [
+            ('Preparing mod files', ['python', '-u', 'controlled_swap.py', 'prepare']),
+            ('Starting Evolve with Mods', ['python', '-u', 'auto_launch_frida.py']),
+        ]
+        with patch.object(self.win, 'refresh_swap_status', return_value=restored), \
+             patch('qt_manager.launcher_commands', return_value=steps), \
+             patch.object(self.win, 'confirm', return_value=True), \
+             patch.object(self.win, 'run_steps') as run:
+            self.win.prepare_mods_now()
+            run.assert_called_once()
+            args, kwargs = run.call_args
+            self.assertEqual(len(args[0]), 1)
+            self.assertEqual(args[0][0][0], 'Preparing mod files')
+            self.assertEqual(args[1], 'Prepare Mod Files')
+            self.assertNotIn('auto_launch_frida', str(args[0]))
+        missing = SwapStatus('missing', 'Not configured')
+        with patch.object(self.win, 'refresh_swap_status', return_value=missing), \
+             patch.object(self.win, 'failure') as failed, \
+             patch.object(self.win, 'run_steps') as run:
+            self.win.prepare_mods_now()
+            failed.assert_called_once()
+            run.assert_not_called()
+        unsafe = SwapStatus('swapped', 'Mods live')
+        with patch.object(self.win, 'refresh_swap_status', return_value=unsafe), \
+             patch.object(self.win, 'failure') as failed, \
+             patch.object(self.win, 'run_steps') as run:
+            self.win.prepare_mods_now()
+            failed.assert_called_once()
+            run.assert_not_called()
+
+    def test_recovery_disallows_disabling_live_rename_backups(self):
+        settings = self.win.pages['settings']
+        explanations = ' '.join(label.text() for label in settings.findChildren(QLabel))
+        self.assertIn('same-volume renames', explanations)
+        self.assertIn('.customkey-original', explanations)
+        self.assertIn('manual fallback', explanations)
+        self.assertFalse(hasattr(self.win, 'skip_live_backup_checkbox'))
 
     def test_table_search_description_and_original_names(self):
         stage = self.base/'stage'/'paks'/'Game'

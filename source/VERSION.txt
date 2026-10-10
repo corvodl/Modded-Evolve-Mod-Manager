@@ -1,1 +1,1 @@
-1.1.1 - Windows Qt Font and Readable Screenshot Fix
+1.1.2 - Organized Settings and Faster Mod Preparation

@@ -114,6 +114,18 @@ def _card(title, note=''):
     return frame, lay
 
 
+def _settings_heading(layout, title, description):
+    """A divider and heading within Settings, never a new Menu entry."""
+    line = _widget(QFrame, name='settingsDivider')
+    line.setFrameShape(QFrame.HLine)
+    line.setFixedHeight(1)
+    layout.addWidget(line)
+    name = _label(title)
+    name.setObjectName('settingsHeading')
+    layout.addWidget(name)
+    layout.addWidget(_label(description, muted=True))
+
+
 def _scroll_page():
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -132,6 +144,8 @@ def qt_style():
         font-family:'Segoe UI'; font-size:10pt; }
     QFrame#card { background:#17171d; border:1px solid #353139; border-radius:16px; }
     QFrame#drawer { background:#16151b; border-right:1px solid #45323a; }
+    QFrame#settingsDivider { background:#41313a; border:none; min-height:1px; max-height:1px; }
+    QLabel#settingsHeading { color:#f7f4f6; font-size:14pt; font-weight:650; background:transparent; }
     QLabel#muted { color:#a6a3ae; background:transparent; }
     QLabel#normal { color:#f5f3f6; background:transparent; }
     QLabel#cardTitle { color:#ffffff; font-size:12pt; font-weight:650; background:transparent; }
@@ -213,6 +227,12 @@ class QtManager(QMainWindow):
         self.output_pak = self.settings.get('output_pak', '')
         self.batch_root = self.settings.get('batch_root', '')
         self.archive_label = self.settings.get('archive_label', '')
+        self.ui_density = (self.settings.get('ui_density', 'Comfortable')
+                           if self.settings.get('ui_density') in ('Comfortable', 'Compact')
+                           else 'Comfortable')
+        self.reduce_motion = bool(self.settings.get('reduce_motion', False))
+        self.keep_original_snapshots = bool(self.settings.get('keep_original_snapshots', True))
+        self.show_activity_on_tasks = bool(self.settings.get('show_activity_on_tasks', True))
         self.external_pak = ''
         self.game_root = None
         self.archive_entries = []
@@ -301,6 +321,7 @@ class QtManager(QMainWindow):
         self.version_label.setObjectName('version')
         footer.addWidget(self.version_label)
         body.addLayout(footer)
+        self._apply_appearance()
         self._load_batch()
         self.refresh_archives()
         self.refresh_swap_status()
@@ -497,12 +518,40 @@ class QtManager(QMainWindow):
         self.pages['play'] = scroll
 
     def _settings_page(self):
+        # These are sections INSIDE the scrollable Settings page.
+        # The on-demand Menu continues to contain only the five main pages.
         scroll, lay = _scroll_page()
         heading = _label('Settings')
         heading.setObjectName('sectionTitle')
         lay.addWidget(heading)
-        card, inside = _card('FOLDERS', 'Paths are stored inside your local Data/Settings folder. They are not moved when updated.')
-        lay.addWidget(card)
+        lay.addWidget(_label('Customize the manager without changing your game files.', muted=True))
+        self.settings_sections = ()
+
+        _settings_heading(lay, 'GENERAL',
+                          'Appearance, navigation animation, and desktop shortcuts.')
+        general, general_row = _card('APPEARANCE',
+                                     'Use a compact interface for smaller displays or reduce motion.')
+        lay.addWidget(general)
+        density = QHBoxLayout()
+        density.addWidget(_label('Interface density'))
+        self.density_combo = QComboBox()
+        self.density_combo.addItems(('Comfortable', 'Compact'))
+        self.density_combo.setCurrentText(self.ui_density)
+        self.density_combo.currentTextChanged.connect(self._save_ui_preferences)
+        density.addWidget(self.density_combo)
+        density.addStretch()
+        general_row.addLayout(density)
+        self.motion_checkbox = QCheckBox('Reduce menu animation')
+        self.motion_checkbox.setChecked(self.reduce_motion)
+        self.motion_checkbox.toggled.connect(self._save_ui_preferences)
+        general_row.addWidget(self.motion_checkbox)
+        general_row.addWidget(_button('Create Desktop Shortcut', self.create_shortcut))
+
+        _settings_heading(lay, 'GAME & FILES',
+                          'Connected installation, signing stage, projects, and workspace paths.')
+        folders, inside = _card('FOLDERS',
+                                 'Folders are stored in Data/Settings and are preserved during updates.')
+        lay.addWidget(folders)
         self.fields = {}
         for label, name in (('Signing stage', 'stage'), ('Launch/swap folder', 'swap'), ('Projects', 'projects')):
             line = QHBoxLayout()
@@ -511,7 +560,7 @@ class QtManager(QMainWindow):
             inp.setText(getattr(self, name + '_path'))
             self.fields[name] = inp
             line.addWidget(inp, 1)
-            line.addWidget(_button('Browse…', lambda _=False, k=name: self.browse_folder(k)))
+            line.addWidget(_button('Browse…', lambda k=name: self.browse_folder(k)))
             inside.addLayout(line)
         btns = QWidget()
         btns.setLayout(_row(_button('Set Up Manager', self.initial_setup, primary=True),
@@ -519,17 +568,58 @@ class QtManager(QMainWindow):
                              _button('Open Projects', self.open_projects),
                              _button('Save Settings', self.save_settings)))
         inside.addWidget(btns)
-        update_card, update_row = _card('UPDATES', 'Main-channel builds check GitHub for a verified release; installation is optional.')
+
+        _settings_heading(lay, 'BACKUPS & RECOVERY',
+                          'Save disk space safely without sacrificing quick local restoration.')
+        backups, backup_row = _card('ORIGINAL GAME FILES',
+            'The live swap preserves originals using same-volume renames, not extra full-size copies.')
+        lay.addWidget(backups)
+        self.snapshots_checkbox = QCheckBox('Keep permanent original snapshots during setup / refresh')
+        self.snapshots_checkbox.setChecked(self.keep_original_snapshots)
+        self.snapshots_checkbox.toggled.connect(self._save_ui_preferences)
+        backup_row.addWidget(self.snapshots_checkbox)
+        backup_row.addWidget(_label(
+            'Turn off permanent snapshots to save disk space in FUTURE setups and refreshes. '
+            'This does not delete existing snapshots or disable the temporary '
+            '.customkey-original recovery files used during every launch.', muted=True))
+        backup_row.addWidget(_label(
+            'The Modded Evolve client can verify and re-download original files after a '
+            'modded session. Verification is a manual fallback, not proof the swap journal '
+            'was safely restored; do not erase local recovery files while mods are active.',
+            muted=True))
+        backup_row.addWidget(_button('Client Verification & Recovery Guide',
+                                      self.client_recovery_guide))
+
+        _settings_heading(lay, 'LAUNCH PREFERENCES',
+                          'Prepare modifications before pressing Play and monitor launch progress.')
+        launch_card, launch_row = _card('FASTER REPEAT LAUNCHES',
+            'Prepared modified files are automatically recycled on successful Restore. '
+            'Renaming the protected originals is quick; the first large preparation may take time.')
+        lay.addWidget(launch_card)
+        self.preparation_status = _label('Checking prepared file state…', muted=True)
+        launch_row.addWidget(self.preparation_status)
+        launch_row.addWidget(_button('Prepare Mod Files Now', self.prepare_mods_now, primary=True))
+        self.activity_checkbox = QCheckBox('Open Activity automatically while processing tasks')
+        self.activity_checkbox.setChecked(self.show_activity_on_tasks)
+        self.activity_checkbox.toggled.connect(self._save_ui_preferences)
+        launch_row.addWidget(self.activity_checkbox)
+        launch_row.addWidget(_label(
+            'Preparing ahead moves the waiting time to an earlier step; it does not skip '
+            'copying or cryptographic verification. Restoring with Restore Game Files '
+            'recycles verified mod files for the next session.', muted=True))
+
+        _settings_heading(lay, 'UPDATES & ADVANCED',
+                          'Verified stable updates, optional previews, and experienced-user tools.')
+        update_card, update_row = _card('UPDATES',
+            'Automatic checks are stable-only. The manual button may offer a separate '
+            'experimental preview download.')
         lay.addWidget(update_card)
         self.update_status = _label('Updates: not checked', muted=True)
         update_row.addWidget(self.update_status)
         self.update_button = _button('Check for Updates', self.check_updates)
         update_row.addWidget(self.update_button)
-        shortcut_card, shortcut_row = _card('DESKTOP SHORTCUT',
-                                            'Create a Windows shortcut for this portable manager using the matching red-and-black icon.')
-        lay.addWidget(shortcut_card)
-        shortcut_row.addWidget(_button('Create Desktop Shortcut', self.create_shortcut))
-        advanced, advanced_row = _card('ADVANCED OPTIONS', 'All advanced features from the Tk interface remain available here.')
+        advanced, advanced_row = _card('ADVANCED FILE OPTIONS',
+                                       'Unpack filtering, current workspace, and output location.')
         lay.addWidget(advanced)
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText('Optional unpack filter (clear for batch extraction)')
@@ -548,6 +638,77 @@ class QtManager(QMainWindow):
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['settings'] = scroll
+        self.settings_sections = ('GENERAL', 'GAME & FILES',
+                                  'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
+                                  'UPDATES & ADVANCED')
+
+    def _apply_appearance(self):
+        style = qt_style()
+        if self.ui_density == 'Compact':
+            style += """
+            QPushButton { padding:5px 10px; }
+            QPushButton#nav, QPushButton#navActive { padding:6px 10px; }
+            QLineEdit, QComboBox { padding:4px; }
+            QTableWidget::item { padding:3px; }
+            """
+        self.setStyleSheet(style)
+        self.menu_animation.setDuration(0 if self.reduce_motion else 205)
+
+    def _save_ui_preferences(self, *_):
+        self.ui_density = self.density_combo.currentText()
+        self.reduce_motion = self.motion_checkbox.isChecked()
+        self.keep_original_snapshots = self.snapshots_checkbox.isChecked()
+        self.show_activity_on_tasks = self.activity_checkbox.isChecked()
+        self._apply_appearance()
+        try:
+            self.persist()
+        except OSError as exc:
+            self._log('Could not save preferences: ' + str(exc))
+
+    def client_recovery_guide(self):
+        self.info('Client verification and recovery',
+            'After playing with mods, close Evolve and the Modded Evolve client.\n\n'
+            'Recommended: click Restore Game Files first. The local .customkey-original '
+            'files are only renamed back, and the modded files can be reused.\n\n'
+            'If restoration fails or installed files were damaged, use the client’s '
+            'verify/repair feature to redownload any changed game files. '
+            'The client may need significant bandwidth and time.\n\n'
+            'Verification does not automatically clear the manager’s swap journal. '
+            'Resolve any remaining backups or interrupted-swap state before '
+            'launching again. Never delete those recovery files blindly.')
+
+    def prepare_mods_now(self):
+        """Run only the existing verified preparation, never launch or swap."""
+        try:
+            if self.busy:
+                raise RuntimeError('Another manager operation is running.')
+            st = self.refresh_swap_status()
+            if st.phase == 'prepared':
+                self.info('Mods already prepared',
+                          'Verified prepared files are ready. Play With Mods can skip copying them.')
+                return
+            if st.phase == 'missing':
+                raise RuntimeError(
+                    'Set Up Manager first so the exact installed EvolveGame folder is known. '
+                    'Do not prepare files using an unconfigured default game path.')
+            if st.phase != 'restored':
+                raise RuntimeError(
+                    'Restore Original Game Files before preparing another modded session.')
+            if st.stage and Path(st.stage).resolve() != Path(self.stage_path).resolve():
+                raise ValueError('The swap journal belongs to a different signing stage.')
+            commands = launcher_commands(Path(self.swap_path), Path(self.stage_path), st.phase)
+            prepare = [step for step in commands if step[0] == 'Preparing mod files']
+            if len(prepare) != 1:
+                raise RuntimeError('The launcher has no valid preparation step.')
+            if not self.confirm('Prepare modified PAKs now?',
+                'This copies and verifies the signed modified files ahead of time. '
+                'The first preparation may take a while and require disk space. '
+                'Installed original game files remain untouched. Continue?'):
+                return
+            self.run_steps(prepare, 'Prepare Mod Files', self.refresh_swap_status,
+                           cwd=Path(self.swap_path))
+        except Exception as exc:
+            self.failure(exc)
 
     def _credits_page(self):
         scroll, lay = _scroll_page()
@@ -619,10 +780,16 @@ class QtManager(QMainWindow):
         yes = box.addButton('Keep full original snapshots', QMessageBox.YesRole)
         no = box.addButton('Space-saving mode', QMessageBox.NoRole)
         box.addButton(QMessageBox.Cancel)
+        # Preference determines the default, but this remains an explicit
+        # per-operation confirmation to avoid accidental destructive choices.
+        preferred = (yes if self.keep_original_snapshots else no)
+        box.setDefaultButton(preferred)
         box.exec()
         if box.clickedButton() == yes:
+            self.snapshots_checkbox.setChecked(True)
             return True
         if box.clickedButton() == no:
+            self.snapshots_checkbox.setChecked(False)
             return False
         return None
 
@@ -661,7 +828,7 @@ class QtManager(QMainWindow):
         self._steps = list(steps)
         self._task_label = label
         self._task_cwd = Path(cwd or ROOT)
-        if self._log_dialog is None:
+        if self.show_activity_on_tasks and self._log_dialog is None:
             self.toggle_activity()
         self._run_next_step()
 
@@ -725,6 +892,10 @@ class QtManager(QMainWindow):
             'output_pak': self.output_pak,
             'archive_label': self.archive_label,
             'batch_root': self.batch_root,
+            'ui_density': self.ui_density,
+            'reduce_motion': self.reduce_motion,
+            'keep_original_snapshots': self.keep_original_snapshots,
+            'show_activity_on_tasks': self.show_activity_on_tasks,
         })
         save_settings(self.settings)
 
@@ -1237,6 +1408,20 @@ class QtManager(QMainWindow):
             'unsafe':'Unsafe state — inspect and restore originals.',
         }
         self.launch_status.setText(labels.get(st.phase, labels['unsafe']))
+        if hasattr(self, 'preparation_status'):
+            if st.phase == 'prepared':
+                self.preparation_status.setText(
+                    f'Ready for fast launch: {st.ready}/{st.count} prepared files are cached.')
+            elif st.phase == 'restored':
+                self.preparation_status.setText(
+                    f'{st.ready}/{st.count} prepared files available. '
+                    'Prepare ahead if files need rebuilding.')
+            elif st.phase == 'missing':
+                self.preparation_status.setText(
+                    'Not prepared yet. Complete setup before the first launch.')
+            else:
+                self.preparation_status.setText(
+                    'Restore or resolve the active swap before preparing more files.')
         return st
 
     def status_details(self):

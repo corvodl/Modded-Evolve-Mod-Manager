@@ -3,7 +3,7 @@ name: Verify Qt production candidate (no publication)
 on:
   workflow_dispatch:
   push:
-    branches: [qt-migration, fix-qt-font-glyphs]
+    branches: [qt-migration, fix-qt-font-glyphs, settings-sections-fast-launch]
 
 permissions:
   contents: read

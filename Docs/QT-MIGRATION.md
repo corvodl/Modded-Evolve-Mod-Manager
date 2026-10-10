@@ -44,3 +44,20 @@ Qt GUI controls and editor saves are covered by automated parity smoke tests.
 Backend tests are retained unchanged. Native OpenGL requires a working graphics
 driver and needs additional real-game device testing. No UI rewrite can
 guarantee gameplay or Evolve network compatibility.
+
+## Settings layout and launch preparation (v1.1.2)
+
+All settings categories are visible **within Settings**, separated by thin rules;
+the five-entry main Menu is unchanged. General includes density and reduced-motion
+preferences. Game & Files contains paths/setup. Backups & Recovery exposes a
+preference for optional permanent snapshots and explains that same-volume live
+swap rename backups remain mandatory. Launch Preferences offers a one-click
+**Prepare Mod Files Now** action, allowing a large preparation to finish before
+users press Play. Updates & Advanced preserves the updater, filters, and exports.
+
+Initial preparation still copies and verifies modified PAKs on the same drive.
+A newly copied PAK's verified SHA-256 is reused rather than unnecessarily
+re-reading the entire file after its disk verification. Existing prepared
+files are checked against their signed sources, and the normal Restore command
+recycles verified modified files for later fast launches. Avoid deleting
+`.customkey-original` files during a live or interrupted session.

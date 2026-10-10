@@ -1,10 +1,19 @@
-# Evolve Stage 2 Mod Manager — v1.1.1
+# Evolve Stage 2 Mod Manager — v1.1.2
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.1 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.2 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.2
+
+- **Settings grouped inside its own page:** General, Game & Files, Backups & Recovery, Launch Preferences and Updates & Advanced appear as separated sections of the existing scrollable Settings page. The Menu still has only the original five main pages.
+- **Functional customization:** Switch between Comfortable and Compact UI density, reduce the sliding menu animation, and choose whether Activity opens automatically during operations. All settings persist in Data/Settings.
+- **Clearly labeled snapshot preference:** Keep or omit optional *permanent* original-file snapshots on new setups and refreshes. The manager still protects installed originals using lightweight same-volume `.customkey-original` renames during modded launches; those recovery files cannot be disabled by the Settings option.
+- **Prepare mod files ahead of Play:** A one-click action in Settings performs only the existing verified preparation step. It never starts Evolve or swaps the installed originals and is blocked when an active/interrupted session requires restoration.
+- **Less redundant first-prep disk work:** After verifying a copied `.partial` file against the source hash, the swap preparer reuses that verified digest instead of reading the newly prepared PAK once more. Existing cached files are still fully checked. Normal Restore already recycles verified mod files for subsequent launches.
+- **Client repair guidance:** Settings explains how to use client verification as a manual fallback without misrepresenting it as proof of restored originals.
 
 ## What's new in v1.1.1
 
