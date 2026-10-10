@@ -1,5 +1,7 @@
 # Evolve Stage 2 Mod Manager
 
+> **Required: install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/) before using this manager.** Use the Modded Evolve client installer and download the game through that client. The Mod Manager does not provide game files; Steam/Legacy installations are not a substitute.
+
 A Windows modding tool for **Evolve Stage 2** that helps you unpack game PAK archives, edit supported files, build mods, and test them with the Modded Evolve client—without having to run the individual tools yourself.
 
 The manager has three main areas: **Make a Mod**, **Play & Restore**, and **Settings**. It prepares its own working PAKs from **your installed game**, so the normal application download does **not** include Evolve or its game files.
