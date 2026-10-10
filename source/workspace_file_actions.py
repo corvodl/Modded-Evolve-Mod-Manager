@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+import uuid
 
 
 def sha_file(path):
@@ -42,7 +43,7 @@ def checked_path(workspace, relative, *, directory=False):
 
 def backup_path(workspace, relative):
     backup_root = (Path(workspace) / 'EditorBackups').resolve()
-    stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '-' + uuid.uuid4().hex
     target = (backup_root / stamp / relative).resolve()
     if not target.is_relative_to(backup_root):
         raise ValueError('Unsafe backup destination.')

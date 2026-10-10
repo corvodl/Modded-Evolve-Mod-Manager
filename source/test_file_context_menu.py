@@ -41,6 +41,22 @@ class AtomicWorkspaceFileTests(unittest.TestCase):
         self.assertEqual(len(list((self.workspace/'EditorBackups').rglob('config.bin'))), 2)
         self.assertFalse(restore_extracted_original(self.workspace, 'misc/config.bin', self.original_hash, self.original_hash))
 
+    def test_backups_never_collide_with_same_windows_clock_tick(self):
+        from workspace_file_actions import backup_path
+        from workspace_editor import save_text, digest
+        with patch('workspace_file_actions.datetime') as clock:
+            clock.now.return_value.strftime.return_value = '20261010_030535_750505'
+            self.assertNotEqual(backup_path(self.workspace, 'misc/config.bin'),
+                                backup_path(self.workspace, 'misc/config.bin'))
+        text_target = self.root / 'misc/config.txt'
+        text_target.write_bytes(b'original')
+        with patch('workspace_editor.datetime') as clock:
+            clock.now.return_value.strftime.return_value = '20261010_030535_750505'
+            save_text(self.workspace, 'misc/config.txt', 'one', digest(b'original'), b'original')
+            save_text(self.workspace, 'misc/config.txt', 'two', digest(b'one'), b'one')
+        self.assertEqual(text_target.read_bytes(), b'two')
+        self.assertEqual(len(list((self.workspace/'EditorBackups').rglob('config.txt'))), 2)
+
     def test_restore_requires_exact_original_sha(self):
         replace_raw_file(self.workspace, 'misc/config.bin', self.candidate, self.original_hash)
         with self.assertRaisesRegex(ValueError, 'Original bytes are not'):

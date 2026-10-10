@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import uuid
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from evolve_gameplay_editor import parse_cryxml_text
@@ -54,7 +55,7 @@ def save_text(workspace, relative, text, expected_hash, original, cryxml=False):
     if cryxml or path.suffix.lower() == '.xml':
         validate_xml(data, original if cryxml else None)
     if data == current: return data
-    backup = Path(workspace)/'EditorBackups'/datetime.now().strftime('%Y%m%d_%H%M%S_%f')/relative
+    backup = Path(workspace)/'EditorBackups'/(datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '-' + uuid.uuid4().hex)/relative
     backup.parent.mkdir(parents=True, exist_ok=True)
     with backup.open('xb') as stream: stream.write(current)
     fd, temporary = tempfile.mkstemp(prefix=path.name+'.edit-', dir=path.parent)
