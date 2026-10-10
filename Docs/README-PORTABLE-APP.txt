@@ -163,7 +163,7 @@ GPU model viewer (experimental, Windows):
   and some older GPUs may not have a usable accelerated OpenGL context.
 - Rendering is read-only. It is approximate diffuse shading, not CryEngine shader parity.
 
-File context menus (v2.9.14):
+File context menus (v2.9.15):
 - Right-click a file in Files/Text, Images/Textures or Models to see actions for that file.
 - Text/XML: Import/Replace File, Save, Export File and Windows Explorer commands.
   CryXML still prohibits structural edits. The original extracted file is backed up.
@@ -177,3 +177,5 @@ File context menus (v2.9.14):
 - Replace unknown binary files only after explicit confirmation; game compatibility
   remains unverified. No action writes to the installed EvolveGame directory.
 - The context menu also works with Shift+F10 for selected files/folders.
+
+UI: Help (?) contains detailed instructions; Activity shows full logs. The main tabs use compact controls.

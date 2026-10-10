@@ -18,6 +18,7 @@ from model_asset import is_model, inspect_model, export_model, replace_model
 from model_preview import ModelPreview, find_preview_mesh
 from multi_pak_assets import model_material_links
 from dds_png_import import encode_png_as_dds, compression_for_dds
+from ui_help import open_help_window
 from workspace_file_actions import (checked_path, sha_file, replace_raw_file,
                                     extracted_original_backup, restore_extracted_original)
 
@@ -122,20 +123,22 @@ class WorkspaceEditor:
         self._changing_tab = False
         self.window = tk.Toplevel(manager.window)
         self.window.title(manager.t('editor_title'))
-        self.window.geometry('1140x740'); self.window.minsize(800, 540)
+        self.window.geometry('1180x760'); self.window.minsize(820, 560)
         self.window.protocol('WM_DELETE_WINDOW', self.close)
         self.query = tk.StringVar()
-        bar = ttk.Frame(self.window, padding=8); bar.pack(fill='x')
-        ttk.Label(bar, text=manager.t('editor_search')).pack(side='left')
-        ttk.Entry(bar, textvariable=self.query, width=44).pack(side='left', padx=8, fill='x', expand=True)
-        ttk.Button(bar, text=manager.t('editor_open_folder'), command=self.explore).pack(side='left', padx=(0, 6))
-        ttk.Button(bar, text=manager.t('editor_reload'), command=self.reload).pack(side='left')
+        self.window.configure(background='#0b0b0d')
+        bar = ttk.Frame(self.window, padding=(14, 12)); bar.pack(fill='x')
+        ttk.Label(bar, text=manager.t('editor_search'), style='Muted.TLabel').pack(side='left')
+        ttk.Entry(bar, textvariable=self.query, width=44).pack(side='left', padx=10, fill='x', expand=True)
+        ttk.Button(bar, text=manager.t('editor_open_folder'), style='Quiet.TButton', command=self.explore).pack(side='left', padx=(0, 6))
+        ttk.Button(bar, text=manager.t('editor_reload'), style='Quiet.TButton', command=self.reload).pack(side='left', padx=(0, 6))
+        ttk.Button(bar, text=manager.t('editor_help_button'), style='Quiet.TButton', command=self.show_help).pack(side='left')
 
         # Show every unpacked PAK in the SAME editor popup; clicking one changes
         # the file trees below without mixing or overwriting archive entries.
         self.archive_list = None
         if len(self.archive_map) > 1:
-            archives = ttk.LabelFrame(self.window, text=manager.t('editor_archive_selector'), padding=(8, 5))
+            archives = ttk.LabelFrame(self.window, text=manager.t('editor_archive_selector'), padding=(10, 6))
             archives.pack(fill='x', padx=8, pady=(0, 5))
             self.archive_list = tk.Listbox(archives, height=min(5, len(self.archive_map)),
                                            exportselection=False, selectmode='browse',
@@ -168,7 +171,7 @@ class WorkspaceEditor:
             tools.pack(fill='x', pady=(0, 7))
             if tab == 'files':
                 ttk.Button(tools, text=manager.t('editor_save'), command=self.save).pack(side='left')
-                ttk.Label(tools, text=manager.t('editor_files_help')).pack(side='left', padx=10)
+
             elif tab == 'images':
                 self.export_button = ttk.Button(tools, text=manager.t('texture_export'), command=self.export_texture)
                 self.export_button.pack(side='left', padx=(0, 6))
@@ -176,7 +179,7 @@ class WorkspaceEditor:
                 self.import_png_button.pack(side='left', padx=(0, 6))
                 self.import_button = ttk.Button(tools, text=manager.t('texture_import'), command=self.import_texture)
                 self.import_button.pack(side='left', padx=(0, 6))
-                ttk.Label(tools, text=manager.t('editor_images_help')).pack(side='left', padx=8)
+
             else:
                 self.model_export_button = ttk.Button(tools, text=manager.t('model_export'), command=self.export_model)
                 self.model_export_button.pack(side='left', padx=(0, 6))
@@ -184,7 +187,7 @@ class WorkspaceEditor:
                 self.model_import_button.pack(side='left', padx=(0, 6))
                 ttk.Button(tools, text='Find Model Textures', command=self.show_model_textures).pack(side='left', padx=(0, 6))
                 ttk.Button(tools, text='Choose Texture Folder', command=self.choose_texture_folder).pack(side='left', padx=(0, 6))
-                ttk.Label(tools, text=manager.t('editor_models_help')).pack(side='left', padx=8)
+
 
             pane = ttk.Panedwindow(page, orient='horizontal')
             pane.pack(fill='both', expand=True)
@@ -230,14 +233,23 @@ class WorkspaceEditor:
                 self.viewers[tab] = self.model_label
 
         self.info = tk.StringVar(value=manager.t('editor_hint'))
-        ttk.Label(self.window, textvariable=self.info, wraplength=1080, padding=8).pack(fill='x')
-        ttk.Label(self.window, text=manager.t('editor_footer'), padding=(8, 0, 8, 8)).pack(fill='x')
+        ttk.Label(self.window, textvariable=self.info, wraplength=1080, padding=(12, 8), style='Muted.TLabel').pack(fill='x')
+        ttk.Label(self.window, text=manager.t('editor_footer'), padding=(12, 0, 12, 10), style='Muted.TLabel').pack(fill='x')
         self.query.trace_add('write', lambda *_: self.populate())
         self.tabs.bind('<<NotebookTabChanged>>', self.on_tab_changed)
         self.window.bind('<Control-s>', lambda _: self.save())
         self.window.bind('<Control-f>', lambda _: self.find_text())
         self.reset_views()
         self.populate()
+
+    def show_help(self):
+        sections = [
+            (self.manager.t('editor_tab_files'), self.manager.t('editor_help_files')),
+            (self.manager.t('editor_tab_images'), self.manager.t('editor_help_images')),
+            (self.manager.t('editor_tab_models'), self.manager.t('editor_help_models')),
+        ]
+        section = self.TABS.index(self.active_tab) if self.active_tab in self.TABS else 0
+        open_help_window(self.window, self.manager.t('editor_help_title'), sections, selected=section)
 
     @staticmethod
     def _read_records(workspace):

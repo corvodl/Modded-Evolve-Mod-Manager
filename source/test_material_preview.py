@@ -45,11 +45,11 @@ class MaterialRenderingTests(unittest.TestCase):
         mesh=read_preview_mesh(uv_mesh())
         with self.assertRaisesRegex(ValueError,'No resolved diffuse'):
             render_textured_mesh(mesh,PreviewMaterials((None,),('none',),'missing'),220,220)
-    def test_activity_log_starts_visible_and_shows_during_work(self):
+    def test_activity_log_is_optional_but_shows_during_work(self):
         import inspect
         from pak_manager_gui import Manager
         source=inspect.getsource(Manager.__init__)
-        self.assertIn('self.toggle_log(show=True)',source)
+        self.assertNotIn('self.toggle_log(show=True)',source)
         self.assertIn('self.toggle_log(show=True)',inspect.getsource(Manager.run_steps))
     def test_gui_activity_log_and_models_texture_toggle(self):
         import tkinter as tk

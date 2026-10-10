@@ -1,6 +1,6 @@
 > **REQUIRED BEFORE USING THIS MANAGER:** Install **Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** using its official client installer. This manager requires the game files installed by that client; it does **not** download or install Evolve itself. A separate Steam or Legacy installation is not a substitute.
 
-# Evolve Stage 2 Mod Manager v2.9.14 (experimental)
+# Evolve Stage 2 Mod Manager v2.9.15 (experimental)
 
 A portable Windows modding manager for Evolve Stage 2, with PAK editing, a three-tab asset explorer, backup/restore, and offline-only modded launching.
 
@@ -13,7 +13,7 @@ A portable Windows modding manager for Evolve Stage 2, with PAK editing, a three
 - **UV diffuse material preview:** The Models tab now renders supported CryEngine CrChF meshes using their UV coordinates and material-specific diffuse textures. Texture rendering happens on a background thread; rotate, zoom, and toggle wireframe as before.
 - **Automatic cross-PAK textures:** Extract model/material and texture PAKs as a batch or separately into the same manager Projects folder. Selecting a model searches verified extracted workspaces automatically; duplicate paths are reported instead of guessed.
 - **Loose texture folder (optional):** In Models, use **Choose Texture Folder** only when your textures are outside the extracted manager Projects directory.
-- **Activity Log:** Opens automatically when the manager starts and whenever a manager operation runs. You can close it between operations.
+- **Activity Log:** Stays closed at startup for a cleaner workspace; opens when an operation runs and whenever you click Activity.
 
 ## Viewing files from two unpacked PAKs
 
@@ -53,3 +53,7 @@ desktops), the manager automatically falls back to software without affecting ga
 
 This is a read-only material approximation: no normal-map shading, CryEngine-specific
 materials, animation, or edited-model conversion is implied.
+
+### Streamlined interface (experimental 2.9.15)
+
+A black/red modernized layout keeps Make a Mod, Play & Restore, Settings and Credits uncluttered. Click **Help ?** in the manager or editor for full instructions; **Activity** opens the detailed log. The log stays closed on initial startup and opens when operations begin. All existing PAK, backup and recovery workflows are unchanged.
