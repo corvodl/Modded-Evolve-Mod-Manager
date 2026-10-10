@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from dark_theme import apply_theme
-from pak_browser import describe_archive, matching_archives, import_target
+from pak_browser import describe_archive, archive_description, matching_archives, import_target
 from pak_manager_gui import Manager
 from ui_copy import load_text
 
@@ -20,6 +20,23 @@ class BrowserLogicTests(unittest.TestCase):
         self.assertEqual(describe_archive('Game/characters_monsters_goliath_data.pak'),
                          ('characters_monsters_goliath_data.pak', 'Game'))
         self.assertEqual(describe_archive('libs.pak'), ('libs.pak', '/'))
+
+    def test_filename_inferred_descriptions(self):
+        self.assertEqual(archive_description('Game/characters_monsters_goliath_data.pak'),
+                         'Goliath Models')
+        self.assertEqual(archive_description('Game/characters_monsters_goliath_ts.pak'),
+                         'Goliath Textures')
+        self.assertEqual(archive_description('Game/characters_hunters_merc_caira_ts.pak'),
+                         'Caira Textures')
+        self.assertEqual(archive_description('Game/objects_basic_props.pak'),
+                         'Basic Props Objects')
+        self.assertEqual(archive_description('Game/UI_Data.pak'), 'Interface Data')
+        self.assertEqual(archive_description('Game/sounds_hunters.pak'), 'Hunters Audio')
+        self.assertEqual(archive_description('Game/unknown_archive.pak'), 'Unknown Archive')
+        self.assertEqual(matching_archives(
+            ['Game/characters_monsters_goliath_data.pak',
+             'Game/characters_monsters_goliath_ts.pak'], 'Goliath Models'),
+            ['Game/characters_monsters_goliath_data.pak'])
 
     def test_search_sort_and_case_insensitivity(self):
         rows = ['Game/zeta.pak', 'Mods/alpha.pak', 'Game/alpha.pak', 'Game/props.pak']
@@ -56,7 +73,8 @@ class BrowserInterfaceTests(unittest.TestCase):
         self.manager = Manager.__new__(Manager)
         self.manager.window = self.root
         self.manager.copy, _ = load_text()
-        self.manager.archive_entries = ['Game/goliath.pak', 'Game/libs.pak', 'DLC/props.pak']
+        self.manager.archive_entries = ['Game/goliath.pak', 'Game/libs.pak', 'DLC/props.pak',
+                                        'Game/characters_monsters_goliath_data.pak']
         self.manager.batch_workspaces = {}
         self.manager.visible = []
         for name, value in {'search':'', 'archive_count':'', 'archive_label':'',
@@ -74,9 +92,11 @@ class BrowserInterfaceTests(unittest.TestCase):
         tree = self.manager.archives
         self.assertIsInstance(tree, ttk.Treeview)
         self.assertEqual(str(tree['selectmode']), 'extended')
-        self.assertEqual(tuple(tree['columns']), ('folder','name','project','size'))
-        self.assertEqual(tree.item('Game/goliath.pak')['values'][:2],
-                         ['Game', 'goliath.pak'])
+        self.assertEqual(tuple(tree['columns']), ('folder','description','name','project','size'))
+        self.assertEqual(tree.item('Game/goliath.pak')['values'][:3],
+                         ['Game', 'Goliath', 'goliath.pak'])
+        self.assertEqual(tree.item('Game/characters_monsters_goliath_data.pak')['values'][1],
+                         'Goliath Models')
         self.manager.search.set('goliath')
         self.root.update()
         self.assertEqual(self.manager.visible, ['Game/goliath.pak'])
@@ -94,9 +114,54 @@ class BrowserInterfaceTests(unittest.TestCase):
         self.assertEqual(set(self.manager.selected_archive_relatives()),
                          {'Game/libs.pak','DLC/props.pak'})
         self.assertEqual(self.manager.browser_selection.get(), '2 selected')
-        self.manager.sort_archives('location')
+        self.manager.sort_archives('description')
         self.assertEqual(set(self.manager.selected_archive_relatives()),
                          {'Game/libs.pak','DLC/props.pak'})
+
+    def test_context_menu_right_click_selects_clicked_pak_not_stale_selection(self):
+        from types import SimpleNamespace
+        manager = self.manager
+        tree = manager.archives
+        manager.game_root = self.project / 'game'
+        (manager.game_root / 'Game').mkdir(parents=True)
+        original = manager.game_root / 'Game' / 'goliath.pak'
+        original.write_bytes(b'original game archive')
+        tree.selection_set('DLC/props.pak')
+        target = 'Game/goliath.pak'
+        self.root.update()
+        coords = tree.bbox(target)
+        self.assertTrue(coords)
+        event = SimpleNamespace(x=coords[0]+10, y=coords[1]+5,
+                                x_root=100, y_root=150, keysym='')
+        seen = {}
+        def fake_popup(menu, x, y):
+            seen['labels'] = [menu.entrycget(i, 'label') for i in range(menu.index('end') + 1)
+                              if menu.type(i) != 'separator']
+            seen['commands'] = menu
+        with patch('tkinter.Menu.tk_popup', autospec=True, side_effect=fake_popup):
+            manager.show_archive_context_menu(event)
+        self.assertEqual(manager.archive_label.get(), target)
+        self.assertEqual(tree.focus(), target)
+        self.assertIn('Unpack PAK', seen['labels'])
+        self.assertIn('Inspect PAK Details', seen['labels'])
+        self.assertIn('Show Original Game File in Explorer', seen['labels'])
+
+    def test_context_paths_keep_stage_and_original_separate(self):
+        manager = self.manager
+        manager.game_root = self.project / 'installed' / 'EvolveGame'
+        stage, original = manager._pak_locations('Game/goliath.pak')
+        self.assertEqual(stage, self.sample)
+        self.assertEqual(original, manager.game_root / 'Game' / 'goliath.pak')
+        with patch('pak_manager_gui.messagebox.showinfo') as info:
+            manager.inspect_browser_pak('Game/goliath.pak')
+            self.assertIn('Goliath', info.call_args.args[0])
+            self.assertIn(str(self.sample), info.call_args.args[1])
+        with patch.object(manager, '_show_file_in_explorer') as reveal:
+            manager.reveal_browser_pak('Game/goliath.pak', original=False)
+            reveal.assert_called_once_with(self.sample)
+            manager.reveal_browser_pak('Game/goliath.pak', original=True)
+            self.assertEqual(reveal.call_args.args[0],
+                             manager.game_root / 'Game' / 'goliath.pak')
 
     def test_external_import_uses_guarded_staging_worker_not_workspace(self):
         mod = self.project/'modified'/'goliath.pak'

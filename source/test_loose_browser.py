@@ -108,10 +108,10 @@ class LooseBrowserGuiTests(unittest.TestCase):
 
     def test_order_size_and_selection_isolated_from_signed_paks(self):
         tree=self.manager.archives
-        self.assertEqual(tuple(tree['columns']),('folder','name','project','size'))
-        self.assertEqual(tree.item('Game/libs.pak')['values'], ['Game','libs.pak','PAK','10 B'])
+        self.assertEqual(tuple(tree['columns']),('folder','description','name','project','size'))
+        self.assertEqual(tree.item('Game/libs.pak')['values'], ['Game','Game Libraries','libs.pak','PAK','10 B'])
         loose='loose-file:Game/settings.cfg'
-        self.assertEqual(tree.item(loose)['values'][:3], ['Game','settings.cfg','Game file'])
+        self.assertEqual(tree.item(loose)['values'][:4], ['Game','Game file','settings.cfg','Game file'])
         self.assertEqual(tree.column('size')['anchor'],'e')
         tree.selection_set(loose);tree.focus(loose);self.manager.select_archive()
         self.assertEqual(self.manager.loose_selected,'Game/settings.cfg')

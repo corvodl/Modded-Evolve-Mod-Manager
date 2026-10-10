@@ -4,6 +4,63 @@ No installed game files are modified here. A selected external PAK must still
 pass RSA and entry-layout checks in universal_stage.install before staging.
 """
 from pathlib import PurePosixPath
+import re
+
+
+def _title_words(stem: str) -> str:
+    """Readable fallback without claiming the exact archive contents."""
+    overrides = {
+        'goliathmeteor': 'Meteor Goliath',
+        'cairalowgrav': 'Caira Lowgrav',
+        'cabotbattle': 'Cabot Battle',
+        'aberenegade': 'Renegade Abe',
+        'griffinelectro': 'Electro Griffin',
+        'markovblitz': 'Blitz Markov',
+        'parnelltank': 'Tank Parnell',
+        'maggiesavage': 'Savage Maggie',
+        'hanksgt': 'Hank Sgt',
+        'valrogue': 'Rogue Val',
+        'rockybobcicle': 'Rocky Bobcicle',
+    }
+    words = [overrides.get(word.lower(), word.title()) for word in re.split(r'[_ -]+', stem) if word]
+    return ' '.join(words)
+
+
+def archive_description(relative: str) -> str:
+    """Best-effort *filename-derived* label, never a content inspection."""
+    name = PurePosixPath(relative.replace('\\', '/')).name
+    stem = name[:-4] if name.lower().endswith('.pak') else name
+    lower = stem.casefold()
+    if lower.startswith('characters_'):
+        parts = stem.split('_')
+        if len(parts) >= 4 and parts[-1].casefold() in ('data', 'ts'):
+            subject = '_'.join(parts[2:-1])
+            if parts[1].casefold() == 'hunters' and subject.casefold().startswith('merc_'):
+                subject = subject[5:]
+            if subject:
+                kind = 'Models' if parts[-1].casefold() == 'data' else 'Textures'
+                return _title_words(subject) + ' ' + kind
+        if len(parts) >= 3:
+            return _title_words('_'.join(parts[2:])) + ' Characters'
+    if lower.startswith('objects_'):
+        return _title_words(stem[len('objects_'):]) + ' Objects'
+    if lower.startswith('sounds_'):
+        return _title_words(stem[len('sounds_'):]) + ' Audio'
+    if lower.startswith('materials_'):
+        return _title_words(stem[len('materials_'):]) + ' Materials'
+    if lower.startswith('levels_'):
+        return _title_words(stem[len('levels_'):]) + ' Level'
+    if lower.startswith('animations'):
+        return _title_words(stem) + ' Assets'
+    specials = {
+        'libs': 'Game Libraries', 'scripts': 'Game Scripts',
+        'textures': 'Game Textures', 'music': 'Game Music',
+        'videos': 'Game Videos', 'entities': 'Game Entities',
+        'prefabs': 'Game Prefabs', 'fonts': 'Game Fonts',
+        'ui_data': 'Interface Data', 'ui_assets': 'Interface Assets',
+        'ui_preload': 'Interface Preload',
+    }
+    return specials.get(lower, _title_words(stem))
 
 
 def describe_archive(relative: str) -> tuple[str, str]:
@@ -14,7 +71,7 @@ def describe_archive(relative: str) -> tuple[str, str]:
 
 def matching_archives(archives, query='', sort_by='name', descending=False):
     text = query.strip().casefold()
-    result = [a for a in archives if text in a.casefold()]
+    result = [a for a in archives if text in a.casefold() or text in archive_description(a).casefold()]
     def sort_key(rel):
         name, folder = describe_archive(rel)
         if sort_by == 'location':

@@ -32,7 +32,7 @@ from portable_bundle import bind_home, MARKER
 from old_prepared import scan_prepared
 from orphaned_swap_recovery import plan_recovery
 from multi_pak_assets import load_collection, create_batch
-from pak_browser import describe_archive, matching_archives, import_target, format_size
+from pak_browser import describe_archive, archive_description, matching_archives, import_target, format_size
 from loose_game_files import scan_loose_files, LooseFile
 from loose_file_editor import LooseFileEditor
 
@@ -408,28 +408,32 @@ class Manager:
         self.search.trace_add('write', lambda *_: self.refresh_list())
         archive_area = ttk.Frame(select)
         archive_area.pack(fill='both', expand=True)
-        # Folder first, filename second and right-aligned size last.
+        # Folder remains first. A filename-derived description sits to the left
+        # of the exact PAK name, so users can identify assets without guessing.
         # Loose files use distinct item IDs and never enter the signed-PAK flow.
         self.archive_sort = ('folder', False)
-        self.archives = ttk.Treeview(archive_area, columns=('folder', 'name', 'project', 'size'),
+        self.archives = ttk.Treeview(archive_area, columns=('folder', 'description', 'name', 'project', 'size'),
                                      show='headings', selectmode='extended', height=9,
                                      style='Archive.Treeview')
         for column, label, width, anchor in (
-            ('folder', 'Folder', 270, 'w'),
-            ('name', 'File', 325, 'w'),
-            ('project', 'Type / Project', 140, 'center'),
-            ('size', 'Size', 105, 'e'),
+            ('folder', 'Folder', 155, 'w'),
+            ('description', 'Description', 220, 'w'),
+            ('name', 'File', 305, 'w'),
+            ('project', 'Type / Project', 125, 'center'),
+            ('size', 'Size', 95, 'e'),
         ):
             self.archives.heading(column, text=label,
                                   command=lambda col=column: self.sort_archives(col))
             self.archives.column(column, width=width, minwidth=75,
-                                 stretch=column in ('folder', 'name'), anchor=anchor)
+                                 stretch=column in ('folder', 'description', 'name'), anchor=anchor)
         self.archives.pack(side='left', fill='both', expand=True)
         archive_scroll = ttk.Scrollbar(archive_area, orient='vertical', command=self.archives.yview)
         archive_scroll.pack(side='right', fill='y')
         self.archives.configure(yscrollcommand=archive_scroll.set)
         self.archives.bind('<<TreeviewSelect>>', self.select_archive)
         self.archives.bind('<Double-Button-1>', self.open_browser_selection)
+        self.archives.bind('<Button-3>', self.show_archive_context_menu)
+        self.archives.bind('<Shift-F10>', self.show_archive_context_menu)
         self.archives.bind('<Control-a>', self.select_all_archives)
         self.archives.bind('<Control-A>', self.select_all_archives)
         status_line = ttk.Frame(select)
@@ -635,7 +639,7 @@ class Manager:
         return 'break'
 
     def sort_archives(self, column):
-        sort_by = column if column in ('folder', 'name', 'size', 'project') else 'folder'
+        sort_by = column if column in ('folder', 'description', 'name', 'size', 'project') else 'folder'
         name, reverse = self.archive_sort
         self.archive_sort = (sort_by, not reverse if name == sort_by else False)
         self.refresh_list()
@@ -666,22 +670,24 @@ class Manager:
             path = stage_paks.joinpath(*rel.split('/')) if stage_paks else None
             try: size = path.stat().st_size if path and path.is_file() else -1
             except OSError: size = -1
-            rows.append((rel, folder, name, 'Unpacked' if unpacked else 'PAK', size, False))
+            rows.append((rel, folder, archive_description(rel), name,
+                         'Unpacked' if unpacked else 'PAK', size, False))
         for item in loose:
             name, folder = describe_archive(item.relative)
-            rows.append((self._loose_iid(item.relative), folder, name,
+            rows.append((self._loose_iid(item.relative), folder, 'Game file', name,
                          'Game file', item.size, True))
         def sort_key(row):
-            iid, folder, name, label, size, is_loose = row
+            iid, folder, description, name, label, size, is_loose = row
             if sort_by == 'size': return (size, folder.casefold(), name.casefold(), iid.casefold())
             if sort_by == 'name': return (name.casefold(), folder.casefold(), iid.casefold())
+            if sort_by == 'description': return (description.casefold(), folder.casefold(), name.casefold())
             if sort_by == 'project': return (label.casefold(), folder.casefold(), name.casefold())
             return (folder.casefold(), name.casefold(), iid.casefold())
         rows.sort(key=sort_key, reverse=reverse)
         self.archives.delete(*self.archives.get_children())
-        for index, (iid, folder, name, state, size, is_loose) in enumerate(rows):
+        for index, (iid, folder, description, name, state, size, is_loose) in enumerate(rows):
             self.archives.insert('', 'end', iid=iid,
-                                 values=(folder, name, state, format_size(size)),
+                                 values=(folder, description, name, state, format_size(size)),
                                  tags=('game-file' if is_loose else 'odd' if index%2 else 'even',))
         self.browser_visible = [r[0] for r in rows]
         restored = [iid for iid in self.browser_visible if iid in previous_selection]
@@ -709,6 +715,148 @@ class Manager:
             self.browser_selection.set('Game file copy')
         else:
             self.browser_selection.set('')
+
+    def _pak_locations(self, relative):
+        """Return a staged file and its actual installed-game counterpart."""
+        if relative not in self.archive_entries:
+            raise ValueError('Select a staged PAK first.')
+        parts = relative.replace('\\', '/').split('/')
+        if not parts or any(part in ('', '.', '..') for part in parts):
+            raise ValueError('Unsafe PAK path: ' + relative)
+        staged = Path(self.stage.get()) / 'paks' / Path(*parts)
+        game_root = getattr(self, 'game_root', None) or self._find_game_root()
+        original = Path(game_root) / Path(*parts) if game_root else None
+        return staged, original
+
+    @staticmethod
+    def _show_file_in_explorer(path):
+        """Select a file in Explorer without opening, editing or launching it."""
+        path = Path(path)
+        if not path.is_file():
+            raise FileNotFoundError('File not found: ' + str(path))
+        if os.name == 'nt':
+            subprocess.Popen(['explorer.exe', '/select,', str(path)])
+        else:
+            open_folder(path.parent)
+
+    def inspect_browser_pak(self, relative=None):
+        try:
+            relative = relative or self.archive_label.get()
+            staged, original = self._pak_locations(relative)
+            name = describe_archive(relative)[0]
+            size = format_size(staged.stat().st_size) if staged.is_file() else 'Missing'
+            original_status = ('Found' if original.is_file() else 'Not found') if original else 'Unknown game folder'
+            workspace = self.batch_workspaces.get(relative)
+            if not workspace and self.archive_label.get() == relative and self.current_workspace.get():
+                workspace = Path(self.current_workspace.get())
+            workspace_text = str(workspace) if workspace and Path(workspace).is_dir() else 'Not unpacked'
+            messagebox.showinfo(
+                'PAK details: ' + name,
+                'Description (estimated from filename): ' + archive_description(relative) +
+                '\nArchive: ' + relative +
+                '\nStaged size: ' + size +
+                '\nStaged copy: ' + str(staged) +
+                '\nInstalled game copy: ' + (str(original) if original else 'Unavailable') +
+                '\nGame copy: ' + original_status +
+                '\nUnpacked workspace: ' + workspace_text +
+                '\n\nThese labels are inferred from filenames, not a scan of the contents.',
+                parent=self.window)
+        except Exception as exc:
+            self.fail(exc)
+
+    def reveal_browser_pak(self, relative=None, original=True):
+        try:
+            relative = relative or self.archive_label.get()
+            staged, game_file = self._pak_locations(relative)
+            target = game_file if original else staged
+            if target is None:
+                raise ValueError('The original game folder is unknown. Check your setup in Settings.')
+            self._show_file_in_explorer(target)
+        except Exception as exc:
+            self.fail(exc)
+
+    def copy_browser_pak_path(self, relative=None, original=True):
+        try:
+            staged, game_file = self._pak_locations(relative or self.archive_label.get())
+            path = game_file if original else staged
+            if path is None:
+                raise ValueError('The original game folder is unknown. Check your setup in Settings.')
+            self.window.clipboard_clear()
+            self.window.clipboard_append(str(path))
+            self.write('Copied PAK path: ' + str(path) + '\n')
+        except Exception as exc:
+            self.fail(exc)
+
+    def open_unpacked_browser_pak(self, relative=None):
+        try:
+            rel = relative or self.archive_label.get()
+            workspace = self.batch_workspaces.get(rel)
+            if not workspace and self.archive_label.get() == rel and self.current_workspace.get():
+                workspace = Path(self.current_workspace.get())
+            if not workspace or not (Path(workspace) / '.evolve-pak-workspace.json').is_file():
+                raise ValueError('Unpack this PAK first.')
+            open_folder(Path(workspace) / 'files')
+        except Exception as exc:
+            self.fail(exc)
+
+    def show_archive_context_menu(self, event=None):
+        """Right-click one row without accidentally applying actions to another."""
+        if event is None:
+            return
+        if getattr(event, 'keysym', '') == 'F10':
+            iid = self.archives.focus() or (
+                self.archives.selection()[0] if self.archives.selection() else '')
+            if not iid:
+                return 'break'
+            bbox = self.archives.bbox(iid)
+            x_root = self.archives.winfo_rootx() + (bbox[0] + 25 if bbox else 20)
+            y_root = self.archives.winfo_rooty() + (bbox[1] + 15 if bbox else 20)
+        else:
+            if self.archives.identify('region', event.x, event.y) != 'cell':
+                return
+            iid = self.archives.identify_row(event.y)
+            if not iid:
+                return
+            x_root, y_root = event.x_root, event.y_root
+        if iid not in self.archives.selection():
+            self.archives.selection_set(iid)
+        self.archives.focus(iid)
+        self.select_archive()
+        menu = tk.Menu(self.archives, tearoff=False)
+        if iid.startswith('loose-file:'):
+            relative = iid[len('loose-file:'):]
+            menu.add_command(label=self.t('pak_menu_edit_loose'), command=self.open_editable)
+            game = getattr(self, 'game_root', None)
+            if game:
+                path = Path(game) / Path(*relative.split('/'))
+                menu.add_command(label=self.t('pak_menu_reveal_game'),
+                                 command=lambda p=path: self._show_file_in_explorer(p))
+        else:
+            relative = iid
+            selected = self.selected_archive_relatives()
+            if len(selected) > 1:
+                menu.add_command(label=self.t('pak_menu_batch'), command=self.extract_batch)
+            else:
+                menu.add_command(label=self.t('pak_menu_unpack'), command=self.extract)
+            menu.add_command(label=self.t('pak_menu_inspect'),
+                             command=lambda rel=relative: self.inspect_browser_pak(rel))
+            menu.add_separator()
+            menu.add_command(label=self.t('pak_menu_reveal_game'),
+                             command=lambda rel=relative: self.reveal_browser_pak(rel, original=True))
+            menu.add_command(label=self.t('pak_menu_reveal_stage'),
+                             command=lambda rel=relative: self.reveal_browser_pak(rel, original=False))
+            menu.add_command(label=self.t('pak_menu_copy_game'),
+                             command=lambda rel=relative: self.copy_browser_pak_path(rel, original=True))
+            menu.add_command(label=self.t('pak_menu_copy_stage'),
+                             command=lambda rel=relative: self.copy_browser_pak_path(rel, original=False))
+            menu.add_separator()
+            menu.add_command(label=self.t('pak_menu_open_unpacked'),
+                             command=lambda rel=relative: self.open_unpacked_browser_pak(rel))
+        try:
+            menu.tk_popup(x_root, y_root)
+        finally:
+            menu.grab_release()
+        return 'break'
 
     def open_browser_selection(self, event=None):
         if getattr(self, 'loose_selected', ''):

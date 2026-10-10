@@ -217,3 +217,16 @@ name, restores the original PAK/inject.dll by same-drive rename, and keeps a
 per-file recovery manifest in Data/RecoveryLogs. A failed rename stops safely;
 inspect the activity log and recovery manifest before retrying. The launcher
 and game must be closed. Recovery does not delete mods or Data/Projects.
+
+PAK BROWSER DESCRIPTIONS AND RIGHT-CLICK (v2.10.6)
+--------------------------------------------------
+The main Make a Mod list shows Folder | Description | File | Type / Project | Size.
+The Description column is guessed from the PAK filename (NOT a contents scan).
+For example, characters_monsters_goliath_data.pak is 'Goliath Models' and
+characters_monsters_goliath_ts.pak is 'Goliath Textures'. The actual PAK path
+and filename remain unchanged. Description text is searchable and sortable.
+Right-click a PAK to unpack, inspect metadata/locations, reveal its original
+installed-game PAK or the separate staged PAK in Explorer, copy paths or open
+existing unpacked files. Right-click on a selected multi-PAK group to unpack
+all selected archives using the regular guarded batch workflow.
+All file-location actions are read-only and do not change installed game files.
