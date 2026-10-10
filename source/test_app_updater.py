@@ -88,6 +88,37 @@ class UpdateTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'commit'):
                     u.download_and_prepare(u.Update(OLD, 'v2.10', update.sha256, url, len(archive)), base/'different')
 
+    def test_download_and_extract_emit_progress_without_modifying_data(self):
+        archive = zip_bytes(extra={'EvolveModManager/_internal/asset.dat': b'x' * 4000})
+        url = f'https://github.com/{u.REPO}/releases/download/Main/{u.RELEASE_ASSET}'
+        update = u.Update(COMMIT, 'v2.10.2', hashlib.sha256(archive).hexdigest(), url, len(archive))
+        progress = []
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(u.urllib.request, 'urlopen', return_value=Response(archive, url)):
+                staged = u.download_and_prepare(update, Path(temp) / 'scratch',
+                                                progress=lambda name, n, total: progress.append((name, n, total)))
+            self.assertEqual((staged / '_internal' / 'asset.dat').read_bytes(), b'x' * 4000)
+        phases = [name for name, _, _ in progress]
+        self.assertIn('Downloading', phases)
+        self.assertIn('Verifying', phases)
+        self.assertIn('Extracting', phases)
+        self.assertEqual(progress[0], ('Downloading', 0, len(archive)))
+        self.assertIn(('Downloading', len(archive), len(archive)), progress)
+        self.assertEqual(progress[-1], ('Ready', 1, 1))
+        for stage in ('Downloading', 'Extracting'):
+            values = [n for phase, n, _ in progress if phase == stage]
+            self.assertEqual(values, sorted(values))
+
+    def test_detached_installer_has_visible_progress_and_restart(self):
+        script = u.APPLY_PS1
+        self.assertIn('System.Windows.Forms.ProgressBar', script)
+        self.assertIn('Set-UpdateProgress', script)
+        self.assertIn('WaitForExit(30000)', script)
+        self.assertIn("Start-Process -FilePath (Join-Path $TargetDir 'EvolveModManager.exe')", script)
+        self.assertIn('restoring previous version', script)
+        self.assertNotIn("'Data'", script)
+        self.assertIn('CREATE_NO_WINDOW', Path(u.__file__).read_text(encoding='utf-8'))
+
     def test_zip_path_traversal_and_sensitive_files_refused(self):
         for bad in ('EvolveModManager/../../Data/key.pem',
                     'EvolveModManager/Data/Projects/file.pak',

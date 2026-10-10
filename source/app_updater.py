@@ -17,6 +17,7 @@ import urllib.request
 import urllib.parse
 import uuid
 import zipfile
+from typing import Callable
 
 REPO = 'corvodl/Modded-Evolve-Mod-Manager'
 API = f'https://api.github.com/repos/{REPO}'
@@ -120,7 +121,8 @@ def _validated_zip_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
     return files
 
 
-def download_and_prepare(update: Update, scratch: Path | None = None) -> Path:
+def download_and_prepare(update: Update, scratch: Path | None = None,
+                         progress: Callable[[str, int, int], None] | None = None) -> Path:
     """Prepare only inside a standalone scratch directory; never modify the install."""
     if scratch is None:
         base = Path(os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()) / 'EvolveModManagerUpdates'
@@ -130,6 +132,7 @@ def download_and_prepare(update: Update, scratch: Path | None = None) -> Path:
     archive_path = scratch / 'download.zip'
     h = hashlib.sha256()
     total = 0
+    if progress: progress('Downloading', 0, update.size)
     req = urllib.request.Request(update.url, headers={'User-Agent': USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=45) as stream, archive_path.open('xb') as output:
@@ -140,21 +143,29 @@ def download_and_prepare(update: Update, scratch: Path | None = None) -> Path:
                 if total > MAX_ZIP_BYTES or total > update.size:
                     raise ValueError('Downloaded ZIP exceeds expected size.')
                 h.update(block); output.write(block)
+                if progress: progress('Downloading', total, update.size)
         if total != update.size or h.hexdigest() != update.sha256:
             raise ValueError('Downloaded ZIP does not match its published SHA-256.')
         extracted = scratch / 'extracted'
         extracted.mkdir()
+        if progress: progress('Verifying', 0, 1)
         with zipfile.ZipFile(archive_path) as z:
             files = _validated_zip_members(z)
+            expanded = sum(member.file_size for member in files)
+            unpacked = 0
+            if progress: progress('Extracting', 0, max(1, expanded))
             for member in files:
                 target = extracted.joinpath(*PurePosixPath(member.filename).parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with z.open(member) as inp, target.open('xb') as out:
-                    import shutil
-                    shutil.copyfileobj(inp, out, 1024 * 1024)
+                    for block in iter(lambda: inp.read(1024 * 1024), b''):
+                        out.write(block)
+                        unpacked += len(block)
+                        if progress: progress('Extracting', unpacked, max(1, expanded))
         staged = extracted / 'EvolveModManager'
         if installed_commit(staged) != update.commit:
             raise ValueError('Build commit in downloaded application does not match GitHub main.')
+        if progress: progress('Ready', 1, 1)
         return staged
     except BaseException:
         # Retain scratch as evidence for diagnosis, never touch installed data.
@@ -168,16 +179,58 @@ APPLY_PS1 = r'''param(
   [Parameter(Mandatory=$true)][string]$ExpectedCommit
 )
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 $Names = @('EvolveModManager.exe','EvolveModWorker.exe','_internal','Docs','START-HERE.txt','BUILD_COMMIT.txt','BUILD_CHANNEL.txt')
 $Backup = Join-Path $TargetDir ('.update-backup-' + [guid]::NewGuid().ToString('N'))
 $Moved = New-Object System.Collections.Generic.List[string]
 $Installed = New-Object System.Collections.Generic.List[string]
+$Window = New-Object System.Windows.Forms.Form
+$Window.Text = 'Evolve Mod Manager - Installing Update'
+$Window.Size = New-Object System.Drawing.Size(510,162)
+$Window.StartPosition = 'CenterScreen'
+$Window.BackColor = [System.Drawing.Color]::FromArgb(11,11,13)
+$Window.ForeColor = [System.Drawing.Color]::White
+$Window.FormBorderStyle = 'FixedDialog'
+$Window.MaximizeBox = $false
+$Window.MinimizeBox = $false
+$Window.ControlBox = $false
+$Label = New-Object System.Windows.Forms.Label
+$Label.Location = New-Object System.Drawing.Point(20,16)
+$Label.Size = New-Object System.Drawing.Size(455,34)
+$Label.Text = 'Waiting for Evolve Mod Manager to close...'
+$Label.ForeColor = [System.Drawing.Color]::FromArgb(242,242,244)
+$Window.Controls.Add($Label)
+$Bar = New-Object System.Windows.Forms.ProgressBar
+$Bar.Location = New-Object System.Drawing.Point(20,65)
+$Bar.Size = New-Object System.Drawing.Size(453,22)
+$Bar.Minimum = 0
+$Bar.Maximum = 100
+$Bar.Value = 0
+$Bar.Style = 'Continuous'
+$Window.Controls.Add($Bar)
+$Percent = New-Object System.Windows.Forms.Label
+$Percent.Location = New-Object System.Drawing.Point(20,95)
+$Percent.Size = New-Object System.Drawing.Size(453,24)
+$Percent.Text = '0%'
+$Percent.ForeColor = [System.Drawing.Color]::FromArgb(244,85,105)
+$Window.Controls.Add($Percent)
+function Set-UpdateProgress([string]$Stage, [int]$Value) {
+  $Value = [Math]::Max(0,[Math]::Min(100,$Value))
+  $Label.Text = $Stage
+  $Bar.Value = $Value
+  $Percent.Text = "$Value%"
+  [System.Windows.Forms.Application]::DoEvents()
+}
+$Window.Show()
+[System.Windows.Forms.Application]::DoEvents()
 try {
   $proc = Get-Process -Id $ManagerPid -ErrorAction SilentlyContinue
   if ($null -ne $proc) { $null = $proc.WaitForExit(30000) }
   if (Get-Process -Id $ManagerPid -ErrorAction SilentlyContinue) { throw 'Manager did not close in 30 seconds.' }
   if (-not (Test-Path -LiteralPath (Join-Path $TargetDir 'EvolveModManager.exe') -PathType Leaf)) { throw 'Application folder is missing.' }
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_COMMIT.txt') -Raw).Trim() -ne $ExpectedCommit) { throw 'Update commit mismatch.' }
+  Set-UpdateProgress 'Backing up the current application...' 5
   New-Item -ItemType Directory -Path $Backup -ErrorAction Stop | Out-Null
   foreach ($name in $Names) {
     $original = Join-Path $TargetDir $name
@@ -186,20 +239,42 @@ try {
       $Moved.Add($name)
     }
   }
+  Set-UpdateProgress 'Installing the verified update...' 15
+  $Files = New-Object System.Collections.Generic.List[object]
   foreach ($name in $Names) {
     $from = Join-Path $SourceDir $name
-    if (Test-Path -LiteralPath $from) {
-      # Mark before copying so even a partially copied directory gets removed.
-      $Installed.Add($name)
-      Copy-Item -LiteralPath $from -Destination (Join-Path $TargetDir $name) -Recurse -Force -ErrorAction Stop
+    if (-not (Test-Path -LiteralPath $from)) { continue }
+    $Installed.Add($name)
+    if (Test-Path -LiteralPath $from -PathType Container) {
+      foreach ($file in @(Get-ChildItem -LiteralPath $from -Recurse -File -Force)) {
+        $relative = $file.FullName.Substring($SourceDir.TrimEnd('\').Length + 1)
+        $Files.Add([pscustomobject]@{ Source=$file.FullName; Relative=$relative })
+      }
+    } else {
+      $Files.Add([pscustomobject]@{ Source=$from; Relative=$name })
     }
   }
-  Start-Process -FilePath (Join-Path $TargetDir 'EvolveModManager.exe') -WorkingDirectory $TargetDir
+  $Count = [Math]::Max(1,$Files.Count)
+  for ($i=0; $i -lt $Files.Count; $i++) {
+    $file = $Files[$i]
+    $targetFile = Join-Path $TargetDir $file.Relative
+    $targetParent = Split-Path -Parent $targetFile
+    if (-not (Test-Path -LiteralPath $targetParent)) { New-Item -ItemType Directory -Path $targetParent -Force | Out-Null }
+    Copy-Item -LiteralPath $file.Source -Destination $targetFile -Force -ErrorAction Stop
+    if ($i -eq 0 -or $i % 12 -eq 0 -or $i -eq $Files.Count - 1) {
+      $percent = 15 + [int][Math]::Floor(80 * ($i + 1) / $Count)
+      Set-UpdateProgress 'Installing application files...' $percent
+    }
+  }
+  Set-UpdateProgress 'Reopening Evolve Mod Manager...' 98
+  $null = Start-Process -FilePath (Join-Path $TargetDir 'EvolveModManager.exe') -WorkingDirectory $TargetDir -PassThru -ErrorAction Stop
+  Set-UpdateProgress 'Update complete. Manager restarted.' 100
   Write-Output "Update successful: $ExpectedCommit"
-  # Backup is removed only after the updated EXE successfully launches.
   Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction SilentlyContinue
 } catch {
-  Write-Output "Update failed: $_"
+  $Failure = "$_"
+  Write-Output "Update failed: $Failure"
+  Set-UpdateProgress 'Update failed; restoring previous version...' 0
   foreach ($name in $Installed) { Remove-Item -LiteralPath (Join-Path $TargetDir $name) -Recurse -Force -ErrorAction SilentlyContinue }
   foreach ($name in $Moved) {
     $prior = Join-Path $Backup $name
@@ -208,7 +283,14 @@ try {
     }
   }
   Write-Output "Previous files restored where possible. Recovery backup (if present): $Backup"
+  [System.Windows.Forms.MessageBox]::Show("Update failed: $Failure`n`nPrevious files restored where possible. See update.log.", 'Evolve Mod Manager', 'OK', 'Error') | Out-Null
+  if (Test-Path -LiteralPath (Join-Path $TargetDir 'EvolveModManager.exe')) {
+    try { Start-Process -FilePath (Join-Path $TargetDir 'EvolveModManager.exe') -WorkingDirectory $TargetDir -ErrorAction Stop } catch { }
+  }
   exit 1
+} finally {
+  $Window.Close()
+  $Window.Dispose()
 }
 '''
 
@@ -225,9 +307,9 @@ def launch_apply(update: Update, staged: Path, app_home: Path, manager_pid: int)
     script.write_text(APPLY_PS1, encoding='utf-8-sig')
     log = scratch / 'update.log'
     with log.open('wb') as output:
-        subprocess.Popen(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        subprocess.Popen(['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
                           '-File', str(script), '-TargetDir', str(app_home), '-SourceDir', str(staged),
                           '-ManagerPid', str(manager_pid), '-ExpectedCommit', update.commit],
                          stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-                         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+                         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
     return log

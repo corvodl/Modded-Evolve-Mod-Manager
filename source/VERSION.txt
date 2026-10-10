@@ -1,1 +1,1 @@
-2.10.1 - Readable PAK Browser and Verified Modified PAK Import
+2.10.2 - Startup Update Prompt, Download and Install Progress, Auto-Restart

@@ -82,6 +82,8 @@ class Manager:
         self.update_status = tk.StringVar(value='Updates: not checked')
         self.available_update = None
         self.update_in_progress = False
+        self._update_prompt_pending = False
+        self._update_progress_window = None
         self.bundle_error = ''
         self.bundle = None
         self.read_settings()
@@ -156,7 +158,70 @@ class Manager:
             if not silent: messagebox.showinfo('Updates', 'You have the latest released build, or the new build is still being verified.', parent=self.window)
         else:
             self.update_status.set('Update available: ' + candidate.version)
-            if not silent: self.offer_update()
+            # A startup check is quiet only when no update exists. Prompt once
+            # after discovery, outside the event-polling callback.
+            if silent:
+                self._update_prompt_pending = True
+                self.window.after(100, self._offer_pending_update)
+            else:
+                self.window.after(100, self.offer_update)
+
+    def _offer_pending_update(self):
+        if not self._update_prompt_pending or self.update_in_progress:
+            return
+        if self.busy:
+            # Leave the prompt pending until the active task finishes.
+            return
+        self._update_prompt_pending = False
+        self.offer_update()
+
+    def _open_update_progress(self, version):
+        popup = tk.Toplevel(self.window)
+        popup.title('Updating Evolve Mod Manager')
+        popup.geometry('465x172')
+        popup.resizable(False, False)
+        popup.configure(background='#0b0b0d')
+        popup.transient(self.window)
+        popup.protocol('WM_DELETE_WINDOW', lambda: None)
+        frame = ttk.Frame(popup, padding=18)
+        frame.pack(fill='both', expand=True)
+        ttk.Label(frame, text='Installing ' + version, style='Section.TLabel').pack(anchor='w')
+        self._update_stage = tk.StringVar(master=popup, value='Connecting to GitHub...')
+        ttk.Label(frame, textvariable=self._update_stage, style='Muted.TLabel').pack(anchor='w', pady=(8, 10))
+        self._update_bar = ttk.Progressbar(frame, mode='determinate', maximum=100, value=0)
+        self._update_bar.pack(fill='x')
+        self._update_percentage = tk.StringVar(master=popup, value='0%')
+        ttk.Label(frame, textvariable=self._update_percentage, style='AccentText.TLabel').pack(anchor='e', pady=(4, 0))
+        popup.lift()
+        self._update_progress_window = popup
+
+    def _set_update_progress(self, stage, completed, total):
+        popup = self._update_progress_window
+        if popup is None or not popup.winfo_exists():
+            return
+        fraction = max(0.0, min(1.0, completed / max(1, total)))
+        # Download 0-65%, extraction 70-99%, install in separate process.
+        if stage == 'Downloading':
+            value = round(65 * fraction)
+            label = 'Downloading update...'
+        elif stage == 'Verifying':
+            value = 68
+            label = 'Verifying download...'
+        elif stage == 'Extracting':
+            value = 70 + round(29 * fraction)
+            label = 'Preparing application files...'
+        else:
+            value = 100
+            label = 'Ready to install. Restarting...'
+        self._update_bar.configure(value=value)
+        self._update_stage.set(label)
+        self._update_percentage.set(f'{value}%')
+
+    def _close_update_progress(self):
+        popup = self._update_progress_window
+        self._update_progress_window = None
+        if popup is not None and popup.winfo_exists():
+            popup.destroy()
 
     def offer_update(self):
         candidate = self.available_update
@@ -172,8 +237,11 @@ class Manager:
         self.update_in_progress = True
         self.update_status.set('Downloading verified update…')
         self.update_button.configure(state='disabled')
+        self._open_update_progress(candidate.version)
+        def progress(stage, completed, total):
+            self.events.put(('update-progress', (stage, completed, total)))
         def download():
-            try: self.events.put(('update-download', (candidate, download_and_prepare(candidate), None)))
+            try: self.events.put(('update-download', (candidate, download_and_prepare(candidate, progress=progress), None)))
             except Exception as exc: self.events.put(('update-download', (candidate, None, str(exc))))
         threading.Thread(target=download, daemon=True).start()
 
@@ -181,10 +249,12 @@ class Manager:
         self.update_in_progress = False
         self.update_button.configure(state='normal')
         if error:
+            self._close_update_progress()
             self.update_status.set('Update download failed')
             messagebox.showerror('Update failed', str(error) + '\n\nThe current installation is unchanged.', parent=self.window)
             return
         if self.busy or not self.flush_editors():
+            self._close_update_progress()
             self.update_status.set('Update downloaded; install postponed')
             messagebox.showinfo('Update postponed', 'Finish operations and save edits first. Recheck updates when ready.', parent=self.window)
             return
@@ -192,9 +262,11 @@ class Manager:
             self.persist()
             log = launch_apply(candidate, staged, APP_HOME, os.getpid())
         except Exception as exc:
+            self._close_update_progress()
             self.update_status.set('Could not start updater')
             messagebox.showerror('Update failed', f'{exc}\n\nThe current installation is unchanged.', parent=self.window)
             return
+        self._close_update_progress()
         # The detached Windows updater waits for this process to exit and then
         # performs the replacement. Never edit running EXEs or user Data here.
         self.window.destroy()
@@ -1140,6 +1212,8 @@ class Manager:
                 kind,val=self.events.get_nowait()
                 if kind == 'update-check':
                     self.on_update_check(*val)
+                elif kind == 'update-progress':
+                    self._set_update_progress(*val)
                 elif kind == 'update-download':
                     self.on_update_download(*val)
                 elif kind=='text':
@@ -1152,6 +1226,8 @@ class Manager:
                 elif kind=='done':
                     rc,label,callback=val
                     self.busy=False
+                    if self._update_prompt_pending:
+                        self.window.after(100, self._offer_pending_update)
                     if rc==0:
                         self.status.set('Completed: '+label)
                         self.write('>>> SUCCESS\n')
