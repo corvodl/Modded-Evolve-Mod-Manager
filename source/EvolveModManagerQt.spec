@@ -49,7 +49,7 @@ pyz = PYZ(a.pure)
 shared = [script for script in a.scripts if script[0] not in entrypoints]
 executables = []
 for entry, name, console in (
-    ('qt_manager', 'EvolveModManagerQt', False),
+    ('qt_manager', 'EvolveModManagerQt', True)  # diagnostic preview only,
     ('worker_entry', 'EvolveModWorker', True),
     ('qt_legacy_editor_bridge', 'EvolveModLegacyEditor', False),
 ):

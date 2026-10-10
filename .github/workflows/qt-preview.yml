@@ -33,6 +33,11 @@ jobs:
         run: |
           $exe = ".build/qt-preview-dist/EvolveModManagerQt/EvolveModManagerQt.exe"
           $png = "dist/EvolveModManagerQt-compiled-screenshot.png"
+          # Qt Windows services run without an interactive desktop on CI.
+          # Render the actual compiled Qt Widgets window using the offscreen
+          # platform plugin, then capture via QWidget.grab().
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QT_DEBUG_PLUGINS = "1"
           & $exe --capture-screenshot $png
           if ($LASTEXITCODE -ne 0) { throw "Compiled Qt app failed to capture a screenshot." }
           if (!(Test-Path $png -PathType Leaf)) { throw "No real Qt screenshot was captured." }
