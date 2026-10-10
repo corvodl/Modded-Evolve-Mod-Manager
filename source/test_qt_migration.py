@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QApplication, QPushButton, QLabel, QTableWidget
 
 from launch_integration import SwapStatus
 from qt_manager import QtManager, SECTIONS, qt_style
+from qt_font_health import ensure_readable_ui_font, glyphs_readable, glyph_signature, ui_family
 from qt_workspace_editor import QtWorkspaceEditor, QtLooseFileEditor
 from qt_preview_package import package
 
@@ -26,6 +27,7 @@ class QtMigrationTests(unittest.TestCase):
     def setUpClass(cls):
         cls.application = QApplication.instance() or QApplication([])
         cls.application.setStyle('Fusion')
+        ensure_readable_ui_font(cls.application, strict=True)
 
     def setUp(self):
         self.temp = TemporaryDirectory()
@@ -47,6 +49,14 @@ class QtMigrationTests(unittest.TestCase):
         self.addCleanup(self.win.close)
         self.win.show()
         self.application.processEvents()
+
+    def test_ascii_glyphs_render_as_distinct_letters_not_squares(self):
+        font = self.application.font()
+        self.assertTrue(glyphs_readable(font), ui_family())
+        rasters = [glyph_signature(font, char) for char in 'ABM129']
+        self.assertEqual(len({shape for shape, ink in rasters}), 6)
+        self.assertTrue(all(ink > 6 for _, ink in rasters))
+        self.assertIn('font-family:"'+ui_family()+'";', qt_style())
 
     def test_all_pages_and_instruction_information_survive(self):
         self.assertEqual(SECTIONS, (
