@@ -97,7 +97,17 @@ class BrowserInterfaceTests(unittest.TestCase):
                          ['Game', 'Goliath', 'goliath.pak'])
         self.assertEqual(tree.item('Game/characters_monsters_goliath_data.pak')['values'][1],
                          'Goliath Models')
+        # A broad search now matches both exact filenames and readable labels.
         self.manager.search.set('goliath')
+        self.root.update()
+        self.assertEqual(self.manager.visible, [
+            'Game/characters_monsters_goliath_data.pak', 'Game/goliath.pak'])
+        self.manager.search.set('Goliath Models')
+        self.root.update()
+        self.assertEqual(self.manager.visible, [
+            'Game/characters_monsters_goliath_data.pak'])
+        # Searching the complete filename still selects only the exact PAK.
+        self.manager.search.set('goliath.pak')
         self.root.update()
         self.assertEqual(self.manager.visible, ['Game/goliath.pak'])
         tree.selection_set('Game/goliath.pak')
@@ -154,7 +164,9 @@ class BrowserInterfaceTests(unittest.TestCase):
         self.assertEqual(original, manager.game_root / 'Game' / 'goliath.pak')
         with patch('pak_manager_gui.messagebox.showinfo') as info:
             manager.inspect_browser_pak('Game/goliath.pak')
-            self.assertIn('Goliath', info.call_args.args[0])
+            self.assertEqual(info.call_args.args[0], 'PAK details: goliath.pak')
+            self.assertIn('Description (estimated from filename): Goliath',
+                          info.call_args.args[1])
             self.assertIn(str(self.sample), info.call_args.args[1])
         with patch.object(manager, '_show_file_in_explorer') as reveal:
             manager.reveal_browser_pak('Game/goliath.pak', original=False)
