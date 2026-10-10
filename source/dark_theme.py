@@ -95,6 +95,12 @@ def apply_theme(root):
     style.configure('Vertical.TScrollbar', background='#393940', arrowcolor=TEXT)
     style.configure('TSeparator', background='#472630')
 
+    # A manager may reapply the theme to an already themed Tk root (for
+    # example during a first-run reset). Keep existing native images alive and
+    # do not re-register Tcl's one-time image-backed element names.
+    if getattr(root, '_evolve_style_images', None):
+        return
+
     # iOS-inspired capsules (built from bundled Pillow, not system theme APIs).
     # Image-backed ttk elements provide genuine antialiased rounded corners
     # even under the Windows clam theme; their text/commands stay native ttk.
