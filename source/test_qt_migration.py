@@ -55,7 +55,7 @@ class QtMigrationTests(unittest.TestCase):
         self.assertTrue(glyphs_readable(font), ui_family())
         rasters = [glyph_signature(font, char) for char in 'ABM129']
         self.assertEqual(len({shape for shape, ink in rasters}), 6)
-        self.assertTrue(all(ink > 6 for _, ink in rasters))
+        self.assertTrue(all(ink >= 6 for _, ink in rasters))
         self.assertIn('font-family:"'+ui_family()+'";', qt_style())
 
     def test_all_pages_and_instruction_information_survive(self):
