@@ -34,8 +34,11 @@ jobs:
             foreach ($item in @("EvolveModManager/EvolveModManager.exe", "EvolveModManager/EvolveModWorker.exe")) {
               if ($names -notcontains $item) { throw "Missing $item" }
             }
-            if ($names | Where-Object { $_ -match "(^|/)(Data/|private_key[.]pem$)|[.]pak$" }) {
-              throw "Release contains user data or game files"
+            $suspicious = @($names | Where-Object { $_ -match "(^|/)(Data/|private_key[.]pem$)|[.]pak$" })
+            if ($suspicious.Count -gt 0) {
+              Write-Host "Matched paths (diagnostic only):"
+              $suspicious | ForEach-Object { Write-Host "  $_" }
+              throw "Release archive validation found excluded or over-broad path matches."
             }
           } finally { $archive.Dispose() }
       - uses: actions/upload-artifact@v4
