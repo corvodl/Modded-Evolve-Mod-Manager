@@ -134,7 +134,7 @@ class QtMigrationTests(unittest.TestCase):
                          'sha256':'digest-not-used-for-saving'}]}),
             encoding='utf-8')
         self.win.projects_path = str(self.base/'Projects')
-        editor = QtWorkspaceEditor(self.win,ws,advanced=lambda:None)
+        editor = QtWorkspaceEditor(self.win,ws)
         self.addCleanup(editor.close)
         self.assertEqual(editor.tabs.count(),3)
         button_labels = [b.text() for b in editor.findChildren(QPushButton)]
@@ -152,6 +152,8 @@ class QtMigrationTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(),b'hello Qt\n')
         self.assertTrue(any((ws/'EditorBackups').rglob('settings.txt')))
         self.assertFalse(editor._dirty())
+        self.assertIsNotNone(editor.save_shortcut)
+        self.assertIsNotNone(editor.find_shortcut)
 
     def test_compiled_qt_stable_update_path_keeps_manual_previews_separate(self):
         from qt_manager import QtManager

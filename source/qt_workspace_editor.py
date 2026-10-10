@@ -18,7 +18,7 @@ import tempfile
 
 from PIL import Image
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QPixmap, QDesktopServices, QKeySequence
+from PySide6.QtGui import QPixmap, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
@@ -208,10 +208,10 @@ class QtWorkspaceEditor(QDialog):
         self.status = QLabel('Files remain inside the extracted project; build and add each PAK separately.')
         self.status.setWordWrap(True)
         main.addWidget(self.status)
-        self.save_shortcut = self._button('', self.save)
-        self.save_shortcut.setShortcut(QKeySequence.Save)
-        self.save_shortcut.setVisible(False)
-        main.addWidget(self.save_shortcut)
+        self.save_shortcut = QShortcut(QKeySequence.Save, self)
+        self.save_shortcut.activated.connect(self.save)
+        self.find_shortcut = QShortcut(QKeySequence.Find, self)
+        self.find_shortcut.activated.connect(self.find_text)
         self.populate()
 
     @staticmethod
@@ -445,9 +445,36 @@ class QtWorkspaceEditor(QDialog):
     def explore(self):
         try:
             path = checked_path(self.workspace, self.current) if self.current else self.workspace/'files'
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent if path.is_file() else path)))
+            if os.name == 'nt' and path.is_file():
+                subprocess.Popen(['explorer.exe','/select,',str(path)])
+            else:
+                QDesktopServices.openUrl(
+                    QUrl.fromLocalFile(str(path.parent if path.is_file() else path)))
         except Exception as exc:
             QMessageBox.critical(self, 'Could not open folder', str(exc))
+
+    def open_extracted_external(self):
+        try:
+            path = checked_path(self.workspace, self.selected())
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        except Exception as exc:
+            QMessageBox.critical(self, 'Could not open extracted file', str(exc))
+
+    def copy_extracted_path(self):
+        try:
+            QApplication.clipboard().setText(str(checked_path(self.workspace,self.selected())))
+        except Exception as exc:
+            QMessageBox.critical(self, 'Could not copy path', str(exc))
+
+    def copy_game_path(self):
+        try:
+            rel = self.selected()
+            game = self.manager.game_root or self.manager._find_game_root()
+            if not game:
+                raise ValueError('The installed EvolveGame directory is not configured.')
+            QApplication.clipboard().setText(str(Path(game)/Path(*rel.split('/'))))
+        except Exception as exc:
+            QMessageBox.critical(self, 'Could not copy game path', str(exc))
 
     def _import_and_reload(self, action):
         try:
@@ -531,7 +558,10 @@ class QtWorkspaceEditor(QDialog):
         menu.addAction('Import Over / Replace', self.import_raw)
         menu.addAction('Restore Original Extraction', self.restore_original)
         menu.addAction('Export Raw File', self.export_raw)
-        menu.addAction('Open Original File Location', self.explore)
+        menu.addAction('Reveal Extracted File in Explorer', self.explore)
+        menu.addAction('Open Extracted File in External App', self.open_extracted_external)
+        menu.addAction('Copy Extracted Absolute Path', self.copy_extracted_path)
+        menu.addAction('Copy Installed Game Path', self.copy_game_path)
         menu.addAction('Copy Relative Path', lambda: QApplication.clipboard().setText(self.selected()))
         menu.exec(tree.mapToGlobal(position))
 
@@ -671,6 +701,16 @@ class QtWorkspaceEditor(QDialog):
                 lines.append('\n'+str(record.get('map'))+': '+str(record.get('reference')))
                 lines.append('  '+str(record.get('status')))
                 lines.append('  Paths: '+', '.join(record.get('paths', [])))
+                if record.get('archives'):
+                    lines.append('  Archives: '+', '.join(record.get('archives', [])))
+            if result.get('status') == 'ambiguous':
+                lines.append('\nMultiple different versions of the material were found:')
+                for candidate in result.get('candidates', []):
+                    lines.append('  '+str(candidate.get('archive',''))+' | '+
+                                 str(candidate.get('workspace','')))
+            elif result.get('status') == 'missing':
+                lines.append('\nMaterial missing: unpack the PAK containing its .mtl file.')
+            lines.append('\nCryEngine .tif references may correspond to .dds/.dds.0 textures.')
             QMessageBox.information(self,'Model textures','\n'.join(lines))
         except Exception as exc:
             QMessageBox.critical(self,'Model textures',str(exc))
