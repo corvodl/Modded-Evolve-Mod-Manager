@@ -30,6 +30,7 @@ from ui_copy import load_text
 from workspace_editor import WorkspaceEditor
 from portable_bundle import bind_home, MARKER
 from old_prepared import scan_prepared
+from orphaned_swap_recovery import plan_recovery
 from multi_pak_assets import load_collection, create_batch
 from pak_browser import describe_archive, matching_archives, import_target, format_size
 from loose_game_files import scan_loose_files, LooseFile
@@ -1034,6 +1035,17 @@ class Manager:
 
     def update_launch_state(self):
         st=state_status(Path(self.swap.get()))
+        if st.phase in ('missing', 'prepared', 'restored') and (
+                st.game or self.game_root):
+            # Don't claim the game is safe when the journal is stale.
+            try:
+                game = Path(st.game) if st.game else self.game_root
+                if plan_recovery(game):
+                    from launch_integration import SwapStatus
+                    st = SwapStatus('unsafe', 'Unrestored original backups found in game folder.')
+            except (OSError, ValueError):
+                # A missing/unconfigured game is diagnosed when Restore is clicked.
+                pass
         summaries = {
             'missing': self.t('launch_missing'),
             'restored': self.t('launch_restored'),
@@ -1073,14 +1085,52 @@ class Manager:
         try:
             if self.busy:raise RuntimeError('Wait for the current operation to finish.')
             st=self.update_launch_state()
-            if st.phase in ('missing','prepared','restored'):
-                messagebox.showinfo('Nothing to restore','Your original game files are already in place. No restoration is needed.')
+            # The journal can be missing or stale even with hundreds of live
+            # .customkey-original backups. Inspect the installed game first.
+            game = Path(st.game) if st.game and Path(st.game).is_dir() else (
+                self.game_root or self._find_game_root())
+            if not game:
+                chosen = filedialog.askdirectory(
+                    title='Choose EvolveGame folder to check original-file backups')
+                if not chosen: return
+                game = Path(chosen)
+            game = Path(game).resolve(strict=True)
+            pending = plan_recovery(game)
+            if pending and st.phase not in ('swapped','swapping','restoring','interrupted'):
+                # Journal-independent recovery intentionally uses a separate
+                # manifest, does not touch the journal and preserves live mods.
+                size = sum(item.bytes for item in pending) / (1024 ** 3)
+                if not messagebox.askyesno(
+                        'Recover original game files?',
+                        f'Found {len(pending)} original backups ({size:.2f} GiB) even though '
+                        'the launch journal does not report an active swap.\n\n'
+                        'Close Evolve and its launcher first.\n\n'
+                        'Recovery will preserve EVERY currently installed modified file '
+                        'under a unique recovery name, restore each original backup, '
+                        'and save a recovery manifest in your manager Data folder.\n\n'
+                        'This may require setting up your mods again afterward. '
+                        'Continue?', parent=self.window):
+                    return
+                cmd = [sys.executable, '-u', str(ROOT/'orphaned_swap_recovery.py'),
+                       '--game', str(game), '--manifest-dir',
+                       str(DATA_HOME/'RecoveryLogs'), '--apply']
+                self.run_steps([('Recovering original game files without a swap journal', cmd)],
+                               'Restore originals', self.after_restore)
                 return
-            if not messagebox.askyesno(self.t('dialog_restore_title'), self.t('dialog_restore_body')):
+            if not pending and st.phase in ('missing','prepared','restored'):
+                messagebox.showinfo('Nothing to restore',
+                                    'No original swap backups were found in the selected game folder.',
+                                    parent=self.window)
+                return
+            if not pending and st.phase == 'unsafe':
+                raise RuntimeError('Swap state is unsafe, but no original backups were found. '
+                                   'Inspect the swap journal before continuing.')
+            if not messagebox.askyesno(self.t('dialog_restore_title'),
+                                       self.t('dialog_restore_body')):
                 return
             cmd=restore_command(Path(self.swap.get()))
-            self.run_steps([('Restoring original game files',cmd)],'Restore originals',self.after_restore,
-                           cwd=Path(self.swap.get()))
+            self.run_steps([('Restoring original game files',cmd)],'Restore originals',
+                           self.after_restore,cwd=Path(self.swap.get()))
         except Exception as e:self.fail(e)
 
     def offer_initial_setup(self):

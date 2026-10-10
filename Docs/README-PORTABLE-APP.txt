@@ -204,3 +204,16 @@ that the replacement GUI is responsive before removing the application backup,
 and restores the old application if installation or startup fails.
 Troubleshooting logs: %LOCALAPPDATA%\EvolveModManagerUpdates\<id>\update.log
 Preserve .update-backup-* folders if rollback is incomplete. Data is untouched.
+
+
+ORPHANED GAME SWAP RECOVERY (v2.10.5)
+---------------------------------------
+Restore Game Files inspects the actual game folder for .customkey-original
+backups even if the launch journal says 'missing', 'prepared', or 'restored'.
+When backups exist without a usable journal, the manager asks for confirmation
+and uses a separate recovery worker. It preserves every currently installed
+modified file alongside its original with a unique .customkey-recovery-mod-*
+name, restores the original PAK/inject.dll by same-drive rename, and keeps a
+per-file recovery manifest in Data/RecoveryLogs. A failed rename stops safely;
+inspect the activity log and recovery manifest before retrying. The launcher
+and game must be closed. Recovery does not delete mods or Data/Projects.

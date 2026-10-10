@@ -1,1 +1,1 @@
-2.10.4 - Resilient Windows Updater with Verified Restart and Rollback
+2.10.5 - Detect Orphaned Game Backups and Restore Originals Without a Swap Journal
