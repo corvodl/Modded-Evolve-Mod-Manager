@@ -29,7 +29,7 @@ from modern_surfaces import RoundedPanel
 from ui_help import open_help_window
 from version_info import app_version
 from desktop_shortcut import create_desktop_shortcut
-from app_updater import discover as discover_update, download_and_prepare, launch_apply, installed_commit, report_startup_ready
+from app_updater import discover as discover_update, discover_experimental, download_and_prepare, launch_apply, installed_commit, report_startup_ready
 from ui_copy import load_text
 from workspace_editor import WorkspaceEditor
 from portable_bundle import bind_home, MARKER
@@ -169,6 +169,11 @@ class Manager:
         def background():
             try: self.events.put(('update-check', (discover_update(installed_commit(APP_HOME)), None, silent)))
             except Exception as exc: self.events.put(('update-check', (None, str(exc), silent)))
+            # Only an explicit click checks experimental builds. Startup is
+            # strictly main-channel only and never displays a preview prompt.
+            if not silent:
+                try: self.events.put(('experimental-check', (discover_experimental(), None)))
+                except Exception as exc: self.events.put(('experimental-check', (None, str(exc))))
         threading.Thread(target=background, daemon=True).start()
 
     def on_update_check(self, candidate, error, silent):
@@ -190,6 +195,24 @@ class Manager:
                 self.window.after(100, self._offer_pending_update)
             else:
                 self.window.after(100, self.offer_update)
+
+    def on_experimental_check(self, candidate, error):
+        if error:
+            self.write('Experimental build lookup unavailable: ' + str(error) + '\n')
+            return
+        if candidate is None:
+            self.write('No successful experimental Qt preview artifact is currently available.\n')
+            return
+        self.write('Experimental Qt build found: ' + candidate.commit[:12] + '\n')
+        if messagebox.askyesno(
+                'Experimental Qt update available',
+                'An experimental Qt build is available (commit ' +
+                candidate.commit[:12] + ').\n\n'
+                'This is a preview, not a verified Main-channel update. '
+                'It does not automatically install over your working manager.\n\n'
+                'Open the GitHub download page to install it in a SEPARATE folder?',
+                parent=self.window):
+            webbrowser.open(candidate.url, new=2)
 
     def _offer_pending_update(self):
         if not self._update_prompt_pending or self.update_in_progress:
@@ -1720,6 +1743,8 @@ class Manager:
                 kind,val=self.events.get_nowait()
                 if kind == 'update-check':
                     self.on_update_check(*val)
+                elif kind == 'experimental-check':
+                    self.on_experimental_check(*val)
                 elif kind == 'update-progress':
                     self._set_update_progress(*val)
                 elif kind == 'update-download':

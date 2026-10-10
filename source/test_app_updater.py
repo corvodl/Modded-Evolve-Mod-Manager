@@ -44,6 +44,37 @@ class Response(io.BytesIO):
 
 
 class UpdateTests(unittest.TestCase):
+    def test_experimental_only_discovers_successful_unexpired_qt_build(self):
+        run = {'id': 48, 'head_sha': 'c'*40, 'head_branch': 'qt-migration',
+               'conclusion': 'success'}
+        artifact = {'id': 91, 'name': 'EvolveModManagerQt-Preview-Windows',
+                    'expired': False, 'size_in_bytes': 1024}
+        def get(url):
+            if '/workflows/qt-preview.yml/runs?' in url:
+                return json.dumps({'workflow_runs': [run]}).encode()
+            if '/actions/runs/48/artifacts' in url:
+                return json.dumps({'artifacts': [artifact]}).encode()
+            raise AssertionError('Unexpected API endpoint: '+url)
+        with patch.object(u, '_get', side_effect=get):
+            candidate = u.discover_experimental()
+            self.assertEqual(candidate.commit, 'c'*40)
+            self.assertEqual(candidate.artifact_id, 91)
+            self.assertEqual(candidate.run_id, 48)
+            self.assertEqual(candidate.url,
+                f'https://github.com/{u.REPO}/actions/runs/48')
+            artifact['expired'] = True
+            self.assertIsNone(u.discover_experimental())
+            artifact['expired'] = False
+            run['conclusion'] = 'failure'
+            self.assertIsNone(u.discover_experimental())
+
+    def test_startup_update_path_never_checks_experimental(self):
+        src = Path(__file__).with_name('pak_manager_gui.py').read_text(encoding='utf-8')
+        self.assertIn('if not silent:', src)
+        self.assertIn("('experimental-check', (discover_experimental(), None))", src)
+        self.assertIn("if self.build_channel() == 'main' and self.setup_is_ready():", src)
+        self.assertIn('self.check_updates(silent=True)', src)
+
     def test_release_requires_main_head_exactly(self):
         archive = zip_bytes()
         sha = hashlib.sha256(archive).hexdigest()
