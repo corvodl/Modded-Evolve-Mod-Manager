@@ -29,6 +29,24 @@ jobs:
       - name: Build and test EXE
         shell: cmd
         run: call Build-Windows-EXE.cmd
+      - name: Capture real compiled app window (Windows)
+        shell: pwsh
+        run: |
+          & ".build/venv/Scripts/python.exe" "source/capture_compiled_ui.py" `
+            --executable ".build/app-dist/EvolveModManager/EvolveModManager.exe" `
+            --output "dist/EvolveModManager-compiled-screenshot.png"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not capture an actual visible window from the packaged manager."
+          }
+          if (!(Test-Path "dist/EvolveModManager-compiled-screenshot.png")) {
+            throw "Real manager screenshot was not created."
+          }
+      - name: Publish real compiled UI screenshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EvolveModManager-Actual-Windows-Screenshot
+          path: dist/EvolveModManager-compiled-screenshot.png
+          if-no-files-found: error
       - name: Verify release ZIP
         shell: pwsh
         run: |
@@ -85,6 +103,8 @@ jobs:
           }
           gh release upload Main "dist/EvolveModManager-Windows.zip" --clobber
           if ($LASTEXITCODE -ne 0) { throw "ZIP release upload failed." }
+          gh release upload Main "dist/EvolveModManager-compiled-screenshot.png" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Compiled Windows screenshot upload failed." }
           # Upload manifest LAST: old manifests never authorize new, mismatched bytes.
           gh release upload Main "dist/update-manifest.json" --clobber
           if ($LASTEXITCODE -ne 0) { throw "Update manifest upload failed." }
