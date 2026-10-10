@@ -1,1 +1,1 @@
-2.10.3 - Folder/File/Size Browser and Safe Loose Game File Editing
+2.10.4 - Resilient Windows Updater with Verified Restart and Rollback

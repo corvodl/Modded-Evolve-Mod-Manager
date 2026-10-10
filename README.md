@@ -1,8 +1,12 @@
 > **REQUIRED BEFORE USING THIS MANAGER:** Install **Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** using its official client installer. This manager requires the game files installed by that client; it does **not** download or install Evolve itself. A separate Steam or Legacy installation is not a substitute.
 
-# Evolve Stage 2 Mod Manager v2.10.3
+# Evolve Stage 2 Mod Manager v2.10.4
 
 A portable Windows modding manager for Evolve Stage 2, with PAK editing, a three-tab asset explorer, backup/restore, and offline-only modded launching.
+
+## Windows updater reliability (v2.10.4)
+
+The external installer treats progress-window failures as nonfatal, logs each installation and rollback step, waits for the old manager to exit, and only discards its recovery backup after the new manager confirms that its GUI has started and remains running. If startup or file replacement fails, it stops the replacement, restores the previous application files, and attempts to reopen the old manager. `Data` (projects, backups, keys, settings) is never replaced. Failed update logs remain in `%LOCALAPPDATA%\EvolveModManagerUpdates`.
 
 ## Browser and loose game files (v2.10.3)
 

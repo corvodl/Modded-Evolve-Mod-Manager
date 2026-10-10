@@ -196,3 +196,11 @@ Use Edit Files (or double-click) to create an editable copy in
 Data/Projects/LooseGameFiles. Text can be edited internally and binary files
 with external tools. The installed game is NEVER overwritten when saving a
 loose file. Loose-file copies cannot be staged as signed PAK mods.
+
+UPDATER RECOVERY (v2.10.4)
+-------------------------
+The separate installer now logs progress even if its window fails, confirms
+that the replacement GUI is responsive before removing the application backup,
+and restores the old application if installation or startup fails.
+Troubleshooting logs: %LOCALAPPDATA%\EvolveModManagerUpdates\<id>\update.log
+Preserve .update-backup-* folders if rollback is incomplete. Data is untouched.

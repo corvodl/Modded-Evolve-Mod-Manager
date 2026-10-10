@@ -172,6 +172,31 @@ def download_and_prepare(update: Update, scratch: Path | None = None,
         raise
 
 
+
+def report_startup_ready(app_home: Path) -> None:
+    """Acknowledge a responsive replacement GUI to the detached installer.
+
+    The path must reside in the updater's scratch area, never the game or
+    user-owned Data directory. A missing or invalid hint is ignored.
+    """
+    hint = os.environ.pop('EVOLVE_MANAGER_UPDATE_ACK', '')
+    if not hint:
+        return
+    try:
+        scratch = (Path(os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()) /
+                   'EvolveModManagerUpdates').resolve()
+        path = Path(hint).resolve()
+        if (not path.is_relative_to(scratch) or
+                not path.name.startswith('startup-ok-') or path.suffix != '.txt'):
+            return
+        commit = installed_commit(app_home)
+        if commit:
+            path.write_text(commit + '\n', encoding='ascii')
+    except (OSError, ValueError):
+        # Acknowledgement failure is handled by the installer watchdog.
+        pass
+
+
 APPLY_PS1 = r'''param(
   [Parameter(Mandatory=$true)][string]$TargetDir,
   [Parameter(Mandatory=$true)][string]$SourceDir,
@@ -179,58 +204,78 @@ APPLY_PS1 = r'''param(
   [Parameter(Mandatory=$true)][string]$ExpectedCommit
 )
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
 $Names = @('EvolveModManager.exe','EvolveModWorker.exe','_internal','Docs','START-HERE.txt','BUILD_COMMIT.txt','BUILD_CHANNEL.txt')
 $Backup = Join-Path $TargetDir ('.update-backup-' + [guid]::NewGuid().ToString('N'))
 $Moved = New-Object System.Collections.Generic.List[string]
 $Installed = New-Object System.Collections.Generic.List[string]
-$Window = New-Object System.Windows.Forms.Form
-$Window.Text = 'Evolve Mod Manager - Installing Update'
-$Window.Size = New-Object System.Drawing.Size(510,162)
-$Window.StartPosition = 'CenterScreen'
-$Window.BackColor = [System.Drawing.Color]::FromArgb(11,11,13)
-$Window.ForeColor = [System.Drawing.Color]::White
-$Window.FormBorderStyle = 'FixedDialog'
-$Window.MaximizeBox = $false
-$Window.MinimizeBox = $false
-$Window.ControlBox = $false
-$Label = New-Object System.Windows.Forms.Label
-$Label.Location = New-Object System.Drawing.Point(20,16)
-$Label.Size = New-Object System.Drawing.Size(455,34)
-$Label.Text = 'Waiting for Evolve Mod Manager to close...'
-$Label.ForeColor = [System.Drawing.Color]::FromArgb(242,242,244)
-$Window.Controls.Add($Label)
-$Bar = New-Object System.Windows.Forms.ProgressBar
-$Bar.Location = New-Object System.Drawing.Point(20,65)
-$Bar.Size = New-Object System.Drawing.Size(453,22)
-$Bar.Minimum = 0
-$Bar.Maximum = 100
-$Bar.Value = 0
-$Bar.Style = 'Continuous'
-$Window.Controls.Add($Bar)
-$Percent = New-Object System.Windows.Forms.Label
-$Percent.Location = New-Object System.Drawing.Point(20,95)
-$Percent.Size = New-Object System.Drawing.Size(453,24)
-$Percent.Text = '0%'
-$Percent.ForeColor = [System.Drawing.Color]::FromArgb(244,85,105)
-$Window.Controls.Add($Percent)
+$script:NewManager = $null
+$script:ProgressWindow = $null
+$script:ProgressLabel = $null
+$script:ProgressPercent = $null
+$script:ProgressBar = $null
 function Set-UpdateProgress([string]$Stage, [int]$Value) {
   $Value = [Math]::Max(0,[Math]::Min(100,$Value))
-  $Label.Text = $Stage
-  $Bar.Value = $Value
-  $Percent.Text = "$Value%"
-  [System.Windows.Forms.Application]::DoEvents()
+  Write-Output ("UPDATE STAGE: " + $Stage + " [" + $Value + "%]")
+  if ($null -eq $script:ProgressWindow) { return }
+  try {
+    $script:ProgressLabel.Text = $Stage
+    $script:ProgressPercent.Text = "$Value%"
+    $script:ProgressBar.Value = $Value
+    [System.Windows.Forms.Application]::DoEvents()
+  } catch {
+    Write-Output ("Progress UI warning (installation continues): " + $_.Exception.Message)
+    $script:ProgressWindow = $null
+  }
 }
-$Window.Show()
-[System.Windows.Forms.Application]::DoEvents()
+try {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  $script:ProgressWindow = New-Object System.Windows.Forms.Form
+  $script:ProgressWindow.Text = 'Evolve Mod Manager - Installing Update'
+  $script:ProgressWindow.Size = New-Object System.Drawing.Size(510,162)
+  $script:ProgressWindow.StartPosition = 'CenterScreen'
+  $script:ProgressWindow.BackColor = [System.Drawing.Color]::FromArgb(11,11,13)
+  $script:ProgressWindow.ForeColor = [System.Drawing.Color]::White
+  $script:ProgressWindow.FormBorderStyle = 'FixedDialog'
+  $script:ProgressWindow.MaximizeBox = $false
+  $script:ProgressWindow.MinimizeBox = $false
+  $script:ProgressWindow.ControlBox = $false
+  $script:ProgressLabel = New-Object System.Windows.Forms.Label
+  $script:ProgressLabel.Location = New-Object System.Drawing.Point(20,16)
+  $script:ProgressLabel.Size = New-Object System.Drawing.Size(455,34)
+  $script:ProgressLabel.Text = 'Waiting for Evolve Mod Manager to close...'
+  $script:ProgressLabel.ForeColor = [System.Drawing.Color]::FromArgb(242,242,244)
+  $script:ProgressWindow.Controls.Add($script:ProgressLabel)
+  $script:ProgressBar = New-Object System.Windows.Forms.ProgressBar
+  $script:ProgressBar.Location = New-Object System.Drawing.Point(20,65)
+  $script:ProgressBar.Size = New-Object System.Drawing.Size(453,22)
+  $script:ProgressBar.Minimum = 0
+  $script:ProgressBar.Maximum = 100
+  $script:ProgressBar.Style = 'Continuous'
+  $script:ProgressWindow.Controls.Add($script:ProgressBar)
+  $script:ProgressPercent = New-Object System.Windows.Forms.Label
+  $script:ProgressPercent.Location = New-Object System.Drawing.Point(20,95)
+  $script:ProgressPercent.Size = New-Object System.Drawing.Size(453,24)
+  $script:ProgressPercent.Text = '0%'
+  $script:ProgressPercent.ForeColor = [System.Drawing.Color]::FromArgb(244,85,105)
+  $script:ProgressWindow.Controls.Add($script:ProgressPercent)
+  $script:ProgressWindow.Show()
+  [System.Windows.Forms.Application]::DoEvents()
+} catch {
+  Write-Output ("Progress window unavailable (installation continues): " + $_.Exception.Message)
+  $script:ProgressWindow = $null
+}
 try {
   $proc = Get-Process -Id $ManagerPid -ErrorAction SilentlyContinue
   if ($null -ne $proc) { $null = $proc.WaitForExit(30000) }
   if (Get-Process -Id $ManagerPid -ErrorAction SilentlyContinue) { throw 'Manager did not close in 30 seconds.' }
   if (-not (Test-Path -LiteralPath (Join-Path $TargetDir 'EvolveModManager.exe') -PathType Leaf)) { throw 'Application folder is missing.' }
+  foreach ($required in @('EvolveModManager.exe','EvolveModWorker.exe','_internal','BUILD_COMMIT.txt','BUILD_CHANNEL.txt')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $SourceDir $required))) { throw "Missing update component: $required" }
+  }
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_COMMIT.txt') -Raw).Trim() -ne $ExpectedCommit) { throw 'Update commit mismatch.' }
-  Set-UpdateProgress 'Backing up the current application...' 5
+  if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_CHANNEL.txt') -Raw).Trim().ToLowerInvariant() -ne 'main') { throw 'Update build channel mismatch.' }
+  Set-UpdateProgress 'Backing up current application...' 5
   New-Item -ItemType Directory -Path $Backup -ErrorAction Stop | Out-Null
   foreach ($name in $Names) {
     $original = Join-Path $TargetDir $name
@@ -239,7 +284,7 @@ try {
       $Moved.Add($name)
     }
   }
-  Set-UpdateProgress 'Installing the verified update...' 15
+  Set-UpdateProgress 'Installing verified files...' 15
   $Files = New-Object System.Collections.Generic.List[object]
   foreach ($name in $Names) {
     $from = Join-Path $SourceDir $name
@@ -259,38 +304,92 @@ try {
     $file = $Files[$i]
     $targetFile = Join-Path $TargetDir $file.Relative
     $targetParent = Split-Path -Parent $targetFile
-    if (-not (Test-Path -LiteralPath $targetParent)) { New-Item -ItemType Directory -Path $targetParent -Force | Out-Null }
+    if (-not (Test-Path -LiteralPath $targetParent)) { New-Item -ItemType Directory -Path $targetParent -Force -ErrorAction Stop | Out-Null }
     Copy-Item -LiteralPath $file.Source -Destination $targetFile -Force -ErrorAction Stop
     if ($i -eq 0 -or $i % 12 -eq 0 -or $i -eq $Files.Count - 1) {
-      $percent = 15 + [int][Math]::Floor(80 * ($i + 1) / $Count)
+      $percent = 15 + [int][Math]::Floor(75 * ($i + 1) / $Count)
       Set-UpdateProgress 'Installing application files...' $percent
     }
   }
-  Set-UpdateProgress 'Reopening Evolve Mod Manager...' 98
-  $null = Start-Process -FilePath (Join-Path $TargetDir 'EvolveModManager.exe') -WorkingDirectory $TargetDir -PassThru -ErrorAction Stop
-  Set-UpdateProgress 'Update complete. Manager restarted.' 100
-  Write-Output "Update successful: $ExpectedCommit"
-  Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction SilentlyContinue
+  if ((Get-Content -LiteralPath (Join-Path $TargetDir 'BUILD_COMMIT.txt') -Raw).Trim() -ne $ExpectedCommit) { throw 'Installed commit mismatch.' }
+  Set-UpdateProgress 'Launching and checking updated manager...' 95
+  $ScratchRoot = Split-Path -Parent (Split-Path -Parent $SourceDir)
+  $AckPath = Join-Path $ScratchRoot ('startup-ok-' + [guid]::NewGuid().ToString('N') + '.txt')
+  $info = New-Object System.Diagnostics.ProcessStartInfo
+  $info.FileName = Join-Path $TargetDir 'EvolveModManager.exe'
+  $info.WorkingDirectory = $TargetDir
+  $info.UseShellExecute = $false
+  $info.EnvironmentVariables['EVOLVE_MANAGER_UPDATE_ACK'] = $AckPath
+  $script:NewManager = [System.Diagnostics.Process]::Start($info)
+  if ($null -eq $script:NewManager) { throw 'Could not start updated manager.' }
+  $timer = [System.Diagnostics.Stopwatch]::StartNew()
+  $Acknowledged = $false
+  while ($timer.Elapsed.TotalSeconds -lt 45) {
+    if ($script:NewManager.HasExited) { throw "Updated manager exited during startup (code $($script:NewManager.ExitCode))." }
+    if (Test-Path -LiteralPath $AckPath -PathType Leaf) {
+      $AckValue = (Get-Content -LiteralPath $AckPath -Raw).Trim()
+      if ($AckValue -eq $ExpectedCommit) { $Acknowledged = $true; break }
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not $Acknowledged) { throw 'Updated manager did not confirm successful startup.' }
+  Start-Sleep -Milliseconds 1000
+  if ($script:NewManager.HasExited) { throw 'Updated manager quit immediately after startup.' }
+  Set-UpdateProgress 'Update complete; manager reopened.' 100
+  Write-Output "UPDATE SUCCESS: $ExpectedCommit"
+  try { Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction Stop }
+  catch { Write-Output ("Backup retained (cleanup warning): " + $_.Exception.Message + " at " + $Backup) }
 } catch {
-  $Failure = "$_"
-  Write-Output "Update failed: $Failure"
+  $Failure = $_.Exception.Message
+  Write-Output "UPDATE FAILED: $Failure"
   Set-UpdateProgress 'Update failed; restoring previous version...' 0
-  foreach ($name in $Installed) { Remove-Item -LiteralPath (Join-Path $TargetDir $name) -Recurse -Force -ErrorAction SilentlyContinue }
-  foreach ($name in $Moved) {
-    $prior = Join-Path $Backup $name
-    if (Test-Path -LiteralPath $prior) {
-      Move-Item -LiteralPath $prior -Destination (Join-Path $TargetDir $name) -ErrorAction SilentlyContinue
+  $RollbackErrors = New-Object System.Collections.Generic.List[string]
+  if ($null -ne $script:NewManager) {
+    try {
+      if (-not $script:NewManager.HasExited) {
+        $script:NewManager.Kill()
+        $null = $script:NewManager.WaitForExit(10000)
+        if (-not $script:NewManager.HasExited) { throw 'Updated manager did not exit during rollback.' }
+      }
+    } catch { $RollbackErrors.Add("Stopping updated manager: " + $_.Exception.Message) }
+  }
+  if ($RollbackErrors.Count -eq 0) {
+    foreach ($name in $Installed) {
+      $new = Join-Path $TargetDir $name
+      try {
+        if (Test-Path -LiteralPath $new) { Remove-Item -LiteralPath $new -Recurse -Force -ErrorAction Stop }
+      } catch { $RollbackErrors.Add("Removing new " + $name + ": " + $_.Exception.Message) }
+    }
+    foreach ($name in $Moved) {
+      $prior = Join-Path $Backup $name
+      if (Test-Path -LiteralPath $prior) {
+        try {
+          $target = Join-Path $TargetDir $name
+          if (Test-Path -LiteralPath $target) { throw "Destination still exists: $target" }
+          Move-Item -LiteralPath $prior -Destination $target -ErrorAction Stop
+        } catch { $RollbackErrors.Add("Restoring " + $name + ": " + $_.Exception.Message) }
+      } else { $RollbackErrors.Add("Recovery file missing: $prior") }
     }
   }
-  Write-Output "Previous files restored where possible. Recovery backup (if present): $Backup"
-  [System.Windows.Forms.MessageBox]::Show("Update failed: $Failure`n`nPrevious files restored where possible. See update.log.", 'Evolve Mod Manager', 'OK', 'Error') | Out-Null
-  if (Test-Path -LiteralPath (Join-Path $TargetDir 'EvolveModManager.exe')) {
-    try { Start-Process -FilePath (Join-Path $TargetDir 'EvolveModManager.exe') -WorkingDirectory $TargetDir -ErrorAction Stop } catch { }
+  if ($RollbackErrors.Count -eq 0 -and (Test-Path -LiteralPath (Join-Path $TargetDir 'EvolveModManager.exe') -PathType Leaf)) {
+    Write-Output 'ROLLBACK COMPLETE: Previous application files restored.'
+    try {
+      Start-Process -FilePath (Join-Path $TargetDir 'EvolveModManager.exe') -WorkingDirectory $TargetDir -ErrorAction Stop
+      Write-Output 'Previous manager restart requested.'
+    } catch { Write-Output ("Could not reopen restored manager: " + $_.Exception.Message) }
+  } else {
+    Write-Output ('ROLLBACK INCOMPLETE: ' + ($RollbackErrors -join ' | '))
   }
+  Write-Output "Recovery backup location (if present): $Backup"
+  try {
+    [System.Windows.Forms.MessageBox]::Show("Update failed: $Failure" + [Environment]::NewLine + "See update.log. Backup: $Backup", 'Evolve Mod Manager', 'OK', 'Error') | Out-Null
+  } catch { Write-Output ("Unable to display failure dialog: " + $_.Exception.Message) }
   exit 1
 } finally {
-  $Window.Close()
-  $Window.Dispose()
+  if ($null -ne $script:ProgressWindow) {
+    try { $script:ProgressWindow.Close(); $script:ProgressWindow.Dispose() }
+    catch { Write-Output ("Progress cleanup warning: " + $_.Exception.Message) }
+  }
 }
 '''
 

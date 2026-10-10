@@ -2,6 +2,8 @@
 from __future__ import annotations
 import hashlib
 import io
+import os
+import subprocess
 import json
 from pathlib import Path
 import tempfile
@@ -114,7 +116,10 @@ class UpdateTests(unittest.TestCase):
         self.assertIn('System.Windows.Forms.ProgressBar', script)
         self.assertIn('Set-UpdateProgress', script)
         self.assertIn('WaitForExit(30000)', script)
-        self.assertIn("Start-Process -FilePath (Join-Path $TargetDir 'EvolveModManager.exe')", script)
+        self.assertIn('System.Diagnostics.ProcessStartInfo', script)
+        self.assertIn('EVOLVE_MANAGER_UPDATE_ACK', script)
+        self.assertIn('ROLLBACK COMPLETE', script)
+        self.assertIn('Progress UI warning', script)
         self.assertIn('restoring previous version', script)
         self.assertNotIn("'Data'", script)
         self.assertIn('CREATE_NO_WINDOW', Path(u.__file__).read_text(encoding='utf-8'))
@@ -150,6 +155,64 @@ class UpdateTests(unittest.TestCase):
                             text.index('gh release upload Main "dist/update-manifest.json"'))
             self.assertIn('Get-FileHash', text)
             self.assertIn('github.sha', text)
+
+
+    def test_acknowledgement_restricted_to_updater_scratch(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            app = base / 'app'
+            app.mkdir()
+            (app / 'BUILD_COMMIT.txt').write_text(COMMIT)
+            scratch = base / 'EvolveModManagerUpdates' / 'unique'
+            scratch.mkdir(parents=True)
+            ack = scratch / 'startup-ok-123.txt'
+            with patch.dict(os.environ, {'LOCALAPPDATA': str(base),
+                                         'EVOLVE_MANAGER_UPDATE_ACK': str(ack)}):
+                u.report_startup_ready(app)
+            self.assertEqual(ack.read_text().strip(), COMMIT)
+            outside = base / 'Data' / 'nope.txt'
+            with patch.dict(os.environ, {'LOCALAPPDATA': str(base),
+                                         'EVOLVE_MANAGER_UPDATE_ACK': str(outside)}):
+                u.report_startup_ready(app)
+            self.assertFalse(outside.exists())
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell installer required')
+    def test_windows_apply_rolls_back_after_invalid_new_executable(self):
+        # Actual PowerShell execution on the Windows CI runner, rather than
+        # merely searching installer source for rollback commands.
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            target, staged = base / 'installed', base / 'scratch' / 'extracted' / 'EvolveModManager'
+            target.mkdir(parents=True)
+            staged.mkdir(parents=True)
+            (target / 'EvolveModManager.exe').write_bytes(b'previous executable')
+            (target / 'EvolveModWorker.exe').write_bytes(b'previous worker')
+            (target / '_internal').mkdir()
+            (target / '_internal' / 'old.bin').write_bytes(b'prior runtime')
+            (target / 'Data' / 'Projects').mkdir(parents=True)
+            (target / 'Data' / 'Projects' / 'save.dat').write_bytes(b'personal data')
+            (staged / 'EvolveModManager.exe').write_bytes(b'invalid replacement')
+            (staged / 'EvolveModWorker.exe').write_bytes(b'new worker')
+            (staged / '_internal').mkdir()
+            (staged / '_internal' / 'new.bin').write_bytes(b'new runtime')
+            (staged / 'BUILD_COMMIT.txt').write_text(COMMIT)
+            (staged / 'BUILD_CHANNEL.txt').write_text('main')
+            script = base / 'scratch' / 'apply.ps1'
+            script.write_text(u.APPLY_PS1, encoding='utf-8-sig')
+            done = subprocess.run(
+                ['powershell.exe', '-NoProfile', '-NonInteractive', '-STA',
+                 '-ExecutionPolicy', 'Bypass', '-File', str(script),
+                 '-TargetDir', str(target), '-SourceDir', str(staged),
+                 '-ManagerPid', '2147483647', '-ExpectedCommit', COMMIT],
+                capture_output=True, text=True, timeout=90)
+            self.assertNotEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertIn('ROLLBACK COMPLETE', done.stdout + done.stderr)
+            self.assertEqual((target / 'EvolveModManager.exe').read_bytes(), b'previous executable')
+            self.assertEqual((target / 'EvolveModWorker.exe').read_bytes(), b'previous worker')
+            self.assertEqual((target / '_internal' / 'old.bin').read_bytes(), b'prior runtime')
+            self.assertFalse((target / '_internal' / 'new.bin').exists())
+            self.assertEqual((target / 'Data' / 'Projects' / 'save.dat').read_bytes(), b'personal data')
 
 
 if __name__ == '__main__': unittest.main()

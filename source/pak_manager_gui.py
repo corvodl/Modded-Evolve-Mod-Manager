@@ -25,7 +25,7 @@ from universal_stage import allowed_paks
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
 from dark_theme import apply_theme
 from ui_help import open_help_window
-from app_updater import discover as discover_update, download_and_prepare, launch_apply, installed_commit
+from app_updater import discover as discover_update, download_and_prepare, launch_apply, installed_commit, report_startup_ready
 from ui_copy import load_text
 from workspace_editor import WorkspaceEditor
 from portable_bundle import bind_home, MARKER
@@ -1349,4 +1349,6 @@ if __name__=='__main__':
             pass
     app=tk.Tk()
     Manager(app)
+    # Only acknowledge once Tk has started processing its event loop.
+    app.after(400, lambda: report_startup_ready(APP_HOME))
     app.mainloop()
