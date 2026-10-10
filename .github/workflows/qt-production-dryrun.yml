@@ -3,7 +3,7 @@ name: Verify Qt production candidate (no publication)
 on:
   workflow_dispatch:
   push:
-    branches: [qt-migration]
+    branches: [qt-migration, fix-qt-font-glyphs]
 
 permissions:
   contents: read
@@ -28,7 +28,7 @@ jobs:
       - name: Capture actual compiled Qt manager
         shell: pwsh
         run: |
-          $env:QT_QPA_PLATFORM = 'offscreen'
+          $env:QT_QPA_PLATFORM = 'windows'
           & '.build/app-dist/EvolveModManager/EvolveModManager.exe' --capture-screenshot 'dist/EvolveModManager-compiled-screenshot.png'
           if ($LASTEXITCODE -ne 0) { throw 'Production-candidate compiled Qt GUI failed to render.' }
           & '.build/venv/Scripts/python.exe' -c "from PIL import Image,ImageStat; im=Image.open('dist/EvolveModManager-compiled-screenshot.png').convert('RGB'); print(im.size); assert im.width>=850 and im.height>=600 and max(ImageStat.Stat(im).stddev)>14"

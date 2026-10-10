@@ -1,10 +1,16 @@
-# Evolve Stage 2 Mod Manager — v1.1.0
+# Evolve Stage 2 Mod Manager — v1.1.1
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.0 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.1 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.1
+
+- Fixed unreadable square placeholder letters in the compiled Qt screenshot by explicitly registering installed Windows TrueType fonts and verifying distinct rendered letters.
+- Windows Qt screenshot CI now uses the native platform instead of offscreen; it fails rather than publishing a screenshot if text glyphs are unavailable.
+- No proprietary font files are bundled: the manager uses the fonts already installed by Windows.
 
 ## What's new in v1.1.0
 

@@ -1,7 +1,7 @@
-"""Experimental PySide6 Evolve Mod Manager frontend.
+"""Production PySide6 Evolve Mod Manager frontend.
 
-Do not publish this as the default updater channel until full editor parity is
-confirmed. The stable Tk application remains the production release.
+Qt text/font health is checked before generating a compiled screenshot so
+blank glyphs cannot pass publication without detection.
 """
 from __future__ import annotations
 
@@ -57,6 +57,7 @@ from multi_pak_assets import load_collection
 from old_prepared import scan_prepared
 from desktop_shortcut import create_desktop_shortcut
 from ui_copy import load_text
+from qt_font_health import ensure_readable_ui_font, ui_family, glyphs_readable
 from portable_bundle import MARKER, bind_home
 
 ROOT = Path(__file__).resolve().parent
@@ -166,7 +167,7 @@ def qt_style():
     QMenu { background:#1e1c23; color:#eee; border:1px solid #403943; padding:5px; }
     QMenu::item { padding:7px 18px; border-radius:7px; }
     QMenu::item:selected { background:#702c3c; }
-    """
+    """.replace("font-family:'Segoe UI';", f'font-family:"{ui_family()}";')
 
 
 class TaskSignals(QObject):
@@ -1632,7 +1633,11 @@ class QtManager(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
-    app.setFont(QFont('Segoe UI', 10))
+    family = ensure_readable_ui_font(app, strict=('--capture-screenshot' in sys.argv))
+    if '--capture-screenshot' in sys.argv:
+        if not glyphs_readable(app.font()):
+            raise RuntimeError('Qt screenshot would have unreadable font glyphs.')
+        print('Real Qt font rasterization verified:', family, flush=True)
     main_window = QtManager()
     main_window.show()
     if '--capture-screenshot' in sys.argv:

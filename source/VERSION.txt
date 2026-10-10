@@ -1,1 +1,1 @@
-1.1.0 - Native Qt Interface and OpenGL Model Viewer
+1.1.1 - Windows Qt Font and Readable Screenshot Fix

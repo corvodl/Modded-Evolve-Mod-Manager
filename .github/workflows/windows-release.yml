@@ -33,8 +33,9 @@ jobs:
         shell: pwsh
         run: |
           # Capture genuine Qt widgets rendered by the compiled Windows executable.
-          # Headless runner cannot guarantee reliable GDI PrintWindow for Qt surfaces.
-          $env:QT_QPA_PLATFORM = "offscreen"
+          # Offscreen Qt previously rendered square replacement glyphs.
+          # Use the real Windows platform/font backend instead.
+          $env:QT_QPA_PLATFORM = "windows"
           & ".build/app-dist/EvolveModManager/EvolveModManager.exe" `
             --capture-screenshot "dist/EvolveModManager-compiled-screenshot.png"
           if ($LASTEXITCODE -ne 0) {
