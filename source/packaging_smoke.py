@@ -30,3 +30,7 @@ assert Image and ImageTk and dds_texture.parse_dds and dds_png_import.encode_png
 assert frida.__version__ and numpy.__version__ and material_preview.render_textured_mesh
 assert gpu_model_preview.prepare_geometry and gpu_model_preview.Win32GPUPreview
 print('Bundled crypto, Twofish, Frida, GPU preview, Pillow DDS and PAK workspace imports passed.')
+
+# File context-menu helpers must be bundled for all three editor tabs.
+import workspace_file_actions
+assert workspace_file_actions.checked_path

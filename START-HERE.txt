@@ -1,6 +1,6 @@
 IMPORTANT: Install Evolve Stage 2 using the Modded Evolve client from https://modded-evolve.com/ before using this manager.
 
-EVOLVE STAGE 2 MOD MANAGER v2.9.8 - BUILD KIT
+EVOLVE STAGE 2 MOD MANAGER v2.9.14 - BUILD KIT
 ==========================================
 
 BUILD COMPUTER (Windows x64):

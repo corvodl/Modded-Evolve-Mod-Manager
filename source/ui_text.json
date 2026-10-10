@@ -112,5 +112,22 @@
   "credits_github_label": "GitHub repository",
   "credits_website_label": "Modded Evolve website (install Evolve Stage 2 here)",
   "credits_install_note": "Install Evolve Stage 2 through the Modded Evolve website before using this manager. The mod manager does not install the game.",
-  "editor_archive_selector": "Unpacked PAKs — select an archive below to browse its files (Build Mod works on one PAK at a time)"
+  "editor_archive_selector": "Unpacked PAKs — select an archive below to browse its files (Build Mod works on one PAK at a time)",
+  "context_reveal_folder": "Show Folder in File Explorer",
+  "context_copy_folder": "Copy Game Folder Path",
+  "context_expand_folder": "Expand / Collapse",
+  "context_preview": "Edit / Preview",
+  "context_import_png": "Import PNG as DDS...",
+  "context_import_dds": "Import Compatible DDS...",
+  "context_export_png": "Export PNG...",
+  "context_import_model": "Import Model (Experimental)...",
+  "context_export_model": "Export Native Model...",
+  "context_find_textures": "Find Model Textures",
+  "context_replace_file": "Import / Replace File...",
+  "context_save": "Save Text Changes",
+  "context_export_file": "Export File...",
+  "context_reveal": "Show in File Explorer",
+  "context_open_default": "Open With Default App",
+  "context_copy_path": "Copy Game File Path",
+  "context_restore": "Restore Extracted Original..."
 }

@@ -1,11 +1,14 @@
 > **REQUIRED BEFORE USING THIS MANAGER:** Install **Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** using its official client installer. This manager requires the game files installed by that client; it does **not** download or install Evolve itself. A separate Steam or Legacy installation is not a substitute.
 
-# Evolve Stage 2 Mod Manager v2.9.9 (experimental)
+# Evolve Stage 2 Mod Manager v2.9.14 (experimental)
 
 A portable Windows modding manager for Evolve Stage 2, with PAK editing, a three-tab asset explorer, backup/restore, and offline-only modded launching.
 
 ## New in this experimental build
 
+- **Right-click file actions:** Context menus in Files/Text, Images/Textures and Models include preview/edit, safe replacement or import, export, Show in File Explorer, Open with Default App, and Copy Game File Path. Folders offer reveal and expand/collapse actions.
+- **Verified restore:** Restore Extracted Original is enabled only if an EditorBackups copy exactly matches the original extraction checksum. Whole-stream split DDS restore is intentionally not provided via the right-click menu.
+- **GPU preview:** Supported Windows hardware drivers provide OpenGL-based model rotation and diffuse texture rendering, with a Software fallback.
 - **Multi-PAK editor view:** After clicking **Unpack Selected PAKs**, the Edit Files window lists every archive in the completed batch above the Files, Images, and Models tabs. Click either archive to browse and edit its own files, without closing the editor. Each archive retains an independent workspace and Build Mod target. Unsaved text prompts before switching.
 - **UV diffuse material preview:** The Models tab now renders supported CryEngine CrChF meshes using their UV coordinates and material-specific diffuse textures. Texture rendering happens on a background thread; rotate, zoom, and toggle wireframe as before.
 - **Automatic cross-PAK textures:** Extract model/material and texture PAKs as a batch or separately into the same manager Projects folder. Selecting a model searches verified extracted workspaces automatically; duplicate paths are reported instead of guessed.
@@ -42,6 +45,11 @@ This archive is a **Windows build kit**, not a precompiled EXE. Run `Build-Windo
 
 ## Hardware-accelerated 3D preview (experimental)
 
-The Models tab defaults to **GPU (Auto)** on Windows. With a compatible accelerated OpenGL driver, it uses GPU-indexed triangles, depth testing and live diffuse UV textures while rotating or zooming the mesh. Use **Renderer → Software** to force the original CPU renderer, or let it automatically fall back when hardware OpenGL is unavailable. **Fast / Balanced / Detailed** adjust GPU texture quality. A GPU driver, not just WSL, is required.
+The Models tab defaults to **GPU (Auto)** on Windows. If an accelerated OpenGL driver is
+available, it uses indexed GPU rendering and real-time diffuse textures while rotating and
+zooming the mesh. **Renderer → Software** switches back to the original CPU preview. On
+systems with no accelerated OpenGL driver (including some virtual machines and remote
+desktops), the manager automatically falls back to software without affecting game files.
 
-This is still an approximate, read-only material preview; it does not reproduce all CryEngine effects or convert Blender-edited geometry back to Evolve.
+This is a read-only material approximation: no normal-map shading, CryEngine-specific
+materials, animation, or edited-model conversion is implied.

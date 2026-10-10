@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -15,6 +17,8 @@ from model_asset import is_model, inspect_model, export_model, replace_model
 from model_preview import ModelPreview, find_preview_mesh
 from multi_pak_assets import model_material_links
 from dds_png_import import encode_png_as_dds, compression_for_dds
+from workspace_file_actions import (checked_path, sha_file, replace_raw_file,
+                                    extracted_original_backup, restore_extracted_original)
 
 MAX_TEXT = 5 * 1024 * 1024
 TEXT_SUFFIXES = {'.xml', '.txt', '.cfg', '.ini', '.lua', '.json', '.csv', '.mtl', '.chrparams', '.cdf', '.animevents', '.lmg', '.bspace', '.comb'}
@@ -193,6 +197,8 @@ class WorkspaceEditor:
             scroll.pack(side='right', fill='y')
             tree.configure(yscrollcommand=scroll.set)
             tree.bind('<<TreeviewSelect>>', lambda event, name=tab: self.select(name))
+            tree.bind('<Button-3>', lambda event, name=tab: self.show_context_menu(name, event))
+            tree.bind('<Shift-F10>', lambda event, name=tab: self.show_context_menu(name, event))
             self.trees[tab] = tree
             self.tree_nodes[tab] = {}
             self.tree_paths[tab] = {}
@@ -397,6 +403,229 @@ class WorkspaceEditor:
                 self.load(rel)
             elif self.path in self.path_items[tab]:
                 tree.selection_set(self.path_items[tab][self.path])
+
+    def _context_text(self, name, fallback):
+        """New context labels are developer-configurable, not user overrides."""
+        copy = getattr(self.manager, 'copy', {})
+        return copy.get('context_' + name, fallback) if isinstance(copy, dict) else fallback
+
+    def _clicked_entry(self, tab, event):
+        """Return (relative path, folder flag) for a right-clicked tree node."""
+        tree = self.trees[tab]
+        node = tree.identify_row(event.y) if getattr(event, 'num', None) == 3 else ''
+        if not node and getattr(event, 'num', None) != 3:
+            chosen = tree.selection()
+            node = chosen[0] if chosen else ''
+        if not node:
+            return None, None
+        relative = self.tree_paths[tab].get(node)
+        if relative is None:
+            return None, None
+        return (relative, node not in self.tree_nodes[tab])
+
+    def show_context_menu(self, tab, event):
+        """Windows right-click actions; only the clicked workspace file is changed."""
+        relative, is_folder = self._clicked_entry(tab, event)
+        if relative is None:
+            return 'break'
+        tree = self.trees[tab]
+        node = tree.identify_row(event.y) if getattr(event, 'num', None) == 3 else ''
+        if not node and getattr(event, 'num', None) != 3:
+            chosen = tree.selection()
+            node = chosen[0] if chosen else ''
+        if is_folder:
+            menu = tk.Menu(tree, tearoff=False)
+            menu.add_command(label=self._context_text('reveal_folder', 'Show Folder in File Explorer'),
+                             command=lambda rel=relative: self.reveal_in_explorer(rel, True))
+            menu.add_command(label=self._context_text('copy_folder', 'Copy Game Folder Path'),
+                             command=lambda rel=relative: self.copy_game_path(rel))
+            menu.add_separator()
+            menu.add_command(label=self._context_text('expand_folder', 'Expand / Collapse'),
+                             command=lambda item=node: tree.item(item, open=not tree.item(item, 'open')))
+        else:
+            # Right-click must not bypass the unsaved-buffer prompt or use the
+            # previous file's raw bytes after the user clicks a new file.
+            if tab == self.active_tab and relative != self.path:
+                if not self.confirm():
+                    return 'break'
+                tree.selection_set(node)
+                self.load(relative)
+            elif tab != self.active_tab:
+                return 'break'
+            menu = self._file_context_menu(tab, relative)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+            menu.destroy()
+        return 'break'
+
+    def _file_context_menu(self, tab, relative):
+        menu = tk.Menu(self.trees[tab], tearoff=False)
+        current = (self.path == relative)
+        view_ok = current and self.view_mode not in ('unavailable', None)
+        menu.add_command(label=self._context_text('preview', 'Edit / Preview'), command=lambda rel=relative: self.context_preview(rel))
+        menu.add_separator()
+        if tab == 'images':
+            menu.add_command(label=self._context_text('import_png', 'Import PNG as DDS...'), command=self.import_png,
+                             state='normal' if view_ok else 'disabled')
+            menu.add_command(label=self._context_text('import_dds', 'Import Compatible DDS...'), command=self.import_texture,
+                             state='normal' if view_ok else 'disabled')
+            menu.add_command(label=self._context_text('export_png', 'Export PNG...'), command=self.export_texture,
+                             state='normal' if view_ok else 'disabled')
+        elif tab == 'models':
+            menu.add_command(label=self._context_text('import_model', 'Import Model (Experimental)...'), command=self.import_model,
+                             state='normal' if view_ok else 'disabled')
+            menu.add_command(label=self._context_text('export_model', 'Export Native Model...'), command=self.export_model,
+                             state='normal' if view_ok else 'disabled')
+            menu.add_command(label=self._context_text('find_textures', 'Find Model Textures'), command=self.show_model_textures,
+                             state='normal' if view_ok else 'disabled')
+        else:
+            menu.add_command(label=self._context_text('replace_file', 'Import / Replace File...'), command=self.import_generic_file)
+            if self.view_mode == 'text' and current:
+                menu.add_command(label=self._context_text('save', 'Save Text Changes'), command=self.save)
+        menu.add_command(label=self._context_text('export_file', 'Export File...'), command=lambda rel=relative: self.export_raw_file(rel))
+        menu.add_separator()
+        menu.add_command(label=self._context_text('reveal', 'Show in File Explorer'), command=lambda rel=relative: self.reveal_in_explorer(rel))
+        menu.add_command(label=self._context_text('open_default', 'Open With Default App'), command=lambda rel=relative: self.open_extracted_file(rel))
+        menu.add_command(label=self._context_text('copy_path', 'Copy Game File Path'), command=lambda rel=relative: self.copy_game_path(rel))
+        menu.add_separator()
+        # Split streaming DDS is a coordinated set, not an independent file.
+        # Never partially restore a fragment without a transaction for ALL parts.
+        sha = self.records[relative].get('sha256', '')
+        try:
+            current_hash = sha_file(checked_path(self.workspace, relative))
+            original = (extracted_original_backup(self.workspace, relative, sha)
+                        if not is_split_dds(relative) and sha and current_hash != sha else None)
+        except (OSError, ValueError):
+            original = None
+        menu.add_command(label=self._context_text('restore', 'Restore Extracted Original...'),
+                         command=lambda rel=relative: self.restore_original(rel),
+                         state='normal' if original is not None else 'disabled')
+        return menu
+
+    def context_preview(self, relative):
+        # A menu action must not discard a dirty text buffer silently.
+        if not self.confirm():
+            return
+        self.load(relative)
+
+    def copy_game_path(self, relative):
+        self.window.clipboard_clear()
+        self.window.clipboard_append(relative.replace('/', '\\'))
+        self.info.set('Copied virtual game path: ' + relative)
+
+    def reveal_in_explorer(self, relative, directory=False):
+        try:
+            target = checked_path(self.workspace, relative, directory=directory)
+            if os.name != 'nt':
+                raise OSError('Show in File Explorer is available on Windows.')
+            if directory:
+                subprocess.Popen(['explorer.exe', str(target)])
+            else:
+                subprocess.Popen(['explorer.exe', '/select,', str(target)])
+        except (OSError, ValueError) as error:
+            messagebox.showerror('Cannot reveal file', str(error), parent=self.window)
+
+    def open_extracted_file(self, relative):
+        try:
+            target = checked_path(self.workspace, relative)
+            if target.suffix.casefold() in {'.exe', '.com', '.cmd', '.bat', '.ps1', '.vbs', '.js', '.scr'}:
+                raise ValueError('Opening executable scripts from a PAK is disabled for safety.')
+            if os.name != 'nt':
+                raise OSError('Default application opening is available on Windows.')
+            os.startfile(str(target))
+        except (OSError, ValueError) as error:
+            messagebox.showerror('Cannot open file', str(error), parent=self.window)
+
+    def export_raw_file(self, relative):
+        from tkinter import filedialog
+        try:
+            source = checked_path(self.workspace, relative)
+            filename = Path(relative).name
+            destination = filedialog.asksaveasfilename(parent=self.window,
+                         title='Export extracted file', initialfile=filename)
+            if not destination:
+                return
+            target = Path(destination).resolve()
+            if source == target:
+                raise ValueError('Export destination cannot be the original extracted file.')
+            shutil.copyfile(source, target)
+            self.info.set('Exported: ' + relative + ' -> ' + str(target))
+        except (OSError, ValueError) as error:
+            messagebox.showerror('Export failed', str(error), parent=self.window)
+
+    def import_generic_file(self):
+        """Import text with CryXML guards or opt-in raw binary with a backup."""
+        if self.active_tab != 'files' or not self.path:
+            return
+        if self.manager.busy:
+            messagebox.showerror('Wait for current task', 'Finish the current operation first.', parent=self.window)
+            return
+        if not self.confirm():
+            return
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(parent=self.window,
+                    title='Choose replacement for ' + Path(self.path).name)
+        if not path:
+            return
+        rel = self.path
+        try:
+            target = checked_path(self.workspace, rel)
+            before = target.read_bytes()
+            if self.view_mode == 'text' and digest(before) != digest(self.raw):
+                raise ValueError('File changed externally. Reload before importing a replacement.')
+            record = self.records[rel]
+            # CryXML is exported as text; never write arbitrary raw bytes over it.
+            if record['format'] == 'cryxml' or target.suffix.casefold() in TEXT_SUFFIXES:
+                replacement = Path(path).read_bytes()
+                if len(replacement) > MAX_TEXT:
+                    raise ValueError('Text replacement exceeds the 5 MiB editor limit.')
+                candidate = replacement.decode('utf-8-sig')
+                if '\x00' in candidate:
+                    raise ValueError('Cannot import binary bytes into a text file.')
+                save_text(self.workspace, rel, candidate, digest(before), before,
+                          cryxml=record['format'] == 'cryxml')
+            else:
+                if not messagebox.askyesno('Replace binary file?',
+                        'This is an unknown binary format. Replacement may not work in Evolve.\n\n'
+                        'Replace this extracted file and keep the previous bytes in EditorBackups?',
+                        parent=self.window):
+                    return
+                replace_raw_file(self.workspace, rel, path, digest(before))
+            self.load(rel)
+            self.info.set('Imported replacement: ' + rel + ' | Previous bytes backed up')
+        except (OSError, ValueError, RuntimeError, UnicodeError) as error:
+            messagebox.showerror('Import rejected', str(error), parent=self.window)
+
+    def restore_original(self, relative):
+        if self.manager.busy:
+            messagebox.showerror('Wait for current task', 'Finish the current operation first.', parent=self.window)
+            return
+        if is_split_dds(relative):
+            messagebox.showerror('Cannot restore part of a stream',
+                'A split DDS needs every original fragment restored together. Automated stream restore is not supported.',
+                parent=self.window)
+            return
+        if not self.confirm():
+            return
+        try:
+            target = checked_path(self.workspace, relative)
+            original_hash = self.records[relative].get('sha256', '')
+            current_hash = sha_file(target)
+            if current_hash == original_hash:
+                self.info.set('Already matches extracted original: ' + relative)
+                return
+            if not messagebox.askyesno('Restore extracted original?',
+                    'Restore the original extracted contents of ' + relative + '?\n\n'
+                    'Current edited bytes will be saved to EditorBackups.\n'
+                    'Other PAK files will not be modified.', parent=self.window):
+                return
+            restore_extracted_original(self.workspace, relative, original_hash, current_hash)
+            self.load(relative)
+            self.info.set('Restored extracted original: ' + relative + ' | Previous bytes backed up')
+        except (OSError, ValueError, RuntimeError) as error:
+            messagebox.showerror('Restore failed', str(error), parent=self.window)
 
     def reset_views(self):
         self.preview_photo = None

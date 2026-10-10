@@ -162,3 +162,18 @@ GPU model viewer (experimental, Windows):
 - Driver-based OpenGL needs a supported GPU driver; WSL, remote desktop, headless VMs
   and some older GPUs may not have a usable accelerated OpenGL context.
 - Rendering is read-only. It is approximate diffuse shading, not CryEngine shader parity.
+
+File context menus (v2.9.14):
+- Right-click a file in Files/Text, Images/Textures or Models to see actions for that file.
+- Text/XML: Import/Replace File, Save, Export File and Windows Explorer commands.
+  CryXML still prohibits structural edits. The original extracted file is backed up.
+- Images: Import PNG as DDS, Import compatible DDS, Export PNG, Export raw file.
+  Split DDS fragment imports keep their existing all-parts validation and backups.
+- Models: Native import (experimental), native export, find texture references and reveal.
+- Folders: Show in File Explorer, Copy Game Folder Path, Expand/Collapse.
+- Restore Extracted Original is enabled only when an EditorBackups copy has the EXACT
+  checksum of the original extracted file from the manifest. Unsupported/multi-part
+  split streaming DDS restores are disabled until atomic group restoration exists.
+- Replace unknown binary files only after explicit confirmation; game compatibility
+  remains unverified. No action writes to the installed EvolveGame directory.
+- The context menu also works with Shift+F10 for selected files/folders.
