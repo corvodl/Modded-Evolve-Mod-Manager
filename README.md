@@ -28,8 +28,6 @@ The portable Windows release bundles Python and its required application depende
 | **Settings** | Projects, stage and launch-helper folders; maintenance and advanced workflows |
 | **Credits** | Project links and attribution |
 
-The header shows the existing project icon beside **EVOLVE / MOD MANAGER**. The bottom-right footer displays **v1.0.0**, read from the packaged `VERSION.txt` file. The UI keeps its black/red theme; verbose activity remains in the optional **Activity** window.
-
 ### Readable PAK browser and right-click tools
 
 The main list is arranged **Folder → Description → File → Type / Project → Size**. Descriptions are **inferred from filenames**, not verified by analyzing archive contents. The actual signed filenames remain unchanged.
