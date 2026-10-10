@@ -51,6 +51,8 @@ class BrandingTests(unittest.TestCase):
             for exe in ('EvolveModManager.exe', 'EvolveModWorker.exe'):
                 (built/exe).write_bytes(b'fake exe')
             (internal/'ui_text.json').write_bytes((ROOT/'ui_text.json').read_bytes())
+            (built/'BUILD_COMMIT.txt').write_text('a'*40)
+            (built/'BUILD_CHANNEL.txt').write_text('main')
             (built/'START-HERE.txt').write_text('Run EvolveModManager.exe')
             (docs/'README-PORTABLE-APP.txt').write_text('Run Set Up Manager')
             release, archive = publish(built, base/'dist')

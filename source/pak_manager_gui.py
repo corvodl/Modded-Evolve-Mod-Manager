@@ -13,6 +13,7 @@ import queue
 import subprocess
 import sys
 import threading
+import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -23,10 +24,13 @@ from launch_integration import (
 from universal_stage import allowed_paks
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
 from dark_theme import apply_theme
+from ui_help import open_help_window
+from app_updater import discover as discover_update, download_and_prepare, launch_apply, installed_commit
 from ui_copy import load_text
 from workspace_editor import WorkspaceEditor
 from portable_bundle import bind_home, MARKER
 from old_prepared import scan_prepared
+from multi_pak_assets import load_collection, create_batch
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_STAGE = str(DATA_HOME/'Setup'/'staged')
@@ -53,12 +57,14 @@ class Manager:
             pass
         self.copy, self.ui_warning = load_text()
         self.window.title(self.t('window_title'))
-        self.window.geometry('980x690')
-        self.window.minsize(800,580)
+        self.window.geometry('1040x710')
+        self.window.minsize(860,620)
         self.events = queue.Queue()
         self.busy = False
         self.editors = []
         self.archive_entries = []
+        self.batch_workspaces = {}
+        self.batch_root = tk.StringVar()
         self.visible = []
         self.stage = tk.StringVar(value=DEFAULT_STAGE)
         self.swap = tk.StringVar(value=DEFAULT_SWAP)
@@ -72,15 +78,22 @@ class Manager:
         self.status = tk.StringVar(value=self.t('status_welcome'))
         self.launch_state = tk.StringVar(value=self.t('status_launch_check'))
         self.archive_count = tk.StringVar()
+        self.update_status = tk.StringVar(value='Updates: not checked')
+        self.available_update = None
+        self.update_in_progress = False
         self.bundle_error = ''
         self.bundle = None
         self.read_settings()
+        self.load_batch_mapping()
         self.draw()
+        # Detailed activity is optional; automatic operation logs still open when work starts.
         if self.ui_warning:self.write('UI TEXT: '+self.ui_warning+'\n')
         self.reload_archives()
         self.update_launch_state()
         self.window.after(120, self.poll)
         self.window.protocol('WM_DELETE_WINDOW',self.on_close)
+        if self.build_channel() == 'main':
+            self.window.after(2500, lambda: self.check_updates(silent=True))
         if self.bundle_error:self.window.after(300,lambda:self.fail(RuntimeError(self.bundle_error)))
         elif self.bundle and not self.bundle.get('configured'):self.window.after(300,self.configure_bundle)
         elif not (Path(self.stage.get())/'stage_status.json').is_file():self.window.after(300,self.offer_initial_setup)
@@ -92,7 +105,7 @@ class Manager:
         if source.is_file():
             try:
                 data=json.loads(source.read_text(encoding='utf-8'))
-                for name in ('stage','swap','projects','current_workspace','output_pak','archive_label'):
+                for name in ('stage','swap','projects','current_workspace','output_pak','archive_label','batch_root'):
                     if name in data and isinstance(data[name],str):
                         getattr(self,name).set(data[name])
             except (OSError, ValueError):
@@ -100,56 +113,177 @@ class Manager:
 
     def persist(self):
         data={name:getattr(self,name).get() for name in (
-            'stage','swap','projects','current_workspace','output_pak','archive_label')}
+            'stage','swap','projects','current_workspace','output_pak','archive_label','batch_root')}
         save_settings(data)
 
     def t(self, name):
         """Lookup a developer-configured label (unknown keys remain visible)."""
         return self.copy.get(name, name.replace('_', ' ').capitalize())
 
+    @staticmethod
+    def build_channel():
+        try:
+            return (APP_HOME / 'BUILD_CHANNEL.txt').read_text(encoding='ascii').strip().lower()
+        except OSError:
+            return ''
+
+    def check_updates(self, silent=False):
+        if self.update_in_progress or self.busy:
+            if not silent: messagebox.showinfo('Updates', 'Finish the current operation first.', parent=self.window)
+            return
+        if self.build_channel() != 'main' or not (APP_HOME / 'EvolveModManager.exe').is_file():
+            self.update_status.set('Automatic updates are available in the main Windows release.')
+            if not silent:messagebox.showinfo('Updates', self.update_status.get(), parent=self.window)
+            return
+        self.update_in_progress = True
+        self.update_status.set('Checking for updates…')
+        self.update_button.configure(state='disabled')
+        def background():
+            try: self.events.put(('update-check', (discover_update(installed_commit(APP_HOME)), None, silent)))
+            except Exception as exc: self.events.put(('update-check', (None, str(exc), silent)))
+        threading.Thread(target=background, daemon=True).start()
+
+    def on_update_check(self, candidate, error, silent):
+        self.update_in_progress = False
+        self.update_button.configure(state='normal')
+        self.available_update = candidate
+        if error:
+            self.update_status.set('Update check unavailable')
+            if not silent:messagebox.showwarning('Updates', f'Could not check GitHub: {error}', parent=self.window)
+        elif candidate is None:
+            self.update_status.set('No verified newer build available')
+            if not silent: messagebox.showinfo('Updates', 'You have the latest released build, or the new build is still being verified.', parent=self.window)
+        else:
+            self.update_status.set('Update available: ' + candidate.version)
+            if not silent: self.offer_update()
+
+    def offer_update(self):
+        candidate = self.available_update
+        if candidate is None or self.update_in_progress: return
+        if self.busy:
+            messagebox.showinfo('Updates', 'Finish your current operation before updating.', parent=self.window)
+            return
+        if not messagebox.askyesno('Update available',
+                f'{candidate.version} is ready to install.\n\n'
+                'The manager will download and verify the release, then restart. '
+                'Your Data folder (projects, keys and backups) is preserved.\n\n'
+                'Update now?', parent=self.window): return
+        self.update_in_progress = True
+        self.update_status.set('Downloading verified update…')
+        self.update_button.configure(state='disabled')
+        def download():
+            try: self.events.put(('update-download', (candidate, download_and_prepare(candidate), None)))
+            except Exception as exc: self.events.put(('update-download', (candidate, None, str(exc))))
+        threading.Thread(target=download, daemon=True).start()
+
+    def on_update_download(self, candidate, staged, error):
+        self.update_in_progress = False
+        self.update_button.configure(state='normal')
+        if error:
+            self.update_status.set('Update download failed')
+            messagebox.showerror('Update failed', str(error) + '\n\nThe current installation is unchanged.', parent=self.window)
+            return
+        if self.busy or not self.flush_editors():
+            self.update_status.set('Update downloaded; install postponed')
+            messagebox.showinfo('Update postponed', 'Finish operations and save edits first. Recheck updates when ready.', parent=self.window)
+            return
+        try:
+            self.persist()
+            log = launch_apply(candidate, staged, APP_HOME, os.getpid())
+        except Exception as exc:
+            self.update_status.set('Could not start updater')
+            messagebox.showerror('Update failed', f'{exc}\n\nThe current installation is unchanged.', parent=self.window)
+            return
+        # The detached Windows updater waits for this process to exit and then
+        # performs the replacement. Never edit running EXEs or user Data here.
+        self.window.destroy()
+
     def draw(self):
         root = self.window
-        base = ttk.Frame(root, padding=(14, 10))
+        base = ttk.Frame(root, padding=(18, 15, 18, 12))
         base.pack(fill='both', expand=True)
-        header_row = ttk.Frame(base)
-        header_row.pack(fill='x')
-        ttk.Label(header_row, text=self.t('header'), foreground='#ff4255',
-                  font=('Segoe UI', 17, 'bold')).pack(side='left')
-        ttk.Button(header_row, text=self.t('setup_button'), command=self.initial_setup).pack(side='right', padx=(6, 0))
-        self.log_button = ttk.Button(header_row, text=self.t('details_show'), command=self.toggle_log)
-        self.log_button.pack(side='right')
-        ttk.Label(base, text=self.t('subtitle'), foreground='#b5b5bf').pack(anchor='w', pady=(2, 7))
+
+        header = ttk.Frame(base)
+        header.pack(fill='x', pady=(0, 13))
+        brand = ttk.Frame(header)
+        brand.pack(side='left', fill='x', expand=True)
+        ttk.Label(brand, text=self.t('header'), style='Brand.TLabel').pack(anchor='w')
+        ttk.Label(brand, text=self.t('subtitle'), style='Muted.TLabel').pack(anchor='w', pady=(2, 0))
+        ttk.Button(header, text=self.t('setup_button'), style='Accent.TButton',
+                   command=self.initial_setup).pack(side='right', padx=(8, 0))
+        self.log_button = ttk.Button(header, text=self.t('details_show'),
+                                     style='Quiet.TButton', command=self.toggle_log)
+        self.log_button.pack(side='right', padx=(8, 0))
+        ttk.Button(header, text=self.t('help_button'), style='Quiet.TButton',
+                   command=self.show_help).pack(side='right')
+
         notebook = ttk.Notebook(base)
         notebook.pack(fill='both', expand=True)
-        self.edit_tab = ttk.Frame(notebook, padding=10)
-        self.play_tab = ttk.Frame(notebook, padding=10)
-        self.settings_tab = ttk.Frame(notebook, padding=10)
-        notebook.add(self.edit_tab, text='  '+self.t('tab_edit')+'  ')
-        notebook.add(self.play_tab, text='  '+self.t('tab_play')+'  ')
-        notebook.add(self.settings_tab, text='  '+self.t('tab_settings')+'  ')
+        self.edit_tab = ttk.Frame(notebook, padding=12)
+        self.play_tab = ttk.Frame(notebook, padding=12)
+        self.settings_tab = ttk.Frame(notebook, padding=12)
+        self.credits_tab = ttk.Frame(notebook, padding=12)
+        notebook.add(self.edit_tab, text='  ' + self.t('tab_edit') + '  ')
+        notebook.add(self.play_tab, text='  ' + self.t('tab_play') + '  ')
+        notebook.add(self.settings_tab, text='  ' + self.t('tab_settings') + '  ')
+        notebook.add(self.credits_tab, text='  ' + self.t('tab_credits') + '  ')
         self.notebook = notebook
         self.draw_edit(self.edit_tab)
         self.draw_play(self.play_tab)
         self.draw_settings(self.settings_tab)
+        self.draw_credits(self.credits_tab)
+
         self.log_visible = False
         self.log_window = tk.Toplevel(root)
         self.log_window.withdraw()
-        self.log_window.title('Activity Log | ' + self.t('window_title'))
+        self.log_window.configure(background='#0b0b0d')
+        self.log_window.title('Activity | ' + self.t('window_title'))
         self.log_window.geometry('850x340')
         self.log_window.minsize(550, 220)
         self.log_window.protocol('WM_DELETE_WINDOW', lambda: self.toggle_log(show=False))
-        self.log_frame = ttk.Frame(self.log_window, padding=9)
+        self.log_frame = ttk.Frame(self.log_window, padding=12)
         self.log_frame.pack(fill='both', expand=True)
-        self.log = tk.Text(self.log_frame, height=6, font=('Consolas', 9), wrap='word', relief='flat')
+        self.log = tk.Text(self.log_frame, height=6, font=('Consolas', 9), wrap='word',
+                           relief='flat', borderwidth=0)
         self.log.pack(side='left', fill='both', expand=True)
         scroll = ttk.Scrollbar(self.log_frame, orient='vertical', command=self.log.yview)
         scroll.pack(side='right', fill='y')
         self.log.configure(yscrollcommand=scroll.set)
+
+        ttk.Separator(base).pack(fill='x', pady=(10, 8))
         bottom = ttk.Frame(base)
-        bottom.pack(fill='x', pady=(6, 0))
-        ttk.Label(bottom, textvariable=self.status).pack(side='left')
-        ttk.Label(bottom, text=self.t('footer_note'), foreground='#b5b5bf').pack(side='right')
+        bottom.pack(fill='x')
+        ttk.Label(bottom, textvariable=self.status, style='Status.TLabel').pack(side='left', fill='x', expand=True)
+        ttk.Label(bottom, text=self.t('footer_note'), style='AccentText.TLabel').pack(side='right')
         self.write('Manager opened. No installed game files were changed.\n')
+
+    def show_help(self, section=None):
+        sections = [
+            (self.t('help_mod_title'), self.t('help_mod_body')),
+            (self.t('help_play_title'), self.t('help_play_body')),
+            (self.t('help_setup_title'), self.t('help_setup_body')),
+            (self.t('help_safety_title'), self.t('help_safety_body')),
+        ]
+        if section is None:
+            current = self.notebook.select()
+            section = {str(self.edit_tab): 0, str(self.play_tab): 1,
+                       str(self.settings_tab): 2, str(self.credits_tab): 2}.get(current, 0)
+        open_help_window(self.window, self.t('help_title'), sections, selected=section)
+
+    def draw_credits(self, parent):
+        github = 'https://github.com/corvodl/Modded-Evolve-Mod-Manager'
+        website = 'https://modded-evolve.com/'
+        ttk.Label(parent, text=self.t('credits_heading'), style='Section.TLabel').pack(anchor='w', pady=(5, 13))
+        card = ttk.Frame(parent, style='Card.TFrame', padding=20)
+        card.pack(fill='x')
+        ttk.Label(card, text=self.t('credits_discord'), style='CardTitle.TLabel').pack(anchor='w')
+        ttk.Label(card, text=self.t('credits_author_role'), style='CardMuted.TLabel').pack(anchor='w', pady=(3, 18))
+        ttk.Separator(card).pack(fill='x', pady=(0, 15))
+        ttk.Label(card, text=self.t('credits_github_label'), style='CardMuted.TLabel').pack(anchor='w')
+        ttk.Button(card, text=github, style='Quiet.TButton', command=lambda: webbrowser.open(github, new=2)).pack(anchor='w', pady=(5, 14))
+        ttk.Label(card, text=self.t('credits_website_label'), style='CardMuted.TLabel').pack(anchor='w')
+        ttk.Button(card, text=website, style='Quiet.TButton', command=lambda: webbrowser.open(website, new=2)).pack(anchor='w', pady=(5, 8))
+        ttk.Label(parent, text=self.t('credits_install_note'), style='Muted.TLabel', wraplength=780).pack(anchor='w', pady=(15, 0))
 
     def toggle_log(self, show=None):
         show = not self.log_visible if show is None else bool(show)
@@ -157,6 +291,16 @@ class Manager:
             return
         self.log_visible = show
         if show:
+            # Place beside the main window if possible, rather than obscuring
+            # its controls. Existing manual position is respected after first open.
+            if not getattr(self, '_log_positioned', False):
+                self.window.update_idletasks()
+                root_x, root_y = self.window.winfo_rootx(), self.window.winfo_rooty()
+                candidate = root_x + self.window.winfo_width() + 12
+                if candidate + 850 > self.window.winfo_screenwidth():
+                    candidate = max(20, root_x + 60)
+                self.log_window.geometry(f'+{candidate}+{max(20, root_y + 70)}')
+                self._log_positioned = True
             self.log_window.deiconify()
             self.log_window.lift()
         else:
@@ -164,26 +308,27 @@ class Manager:
         self.log_button.configure(text=self.t('details_hide' if show else 'details_show'))
 
     def draw_edit(self, parent):
-        # The activity log has its own window. Give unused space to the PAK list
-        # and let the user resize it without hiding the editing controls.
+        # Keep the resizable two-pane PAK list. Hide detailed how-to behind Help.
         self.edit_split = tk.PanedWindow(
-            parent, orient=tk.VERTICAL, background='#34343b', borderwidth=0,
-            sashwidth=9, sashpad=4, sashrelief=tk.RAISED,
-            showhandle=True, handlesize=12, handlepad=16,
-            opaqueresize=True, cursor='sb_v_double_arrow')
+            parent, orient=tk.VERTICAL, background='#30272c', borderwidth=0,
+            sashwidth=7, sashpad=3, sashrelief=tk.FLAT,
+            showhandle=False, opaqueresize=True, cursor='sb_v_double_arrow')
         self.edit_split.pack(fill='both', expand=True)
-        select = ttk.LabelFrame(self.edit_split, text=self.t('choose_group'), padding=8)
+        select = ttk.LabelFrame(self.edit_split, text=self.t('choose_group'), padding=10)
         self.edit_split.add(select, minsize=135, stretch='always')
         line = ttk.Frame(select)
-        line.pack(fill='x')
-        ttk.Label(line, text=self.t('search_label')).pack(side='left')
-        ttk.Entry(line, textvariable=self.search).pack(side='left', fill='x', expand=True, padx=8)
-        ttk.Button(line, text=self.t('refresh_list'), command=self.reload_archives).pack(side='left')
-        ttk.Button(line, text=self.t('browse_pak'), command=self.browse_pak).pack(side='left', padx=(5, 0))
+        line.pack(fill='x', pady=(0, 7))
+        ttk.Label(line, text=self.t('search_label'), style='Muted.TLabel').pack(side='left')
+        ttk.Entry(line, textvariable=self.search).pack(side='left', fill='x', expand=True, padx=(10, 12))
+        ttk.Button(line, text=self.t('refresh_list'), style='Quiet.TButton', command=self.reload_archives).pack(side='left')
+        ttk.Button(line, text=self.t('browse_pak'), style='Quiet.TButton', command=self.browse_pak).pack(side='left', padx=(7, 0))
         self.search.trace_add('write', lambda *_: self.refresh_list())
         archive_area = ttk.Frame(select)
-        archive_area.pack(fill='both', expand=True, pady=(5, 0))
-        self.archives = tk.Listbox(archive_area, height=9, exportselection=False, font=('Consolas', 10))
+        archive_area.pack(fill='both', expand=True)
+        self.archives = tk.Listbox(archive_area, height=9, selectmode=tk.EXTENDED,
+                                   exportselection=False, font=('Consolas', 10),
+                                   borderwidth=0, relief='flat', activestyle='none',
+                                   selectbackground='#9c2635', selectforeground='#ffffff')
         self.archives.pack(side='left', fill='both', expand=True)
         archive_scroll = ttk.Scrollbar(archive_area, orient='vertical', command=self.archives.yview)
         archive_scroll.pack(side='right', fill='y')
@@ -191,80 +336,86 @@ class Manager:
         self.archives.bind('<<ListboxSelect>>', self.select_archive)
         self.archives.bind('<Double-Button-1>', lambda *_: self.extract())
         status_line = ttk.Frame(select)
-        status_line.pack(fill='x', pady=(4, 0))
-        ttk.Label(status_line, textvariable=self.archive_count, foreground='#b5b5bf').pack(side='left')
-        ttk.Label(status_line, text='↕ Drag divider below to resize', foreground='#b5b5bf').pack(side='left', padx=16)
-        ttk.Label(status_line, textvariable=self.archive_label, foreground='#ff6370').pack(side='right')
+        status_line.pack(fill='x', pady=(7, 0))
+        ttk.Label(status_line, textvariable=self.archive_count, style='Muted.TLabel').pack(side='left')
+        ttk.Label(status_line, text=self.t('resize_hint'), style='Muted.TLabel').pack(side='left', padx=14)
+        ttk.Label(status_line, textvariable=self.archive_label, style='AccentText.TLabel').pack(side='right')
+
         lower = ttk.Frame(self.edit_split)
-        self.edit_split.add(lower, minsize=185, stretch='never')
-        actions = ttk.LabelFrame(lower, text=self.t('edit_group'), padding=8)
+        self.edit_split.add(lower, minsize=160, stretch='never')
+        actions = ttk.LabelFrame(lower, text=self.t('edit_group'), padding=10)
         actions.pack(fill='x')
-        ttk.Label(actions, text=self.t('edit_instructions')).pack(anchor='w')
         row = ttk.Frame(actions)
-        row.pack(fill='x', pady=(5, 0))
-        ttk.Button(row, text=self.t('unpack_button'), command=self.extract).pack(side='left', fill='x', expand=True, padx=(0, 5))
-        ttk.Button(row, text=self.t('edit_button'), command=self.open_editable).pack(side='left', fill='x', expand=True, padx=(0, 5))
-        ttk.Button(row, text=self.t('review_button'), command=self.diff).pack(side='left', fill='x', expand=True)
-        ttk.Label(actions, text=self.t('edit_note'), foreground='#b5b5bf').pack(anchor='w', pady=(4, 0))
-        finish = ttk.LabelFrame(lower, text=self.t('build_group'), padding=8)
-        finish.pack(fill='x', pady=(7, 0))
-        ttk.Label(finish, text=self.t('build_instructions')).pack(anchor='w')
+        row.pack(fill='x')
+        for index, (key, command) in enumerate((('unpack_button', self.extract),
+                      ('batch_unpack_button', self.extract_batch),
+                      ('edit_button', self.open_editable), ('review_button', self.diff))):
+            ttk.Button(row, text=self.t(key), style='Accent.TButton' if key == 'edit_button' else 'TButton',
+                       command=command).pack(side='left', fill='x', expand=True, padx=(0, 7) if index < 3 else 0)
+        finish = ttk.LabelFrame(lower, text=self.t('build_group'), padding=10)
+        finish.pack(fill='x', pady=(8, 0))
         row = ttk.Frame(finish)
-        row.pack(fill='x', pady=(5, 0))
-        ttk.Button(row, text=self.t('build_button'), style='Accent.TButton', command=self.build).pack(side='left', fill='x', expand=True, padx=(0, 5))
-        ttk.Button(row, text=self.t('add_button'), command=self.install).pack(side='left', fill='x', expand=True)
-        tail = ttk.Frame(finish)
-        tail.pack(fill='x', pady=(4, 0))
-        ttk.Button(tail, text=self.t('undo_button'), command=self.rollback).pack(side='left')
-        ttk.Label(tail, text=self.t('go_play'), foreground='#b5b5bf').pack(side='right')
+        row.pack(fill='x')
+        ttk.Button(row, text=self.t('build_button'), style='Accent.TButton', command=self.build).pack(side='left', fill='x', expand=True, padx=(0, 7))
+        ttk.Button(row, text=self.t('add_button'), command=self.install).pack(side='left', fill='x', expand=True, padx=(0, 7))
+        ttk.Button(row, text=self.t('undo_button'), style='Quiet.TButton', command=self.rollback).pack(side='left')
 
     def draw_play(self, parent):
-        ttk.Label(parent, text=self.t('play_title'), font=('Segoe UI', 13, 'bold')).pack(anchor='w')
-        ttk.Label(parent, text=self.t('play_hint'), foreground='#b5b5bf').pack(anchor='w', pady=(2, 9))
-        panel = ttk.LabelFrame(parent, text=self.t('play_group'), padding=11)
+        ttk.Label(parent, text=self.t('play_title'), style='Section.TLabel').pack(anchor='w', pady=(5, 3))
+        ttk.Label(parent, text=self.t('play_hint'), style='Muted.TLabel').pack(anchor='w', pady=(0, 17))
+        panel = ttk.Frame(parent, style='Card.TFrame', padding=17)
         panel.pack(fill='x')
-        ttk.Label(panel, textvariable=self.launch_state, wraplength=780,
-                  font=('Segoe UI', 11, 'bold')).pack(anchor='w')
-        btns = ttk.Frame(panel)
-        btns.pack(fill='x', pady=(10, 7))
-        ttk.Button(btns, text=self.t('play_button'), style='Accent.TButton', command=self.launch).pack(side='left', fill='x', expand=True, padx=(0, 5), ipady=7)
+        ttk.Label(panel, text=self.t('play_group'), style='CardMuted.TLabel').pack(anchor='w')
+        ttk.Label(panel, textvariable=self.launch_state, style='CardTitle.TLabel').pack(anchor='w', pady=(5, 13))
+        btns = ttk.Frame(panel, style='Card.TFrame')
+        btns.pack(fill='x', pady=(0, 12))
+        ttk.Button(btns, text=self.t('play_button'), style='Accent.TButton', command=self.launch).pack(side='left', fill='x', expand=True, padx=(0, 8), ipady=7)
         ttk.Button(btns, text=self.t('restore_button'), command=self.restore).pack(side='left', fill='x', expand=True, ipady=7)
-        row = ttk.Frame(panel)
+        row = ttk.Frame(panel, style='Card.TFrame')
         row.pack(fill='x')
-        ttk.Button(row, text=self.t('refresh_status'), command=self.update_launch_state).pack(side='left')
-        ttk.Button(row, text=self.t('setup_helper'), command=self.setup_launcher).pack(side='left', padx=(6, 0))
-        ttk.Button(row, text=self.t('refresh_originals'), command=self.refresh_originals).pack(side='left', padx=(6, 0))
-        steps = ttk.LabelFrame(parent, text=self.t('play_help_group'), padding=11)
-        steps.pack(fill='x', pady=(10, 0))
-        for key in ('play_step1', 'play_step2', 'play_step3'):
-            ttk.Label(steps, text=self.t(key), wraplength=800).pack(anchor='w', pady=3)
-        ttk.Separator(steps).pack(fill='x', pady=7)
-        ttk.Label(steps, text=self.t('play_after'), font=('Segoe UI', 10, 'bold'),
-                  wraplength=800).pack(anchor='w')
+        ttk.Button(row, text=self.t('refresh_status'), style='Quiet.TButton', command=self.update_launch_state).pack(side='left')
+        ttk.Button(row, text=self.t('status_details'), style='Quiet.TButton', command=self.show_status_details).pack(side='left', padx=(8, 0))
+        ttk.Button(row, text=self.t('setup_helper'), style='Quiet.TButton', command=self.setup_launcher).pack(side='left', padx=(8, 0))
+        ttk.Button(row, text=self.t('refresh_originals'), style='Quiet.TButton', command=self.refresh_originals).pack(side='left', padx=(8, 0))
+        ttk.Button(parent, text=self.t('play_help_action'), style='Quiet.TButton',
+                   command=lambda: self.show_help(1)).pack(anchor='w', pady=(16, 0))
+
+    def show_status_details(self):
+        st = state_status(Path(self.swap.get()))
+        msg = st.message + (f'\n\nPrepared files: {st.ready}/{st.count}' if st.count else '')
+        messagebox.showinfo(self.t('status_details'), msg, parent=self.window)
 
     def draw_settings(self, parent):
-        ttk.Label(parent, text=self.t('settings_title'), font=('Segoe UI', 13, 'bold')).pack(anchor='w')
-        ttk.Label(parent, text=self.t('settings_hint'), foreground='#b5b5bf').pack(anchor='w', pady=(2, 8))
-        settings = ttk.LabelFrame(parent, text=self.t('folders_group'), padding=10)
+        ttk.Label(parent, text=self.t('settings_title'), style='Section.TLabel').pack(anchor='w', pady=(5, 14))
+        settings = ttk.LabelFrame(parent, text=self.t('folders_group'), padding=14)
         settings.pack(fill='x')
         for i, (key, var, browse) in enumerate((
             ('stage_label', self.stage, self.browse_stage),
             ('swap_label', self.swap, self.browse_swap),
             ('projects_label', self.projects, self.browse_projects),
         )):
-            ttk.Label(settings, text=self.t(key), width=23).grid(row=i, column=0, sticky='w', pady=4)
-            ttk.Entry(settings, textvariable=var).grid(row=i, column=1, sticky='ew', padx=6)
-            ttk.Button(settings, text=self.t('browse_button'), command=browse).grid(row=i, column=2, sticky='e')
+            ttk.Label(settings, text=self.t(key), width=19).grid(row=i, column=0, sticky='w', pady=6)
+            ttk.Entry(settings, textvariable=var).grid(row=i, column=1, sticky='ew', padx=10)
+            ttk.Button(settings, text=self.t('browse_button'), style='Quiet.TButton', command=browse).grid(row=i, column=2, sticky='e')
         settings.columnconfigure(1, weight=1)
         row = ttk.Frame(parent)
-        row.pack(fill='x', pady=(9, 4))
-        ttk.Button(row, text=self.t('setup_button'), style='Accent.TButton', command=self.initial_setup).pack(side='left', padx=(0, 6))
+        row.pack(fill='x', pady=(14, 9))
+        ttk.Button(row, text=self.t('setup_button'), style='Accent.TButton', command=self.initial_setup).pack(side='left', padx=(0, 8))
         ttk.Button(row, text=self.t('check_setup'), command=self.check_setup).pack(side='left')
-        ttk.Button(row, text=self.t('open_projects'), command=self.open_projects).pack(side='left', padx=(6, 0))
-        ttk.Button(row, text=self.t('save_settings'), style='Accent.TButton', command=self.save_settings).pack(side='left', padx=(6, 0))
-        ttk.Separator(parent).pack(fill='x', pady=(8, 7))
-        self.advanced_button = ttk.Button(parent, text=self.t('advanced_toggle_show'), command=self.toggle_advanced)
-        self.advanced_button.pack(anchor='w')
+        ttk.Button(row, text=self.t('open_projects'), style='Quiet.TButton', command=self.open_projects).pack(side='left', padx=(8, 0))
+        ttk.Button(row, text=self.t('save_settings'), command=self.save_settings).pack(side='right')
+        update_row = ttk.Frame(parent)
+        update_row.pack(fill='x', pady=(4, 8))
+        ttk.Label(update_row, textvariable=self.update_status, style='Muted.TLabel').pack(side='left', fill='x', expand=True)
+        self.update_button = ttk.Button(update_row, text='Check for Updates', style='Quiet.TButton', command=self.check_updates)
+        self.update_button.pack(side='right')
+        ttk.Button(update_row, text='Install Update', style='Accent.TButton', command=self.offer_update).pack(side='right', padx=(0, 8))
+        ttk.Separator(parent).pack(fill='x', pady=(8, 12))
+        self.advanced_button = ttk.Button(parent, text=self.t('advanced_toggle_show'),
+                                          style='Quiet.TButton', command=self.toggle_advanced)
+        self.advanced_button.pack(side='left')
+        ttk.Button(parent, text=self.t('settings_help_action'), style='Quiet.TButton',
+                   command=lambda: self.show_help(2)).pack(side='right')
         self.advanced_win = None
 
     def toggle_advanced(self):
@@ -320,6 +471,25 @@ class Manager:
             self.archives.selection_clear(0,tk.END)
             self.write('Selected external file: '+p+'\n')
 
+    def load_batch_mapping(self):
+        """Reattach completed batch projects after restarting the manager."""
+        self.batch_workspaces = {}
+        if not self.batch_root.get():
+            return
+        batch = Path(self.batch_root.get()).resolve()
+        try:
+            data = load_collection(batch)
+            if Path(data['stage']).resolve() != Path(self.stage.get()).resolve():
+                return
+            for row in data['archives']:
+                self.batch_workspaces[row['archive']] = batch / row['workspace']
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+
+    def selected_archive_relatives(self):
+        """Return exactly the staged PAKs visibly selected by the user."""
+        return [self.visible[int(i)] for i in self.archives.curselection()]
+
     def reload_archives(self):
         try:
             stage=Path(self.stage.get())
@@ -327,6 +497,7 @@ class Manager:
                 self.archive_entries=sorted(allowed_paks(stage).values(),key=str.casefold)
             else:
                 self.archive_entries=sorted([p.relative_to(stage/'paks').as_posix() for p in (stage/'paks').rglob('*.pak')],key=str.casefold)
+            self.load_batch_mapping()
             self.write(f'Found {len(self.archive_entries)} custom-signed PAK archives.\n')
         except Exception as e:
             self.archive_entries=[]
@@ -350,7 +521,9 @@ class Manager:
         if not ix:return
         rel=self.visible[ix[0]]
         if self.archive_label.get()!=rel:
-            self.current_workspace.set('');self.output_pak.set('')
+            ws=self.batch_workspaces.get(rel)
+            self.current_workspace.set(str(ws) if ws and (ws/'.evolve-pak-workspace.json').is_file() else '')
+            self.output_pak.set('')
         self.external_pak.set('')
         self.archive_label.set(rel)
 
@@ -398,20 +571,86 @@ class Manager:
             self.run_steps([('Unpacking archive',cmd)], 'Unpack archive',lambda:self.after_extract(ws))
         except Exception as e:self.fail(e)
 
+    def extract_batch(self):
+        try:
+            if self.busy:
+                raise RuntimeError('Wait for the current task to finish.')
+            selected=self.selected_archive_relatives()
+            if not 2 <= len(selected) <= 30:
+                raise ValueError('Use Ctrl/Shift-click to select 2–30 PAKs in the list first.')
+            if self.external_pak.get():
+                raise ValueError('Batch extraction is for the verified staged PAK list only.')
+            if self.filter.get().strip():
+                raise ValueError('Clear the extraction filter for batch asset linking; complete texture paths are required.')
+            pub,_=self.keys()
+            if not messagebox.askyesno('Unpack multiple PAKs?',
+                    f'Unpack {len(selected)} signed PAKs into separate workspaces?\n\n'
+                    'This can use substantial disk space. Identical asset names are kept separate, '
+                    'and each PAK must still be built and installed individually.\n\n'
+                    'Continue?',parent=self.window):
+                return
+            batch=self.new_directory('Batch_Assets')
+            cmd=[sys.executable,'-u',str(ROOT/'multi_pak_assets.py'),
+                 '--stage',self.stage.get(),'--public-key',str(pub),
+                 '--destination',str(batch)]
+            for rel in selected:cmd += ['--pak',rel]
+            self.run_steps([('Unpacking selected PAKs',cmd)],'Batch unpack',
+                           lambda:self.after_extract_batch(batch))
+        except Exception as e:self.fail(e)
+
+    def after_extract_batch(self, batch):
+        data=load_collection(batch)
+        self.batch_root.set(str(batch))
+        self.load_batch_mapping()
+        first=data['archives'][0]
+        self.archive_label.set(first['archive'])
+        self.external_pak.set('')
+        self.current_workspace.set(str(self.batch_workspaces[first['archive']]))
+        self.output_pak.set('')
+        self.persist()
+        self.write('BATCH UNPACK COMPLETE: '+str(batch)+'\n')
+        self.write('Edit Files lists ALL unpacked PAKs above the file tabs; select the one you want to edit.\n')
+        self.write('Find textures from the Models tab; archives remain independent for rebuilds.\n')
+        self.open_editable()
+
     def after_extract(self,ws):
         self.current_workspace.set(str(ws));self.output_pak.set('')
         self.persist()
         self.write('EDITABLE FILES: '+str(ws/'files')+'\n')
         self.open_editable()
 
+    def editor_archive_map(self):
+        """Archives in a completed batch, never a merged or editable fake PAK."""
+        self.load_batch_mapping()
+        selected = self.selected_archive_relatives()
+        if len(selected) > 1:
+            missing = [name for name in selected if name not in self.batch_workspaces]
+            if missing:
+                raise ValueError('You selected multiple PAKs, but not all were unpacked in a batch. '
+                                 'Click "Unpack Selected PAKs" first, wait for it to finish, then choose Edit Files. '
+                                 'Missing: ' + ', '.join(missing[:4]))
+        # A batch collection is browsable even if the main list has since been
+        # narrowed to one PAK. This is also how the editor opens after a batch.
+        current = self.workspace().resolve()
+        if current in (Path(p).resolve() for p in self.batch_workspaces.values()):
+            return {name: path for name, path in self.batch_workspaces.items()}
+        return {}
+
     def open_editable(self):
         try:
-            p=self.workspace()/'files'
-            if not p.is_dir():raise FileNotFoundError('Unpacked file folder missing: '+str(p))
+            ws = self.workspace().resolve()
+            if not (ws/'files').is_dir():
+                raise FileNotFoundError('Unpacked file folder missing: '+str(ws/'files'))
+            archive_map = self.editor_archive_map()
             for editor in self.editors:
-                if editor.window.winfo_exists() and editor.workspace == self.workspace():
-                    editor.window.lift(); return
-            self.editors.append(WorkspaceEditor(self,self.workspace()))
+                if editor.window.winfo_exists() and (editor.workspace == ws or ws in editor.archive_map.values()):
+                    editor.window.lift()
+                    if editor.workspace != ws and archive_map:
+                        label = next((key for key, path in editor.archive_map.items() if Path(path).resolve() == ws), None)
+                        if label:
+                            editor.switch_archive(label)
+                    return
+            self.editors.append(WorkspaceEditor(self, ws, archive_map=archive_map))
         except Exception as e:self.fail(e)
 
     def flush_editors(self):
@@ -518,7 +757,17 @@ class Manager:
 
     def update_launch_state(self):
         st=state_status(Path(self.swap.get()))
-        self.launch_state.set(st.message + (f'  ({st.ready}/{st.count} mod files prepared)' if st.count else ''))
+        summaries = {
+            'missing': self.t('launch_missing'),
+            'restored': self.t('launch_restored'),
+            'prepared': self.t('launch_prepared'),
+            'swapped': self.t('launch_restore'),
+            'swapping': self.t('launch_restore'),
+            'restoring': self.t('launch_restore'),
+            'interrupted': self.t('launch_restore'),
+            'unsafe': self.t('launch_attention'),
+        }
+        self.launch_state.set(summaries.get(st.phase, self.t('launch_attention')))
         return st
 
     def launch(self):
@@ -592,15 +841,27 @@ class Manager:
                 if not preserve_old:
                     self.write('Setup cancelled. Previously prepared mod files left unchanged.\n')
                     return
+            backup_choice=messagebox.askyesnocancel('Keep full original PAK copies?',
+                'YES — Keep a separate full snapshot of every original PAK (uses more disk space).\n\n'
+                'NO — Space-saving setup: read the installed originals directly and keep only custom-signed PAKs.\n\n'
+                'Both modes protect the original files during live swaps and allow normal restoration.\n'
+                'No does not remove any previously saved snapshots.\n\n'
+                'Cancel — Exit setup without changes.')
+            if backup_choice is None:return
+            keep_original_snapshots=bool(backup_choice)
             destination=DATA_HOME/'GameSets'/('Setup_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
             if not messagebox.askyesno(self.t('setup_confirm_title'),
                 'Close Evolve and the normal client first.\n\n'
-                'The manager will copy your original PAKs, generate signing keys and build a local signed set. '
-                'Allow up to twice the PAK size plus 1 GiB free space here. Preparing a later game launch needs additional game-drive space.\n\n'
+                'The manager will verify your original PAKs, generate signing keys and build a local signed set. '
+                + ('It will also keep complete original snapshots. Allow up to twice the PAK size plus 1 GiB here.'
+                   if keep_original_snapshots else
+                   'Space-saving mode: no permanent original PAK copies. Allow up to the PAK size plus 1 GiB here.')
+                + ' Preparing a later game launch needs additional game-drive space.\n\n'
                 'Storage: '+str(destination)+'\n\nCreate setup now?'):return
             cmd=[sys.executable,'-u',str(ROOT/'first_run_setup.py'),'--game',game,'--launcher',launcher,
                  '--destination',str(destination),'--seed-parent',str(DATA_HOME/'SetupSeeds')]
             if preserve_old:cmd.append('--preserve-old-prepared')
+            if not keep_original_snapshots:cmd.append('--skip-original-snapshots')
             self.run_steps([('Creating mod setup from installed game',cmd)],'Set up from game',lambda:self.after_initial_setup(destination))
         except Exception as e:self.fail(e)
 
@@ -663,16 +924,27 @@ class Manager:
             game=filedialog.askdirectory(title='Choose updated EvolveGame folder',initialdir=st.game or None)
             if not game:return
             storage=DATA_HOME/'GameSets';storage.mkdir(parents=True,exist_ok=True)
-            folder=filedialog.askdirectory(title='Choose storage folder for the NEW originals and signed PAK set',initialdir=str(storage))
+            folder=filedialog.askdirectory(title='Choose storage folder for the NEW signed PAK set',initialdir=str(storage))
             if not folder:return
+            backup_choice=messagebox.askyesnocancel('Keep full original PAK copies for this update?',
+                'YES — Store full original PAK snapshots with the new stage (more space).\n\n'
+                'NO — Use installed originals without permanent snapshots (saves space).\n\n'
+                'Both choices retain safe live-swap restoration backups and earlier game sets.\n'
+                'Cancel — Do not refresh.')
+            if backup_choice is None:return
+            keep_original_snapshots=bool(backup_choice)
             destination=Path(folder)/('EvolveRefresh_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
             if not messagebox.askyesno('Refresh originals from updated game?',
                 'First restore originals, update or repair the game in the normal client, then close the game and client.\n\n'
-                'This copies the installed PAKs and builds a fresh signed set. It may need twice the PAK size in free space. '
-                'Previous sets and edits are kept. Old mods must be reviewed and reapplied to freshly unpacked files.\n\n'
+                'This verifies installed PAKs and builds a fresh signed set. '
+                + ('Full original snapshots are also kept; allow twice the PAK size plus 1 GiB.'
+                   if keep_original_snapshots else
+                   'Space-saving mode skips extra originals; allow PAK size plus 1 GiB.')
+                + ' Previous sets and edits are kept. Old mods must be reviewed and reapplied.\n\n'
                 'New set: '+str(destination)+'\n\nContinue?'):return
             cmd=[sys.executable,'-u',str(ROOT/'refresh_originals.py'),'--game',game,'--stage',self.stage.get(),
                  '--swap',self.swap.get(),'--destination',str(destination)]
+            if not keep_original_snapshots:cmd.append('--skip-original-snapshots')
             self.run_steps([('Refreshing original PAKs and signing new set',cmd)],'Refresh Original PAKs',lambda:self.after_refresh(destination))
         except Exception as e:self.fail(e)
 
@@ -682,7 +954,7 @@ class Manager:
         self.stage.set(report['stage']);self.swap.set(report['swap'])
         self.current_workspace.set('');self.output_pak.set('');self.archive_label.set('');self.external_pak.set('')
         self.persist();self.reload_archives();self.update_launch_state()
-        messagebox.showinfo('Originals refreshed','The new set is selected. Previous originals, stages and editing projects were kept.\n\nUnpack the updated PAKs and review/reapply your edits. Old projects cannot be built against the new set.')
+        messagebox.showinfo('Originals refreshed','The new set is selected. Existing data and editing projects were retained.\n\nUnpack the updated PAKs and review/reapply your edits. Old projects cannot be built against the new set.')
 
     def after_restore(self):
         self.update_launch_state()
@@ -718,6 +990,7 @@ class Manager:
     def run_steps(self,steps,label,on_success=None,cwd=ROOT):
         if self.busy:raise RuntimeError('Wait for the current task to finish.')
         self.busy=True
+        self.toggle_log(show=True)
         self.status.set(label+'...')
         self.write('\n>>> '+label+'\n')
         def task():
@@ -743,7 +1016,11 @@ class Manager:
         try:
             while True:
                 kind,val=self.events.get_nowait()
-                if kind=='text':
+                if kind == 'update-check':
+                    self.on_update_check(*val)
+                elif kind == 'update-download':
+                    self.on_update_download(*val)
+                elif kind=='text':
                     self.write(val)
                     if 'Automatic CreateProcessW hook ready' in val:
                         self.status.set('Launcher is ready — press Play in the Evolve window now.')
@@ -772,7 +1049,7 @@ class Manager:
         self.window.after(120,self.poll)
 
     def on_close(self):
-        if self.busy:
+        if self.busy or self.update_in_progress:
             messagebox.showwarning('Still running','Wait for the current operation to complete. Closing now could interrupt your swap or rebuild.')
             return
         if not self.flush_editors():return

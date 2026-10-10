@@ -44,5 +44,141 @@ Note: Some .dds.0 files are complete single-mip DDS textures, even if no .dds.1 
 The Images tab can preview and import those files directly. Missing/unsupported streams display
 a non-blocking explanation in the preview panel rather than a popup during selection.
 
-Main window: drag the horizontal divider below the PAK list to resize it.
-Maximizing the manager expands the list; the Activity Log is separate.
+
+SPACE-SAVING SETUP (OPTIONAL)
+-----------------------------
+During first-time Set Up Manager and Update Base PAKs, choose whether to keep a
+second permanent copy of the game's original PAKs:
+  YES: Keep a full original snapshot (extra disk use).
+  NO:  Build signed PAKs directly from the installed game; do not store a
+       duplicate permanent original snapshot (less disk use).
+The tool verifies and never overwrites installed originals during setup.
+This choice does NOT turn off the temporary .customkey-original recovery files
+created during a live modded launch. These are rename-based swap backups, not
+additional copies, and are required for safe automatic restoration.
+
+Selective loading limitation: the custom injector contains a new RSA public
+signing key. Consequently every signed/encrypted PAK that Evolve loads must
+match that key; it is not safe to swap only PAKs whose gameplay values changed.
+Plain unsigned ZIP PAKs are already left untouched. The manager could adopt
+changed-only swaps later only if a verified dual-key loader becomes available.
+
+A temporary .customkey-ready file is copied next to each original PAK for
+prelaunch swapping, so the game drive still needs free space for those files.
+The current setup option also does not delete earlier saved full snapshots.
+
+Main window layout: drag the horizontal divider directly below the PAK search list
+to give the list more or less room. Maximizing/resizing the main window
+expands the list; the activity log remains in its separate window.
+
+CryEngine skinned character models (Goliath sample):
+- .skin/.skinm and .chr/.chrm companion model files can be inspected in Models.
+- CrChF v7 chunk and mesh stream metadata (vertices/indices/LODs) is shown where available.
+- .cdf/.animevents/.lmg/.bspace/.comb are XML text and appear in Files/Text.
+- Import Model remains same-layout experimental binary replacement; Blender mesh round-trip is not supported.
+- If exporting for external tools, keep each model beside its matching .skinm/.chrm companion.
+
+Models tab: 3D model preview supports CrChF v7 .skinm mesh companions (including Goliath).
+Select .skinm or its .skin file when the .skinm is present in the same extracted folder.
+Drag to rotate, scroll to zoom, switch wireframe on/off, Reset view to recenter.
+This is a read-only 3D preview; .chr/.chrm skeleton rigging and Blender export
+are not yet visualized. The preview never modifies the PAK or model.
+
+Multi-PAK asset extraction (experimental):
+- In Make a Mod, Ctrl/Shift-click 2-30 staged PAKs and click Unpack Selected PAKs.
+- Each signed PAK gets its own independent workspace. No conflicting files are merged.
+- After extraction, select any of those PAKs and choose Edit Files to open its workspace.
+- Under Models, select a model and click Find Model Textures to locate its material
+  and referenced DDS/.dds.0 files across the batch collection. Missing/ambiguous
+  resources are reported rather than automatically replaced.
+- Material .tif references are checked against cooked .dds and .dds.0 names.
+- Rebuild/Install ONE PAK at a time. Batch extraction does NOT automatically make
+  the 3D preview textured if the extracted .mtl and referenced DDS are missing.
+- Batch extraction can consume significant disk space. Originals remain unchanged.
+
+Approximate textured model preview (v2.9.7 experimental):
+- The Models tab reads CrChF v7 UV stream type 2 (2 float32 per vertex) and
+  material subset assignments and maps Diffuse DDS textures through the .mtl file.
+- Split DDS fragments must all be extracted together, within their original PAK
+  workspaces, or placed together in a user-selected flat texture folder.
+- Select a mesh (.skinm, or its .skin with mesh companion) and check Textures.
+- If materials are not found automatically across the unpacked batch, extract a
+  texture archive to a directory and click Choose Texture Folder in Models.
+- Rotation/zoom and wireframe remain available. Textured rendering runs in a
+  background thread to keep the UI responsive. It is an APPROXIMATION of the
+  diffuse material, not original CryEngine shaders (normal/specular/damage/SSS).
+- This preview does not edit any material, texture, PAK, or model bytes.
+
+Activity Log visibility:
+- The Activity Log opens automatically when the manager opens.
+- Closing it is optional; it reopens whenever you start a manager operation,
+  so progress and errors are visible even if the main window is busy.
+
+Automatic model texture lookup:
+- Unpack the model/material PAK and the texture PAK using the same manager setup.
+- Both an extracted batch and separate complete workspaces inside Settings > Editing projects are scanned.
+- Re-select the model in the Models tab to refresh preview after extracting another PAK.
+- If two workspaces contain the same texture path, lookup stops as ambiguous rather than guessing.
+- The Credits tab lists @CorvoDL, the GitHub repository and the Modded Evolve website.
+- Install Evolve Stage 2 through https://modded-evolve.com/ before using the manager.
+
+Batch PAK editor: Use Ctrl/Shift to choose 2-30 PAKs, click Unpack Selected PAKs,
+and wait for completion. Edit Files then shows an Unpacked PAKs list at the top.
+Click an archive name to switch its Files/Text, Images and Models trees in the SAME
+window. Every workspace remains separate; Build Mod works on the currently selected
+archive only. The editor prompts before leaving unsaved text changes.
+
+Add Mod after first setup:
+- Fresh or restored setups may not yet have any per-PAK swap journal records.
+- Build Mod and Add Mod now work before the first Play with Mods action.
+- Mod installation changes staged PAKs only; installed game files are untouched.
+- Play with Mods generates the prepared swap journal when necessary.
+- Existing prepared swaps still require verified matching records and backups.
+- If recovery files are detected, restore your game instead of deleting the journal.
+
+Model texture lookup: repeated extractions of identical .mtl/DDS assets no longer
+cause false ambiguity. The model's own PAK material is used first. Different
+unrelated material versions remain ambiguous (see Find Model Textures for paths).
+If you have made multiple copies of the same PAK project, removing outdated
+project copies from the Projects folder can help. Never remove live swap backups.
+
+3D preview performance:
+- Mouse drag and wheel zoom use a quick untextured shaded preview while moving.
+- When the mouse stops, the selected model renders full UV materials again.
+- Quality: Fast, Balanced (default), Detailed; lower quality cuts render resolution.
+- Old background frames cancel when you turn or select a new mesh, so they do not
+  block the new view or replace it with outdated textures.
+- Wireframe and Textures switches remain available, with no change to game files.
+- This is still a software rasterizer; real-time textured 3D during dragging
+  would require a separate hardware-accelerated renderer.
+
+GPU model viewer (experimental, Windows):
+- Models tab uses hardware OpenGL when a compatible graphics driver is present.
+- Fully textured meshes rotate and zoom live with GPU depth testing and indexed triangles.
+- Renderer selector: GPU (Auto), or Software for unsupported drivers.
+- On Microsoft GDI Generic / Basic Render Driver or failed GPU initialization, the existing
+  slower software viewer is used safely instead.
+- Fast/Balanced/Detailed control texture resolution for the GPU viewer.
+- Driver-based OpenGL needs a supported GPU driver; WSL, remote desktop, headless VMs
+  and some older GPUs may not have a usable accelerated OpenGL context.
+- Rendering is read-only. It is approximate diffuse shading, not CryEngine shader parity.
+
+File context menus (v2.9.15):
+- Right-click a file in Files/Text, Images/Textures or Models to see actions for that file.
+- Text/XML: Import/Replace File, Save, Export File and Windows Explorer commands.
+  CryXML still prohibits structural edits. The original extracted file is backed up.
+- Images: Import PNG as DDS, Import compatible DDS, Export PNG, Export raw file.
+  Split DDS fragment imports keep their existing all-parts validation and backups.
+- Models: Native import (experimental), native export, find texture references and reveal.
+- Folders: Show in File Explorer, Copy Game Folder Path, Expand/Collapse.
+- Restore Extracted Original is enabled only when an EditorBackups copy has the EXACT
+  checksum of the original extracted file from the manifest. Unsupported/multi-part
+  split streaming DDS restores are disabled until atomic group restoration exists.
+- Replace unknown binary files only after explicit confirmation; game compatibility
+  remains unverified. No action writes to the installed EvolveGame directory.
+- The context menu also works with Shift+F10 for selected files/folders.
+
+UI: Help (?) contains detailed instructions; Activity shows full logs. The main tabs use compact controls.
+
+UPDATES
+Main Windows builds check GitHub for newer verified releases. In Settings, use Check for Updates to download and apply an update. Close Evolve before updating. The updater replaces only application files, preserves Data (projects, PAKs, keys, backups, settings), and keeps a recovery backup if replacement fails. Updates are offered only after the matching main commit has passed Windows packaging. Experimental builds do not automatically switch to main.

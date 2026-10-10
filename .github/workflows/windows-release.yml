@@ -4,14 +4,14 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - "source/**"
-      - "Build-Windows-EXE.cmd"
-      - "DEVELOPER-UI-TEXT.txt"
-      - ".github/workflows/windows-release.yml"
 
 permissions:
   contents: write
+
+# New pushes must not publish an older build over a newer successful release.
+concurrency:
+  group: main-windows-release
+  cancel-in-progress: true
 
 jobs:
   build-windows:
@@ -21,17 +21,14 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-
       - name: Set up Python 3.11 x64
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           architecture: "x64"
-
       - name: Build and test EXE
         shell: cmd
         run: call Build-Windows-EXE.cmd
-
       - name: Verify release ZIP
         shell: pwsh
         run: |
@@ -41,32 +38,56 @@ jobs:
           $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $file))
           try {
             $names = @($zip.Entries | ForEach-Object { $_.FullName })
-            foreach ($required in @("EvolveModManager/EvolveModManager.exe", "EvolveModManager/EvolveModWorker.exe")) {
+            foreach ($required in @("EvolveModManager/EvolveModManager.exe", "EvolveModManager/EvolveModWorker.exe", "EvolveModManager/BUILD_COMMIT.txt", "EvolveModManager/BUILD_CHANNEL.txt")) {
               if ($names -notcontains $required) { throw "Missing application file: $required" }
             }
             if (!($names | Where-Object { $_ -like "EvolveModManager/_internal/*" })) {
               throw "Bundled runtime folder is missing."
             }
-            if ($names | Where-Object { $_ -match "(^|/)(Data/|private_key[.]pem$)|[.]pak$" }) {
+            if ($names | Where-Object { $_ -cmatch '^EvolveModManager/Data/' -or $_ -match '(?i)(^|/)private_key[.]pem$|[.]pak$' }) {
               throw "Release contains private game data or generated keys."
             }
+            $commit = $zip.GetEntry('EvolveModManager/BUILD_COMMIT.txt')
+            $reader = [System.IO.StreamReader]::new($commit.Open())
+            try { $embedded = $reader.ReadToEnd().Trim() } finally { $reader.Dispose() }
+            if ($embedded -ne '${{ github.sha }}') { throw "Build commit does not match workflow commit" }
           }
           finally { $zip.Dispose() }
           Write-Host "Windows portable release verified."
-
       - name: Save downloadable workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: EvolveModManager-Windows
           path: dist/EvolveModManager-Windows.zip
           if-no-files-found: error
-
-      - name: Update existing Main release with Windows download
+      - name: Prepare signed-by-checksum update manifest
+        shell: pwsh
+        run: |
+          $zip = "dist/EvolveModManager-Windows.zip"
+          $data = [ordered]@{
+            schema = 1
+            commit = '${{ github.sha }}'
+            version = (Get-Content -LiteralPath 'source/VERSION.txt' -Raw).Trim()
+            asset = 'EvolveModManager-Windows.zip'
+            sha256 = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+            bytes = (Get-Item -LiteralPath $zip).Length
+          }
+          $json = $data | ConvertTo-Json -Depth 3
+          [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'dist/update-manifest.json'), $json, [System.Text.UTF8Encoding]::new($false))
+      - name: Publish matching verified Windows release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload Main "dist/EvolveModManager-Windows.zip" --clobber
-
+        run: |
+          $latest = (gh api 'repos/${{ github.repository }}/branches/main' --jq '.commit.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $latest -ne '${{ github.sha }}') {
+            throw "Main branch moved since this build; refusing to publish stale binaries."
+          }
+          gh release upload Main "dist/EvolveModManager-Windows.zip" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "ZIP release upload failed." }
+          # Upload manifest LAST: old manifests never authorize new, mismatched bytes.
+          gh release upload Main "dist/update-manifest.json" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Update manifest upload failed." }
       - name: Remove obsolete source-only release ZIP
         shell: pwsh
         env:

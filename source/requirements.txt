@@ -2,3 +2,4 @@ cryptography>=41,<48
 twofish>=0.3.0
 frida>=17,<18
 Pillow>=12.3,<13
+numpy>=1.26,<3
