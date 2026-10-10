@@ -1,1 +1,1 @@
-1.0.3 - Compact iOS-Style Controls and Fixed Card Rendering
+1.0.4 - On-Demand Left Navigation Menu

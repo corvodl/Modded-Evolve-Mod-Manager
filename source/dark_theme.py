@@ -67,6 +67,23 @@ def apply_theme(root):
     # Segoe typography. Clam avoids the dated native Windows notebook chrome.
     style.configure('TNotebook', background=BG, borderwidth=0,
                     tabmargins=(0, 5, 0, 0))
+    # Native Notebook page switching remains functional; no top tab bar is
+    # drawn. The five sections instead live in the optional left drawer.
+    style.layout('HiddenNav.TNotebook', [('Notebook.client', {'sticky': 'nswe'})])
+    style.configure('HiddenNav.TNotebook', background=BG, borderwidth=0)
+    style.configure('Sidebar.TFrame', background='#16151b')
+    style.configure('NavHeading.TLabel', background='#16151b',
+                    foreground='#f17482', font=('Segoe UI Semibold', 9, 'bold'))
+    style.configure('Nav.TButton', background='#232128', foreground='#d1ced5',
+                    font=('Segoe UI', 10), padding=(9, 7), borderwidth=0,
+                    relief='flat')
+    style.map('Nav.TButton', background=[('active', '#30242c')],
+              foreground=[('active', '#ffffff')])
+    style.configure('NavActive.TButton', background='#6d2632',
+                    foreground='#ffffff', font=('Segoe UI Semibold', 10, 'bold'),
+                    padding=(9, 7), borderwidth=0, relief='flat')
+    style.map('NavActive.TButton', background=[('active', '#8e3140')],
+              foreground=[('active', '#ffffff')])
     style.configure('TNotebook.Tab', background='#1d1c22', foreground='#b7b5c0',
                     font=('Segoe UI Semibold', 10, 'bold'), padding=(22, 13),
                     borderwidth=0)

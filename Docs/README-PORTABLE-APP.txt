@@ -272,3 +272,11 @@ notched/blank card rendering. v1.0.3 shrinks the native ttk pill element
 images, border slices and widget padding, reduces the Play button extra pady,
 and draws stable antialiased rounded cards. A Windows executable screenshot is
 captured as a tested release artifact. All game/mod/restore logic is unchanged.
+
+ON-DEMAND NAVIGATION v1.0.4
+---------------------------
+The top notebook tabs are hidden to maximize workspace width. Select the
+compact Menu button beside the Evolve logo to show the five navigation
+sections in a temporary left panel. Choosing a section or pressing Escape
+closes the panel. Existing edit, play, restore, update, and setup behavior
+remains unchanged. The menu is collapsed when the program starts.

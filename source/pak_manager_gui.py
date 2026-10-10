@@ -302,6 +302,11 @@ class Manager:
 
         header = ttk.Frame(base)
         header.pack(fill='x', pady=(0, 17))
+        # One compact navigation control replaces permanent tab buttons.
+        self.menu_button = ttk.Button(header, text='☰  Menu',
+                                      style='Quiet.TButton',
+                                      command=self.toggle_section_menu)
+        self.menu_button.pack(side='left', padx=(0, 12))
         brand = ttk.Frame(header)
         brand.pack(side='left', fill='x', expand=True)
         brand_line = ttk.Frame(brand)
@@ -326,8 +331,13 @@ class Manager:
         ttk.Button(header, text=self.t('help_button'), style='Quiet.TButton',
                    command=self.show_help).pack(side='right')
 
-        notebook = ttk.Notebook(base)
-        notebook.pack(fill='both', expand=True)
+        # The Notebook still owns all five pages, but its tab strip is hidden.
+        # A left drawer opens ONLY when Menu is clicked and otherwise gives
+        # the PAK browser the entire available content width.
+        self.main_content = ttk.Frame(base)
+        self.main_content.pack(fill='both', expand=True)
+        notebook = ttk.Notebook(self.main_content, style='HiddenNav.TNotebook')
+        notebook.pack(side='left', fill='both', expand=True)
         self.instructions_tab = ttk.Frame(notebook, padding=12)
         self.edit_tab = ttk.Frame(notebook, padding=12)
         self.play_tab = ttk.Frame(notebook, padding=12)
@@ -339,6 +349,28 @@ class Manager:
         notebook.add(self.settings_tab, text='  ' + self.t('tab_settings') + '  ')
         notebook.add(self.credits_tab, text='  ' + self.t('tab_credits') + '  ')
         self.notebook = notebook
+        self.nav_panel = ttk.Frame(self.main_content, style='Sidebar.TFrame',
+                                   padding=(9, 12))
+        self.nav_panel.configure(width=170)
+        self.nav_panel.pack_propagate(False)
+        self.nav_open = False
+        ttk.Label(self.nav_panel, text='SECTIONS', style='NavHeading.TLabel'
+                  ).pack(anchor='w', padx=(8, 0), pady=(0, 13))
+        self.nav_buttons = {}
+        for label_key, tab in (
+                ('tab_instructions', self.instructions_tab),
+                ('tab_edit', self.edit_tab),
+                ('tab_play', self.play_tab),
+                ('tab_settings', self.settings_tab),
+                ('tab_credits', self.credits_tab)):
+            action = ttk.Button(self.nav_panel, text=self.t(label_key),
+                                style='Nav.TButton',
+                                command=lambda page=tab: self.open_section(page))
+            action.pack(fill='x', pady=(0, 5))
+            self.nav_buttons[str(tab)] = action
+        self.notebook.bind('<<NotebookTabChanged>>', self.sync_section_menu)
+        self.window.bind('<Escape>', self._dismiss_section_menu, add='+')
+        self.sync_section_menu()
         self.draw_instructions(self.instructions_tab)
         self.draw_edit(self.edit_tab)
         self.draw_play(self.play_tab)
@@ -369,6 +401,35 @@ class Manager:
         self.version_label = ttk.Label(bottom, text=app_version(), style='AccentText.TLabel')
         self.version_label.pack(side='right')
         self.write('Manager opened. No installed game files were changed.\n')
+
+    def toggle_section_menu(self, show=None):
+        """Open a compact left drawer only when the user requests navigation."""
+        should_open = not self.nav_open if show is None else bool(show)
+        if should_open == self.nav_open:
+            return
+        self.nav_open = should_open
+        if should_open:
+            self.nav_panel.pack(side='left', fill='y', before=self.notebook,
+                                padx=(0, 10))
+            self.sync_section_menu()
+        else:
+            self.nav_panel.pack_forget()
+        self.menu_button.configure(text='✕  Close' if should_open else '☰  Menu')
+
+    def _dismiss_section_menu(self, _event=None):
+        if self.nav_open:
+            self.toggle_section_menu(False)
+
+    def open_section(self, page):
+        """Switch pages and restore the full-width workspace."""
+        self.notebook.select(page)
+        self.toggle_section_menu(False)
+
+    def sync_section_menu(self, _event=None):
+        active = self.notebook.select()
+        for page, button in self.nav_buttons.items():
+            button.configure(style='NavActive.TButton' if page == active
+                             else 'Nav.TButton')
 
     def show_help(self, section=None):
         sections = [

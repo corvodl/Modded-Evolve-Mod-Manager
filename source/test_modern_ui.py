@@ -117,13 +117,41 @@ class ModernThemeTests(unittest.TestCase):
                               for tab in manager.notebook.tabs()],
                              ['Instructions', 'Modding', 'Play & Restore', 'Settings', 'Credits'])
             self.assertEqual(manager.notebook.index('current'), 0)
+            # Instructions uses the whole workspace until Menu is clicked.
+            self.assertEqual(ttk.Style(self.root).layout('HiddenNav.TNotebook'),
+                             [('Notebook.client', {'sticky': 'nswe'})])
+            self.assertFalse(manager.nav_open)
+            self.assertFalse(manager.nav_panel.winfo_manager())
+            self.assertIn('Menu', manager.menu_button.cget('text'))
+            self.assertEqual(len(manager.nav_buttons), 5)
+            manager.menu_button.invoke()
+            self.root.update()
+            self.assertTrue(manager.nav_open)
+            self.assertEqual(manager.nav_panel.winfo_manager(), 'pack')
+            self.assertLessEqual(manager.nav_panel.winfo_width(), 180)
+            self.assertEqual(manager.nav_buttons[str(manager.instructions_tab)].cget('style'),
+                             'NavActive.TButton')
+            # Selecting a section must automatically collapse the drawer.
+            manager.nav_buttons[str(manager.edit_tab)].invoke()
+            self.root.update()
+            self.assertFalse(manager.nav_open)
+            self.assertFalse(manager.nav_panel.winfo_manager())
+            self.assertEqual(manager.notebook.index('current'), 1)
+            # Clicking the menu again, then Escape, also closes it.
+            manager.menu_button.invoke()
+            self.root.update()
+            self.root.event_generate('<Escape>')
+            self.root.update()
+            self.assertFalse(manager.nav_open)
+            manager.open_section(manager.instructions_tab)
+            self.assertEqual(manager.notebook.index('current'), 0)
             # Navigation is now the only normal startup setup entry point.
             base = self.root.winfo_children()[0]
             header = base.winfo_children()[0]
             toolbar_buttons = [x.cget('text') for x in header.winfo_children()
                                if isinstance(x, ttk.Button)]
             self.assertNotIn('Set Up Manager', toolbar_buttons)
-            self.assertEqual(manager.version_label.cget('text'), 'v1.0.3')
+            self.assertEqual(manager.version_label.cget('text'), 'v1.0.4')
             self.assertTrue(manager.header_icon)
             self.assertGreater(manager.header_icon.width(), 0)
             self.assertLessEqual(manager.header_icon.width(), 36)

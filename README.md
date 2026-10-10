@@ -1,10 +1,16 @@
-# Evolve Stage 2 Mod Manager — v1.0.3
+# Evolve Stage 2 Mod Manager — v1.0.4
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.0.3 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.0.4 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.0.4
+
+- **On-demand section menu:** The oversized top tabs are hidden entirely. A compact **☰ Menu** button beside the header icon opens a lightweight **left-side navigation drawer** containing Instructions, Modding, Play & Restore, Settings and Credits.
+- **Full-width workspace by default:** The drawer starts collapsed, closes immediately after you choose a section, can be toggled with the same menu button, and closes with Escape. Current sections and all backend operations remain intact.
+- **Compact readable labels:** Navigation uses normal-sized Segoe UI text and a muted red active-section highlight rather than pill tabs across the top.
 
 ## What's new in v1.0.3
 
@@ -37,7 +43,7 @@ The portable Windows release bundles Python and its required application depende
 
 **When updating an existing installation:** Preserve the `Data` directory. It contains projects, locally generated keys, staged mods, settings and recovery logs. Never distribute your private `Data` folder or signing key as part of the public app-only ZIP.
 
-## Interface and getting started (v1.0.1)
+## Interface and getting started (v1.0.4)
 
 | Tab | What it does |
 | --- | --- |
@@ -48,6 +54,8 @@ The portable Windows release bundles Python and its required application depende
 | **Credits** | Project links and attribution |
 
 ### Readable PAK browser and right-click tools
+
+Select **☰ Menu** at the top-left to open the section list, then choose the page you want. The menu automatically closes so the content retains the full window width.
 
 The main list is arranged **Folder → Description → File → Type / Project → Size**. Descriptions are **inferred from filenames**, not verified by analyzing archive contents. The actual signed filenames remain unchanged.
 
