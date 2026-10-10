@@ -123,7 +123,7 @@ def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_roo
 
 
 def render_mesh(mesh: PreviewMesh, width=720, height=480, yaw=-0.5, elevation=0.24,
-                zoom=1.0, wireframe=False) -> Image.Image:
+                zoom=1.0, wireframe=False, max_draw_triangles=MAX_DRAW_TRIANGLES) -> Image.Image:
     """Simple non-GPU shaded/outline render. No material/texture decoding."""
     width = max(128, min(int(width), 1600))
     height = max(128, min(int(height), 1200))
@@ -145,7 +145,7 @@ def render_mesh(mesh: PreviewMesh, width=720, height=480, yaw=-0.5, elevation=0.
         points.append((screen_x, screen_y))
         depths.append(depth)
     # Avoid huge draw times on dense models; evenly sample only for display.
-    every = max(1, math.ceil(len(mesh.triangles)/MAX_DRAW_TRIANGLES))
+    every = max(1, math.ceil(len(mesh.triangles)/max(1, max_draw_triangles)))
     faces=[]
     for i in range(0,len(mesh.triangles),every):
         a,b,c=mesh.triangles[i]
@@ -178,141 +178,300 @@ def render_mesh(mesh: PreviewMesh, width=720, height=480, yaw=-0.5, elevation=0.
 
 
 class ModelPreview:
-    """Embedded Tk image canvas with mouse drag rotation and wheel zoom."""
+    """Responsive Tk preview: cheap geometry while moving, UV render after idle.
+
+    Software UV rasterization is expensive. Never queue full textured renders
+    for every mouse motion; cancel obsolete workers and render one final frame.
+    """
+    QUALITY_LIMITS = {
+        'Fast': (420, 320),
+        'Balanced': (650, 440),
+        'Detailed': (1000, 720),
+    }
+
     def __init__(self, parent):
         import tkinter as tk
         from tkinter import ttk
-        self.frame=ttk.Frame(parent)
-        toolbar=ttk.Frame(self.frame)
-        toolbar.pack(fill='x',padx=5,pady=(4,2))
-        self.details=tk.StringVar(value='Choose a supported mesh')
-        ttk.Label(toolbar,textvariable=self.details).pack(side='left',fill='x',expand=True)
-        self.wireframe=tk.BooleanVar(value=False)
-        self.use_textures=tk.BooleanVar(value=True)
-        self.textures_button=ttk.Checkbutton(toolbar,text='Textures',variable=self.use_textures,command=self.schedule)
-        self.textures_button.pack(side='right',padx=4)
+        self.frame = ttk.Frame(parent)
+        toolbar = ttk.Frame(self.frame)
+        toolbar.pack(fill='x', padx=5, pady=(4, 2))
+        self.details = tk.StringVar(value='Choose a supported mesh')
+        ttk.Label(toolbar, textvariable=self.details).pack(side='left', fill='x', expand=True)
+        self.quality = tk.StringVar(value='Balanced')
+        ttk.Label(toolbar, text='Quality').pack(side='right', padx=(4, 2))
+        self.quality_picker = ttk.Combobox(toolbar, width=9, textvariable=self.quality,
+                                           values=tuple(self.QUALITY_LIMITS), state='readonly')
+        self.quality_picker.pack(side='right', padx=3)
+        self.quality_picker.bind('<<ComboboxSelected>>', lambda _: self.schedule())
+        self.wireframe = tk.BooleanVar(value=False)
+        self.use_textures = tk.BooleanVar(value=True)
+        self.textures_button = ttk.Checkbutton(toolbar, text='Textures', variable=self.use_textures,
+                                               command=self.schedule)
+        self.textures_button.pack(side='right', padx=4)
         self.textures_button.state(['disabled'])
-        self.materials=None
-        self._texture_generation=0
-        self._render_busy=False
-        self._result_queue=None
-        self._polling=False
-        ttk.Checkbutton(toolbar,text='Wireframe',variable=self.wireframe,command=self.render).pack(side='right',padx=4)
-        ttk.Button(toolbar,text='Reset view',command=self.reset).pack(side='right',padx=4)
-        self.label=tk.Label(self.frame,background='#20212a',foreground='white',text='Select a model to preview')
-        self.label.pack(fill='both',expand=True)
-        self.label.bind('<ButtonPress-1>',self.press)
-        self.label.bind('<B1-Motion>',self.drag)
-        self.label.bind('<MouseWheel>',self.scroll)
-        self.label.bind('<Button-4>',lambda _:self.change_zoom(1.15))
-        self.label.bind('<Button-5>',lambda _:self.change_zoom(1/1.15))
-        self.label.bind('<Configure>',self.configure)
-        self._pending=None;self._last=None;self._photo=None;self.mesh=None
-        self.yaw=-.5;self.elevation=.24;self.zoom=1.0
+        ttk.Checkbutton(toolbar, text='Wireframe', variable=self.wireframe,
+                        command=self.schedule).pack(side='right', padx=4)
+        ttk.Button(toolbar, text='Reset view', command=self.reset).pack(side='right', padx=4)
+        self.label = tk.Label(self.frame, background='#20212a', foreground='white',
+                              text='Select a model to preview')
+        self.label.pack(fill='both', expand=True)
+        self.label.bind('<ButtonPress-1>', self.press)
+        self.label.bind('<B1-Motion>', self.drag)
+        self.label.bind('<ButtonRelease-1>', self.release)
+        self.label.bind('<MouseWheel>', self.scroll)
+        self.label.bind('<Button-4>', lambda _: self.change_zoom(1.15))
+        self.label.bind('<Button-5>', lambda _: self.change_zoom(1/1.15))
+        self.label.bind('<Configure>', self.configure)
+        self.label.bind('<Destroy>', self._on_destroy)
+        self.mesh = None
+        self.materials = None
+        self._base_details = 'Choose a supported mesh'
+        self._last = None
+        self._photo = None
+        self._pending = None
+        self._settle_pending = None
+        self._interacting = False
+        self._scrolling = False
+        self._texture_generation = 0
+        self._shown_generation = -1
+        self._render_busy = False
+        self._render_cancel = None
+        self._result_queue = None
+        self._polling = False
+        self._poll_pending = None
+        self._want_textured = False
+        self.yaw = -.5
+        self.elevation = .24
+        self.zoom = 1.0
 
-    def set_mesh(self,mesh):
-        self.mesh=mesh
-        self.details.set(f'{Path(mesh.source_name).name} | {mesh.description} | Drag to rotate, wheel to zoom')
-        self.materials=None
+    def _on_destroy(self, event):
+        if event.widget is not self.label:
+            return
+        self._cancel_inflight()
+        for name in ('_pending', '_settle_pending', '_poll_pending'):
+            try:
+                self._cancel_timer(name)
+            except Exception:
+                pass  # Widget is closing; don't register new Tk work.
+
+    def _schedule_poll(self):
+        if self._poll_pending is None:
+            self._poll_pending = self.label.after(35, self._drain_results)
+        self._polling = True
+
+    def _cancel_inflight(self):
+        if self._render_cancel is not None:
+            self._render_cancel.set()
+
+    def _cancel_timer(self, name):
+        ident = getattr(self, name)
+        if ident is not None:
+            self.label.after_cancel(ident)
+            setattr(self, name, None)
+
+    def _settle(self):
+        self._settle_pending = None
+        self._scrolling = False
+        if not self._interacting:
+            self.render()
+
+    def _queue_settle(self):
+        self._cancel_timer('_settle_pending')
+        # Allow bursts of wheel events to stop before rasterizing full UVs.
+        self._settle_pending = self.label.after(170, self._settle)
+
+    def set_mesh(self, mesh):
+        self._cancel_inflight()
+        self.mesh = mesh
+        self._base_details = f'{Path(mesh.source_name).name} | {mesh.description} | Drag to rotate, wheel to zoom'
+        self.details.set(self._base_details)
+        self.materials = None
         self.textures_button.state(['disabled'])
         self.reset()
 
     def set_materials(self, materials):
-        self.materials=materials
+        self._cancel_inflight()
+        self.materials = materials
         self.use_textures.set(True)
         self.textures_button.state(['!disabled'] if materials is not None else ['disabled'])
         self.schedule()
 
     def reset(self):
-        self.yaw=-.5;self.elevation=.24;self.zoom=1.0
-        self.render()
-
-    def press(self,event):
-        self._last=(event.x,event.y)
-
-    def drag(self,event):
-        if self._last is None or self.mesh is None:return
-        dx=event.x-self._last[0];dy=event.y-self._last[1]
-        self._last=(event.x,event.y)
-        self.yaw+=dx*.012
-        self.elevation=max(-1.45,min(1.45,self.elevation+dy*.008))
+        self._cancel_timer('_settle_pending')
+        self._interacting = False
+        self._scrolling = False
+        self.yaw = -.5
+        self.elevation = .24
+        self.zoom = 1.0
         self.schedule()
 
-    def scroll(self,event):
-        self.change_zoom(1.12 if event.delta>0 else 1/1.12)
+    def press(self, event):
+        self._last = (event.x, event.y)
+        self._interacting = True
+        self._cancel_inflight()
 
-    def change_zoom(self,factor):
-        self.zoom=max(.2,min(6.,self.zoom*factor));self.schedule()
+    def drag(self, event):
+        if self._last is None or self.mesh is None:
+            return
+        dx, dy = event.x - self._last[0], event.y - self._last[1]
+        self._last = (event.x, event.y)
+        if dx == 0 and dy == 0:
+            return
+        self.yaw += dx * .012
+        self.elevation = max(-1.45, min(1.45, self.elevation + dy * .008))
+        self._cancel_inflight()
+        self.schedule()
 
-    def configure(self,event):
-        if self.mesh is not None and event.width>150:self.schedule()
+    def release(self, event):
+        self._last = None
+        if self._interacting:
+            self._interacting = False
+            self._cancel_timer('_pending')
+            self._queue_settle()
+
+    def scroll(self, event):
+        if event.delta:
+            self.change_zoom(1.12 if event.delta > 0 else 1/1.12)
+
+    def change_zoom(self, factor):
+        self.zoom = max(.2, min(6., self.zoom * factor))
+        self._scrolling = True
+        self._cancel_inflight()
+        self.schedule()
+        self._queue_settle()
+
+    def configure(self, event):
+        if self.mesh is not None and event.width > 150:
+            self.schedule()
 
     def schedule(self):
         if self._pending is None:
-            self._pending=self.label.after(65,self.render)
+            # Coalesce redraws rather than scheduling one per mouse movement.
+            self._pending = self.label.after(40, self.render)
+
+    def _textured_requested(self):
+        return (self.mesh is not None and self.materials is not None
+                and self.use_textures.get() and not self.wireframe.get()
+                and bool(self.mesh.uvs) and not self._interacting and not self._scrolling)
 
     def render(self):
-        self._pending=None
-        if self.mesh is None:return
+        # A manual render can overtake a scheduled redraw; cancel its timer
+        # rather than losing the after-id and leaving a Tcl callback behind.
+        self._cancel_timer('_pending')
+        if self.mesh is None:
+            return
         self._texture_generation += 1
-        if self.materials and self.use_textures.get() and not self.wireframe.get() and self.mesh.uvs:
-            # Large meshes render in a worker; Tk updates stay on the UI thread.
+        self._want_textured = self._textured_requested()
+        self._cancel_inflight()
+        if self._want_textured:
             self._render_textured_async()
             return
-        width=max(300,self.label.winfo_width());height=max(260,self.label.winfo_height())
-        img=render_mesh(self.mesh,width,height,self.yaw,self.elevation,self.zoom,self.wireframe.get())
-        self._show_image(img)
+        width = max(300, self.label.winfo_width())
+        height = max(260, self.label.winfo_height())
+        moving = self._interacting or self._scrolling
+        if moving:
+            # Fast shaded stand-in while moving: no expensive UV raster.
+            ratio = min(1.0, 440 / max(width, height))
+            w, h = max(160, int(width * ratio)), max(130, int(height * ratio))
+            image = render_mesh(self.mesh, w, h, self.yaw, self.elevation,
+                                self.zoom, self.wireframe.get(), max_draw_triangles=2100)
+            self.details.set(self._base_details + ' | Fast rotation preview')
+            self._show_image(image, scale_to_window=True)
+        else:
+            image = render_mesh(self.mesh, width, height, self.yaw,
+                                self.elevation, self.zoom, self.wireframe.get())
+            self.details.set(self._base_details)
+            self._show_image(image)
 
-    def _show_image(self,img):
-        if not self.label.winfo_exists():return
-        self._photo=ImageTk.PhotoImage(img,master=self.label)
-        self.label.configure(image=self._photo,text='')
+    def _show_image(self, image, *, scale_to_window=False):
+        if not self.label.winfo_exists():
+            return
+        if scale_to_window:
+            size = (max(1, self.label.winfo_width()), max(1, self.label.winfo_height()))
+            if image.size != size:
+                image = image.resize(size, Image.Resampling.BILINEAR)
+        self._photo = ImageTk.PhotoImage(image, master=self.label)
+        self.label.configure(image=self._photo, text='')
 
     def _render_textured_async(self):
         import queue
         import threading
-        if self._result_queue is None:self._result_queue=queue.Queue()
-        if self._render_busy:
-            if not self._polling:self._polling=True;self.label.after(50,self._drain_results)
+        if not self._want_textured or self.mesh is None:
             return
-        self._render_busy=True
-        gen=self._texture_generation
-        args=(self.mesh,self.materials,max(300,self.label.winfo_width()),max(260,self.label.winfo_height()),
-              self.yaw,self.elevation,self.zoom)
-        def task():
+        if self._result_queue is None:
+            self._result_queue = queue.Queue()
+        if self._render_busy:
+            # The previous render is cancelled, not queued behind new frames.
+            self._cancel_inflight()
+            if not self._polling:
+                self._schedule_poll()
+            return
+        self._render_busy = True
+        event = threading.Event()
+        self._render_cancel = event
+        generation = self._texture_generation
+        width = max(300, self.label.winfo_width())
+        height = max(260, self.label.winfo_height())
+        quality = self.QUALITY_LIMITS.get(self.quality.get(), self.QUALITY_LIMITS['Balanced'])
+        scale = min(1., quality[0] / width, quality[1] / height)
+        w, h = max(128, round(width * scale)), max(128, round(height * scale))
+        args = (self.mesh, self.materials, w, h, self.yaw, self.elevation, self.zoom)
+
+        def work():
             try:
-                from material_preview import render_textured_mesh
-                result=render_textured_mesh(*args)
-            except Exception as error:
-                result=error
-            self._result_queue.put((gen,result))
-        threading.Thread(target=task,daemon=True).start()
+                from material_preview import render_textured_mesh, RenderCancelled
+                image = render_textured_mesh(*args, cancel=event.is_set)
+            except Exception as exc:
+                image = exc
+            self._result_queue.put((generation, image))
+
+        threading.Thread(target=work, daemon=True, name='EvolveModelPreview').start()
         if not self._polling:
-            self._polling=True
-            self.label.after(50,self._drain_results)
+            self._schedule_poll()
 
     def _drain_results(self):
-        self._polling=False
-        if not self.label.winfo_exists():return
-        gen=self._texture_generation
+        self._poll_pending = None
+        self._polling = False
+        if not self.label.winfo_exists():
+            return
         while self._result_queue is not None:
-            try:gen,result=self._result_queue.get_nowait()
-            except Exception:break
-            self._render_busy=False
-            if gen == self._texture_generation and self.mesh is not None:
-                if isinstance(result,Exception):
-                    self.details.set('Texture preview unavailable: '+str(result))
-                else:self._show_image(result)
+            try:
+                generation, result = self._result_queue.get_nowait()
+            except Exception:
+                break
+            self._render_busy = False
+            self._render_cancel = None
+            if generation != self._texture_generation or not self._want_textured:
+                continue
+            from material_preview import RenderCancelled
+            if isinstance(result, RenderCancelled):
+                continue
+            if isinstance(result, Exception):
+                # Mark a failed generation as handled; otherwise the polling
+                # loop would retry the same unsupported render indefinitely.
+                self._shown_generation = generation
+                self.details.set('Texture preview unavailable: ' + str(result))
+            else:
+                self._shown_generation = generation
+                self.details.set(self._base_details + ' | ' + self.quality.get() + ' textured preview')
+                self._show_image(result, scale_to_window=True)
         if self._render_busy:
-            self._polling=True;self.label.after(50,self._drain_results)
-        elif self.materials and self.use_textures.get() and self.mesh is not None and gen != self._texture_generation:
+            self._schedule_poll()
+        elif self._want_textured and self._shown_generation != self._texture_generation:
             self._render_textured_async()
 
     def clear(self):
-        if self._pending is not None:
-            self.label.after_cancel(self._pending);self._pending=None
-        self._texture_generation+=1
-        self.mesh=None;self._photo=None;self.materials=None
+        self._cancel_inflight()
+        self._cancel_timer('_pending')
+        self._cancel_timer('_settle_pending')
+        self._texture_generation += 1
+        self._want_textured = False
+        self._interacting = False
+        self._scrolling = False
+        self.mesh = None
+        self._photo = None
+        self.materials = None
         self.textures_button.state(['disabled'])
-        self.details.set('Choose a supported mesh')
-        self.label.configure(image='',text='Select a model to preview')
+        self._base_details = 'Choose a supported mesh'
+        self.details.set(self._base_details)
+        self.label.configure(image='', text='Select a model to preview')

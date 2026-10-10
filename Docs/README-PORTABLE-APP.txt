@@ -141,3 +141,13 @@ cause false ambiguity. The model's own PAK material is used first. Different
 unrelated material versions remain ambiguous (see Find Model Textures for paths).
 If you have made multiple copies of the same PAK project, removing outdated
 project copies from the Projects folder can help. Never remove live swap backups.
+
+3D preview performance:
+- Mouse drag and wheel zoom use a quick untextured shaded preview while moving.
+- When the mouse stops, the selected model renders full UV materials again.
+- Quality: Fast, Balanced (default), Detailed; lower quality cuts render resolution.
+- Old background frames cancel when you turn or select a new mesh, so they do not
+  block the new view or replace it with outdated textures.
+- Wireframe and Textures switches remain available, with no change to game files.
+- This is still a software rasterizer; real-time textured 3D during dragging
+  would require a separate hardware-accelerated renderer.

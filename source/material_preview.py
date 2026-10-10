@@ -7,6 +7,7 @@ unsupported DDS layouts fail visibly instead of being guessed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 from io import BytesIO
 from pathlib import Path
 import re
@@ -32,6 +33,17 @@ class PreviewMaterials:
     @property
     def count(self):
         return sum(tex is not None for tex in self.textures)
+
+    @cached_property
+    def rgb_arrays(self):
+        """Decode Pillow textures to NumPy just once per material selection."""
+        import numpy as np
+        return tuple(None if im is None else np.asarray(im.convert('RGB'), dtype=np.uint8)
+                     for im in self.textures)
+
+
+class RenderCancelled(Exception):
+    """Normal cancellation of an obsolete background preview render."""
 
 
 def _workspace_index(workspace, projects_root=None, stage_root=None):
@@ -170,10 +182,12 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
     return PreviewMaterials(tuple(result),tuple(names),material['relative'])
 
 
-def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevation=.24, zoom=1.):
+def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevation=.24, zoom=1., *, cancel=None):
     """Depth-tested diffuse/UV CPU rasterizer. This is NOT CryEngine shader parity."""
     import math
     import numpy as np
+    if cancel is not None and cancel():
+        raise RenderCancelled('No longer needed')
     width=max(128,min(int(width),1400));height=max(128,min(int(height),1100))
     zoom=max(.2,min(float(zoom),6.0))
     if not mesh.uvs or len(mesh.uvs)!=len(mesh.vertices):
@@ -196,7 +210,7 @@ def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevat
     screen=np.column_stack((sx,sy))
     buffer=np.full((height,width,3),(32,33,42),dtype=np.uint8)
     zbuf=np.full((height,width),-np.inf,dtype=np.float32)
-    textures=[None if im is None else np.asarray(im.convert('RGB'),dtype=np.uint8) for im in materials.textures]
+    textures=materials.rgb_arrays
     default_material=next((i for i,tex in enumerate(textures) if tex is not None),0)
     mapping=np.full(len(tris),default_material,dtype=np.int16)
     for first,count,material_index in mesh.subsets:
@@ -206,6 +220,8 @@ def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevat
     light=np.asarray((.4,-.5,.77),dtype=np.float32)
     light/=np.linalg.norm(light)
     for index,face in enumerate(tris):
+        if cancel is not None and index % 32 == 0 and cancel():
+            raise RenderCancelled('No longer needed')
         texno=int(mapping[index]);tex=textures[texno] if texno<len(textures) else None
         if tex is None:
             continue
@@ -246,6 +262,8 @@ def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevat
         dest=buffer[y0:y1,x0:x1]
         dest[inside]=color[inside]
         depth[inside]=zs[inside]
+    if cancel is not None and cancel():
+        raise RenderCancelled('No longer needed')
     image=Image.fromarray(buffer,'RGB')
     from PIL import ImageDraw
     ImageDraw.Draw(image).text((12,height-26),f'Approximate diffuse UV preview | {mesh.description}',fill='#cad2df')
