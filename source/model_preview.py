@@ -27,6 +27,8 @@ class PreviewMesh:
     center: tuple
     radius: float
     source_name: str = ''
+    uvs: tuple = ()
+    subsets: tuple = ()  # (first_index, count_indices, material_id)
 
     @property
     def description(self):
@@ -44,7 +46,7 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
         if kind != DATA_STREAM_CHUNK:
             continue
         _flags, stream_type, count, stride, _a, _b = struct.unpack_from('<6I', data, offset)
-        if stream_type in (0, 5):
+        if stream_type in (0, 2, 5):
             if stream_type in streams:
                 raise ValueError('Multiple mesh position/index streams; grouped meshes are not yet supported.')
             streams[stream_type] = (count, stride, offset + 24)
@@ -67,6 +69,30 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
             raise ValueError('Invalid packed half-float vertex coordinates.')
         positions.append((x,y,z))
         xs.append(x);ys.append(y);zs.append(z)
+    uv_coordinates = ()
+    if 2 in streams:
+        count_uv, uv_stride, uv_at = streams[2]
+        if count_uv == vertex_count and uv_stride == 8:
+            values = tuple(struct.iter_unpack('<ff', memoryview(data)[uv_at:uv_at + count_uv * 8]))
+            if all(math.isfinite(u) and math.isfinite(v) and abs(u) <= 1e4 and abs(v) <= 1e4 for u,v in values):
+                uv_coordinates = values
+    subsets = ()
+    for i in range(info.chunks):
+        kind, _cid, size, offset = struct.unpack_from('<4I', info.chunk_table, i * 16)
+        if kind != 0x08001017 or size < 16:
+            continue
+        num = struct.unpack_from('<I', data, offset)[0]
+        if not (1 <= num <= 128) or 16 + num * 36 > size:
+            continue
+        rows = []
+        for index in range(num):
+            first, count, _vfirst, _vcount, material = struct.unpack_from('<5I', data, offset + 16 + index * 36)
+            rows.append((first, count, material))
+        if (rows[0][0] == 0 and sum(row[1] for row in rows) == index_count
+            and all(x[0] % 3 == 0 and x[1] % 3 == 0 and x[0]+x[1] <= index_count for x in rows)
+            and all(a[0] + a[1] == b[0] for a,b in zip(rows, rows[1:]))):
+            subsets = tuple(rows)
+        break
     indices = struct.unpack_from('<' + str(index_count) + 'H', data, index_at)
     if max(indices) >= vertex_count:
         raise ValueError('Model triangle index is outside the vertex array.')
@@ -75,7 +101,7 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
     if radius <= 1e-7:
         raise ValueError('Mesh bounds are degenerate.')
     triangles = tuple(zip(indices[::3], indices[1::3], indices[2::3]))
-    return PreviewMesh(tuple(positions), triangles, center, radius, source_name)
+    return PreviewMesh(tuple(positions), triangles, center, radius, source_name, uv_coordinates, subsets)
 
 
 def find_preview_mesh(workspace, relative, raw):
@@ -162,6 +188,15 @@ class ModelPreview:
         self.details=tk.StringVar(value='Choose a supported mesh')
         ttk.Label(toolbar,textvariable=self.details).pack(side='left',fill='x',expand=True)
         self.wireframe=tk.BooleanVar(value=False)
+        self.use_textures=tk.BooleanVar(value=True)
+        self.textures_button=ttk.Checkbutton(toolbar,text='Textures',variable=self.use_textures,command=self.schedule)
+        self.textures_button.pack(side='right',padx=4)
+        self.textures_button.state(['disabled'])
+        self.materials=None
+        self._texture_generation=0
+        self._render_busy=False
+        self._result_queue=None
+        self._polling=False
         ttk.Checkbutton(toolbar,text='Wireframe',variable=self.wireframe,command=self.render).pack(side='right',padx=4)
         ttk.Button(toolbar,text='Reset view',command=self.reset).pack(side='right',padx=4)
         self.label=tk.Label(self.frame,background='#20212a',foreground='white',text='Select a model to preview')
@@ -178,7 +213,15 @@ class ModelPreview:
     def set_mesh(self,mesh):
         self.mesh=mesh
         self.details.set(f'{Path(mesh.source_name).name} | {mesh.description} | Drag to rotate, wheel to zoom')
+        self.materials=None
+        self.textures_button.state(['disabled'])
         self.reset()
+
+    def set_materials(self, materials):
+        self.materials=materials
+        self.use_textures.set(True)
+        self.textures_button.state(['!disabled'] if materials is not None else ['disabled'])
+        self.schedule()
 
     def reset(self):
         self.yaw=-.5;self.elevation=.24;self.zoom=1.0
@@ -211,14 +254,65 @@ class ModelPreview:
     def render(self):
         self._pending=None
         if self.mesh is None:return
+        self._texture_generation += 1
+        if self.materials and self.use_textures.get() and not self.wireframe.get() and self.mesh.uvs:
+            # Large meshes render in a worker; Tk updates stay on the UI thread.
+            self._render_textured_async()
+            return
         width=max(300,self.label.winfo_width());height=max(260,self.label.winfo_height())
         img=render_mesh(self.mesh,width,height,self.yaw,self.elevation,self.zoom,self.wireframe.get())
+        self._show_image(img)
+
+    def _show_image(self,img):
+        if not self.label.winfo_exists():return
         self._photo=ImageTk.PhotoImage(img,master=self.label)
         self.label.configure(image=self._photo,text='')
+
+    def _render_textured_async(self):
+        import queue
+        import threading
+        if self._result_queue is None:self._result_queue=queue.Queue()
+        if self._render_busy:
+            if not self._polling:self._polling=True;self.label.after(50,self._drain_results)
+            return
+        self._render_busy=True
+        gen=self._texture_generation
+        args=(self.mesh,self.materials,max(300,self.label.winfo_width()),max(260,self.label.winfo_height()),
+              self.yaw,self.elevation,self.zoom)
+        def task():
+            try:
+                from material_preview import render_textured_mesh
+                result=render_textured_mesh(*args)
+            except Exception as error:
+                result=error
+            self._result_queue.put((gen,result))
+        threading.Thread(target=task,daemon=True).start()
+        if not self._polling:
+            self._polling=True
+            self.label.after(50,self._drain_results)
+
+    def _drain_results(self):
+        self._polling=False
+        if not self.label.winfo_exists():return
+        gen=self._texture_generation
+        while self._result_queue is not None:
+            try:gen,result=self._result_queue.get_nowait()
+            except Exception:break
+            self._render_busy=False
+            if gen == self._texture_generation and self.mesh is not None:
+                if isinstance(result,Exception):
+                    self.details.set('Texture preview unavailable: '+str(result))
+                else:self._show_image(result)
+        if self._render_busy:
+            self._polling=True;self.label.after(50,self._drain_results)
+        elif self.materials and self.use_textures.get() and self.mesh is not None and gen != self._texture_generation:
+            self._render_textured_async()
 
     def clear(self):
         if self._pending is not None:
             self.label.after_cancel(self._pending);self._pending=None
-        self.mesh=None;self._photo=None
+        self._texture_generation+=1
+        self.mesh=None;self._photo=None;self.materials=None
+        self.textures_button.state(['disabled'])
         self.details.set('Choose a supported mesh')
         self.label.configure(image='',text='Select a model to preview')

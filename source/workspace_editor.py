@@ -106,6 +106,7 @@ class WorkspaceEditor:
         self.view_mode = None
         self.preview_photo = None
         self.streaming = None
+        self.texture_folder = None
         self.active_tab = 'files'
         self._changing_tab = False
         self.window = tk.Toplevel(manager.window)
@@ -151,6 +152,7 @@ class WorkspaceEditor:
                 self.model_import_button = ttk.Button(tools, text=manager.t('model_import'), command=self.import_model)
                 self.model_import_button.pack(side='left', padx=(0, 6))
                 ttk.Button(tools, text='Find Model Textures', command=self.show_model_textures).pack(side='left', padx=(0, 6))
+                ttk.Button(tools, text='Choose Texture Folder', command=self.choose_texture_folder).pack(side='left', padx=(0, 6))
                 ttk.Label(tools, text=manager.t('editor_models_help')).pack(side='left', padx=8)
 
             pane = ttk.Panedwindow(page, orient='horizontal')
@@ -460,7 +462,31 @@ class WorkspaceEditor:
             self.model_label.pack_forget()
             self.model_preview.frame.pack(fill='both', expand=True)
             self.model_preview.set_mesh(mesh)
+            self.apply_model_materials(rel)
         self.info.set('Model: ' + rel + ' | Native export available; replacement is experimental')
+
+    def apply_model_materials(self, rel):
+        # Material/texture PAKs may be stored in another batch workspace.
+        # Missing textures are common and must not prevent mesh inspection.
+        try:
+            from material_preview import load_preview_materials
+            material = load_preview_materials(self.workspace, rel, self.texture_folder)
+        except (ValueError, OSError) as error:
+            self.model_preview.set_materials(None)
+            self.model_preview.details.set('Untextured | ' + str(error)[:180] + ' | Choose Texture Folder…')
+        else:
+            self.model_preview.set_materials(material)
+            self.info.set('UV material preview: ' + material.source +
+                          f' | {material.count} diffuse textures (approximate lighting)')
+
+    def choose_texture_folder(self):
+        if self.active_tab != 'models':return
+        from tkinter import filedialog
+        folder = filedialog.askdirectory(parent=self.window, title='Choose folder containing extracted DDS files')
+        if not folder:return
+        self.texture_folder = Path(folder)
+        if self.view_mode == 'model' and self.model_preview.mesh is not None:
+            self.apply_model_materials(self.path)
 
     def show_model_textures(self):
         """Show material-to-texture links across the unpacked PAK collection."""
@@ -480,7 +506,7 @@ class WorkspaceEditor:
             if not report['textures']:
                 lines.append('No texture references found; try unpacking the PAK containing its .mtl file.')
             lines += ['', 'CryEngine .tif references can correspond to cooked .dds/.dds.0 assets.',
-                      'This finds texture locations; 3D UV/material rendering is not implemented yet.',
+                      'When diffuse DDS files are found, the 3D preview uses their UVs with approximate lighting.',
                       'To edit a texture, choose its PAK in the main list and open the Images tab.']
             view = tk.Toplevel(self.window)
             view.title('Model material and texture locations')

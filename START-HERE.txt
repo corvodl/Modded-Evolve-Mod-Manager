@@ -35,3 +35,6 @@ TROUBLESHOOTING THE OLD ERROR "Untracked prepared files exist":
   - If *.customkey-original backups or *.customkey-ready.partial exist,
     setup stops: restore/inspect with the original mod helper first.
   - Do not distribute Data/ -- contains game snapshots and private keys.
+
+The Activity Log opens automatically at startup and for operations.
+Models now support optional diffuse/UV texture previews when the .mtl and DDS files are available.

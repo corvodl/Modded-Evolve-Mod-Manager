@@ -80,6 +80,8 @@ class Manager:
         self.read_settings()
         self.load_batch_mapping()
         self.draw()
+        # Show the Activity Log as soon as the UI is ready; users can close it.
+        self.window.after(100, lambda: self.toggle_log(show=True))
         if self.ui_warning:self.write('UI TEXT: '+self.ui_warning+'\n')
         self.reload_archives()
         self.update_launch_state()
@@ -161,6 +163,16 @@ class Manager:
             return
         self.log_visible = show
         if show:
+            # Place beside the main window if possible, rather than obscuring
+            # its controls. Existing manual position is respected after first open.
+            if not getattr(self, '_log_positioned', False):
+                self.window.update_idletasks()
+                root_x, root_y = self.window.winfo_rootx(), self.window.winfo_rooty()
+                candidate = root_x + self.window.winfo_width() + 12
+                if candidate + 850 > self.window.winfo_screenwidth():
+                    candidate = max(20, root_x + 60)
+                self.log_window.geometry(f'+{candidate}+{max(20, root_y + 70)}')
+                self._log_positioned = True
             self.log_window.deiconify()
             self.log_window.lift()
         else:
@@ -811,6 +823,7 @@ class Manager:
     def run_steps(self,steps,label,on_success=None,cwd=ROOT):
         if self.busy:raise RuntimeError('Wait for the current task to finish.')
         self.busy=True
+        self.toggle_log(show=True)
         self.status.set(label+'...')
         self.write('\n>>> '+label+'\n')
         def task():

@@ -81,7 +81,7 @@ CryEngine skinned character models (Goliath sample):
 Models tab: 3D model preview supports CrChF v7 .skinm mesh companions (including Goliath).
 Select .skinm or its .skin file when the .skinm is present in the same extracted folder.
 Drag to rotate, scroll to zoom, switch wireframe on/off, Reset view to recenter.
-This is an untextured, read-only 3D preview; .chr/.chrm skeleton rigging and Blender export
+This is a read-only 3D preview; .chr/.chrm skeleton rigging and Blender export
 are not yet visualized. The preview never modifies the PAK or model.
 
 Multi-PAK asset extraction (experimental):
@@ -93,5 +93,23 @@ Multi-PAK asset extraction (experimental):
   resources are reported rather than automatically replaced.
 - Material .tif references are checked against cooked .dds and .dds.0 names.
 - Rebuild/Install ONE PAK at a time. Batch extraction does NOT automatically make
-  the 3D preview textured: actual material UV mapping/shading is future work.
+  the 3D preview textured if the extracted .mtl and referenced DDS are missing.
 - Batch extraction can consume significant disk space. Originals remain unchanged.
+
+Approximate textured model preview (v2.9.7 experimental):
+- The Models tab reads CrChF v7 UV stream type 2 (2 float32 per vertex) and
+  material subset assignments and maps Diffuse DDS textures through the .mtl file.
+- Split DDS fragments must all be extracted together, within their original PAK
+  workspaces, or placed together in a user-selected flat texture folder.
+- Select a mesh (.skinm, or its .skin with mesh companion) and check Textures.
+- If materials are not found automatically across the unpacked batch, extract a
+  texture archive to a directory and click Choose Texture Folder in Models.
+- Rotation/zoom and wireframe remain available. Textured rendering runs in a
+  background thread to keep the UI responsive. It is an APPROXIMATION of the
+  diffuse material, not original CryEngine shaders (normal/specular/damage/SSS).
+- This preview does not edit any material, texture, PAK, or model bytes.
+
+Activity Log visibility:
+- The Activity Log opens automatically when the manager opens.
+- Closing it is optional; it reopens whenever you start a manager operation,
+  so progress and errors are visible even if the main window is busy.
