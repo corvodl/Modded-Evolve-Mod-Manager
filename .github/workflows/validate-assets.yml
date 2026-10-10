@@ -34,11 +34,17 @@ jobs:
             foreach ($item in @("EvolveModManager/EvolveModManager.exe", "EvolveModManager/EvolveModWorker.exe")) {
               if ($names -notcontains $item) { throw "Missing $item" }
             }
-            $suspicious = @($names | Where-Object { $_ -match "(^|/)(Data/|private_key[.]pem$)|[.]pak$" })
-            if ($suspicious.Count -gt 0) {
-              Write-Host "Matched paths (diagnostic only):"
-              $suspicious | ForEach-Object { Write-Host "  $_" }
-              throw "Release archive validation found excluded or over-broad path matches."
+            # Only manager-owned Data/ is personal; NumPy's bundled tests/data/
+            # is not user data. Still reject .pak archives and signing private keys
+            # ANYWHERE in the release.
+            $excluded = @($names | Where-Object {
+              $_ -cmatch '^EvolveModManager/Data/' -or
+              $_ -match '(?i)(^|/)private_key[.]pem$' -or
+              $_ -match '(?i)[.]pak$'
+            })
+            if ($excluded.Count -gt 0) {
+              $excluded | ForEach-Object { Write-Host "Excluded release file: $_" }
+              throw "Release contains user data, personal keys, or game PAKs"
             }
           } finally { $archive.Dispose() }
       - uses: actions/upload-artifact@v4
