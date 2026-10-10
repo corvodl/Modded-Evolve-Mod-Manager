@@ -1,15 +1,22 @@
-# Evolve Stage 2 Mod Manager — v1.0.0
+# Evolve Stage 2 Mod Manager — v1.0.1
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.0.0 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.0.1 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.0.1
+
+- **Instructions-first onboarding:** New installations, including previously exported unconfigured bundles, open on the **Instructions** tab and do not open game-folder selection automatically. Choose **Set Up Manager** only after reading the installation requirements. The Instructions button correctly handles both fresh setups and bundled-setup connections.
+- **Cleaner toolbar:** Removed the duplicate top-right Set Up Manager button. Setup remains available in **Instructions** and **Settings**.
+- **Single update action:** Removed the redundant **Install Update** button. **Check for Updates** checks for a verified release and offers installation immediately when one is available. Eligible initialized Main-channel installs still receive automatic update checks.
+- **Refined interface:** Updated black/red tab navigation, Segoe typography, more spacious controls and archive rows, and a scrollable card-style Instructions page that fits smaller Windows displays.
 
 ## Download and install
 
 1. Download **EvolveModManager-Windows.zip** from the [Main Windows release](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Main) and extract the **entire** `EvolveModManager` folder to a writable location.
-2. Run `EvolveModManager.exe`. The **Instructions** tab is shown first and provides a direct link to the required Modded Evolve website.
+2. Run `EvolveModManager.exe`. The **Instructions** tab is shown first with a link to the required Modded Evolve website. No installation folder picker opens until you click Set Up Manager.
 3. After the normal client has installed Evolve Stage 2, close the game and client. Click **Set Up Manager**, select the client-installed **EvolveGame** folder, and select the normal Modded Evolve client executable.
 4. The manager builds local signing resources, an injector and staged custom-signed PAKs from **your installed game files**. It does not alter the original installed PAKs during setup. Allow substantial free disk space for staging; the amount depends on the game files and original-snapshot option.
 5. Open **Modding** to edit archives. Use **Play & Restore** to play privately/offline and restore originals afterward.
@@ -18,7 +25,7 @@ The portable Windows release bundles Python and its required application depende
 
 **When updating an existing installation:** Preserve the `Data` directory. It contains projects, locally generated keys, staged mods, settings and recovery logs. Never distribute your private `Data` folder or signing key as part of the public app-only ZIP.
 
-## Interface and getting started (v1.0.0)
+## Interface and getting started (v1.0.1)
 
 | Tab | What it does |
 | --- | --- |
@@ -92,7 +99,7 @@ The [Windows CI workflow](https://github.com/corvodl/Modded-Evolve-Mod-Manager/a
 
 ## Limitations
 
-Version **1.0.0** marks the application's first official release, **not** a claim that all mod formats are fully supported. Successful signatures do not guarantee valid gameplay. Do not rename signed archives arbitrarily, change unsupported model layouts or discard backups. GPU models are approximate visualizations, not the game renderer. Use mods for private/offline testing only.
+Version **1.0.1** marks the application's first official release, **not** a claim that all mod formats are fully supported. Successful signatures do not guarantee valid gameplay. Do not rename signed archives arbitrarily, change unsupported model layouts or discard backups. GPU models are approximate visualizations, not the game renderer. Use mods for private/offline testing only.
 
 ## Credits
 

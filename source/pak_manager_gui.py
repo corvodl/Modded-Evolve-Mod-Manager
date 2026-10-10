@@ -62,8 +62,8 @@ class Manager:
             pass
         self.copy, self.ui_warning = load_text()
         self.window.title(self.t('window_title'))
-        self.window.geometry('1040x710')
-        self.window.minsize(860,620)
+        self.window.geometry('1100x760')
+        self.window.minsize(900,640)
         self.events = queue.Queue()
         self.busy = False
         self.editors = []
@@ -102,11 +102,26 @@ class Manager:
         self.update_launch_state()
         self.window.after(120, self.poll)
         self.window.protocol('WM_DELETE_WINDOW',self.on_close)
-        if self.build_channel() == 'main':
+        # Instructions is always visible first. New and unconfigured bundled
+        # installations must *never* launch a folder picker on startup.
+        self.notebook.select(self.instructions_tab)
+        if self.build_channel() == 'main' and self.setup_is_ready():
             self.window.after(2500, lambda: self.check_updates(silent=True))
-        if self.bundle_error:self.window.after(300,lambda:self.fail(RuntimeError(self.bundle_error)))
-        elif self.bundle and not self.bundle.get('configured'):self.window.after(300,self.configure_bundle)
-        # Fresh installs open on Instructions; setup begins via its button.
+        if self.bundle_error:
+            self.window.after(300, lambda: self.fail(RuntimeError(self.bundle_error)))
+
+    def setup_is_ready(self):
+        """Skip startup update prompts while first-run instructions are unread."""
+        if self.bundle and not self.bundle.get('configured', True):
+            return False
+        return (Path(self.stage.get())/'stage_status.json').is_file()
+
+    def start_setup_from_instructions(self):
+        """User-initiated setup: standard game setup or an exported bundle."""
+        if (APP_HOME/MARKER).is_file():
+            self.configure_bundle()
+        else:
+            self.initial_setup()
 
     def read_settings(self):
         try:self.bundle=bind_home(APP_HOME)
@@ -280,11 +295,11 @@ class Manager:
 
     def draw(self):
         root = self.window
-        base = ttk.Frame(root, padding=(18, 15, 18, 12))
+        base = ttk.Frame(root, padding=(22, 18, 22, 13))
         base.pack(fill='both', expand=True)
 
         header = ttk.Frame(base)
-        header.pack(fill='x', pady=(0, 13))
+        header.pack(fill='x', pady=(0, 17))
         brand = ttk.Frame(header)
         brand.pack(side='left', fill='x', expand=True)
         brand_line = ttk.Frame(brand)
@@ -298,8 +313,7 @@ class Manager:
         except (tk.TclError, OSError):
             self.header_icon = None
         ttk.Label(brand_line, text=self.t('header'), style='Brand.TLabel').pack(side='left')
-        ttk.Button(header, text=self.t('setup_button'), style='Accent.TButton',
-                   command=self.initial_setup).pack(side='right', padx=(8, 0))
+        # Set Up Manager lives only on Instructions and Settings.
         self.log_button = ttk.Button(header, text=self.t('details_show'),
                                      style='Quiet.TButton', command=self.toggle_log)
         self.log_button.pack(side='right', padx=(8, 0))
@@ -335,7 +349,7 @@ class Manager:
         self.log_window.protocol('WM_DELETE_WINDOW', lambda: self.toggle_log(show=False))
         self.log_frame = ttk.Frame(self.log_window, padding=12)
         self.log_frame.pack(fill='both', expand=True)
-        self.log = tk.Text(self.log_frame, height=6, font=('Consolas', 9), wrap='word',
+        self.log = tk.Text(self.log_frame, height=6, font=('Consolas', 10), wrap='word',
                            relief='flat', borderwidth=0)
         self.log.pack(side='left', fill='both', expand=True)
         scroll = ttk.Scrollbar(self.log_frame, orient='vertical', command=self.log.yview)
@@ -365,47 +379,76 @@ class Manager:
         open_help_window(self.window, self.t('help_title'), sections, selected=section)
 
     def draw_instructions(self, parent):
-        """First-run guide: short steps, no hidden installation prerequisites."""
-        ttk.Label(parent, text=self.t('instructions_title'),
-                  style='Section.TLabel').pack(anchor='w', pady=(4, 8))
-        ttk.Label(parent, text=self.t('instructions_intro'),
-                  style='Muted.TLabel', wraplength=790, justify='left').pack(anchor='w', pady=(0, 14))
+        """Scrollable onboarding with explicit, user-initiated game selection."""
+        canvas = tk.Canvas(parent, background='#0b0b0d', borderwidth=0,
+                           highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient='vertical', command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        body = ttk.Frame(canvas, padding=(5, 6, 15, 16))
+        window_id = canvas.create_window((0, 0), window=body, anchor='nw')
+        body.bind('<Configure>', lambda _event: canvas.configure(
+            scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(
+            window_id, width=max(1, event.width)))
 
-        required = ttk.LabelFrame(parent, text=self.t('instructions_required_title'),
-                                  padding=(15, 12))
-        required.pack(fill='x', pady=(0, 12))
+        ttk.Label(body, text=self.t('instructions_title'),
+                  style='GuideHero.TLabel').pack(anchor='w', pady=(0, 6))
+        ttk.Label(body, text=self.t('instructions_intro'),
+                  style='Muted.TLabel', wraplength=800,
+                  justify='left').pack(anchor='w', pady=(0, 17))
+
+        required = ttk.Frame(body, style='Card.TFrame', padding=(20, 17))
+        required.pack(fill='x', pady=(0, 15))
+        ttk.Label(required, text=self.t('instructions_required_title'),
+                  style='GuideKicker.TLabel').pack(anchor='w', pady=(0, 8))
         ttk.Label(required, text=self.t('instructions_required_body'),
-                  wraplength=780, justify='left').pack(anchor='w', pady=(0, 10))
-        actions = ttk.Frame(required)
+                  style='GuideBody.TLabel', wraplength=790,
+                  justify='left').pack(anchor='w', pady=(0, 14))
+        actions = ttk.Frame(required, style='Card.TFrame')
         actions.pack(fill='x')
         ttk.Button(actions, text=self.t('instructions_website_button'),
                    style='Accent.TButton',
                    command=lambda: webbrowser.open('https://modded-evolve.com/', new=2)
                    ).pack(side='left')
-        ttk.Button(actions, text=self.t('setup_button'), command=self.initial_setup
+        ttk.Button(actions, text=self.t('setup_button'),
+                   command=self.start_setup_from_instructions
                    ).pack(side='left', padx=(10, 0))
 
-        steps = ttk.LabelFrame(parent, text=self.t('instructions_steps_title'),
-                               padding=(15, 12))
-        steps.pack(fill='x', pady=(0, 12))
+        ttk.Label(body, text=self.t('instructions_steps_title'),
+                  style='GuideKickerBare.TLabel').pack(anchor='w', pady=(2, 12))
         for title_key, body_key in (
                 ('instructions_step_setup', 'instructions_step_setup_body'),
                 ('instructions_step_mod', 'instructions_step_mod_body'),
                 ('instructions_step_play', 'instructions_step_play_body'),
                 ('instructions_step_restore', 'instructions_step_restore_body')):
-            item = ttk.Frame(steps)
-            item.pack(fill='x', pady=(0, 7))
-            ttk.Label(item, text=self.t(title_key), style='CardTitle.TLabel'
-                      ).pack(anchor='w')
-            ttk.Label(item, text=self.t(body_key), wraplength=770,
-                      justify='left', style='Muted.TLabel').pack(anchor='w', pady=(1, 0))
+            step = ttk.Frame(body, style='Card.TFrame', padding=(17, 12))
+            step.pack(fill='x', pady=(0, 8))
+            ttk.Label(step, text=self.t(title_key),
+                      style='GuideStep.TLabel').pack(anchor='w', pady=(0, 5))
+            ttk.Label(step, text=self.t(body_key),
+                      style='GuideBody.TLabel', wraplength=790,
+                      justify='left').pack(anchor='w')
 
-        ttk.Label(parent, text=self.t('instructions_safety'),
+        ttk.Label(body, text=self.t('instructions_safety'),
                   style='Muted.TLabel', wraplength=790,
-                  justify='left').pack(anchor='w', pady=(0, 9))
-        ttk.Button(parent, text=self.t('instructions_modding_button'),
+                  justify='left').pack(anchor='w', pady=(8, 14))
+        ttk.Button(body, text=self.t('instructions_modding_button'),
+                   style='Quiet.TButton',
                    command=lambda: self.notebook.select(self.edit_tab)
                    ).pack(anchor='w')
+
+        # Mousewheel works when hovering the guide, not the entire application.
+        def wheel(event):
+            canvas.yview_scroll(-int(event.delta / 120) if event.delta else 0, 'units')
+        def on_enter(_event):
+            canvas.bind_all('<MouseWheel>', wheel)
+        def on_leave(_event):
+            canvas.unbind_all('<MouseWheel>')
+        for node in (canvas, body):
+            node.bind('<Enter>', on_enter)
+            node.bind('<Leave>', on_leave)
 
     def draw_credits(self, parent):
         github = 'https://github.com/corvodl/Modded-Evolve-Mod-Manager'
@@ -572,7 +615,7 @@ class Manager:
         ttk.Label(update_row, textvariable=self.update_status, style='Muted.TLabel').pack(side='left', fill='x', expand=True)
         self.update_button = ttk.Button(update_row, text='Check for Updates', style='Quiet.TButton', command=self.check_updates)
         self.update_button.pack(side='right')
-        ttk.Button(update_row, text='Install Update', style='Accent.TButton', command=self.offer_update).pack(side='right', padx=(0, 8))
+        # Check for Updates offers installation automatically when verified.
         ttk.Separator(parent).pack(fill='x', pady=(8, 12))
         self.advanced_button = ttk.Button(parent, text=self.t('advanced_toggle_show'),
                                           style='Quiet.TButton', command=self.toggle_advanced)

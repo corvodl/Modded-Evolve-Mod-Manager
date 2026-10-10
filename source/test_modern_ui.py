@@ -68,7 +68,13 @@ class ModernThemeTests(unittest.TestCase):
                               for tab in manager.notebook.tabs()],
                              ['Instructions', 'Modding', 'Play & Restore', 'Settings', 'Credits'])
             self.assertEqual(manager.notebook.index('current'), 0)
-            self.assertEqual(manager.version_label.cget('text'), 'v1.0.0')
+            # Navigation is now the only normal startup setup entry point.
+            base = self.root.winfo_children()[0]
+            header = base.winfo_children()[0]
+            toolbar_buttons = [x.cget('text') for x in header.winfo_children()
+                               if isinstance(x, ttk.Button)]
+            self.assertNotIn('Set Up Manager', toolbar_buttons)
+            self.assertEqual(manager.version_label.cget('text'), 'v1.0.1')
             self.assertTrue(manager.header_icon)
             self.assertGreater(manager.header_icon.width(), 0)
             self.assertLessEqual(manager.header_icon.width(), 36)
@@ -96,7 +102,7 @@ class ModernThemeTests(unittest.TestCase):
         manager.copy, _ = load_text()
         parent = ttk.Frame(self.root)
         parent.pack(fill='both', expand=True)
-        with patch.object(manager, 'initial_setup') as setup, \
+        with patch.object(manager, 'start_setup_from_instructions') as setup, \
              patch('pak_manager_gui.webbrowser.open') as website:
             manager.draw_instructions(parent)
             self.root.update()
@@ -112,12 +118,57 @@ class ModernThemeTests(unittest.TestCase):
             scan(parent)
             self.assertTrue(any('modded-evolve.com' in text for text in labels))
             self.assertTrue(any('Restore Game Files' in text for text in labels))
-            site = next(b for b in buttons if 'Website' in b.cget('text'))
+            site = next(b for b in buttons if 'Evolve Stage 2' in b.cget('text'))
             site.invoke()
             website.assert_called_once_with('https://modded-evolve.com/', new=2)
             setup_button = next(b for b in buttons if b.cget('text') == 'Set Up Manager')
             setup_button.invoke()
             setup.assert_called_once()
+
+    def test_first_boot_does_not_open_any_folder_selection_dialog(self):
+        """Even exported but unconfigured bundles open at Instructions first."""
+        from pak_manager_gui import Manager
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as folder, \
+             patch('pak_manager_gui.bind_home', return_value={'configured': False}), \
+             patch('pak_manager_gui.settings_source', return_value=Path(folder)/'missing.json'), \
+             patch.object(Manager, 'load_batch_mapping', return_value=None), \
+             patch.object(Manager, 'reload_archives', return_value=None), \
+             patch.object(Manager, 'update_launch_state', return_value=None), \
+             patch.object(Manager, 'build_channel', return_value=''), \
+             patch.object(Manager, 'initial_setup') as initial, \
+             patch.object(Manager, 'configure_bundle') as configure, \
+             patch('pak_manager_gui.filedialog.askdirectory') as folder_picker, \
+             patch('pak_manager_gui.filedialog.askopenfilename') as file_picker:
+            manager = Manager(self.root)
+            self.root.update()
+            self.assertEqual(manager.notebook.index('current'), 0)
+            initial.assert_not_called()
+            configure.assert_not_called()
+            folder_picker.assert_not_called()
+            file_picker.assert_not_called()
+            self.assertFalse(manager.setup_is_ready())
+            manager.log_window.destroy()
+
+    def test_instructions_setup_switches_between_standard_and_bundle(self):
+        from pak_manager_gui import Manager
+        from pak_manager_gui import MARKER
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+        manager = Manager.__new__(Manager)
+        with TemporaryDirectory() as folder:
+            fake_home = Path(folder)
+            with patch('pak_manager_gui.APP_HOME', fake_home), \
+                 patch.object(manager, 'configure_bundle') as configure, \
+                 patch.object(manager, 'initial_setup') as regular:
+                manager.start_setup_from_instructions()
+                regular.assert_called_once()
+                configure.assert_not_called()
+                (fake_home/MARKER).write_text('{}', encoding='utf-8')
+                manager.start_setup_from_instructions()
+                configure.assert_called_once()
 
     def test_editor_help_uses_current_tab(self):
         from workspace_editor import WorkspaceEditor

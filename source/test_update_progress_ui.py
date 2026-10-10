@@ -48,6 +48,16 @@ class UpdateProgressUITests(unittest.TestCase):
             self.manager._offer_pending_update()
             offer.assert_called_once()
 
+    def test_manual_check_offers_installation_without_second_button(self):
+        with patch.object(self.manager, 'offer_update') as offer:
+            self.manager.on_update_check(self.version, None, False)
+            self.root.update_idletasks()
+            # The scheduled prompt is exactly the action previously offered by
+            # the redundant "Install Update" button.
+            self.root.update()
+            offer.assert_called_once_with()
+        self.assertIn('2.10.2', self.manager.update_status.get())
+
     def test_progress_bar_tracks_download_unpack_and_restart(self):
         self.manager._open_update_progress('2.10.2')
         self.root.update()

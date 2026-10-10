@@ -1,4 +1,4 @@
-EVOLVE MOD MANAGER v1.0.0 - PORTABLE APP
+EVOLVE MOD MANAGER v1.0.1 - PORTABLE APP
 ==========================================
 Build with Build-Windows-EXE.cmd, then share dist\EvolveModManager-Windows.zip.
 Each recipient extracts the whole folder and opens EvolveModManager.exe.
@@ -242,3 +242,16 @@ v1.0.0 (read from the packaged VERSION.txt).
 Right-click the Modding PAK list to inspect/unpack/reveal/copy source paths.
 Original filename and inferred description are separate columns.
 Keep Data/ intact when updating, including local keys and recovery journals.
+
+MAINTENANCE RELEASE v1.0.1
+-------------------------
+First boot always displays the Instructions tab. Neither fresh setups nor
+unconfigured exported bundles open folder-selection dialogs automatically.
+Click Set Up Manager on Instructions after reading the game prerequisite;
+that button handles either local setup or connecting an exported full bundle.
+The redundant top-right Set Up Manager and Settings > Install Update buttons
+are removed. Settings > Check for Updates discovers verified releases and asks
+whether to install immediately when an update is available.
+Existing initialized Main builds still check for updates on startup.
+The tabs, spacing, fonts and archive table have been refreshed; Instructions
+now uses a scrollable card layout on smaller displays. Footer shows v1.0.1.
