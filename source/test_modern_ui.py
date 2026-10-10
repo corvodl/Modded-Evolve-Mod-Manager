@@ -140,7 +140,11 @@ class ModernThemeTests(unittest.TestCase):
             # Clicking the menu again, then Escape, also closes it.
             manager.menu_button.invoke()
             self.root.update()
-            self.root.event_generate('<Escape>')
+            # Headless Windows jobs may not route generated key events to an
+            # unfocused root window. Check the registered key binding and
+            # exercise its dismiss handler without relying on OS focus.
+            self.assertTrue(self.root.bind('<Escape>'))
+            manager._dismiss_section_menu()
             self.root.update()
             self.assertFalse(manager.nav_open)
             manager.open_section(manager.instructions_tab)
