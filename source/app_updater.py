@@ -189,13 +189,15 @@ try {
   foreach ($name in $Names) {
     $from = Join-Path $SourceDir $name
     if (Test-Path -LiteralPath $from) {
-      Copy-Item -LiteralPath $from -Destination (Join-Path $TargetDir $name) -Recurse -Force -ErrorAction Stop
+      # Mark before copying so even a partially copied directory gets removed.
       $Installed.Add($name)
+      Copy-Item -LiteralPath $from -Destination (Join-Path $TargetDir $name) -Recurse -Force -ErrorAction Stop
     }
   }
-  Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction Stop
   Start-Process -FilePath (Join-Path $TargetDir 'EvolveModManager.exe') -WorkingDirectory $TargetDir
   Write-Output "Update successful: $ExpectedCommit"
+  # Backup is removed only after the updated EXE successfully launches.
+  Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction SilentlyContinue
 } catch {
   Write-Output "Update failed: $_"
   foreach ($name in $Installed) { Remove-Item -LiteralPath (Join-Path $TargetDir $name) -Recurse -Force -ErrorAction SilentlyContinue }
