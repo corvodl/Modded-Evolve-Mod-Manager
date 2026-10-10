@@ -1,73 +1,101 @@
-> **REQUIRED BEFORE USING THIS MANAGER:** Install **Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** using its official client installer. This manager requires the game files installed by that client; it does **not** download or install Evolve itself. A separate Steam or Legacy installation is not a substitute.
+# Evolve Stage 2 Mod Manager — v1.0.0
 
-# Evolve Stage 2 Mod Manager v2.10.4
+A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
-A portable Windows modding manager for Evolve Stage 2, with PAK editing, a three-tab asset explorer, backup/restore, and offline-only modded launching.
+> **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-## Windows updater reliability (v2.10.4)
+**Version:** 1.0.0 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
 
-The external installer treats progress-window failures as nonfatal, logs each installation and rollback step, waits for the old manager to exit, and only discards its recovery backup after the new manager confirms that its GUI has started and remains running. If startup or file replacement fails, it stops the replacement, restores the previous application files, and attempts to reopen the old manager. `Data` (projects, backups, keys, settings) is never replaced. Failed update logs remain in `%LOCALAPPDATA%\EvolveModManagerUpdates`.
+## Download and install
 
-## Browser and loose game files (v2.10.3)
+1. Download **EvolveModManager-Windows.zip** from the [Main Windows release](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Main) and extract the **entire** `EvolveModManager` folder to a writable location.
+2. Run `EvolveModManager.exe`. The **Instructions** tab is shown first and provides a direct link to the required Modded Evolve website.
+3. After the normal client has installed Evolve Stage 2, close the game and client. Click **Set Up Manager**, select the client-installed **EvolveGame** folder, and select the normal Modded Evolve client executable.
+4. The manager builds local signing resources, an injector and staged custom-signed PAKs from **your installed game files**. It does not alter the original installed PAKs during setup. Allow substantial free disk space for staging; the amount depends on the game files and original-snapshot option.
+5. Open **Modding** to edit archives. Use **Play & Restore** to play privately/offline and restore originals afterward.
 
-The main file table now shows **Folder → File → Type / Project → Size** in that order. File size is on the right, folders are grouped together when sorting by Folder, and filters let you choose **All files**, **PAK archives**, or **Game files**. PAK archives still support Ctrl/Shift multiselection and isolated batch extraction.
+The portable Windows release bundles Python and its required application dependencies. A separate Python installation is only necessary to **build from source**.
 
-The manager also discovers *loose editable files* in the installed EvolveGame directory referenced by the verified setup (for example `.xml`, `.cfg`, `.ini`, `.lua`, `.mtl`, `.cdf`, `.dds`, `.dds.N`, `.png`, `.skinm`, `.chr`, and other known asset types). Select a **Game file** row and click **Edit Files** or double-click the row. It creates a private file copy under `Data/Projects/LooseGameFiles/`; readable UTF-8 text can be edited directly, while textures and binary models can be opened in external tools. **The installed game file never changes**, and the copy is **not** silently added to a PAK. Loose-file changes are kept separate from the PAK signing/Build Mod/Add Mod workflows; they do not automatically change the game.
+**When updating an existing installation:** Preserve the `Data` directory. It contains projects, locally generated keys, staged mods, settings and recovery logs. Never distribute your private `Data` folder or signing key as part of the public app-only ZIP.
 
-## New in this experimental build
+## Interface and getting started (v1.0.0)
 
-- **Right-click file actions:** Context menus in Files/Text, Images/Textures and Models include preview/edit, safe replacement or import, export, Show in File Explorer, Open with Default App, and Copy Game File Path. Folders offer reveal and expand/collapse actions.
-- **Verified restore:** Restore Extracted Original is enabled only if an EditorBackups copy exactly matches the original extraction checksum. Whole-stream split DDS restore is intentionally not provided via the right-click menu.
-- **GPU preview:** Supported Windows hardware drivers provide OpenGL-based model rotation and diffuse texture rendering, with a Software fallback.
-- **Multi-PAK editor view:** After clicking **Unpack Selected PAKs**, the Edit Files window lists every archive in the completed batch above the Files, Images, and Models tabs. Click either archive to browse and edit its own files, without closing the editor. Each archive retains an independent workspace and Build Mod target. Unsaved text prompts before switching.
-- **UV diffuse material preview:** The Models tab now renders supported CryEngine CrChF meshes using their UV coordinates and material-specific diffuse textures. Texture rendering happens on a background thread; rotate, zoom, and toggle wireframe as before.
-- **Automatic cross-PAK textures:** Extract model/material and texture PAKs as a batch or separately into the same manager Projects folder. Selecting a model searches verified extracted workspaces automatically; duplicate paths are reported instead of guessed.
-- **Loose texture folder (optional):** In Models, use **Choose Texture Folder** only when your textures are outside the extracted manager Projects directory.
-- **Activity Log:** Stays closed at startup for a cleaner workspace; opens when an operation runs and whenever you click Activity.
+| Tab | What it does |
+| --- | --- |
+| **Instructions** | Required Modded Evolve installation, first-run setup, modding and restoration walkthrough |
+| **Modding** | Archive browser, unpacking, extracted-file editing, building and adding mods |
+| **Play & Restore** | Guided offline launch, swap state, and restoration/recovery of original game files |
+| **Settings** | Projects, stage and launch-helper folders; maintenance and advanced workflows |
+| **Credits** | Project links and attribution |
 
-## Viewing files from two unpacked PAKs
+The header shows the existing project icon beside **EVOLVE / MOD MANAGER**. The bottom-right footer displays **v1.0.0**, read from the packaged `VERSION.txt` file. The UI keeps its black/red theme; verbose activity remains in the optional **Activity** window.
 
-1. Ctrl-click or Shift-click the PAKs in **Make a Mod**.
-2. Click **Unpack Selected PAKs** (not **Unpack PAK**), and wait until the Activity Log reports batch completion.
-3. **Edit Files** opens with an **Unpacked PAKs** list at the top. Both selected PAK names appear there. Click either PAK to switch between their file trees.
-4. **Review Changes → Build Mod** affects only the active PAK selected in the editor; repeat separately for each PAK that you changed.
+### Readable PAK browser and right-click tools
 
-The manager does not merge PAKs. For automatic textured model preview, the other unpacked PAKs are searched behind the scenes.
+The main list is arranged **Folder → Description → File → Type / Project → Size**. Descriptions are **inferred from filenames**, not verified by analyzing archive contents. The actual signed filenames remain unchanged.
 
-## How to preview Goliath with textures
+| Description | Filename |
+| --- | --- |
+| Goliath Models | `characters_monsters_goliath_data.pak` |
+| Goliath Textures | `characters_monsters_goliath_ts.pak` |
+| Caira Textures | `characters_hunters_merc_caira_ts.pak` |
+| Game Libraries | `libs.pak` |
+| Interface Data | `UI_Data.pak` |
+| Hunters Audio | `sounds_hunters.pak` |
 
-1. Unpack the PAKs containing `goliath1.skinm` (or `goliath1.skin`), `goliath1.mtl`, and its DDS textures. Keep each PAK in its own workspace.
-2. Open **Edit Files → Models**, then select the Goliath mesh. The manager searches previously unpacked, compatible PAK workspaces for the materials and DDS textures automatically; **Textures** applies the diffuse material when found. Re-select the model after unpacking additional PAKs.
-3. If the textures are in a separate ZIP, extract them into a folder and choose **Choose Texture Folder** from the Models tab. The manager does not bundle original game assets or textures.
-4. Rotate with the mouse, scroll to zoom, toggle **Wireframe** to inspect geometry, or use **Reset view**.
+Search by name **or** description; click table headings to sort. Ctrl/Shift-click selects multiple PAKs, and the list supports **All files**, **PAK archives** and **Game files** filters.
 
-**Rendering limitations:** This is an approximate, untextured-or-diffuse-only 3D preview, not full CryEngine rendering. Damage blends, advanced normals, specular response, emissive/glow, subsurface scattering, rigging, and animation playback are not reproduced. Unsupported mesh/texture formats gracefully fall back to the untextured preview.
+**Right-click a PAK** to unpack, inspect file details and paths, reveal its installed-game or staged copy in File Explorer, copy either path or open already unpacked files. Multiple selected PAKs offer **Unpack Selected PAKs**. Inspection and reveal actions are read-only: they do not modify installed game archives.
 
-**Offline only:** Modded game sessions disable online play. If you circumvent that restriction, account suspensions or bans are your responsibility; the maintainers are not responsible for them.
+### Unpack, edit, build and add a mod
 
-This archive is a **Windows build kit**, not a precompiled EXE. Run `Build-Windows-EXE.cmd` with Python 3.11 x64 to create the portable Windows application; the resulting app bundles Python and its dependencies. The public GitHub release remains separate until verification.
+1. In **Modding**, select a PAK and click **Unpack**, or select several and choose **Unpack Selected PAKs**. Each archive stays in its own workspace even when unpacked together.
+2. Open **Edit Files**. The editor offers **Files / Text**, **Images / Textures** and **Models**. For batch extraction, switch between the different PAKs using the extracted-archive selector.
+3. Make changes, then **Review** them, **Build Mod**, and **Add Mod**. Each modified PAK is built and staged separately; the tool does not merge unrelated PAKs.
+4. Right-click an extracted file for supported import/replace, export, reveal, copy-path, or verified restore actions. Original extracted files are backed up where supported.
+
+**XML and text:** Edit readable XML, CryXML and configuration content in the workspace. Structural CryXML changes and unexpected game values may be incompatible; always review and test.
+
+**DDS textures:** Preview textures, export PNGs and import compatible DDS or PNG edits for supported BCn/DXT formats. CryEngine streaming textures (`.dds.0`, `.dds.1`, etc.) require all fragments from the same texture to be available together. Dimension, format, mip and size constraints are validated. PNG compression can be lossy.
+
+**Model tools:** Inspect supported `.cgf`, `.cga`, `.chr` and `.skin` geometry, export native files and experiment with same-layout replacements. The GPU/Auto OpenGL preview can display approximate UV/diffuse textures; a software fallback is available. It is not a full CryEngine renderer or Blender/OBJ round-trip, and animations, rigging and complex materials are not reconstructed.
+
+**Cross-PAK textures:** If models, materials and textures reside in different archives, unpack them into separate workspaces within the manager's Projects location. The model preview can find compatible extracted diffuse textures from other workspaces. Ambiguous or absent matches require inspection, not guesses.
+
+### Loose files and external PAKs
+
+The game browser lists certain loose editable files from the installed game. Choosing **Edit Files** creates a **private copy** under `Data/Projects/LooseGameFiles`. Editing it does not overwrite the installed game file or automatically place it in a signed PAK.
+
+**Import Modified PAK** accepts a previously edited archive only if it matches the selected signed filename, the current local signing key and the expected archive-entry structure. The guarded importer validates these properties before adding it to staged mods; it does not directly install a file into the live game.
+
+## Playing with mods and restoring originals
+
+Go to **Play & Restore → Play With Mods** for private/offline testing. Follow the guided launcher steps, wait until the launcher is ready, and then press Play in the normal Modded Evolve client. Modded game files may be incompatible with normal online/profile services.
+
+**When finished:** Close `Evolve.exe` and `ModdedEvolveLauncher.exe`, then click **Restore Game Files**. The usual restore relies on a recorded swap state and retains prepared mod copies for later use.
+
+**Missing-journal recovery:** If `*.customkey-original` backups are present but the swap journal says “Nothing to restore,” the manager checks the actual game folder and offers an independent recovery option. It preserves the currently installed modified files as uniquely named `*.customkey-recovery-mod-*` files, restores the original archives and `inject.dll` using same-drive renames, and saves a recovery manifest to `Data/RecoveryLogs`. Recovery stops on unsafe or failed file operations. Do **not** delete original backups or override recovery warnings.
+
+For ordinary online play, restore the original game state and use the normal client to verify or repair game files if necessary.
+
+## Portable updates and data safety
+
+- **Verified automatic updater:** Eligible Main-channel builds check GitHub for the latest verified commit at startup and offer an optional update. The update displays download/preparation progress and restarts the manager after applying the package.
+- **Failure recovery:** The Windows installer records progress and attempts rollback to the previous application version if installation or the updated GUI startup fails. Logs are retained under `%LOCALAPPDATA%\\EvolveModManagerUpdates`.
+- **Data preservation:** The updater replaces **application files**, not `Data`, user projects, signing keys, game PAKs or existing recovery records.
+- **Full setup export:** Private complete-bundle exports may include local staging and keys and can be large. The public app-only release excludes original PAKs, generated private keys and personal game files.
+- **Activity and inspection:** Detailed logs are hidden at startup but open when tasks run or when the **Activity** button is selected.
+
+## Build from source
+
+The repository is a **source/build kit**. On Windows, install **Python 3.11 x64**, then run `Build-Windows-EXE.cmd`. It configures an isolated environment, runs unit and integration tests, freezes both `EvolveModManager.exe` and `EvolveModWorker.exe`, performs bundled dependency checks and creates `dist/EvolveModManager-Windows.zip`. Some native packages may require Microsoft C++ Build Tools **on the build machine**.
+
+The [Windows CI workflow](https://github.com/corvodl/Modded-Evolve-Mod-Manager/actions/workflows/windows-release.yml) publishes the tested Main-channel release, including a SHA-256 update manifest tied to the source commit. Only verified assets matching the latest `main` revision are offered as automatic updates.
+
+## Limitations
+
+Version **1.0.0** marks the application's first official release, **not** a claim that all mod formats are fully supported. Successful signatures do not guarantee valid gameplay. Do not rename signed archives arbitrarily, change unsupported model layouts or discard backups. GPU models are approximate visualizations, not the game renderer. Use mods for private/offline testing only.
 
 ## Credits
 
-- **Discord:** @CorvoDL
-- **GitHub:** https://github.com/corvodl/Modded-Evolve-Mod-Manager
-- **Modded Evolve / required game installation:** https://modded-evolve.com/
-
-## Hardware-accelerated 3D preview (experimental)
-
-The Models tab defaults to **GPU (Auto)** on Windows. If an accelerated OpenGL driver is
-available, it uses indexed GPU rendering and real-time diffuse textures while rotating and
-zooming the mesh. **Renderer → Software** switches back to the original CPU preview. On
-systems with no accelerated OpenGL driver (including some virtual machines and remote
-desktops), the manager automatically falls back to software without affecting game files.
-
-This is a read-only material approximation: no normal-map shading, CryEngine-specific
-materials, animation, or edited-model conversion is implied.
-
-### Streamlined interface (experimental 2.9.15)
-
-A black/red modernized layout keeps Make a Mod, Play & Restore, Settings and Credits uncluttered. Click **Help ?** in the manager or editor for full instructions; **Activity** opens the detailed log. The log stays closed on initial startup and opens when operations begin. All existing PAK, backup and recovery workflows are unchanged.
-
-## Importing an existing modified PAK
-
-On **Make a Mod**, click **Import Modified PAK…**, choose the edited `.pak`, and confirm its matching staged filename. The manager verifies the archive's RSA signature against your **current local signing key**, exact archive entry order and count, and that some entries changed. A separate original-signed or differently keyed archive is not automatically compatible; it must first be rebuilt and signed with this manager. Only after verification does the existing guarded Add Mod workflow stage the PAK and save an undo backup. **Import never modifies installed game files.** The main browser has folder, filename, project/type and right-aligned size columns, with an All/PAK/Game-files filter.
+Project by **@CorvoDL**. [Source repository](https://github.com/corvodl/Modded-Evolve-Mod-Manager) · [Required Modded Evolve client](https://modded-evolve.com/).

@@ -63,7 +63,21 @@ class ModernThemeTests(unittest.TestCase):
         try:
             self.assertFalse(manager.log_visible)
             self.assertEqual(manager.log_window.state(), 'withdrawn')
-            self.assertEqual(len(manager.notebook.tabs()), 4)
+            self.assertEqual(len(manager.notebook.tabs()), 5)
+            self.assertEqual([manager.notebook.tab(tab, 'text').strip()
+                              for tab in manager.notebook.tabs()],
+                             ['Instructions', 'Modding', 'Play & Restore', 'Settings', 'Credits'])
+            self.assertEqual(manager.notebook.index('current'), 0)
+            self.assertEqual(manager.version_label.cget('text'), 'v1.0.0')
+            self.assertTrue(manager.header_icon)
+            self.assertGreater(manager.header_icon.width(), 0)
+            self.assertLessEqual(manager.header_icon.width(), 36)
+            manager.notebook.select(manager.edit_tab)
+            self.root.update()
+            self.assertEqual(manager.notebook.index('current'), 1)
+            manager.notebook.select(manager.instructions_tab)
+            self.root.update()
+            self.assertEqual(manager.notebook.index('current'), 0)
             manager.show_help(0)
             self.root.update()
             help_windows = [win for win in self.root.winfo_children()
@@ -74,6 +88,36 @@ class ModernThemeTests(unittest.TestCase):
             self.assertEqual(len(manager.edit_split.panes()), 2)
         finally:
             manager.log_window.destroy()
+
+    def test_instructions_required_website_and_setup_actions(self):
+        from pak_manager_gui import Manager
+        manager = Manager.__new__(Manager)
+        manager.window = self.root
+        manager.copy, _ = load_text()
+        parent = ttk.Frame(self.root)
+        parent.pack(fill='both', expand=True)
+        with patch.object(manager, 'initial_setup') as setup, \
+             patch('pak_manager_gui.webbrowser.open') as website:
+            manager.draw_instructions(parent)
+            self.root.update()
+            labels = []
+            buttons = []
+            def scan(node):
+                for child in node.winfo_children():
+                    if isinstance(child, ttk.Label):
+                        labels.append(child.cget('text'))
+                    if isinstance(child, ttk.Button):
+                        buttons.append(child)
+                    scan(child)
+            scan(parent)
+            self.assertTrue(any('modded-evolve.com' in text for text in labels))
+            self.assertTrue(any('Restore Game Files' in text for text in labels))
+            site = next(b for b in buttons if 'Website' in b.cget('text'))
+            site.invoke()
+            website.assert_called_once_with('https://modded-evolve.com/', new=2)
+            setup_button = next(b for b in buttons if b.cget('text') == 'Set Up Manager')
+            setup_button.invoke()
+            setup.assert_called_once()
 
     def test_editor_help_uses_current_tab(self):
         from workspace_editor import WorkspaceEditor

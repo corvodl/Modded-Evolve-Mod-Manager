@@ -21,6 +21,9 @@ from PIL import Image, ImageTk
 from app_runtime import BUNDLE
 assert (BUNDLE/"assets"/"hunt.ico").is_file()
 assert (BUNDLE/"assets"/"hunt.png").is_file()
+assert (BUNDLE/"VERSION.txt").is_file()
+from version_info import app_version
+assert app_version() == "v1.0.0"
 assert (BUNDLE/"reference"/"RSAKeyData.bin").is_file()
 assert (BUNDLE/"reference"/"inject.dll").is_file()
 assert (BUNDLE/"reference"/"inject.dll").read_bytes()[0x870:0x8fc] == (BUNDLE/"reference"/"RSAKeyData.bin").read_bytes()

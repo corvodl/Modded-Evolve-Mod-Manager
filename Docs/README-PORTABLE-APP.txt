@@ -1,5 +1,5 @@
-EVOLVE MOD MANAGER - PORTABLE APP
-================================
+EVOLVE MOD MANAGER v1.0.0 - PORTABLE APP
+==========================================
 Build with Build-Windows-EXE.cmd, then share dist\EvolveModManager-Windows.zip.
 Each recipient extracts the whole folder and opens EvolveModManager.exe.
 Click Set Up Manager, select EvolveGame and the normal Modded Evolve client EXE.
@@ -230,3 +230,15 @@ installed-game PAK or the separate staged PAK in Explorer, copy paths or open
 existing unpacked files. Right-click on a selected multi-PAK group to unpack
 all selected archives using the regular guarded batch workflow.
 All file-location actions are read-only and do not change installed game files.
+
+OFFICIAL v1.0.0 GUI
+-------------------
+The manager opens to the Instructions tab with a required first step:
+install Evolve Stage 2 through the normal Modded Evolve client available at
+https://modded-evolve.com/ . The manager does not include the game itself.
+The UI tabs are Instructions, Modding, Play & Restore, Settings, Credits.
+An icon appears beside EVOLVE / MOD MANAGER, and the bottom-right footer shows
+v1.0.0 (read from the packaged VERSION.txt).
+Right-click the Modding PAK list to inspect/unpack/reveal/copy source paths.
+Original filename and inferred description are separate columns.
+Keep Data/ intact when updating, including local keys and recovery journals.

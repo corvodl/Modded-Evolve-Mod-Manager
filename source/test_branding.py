@@ -28,6 +28,9 @@ class BrandingTests(unittest.TestCase):
         self.assertEqual(spec.count("icon=str(root/'assets'/'hunt.ico')"), 2)
         gui = (ROOT / 'pak_manager_gui.py').read_text(encoding='utf-8')
         self.assertIn("ROOT/'assets'/'hunt.png'", gui)
+        self.assertIn("image=self.header_icon", gui)
+        self.assertIn("app_version()", gui)
+        self.assertIn("datas += [(str(root/'VERSION.txt'), '.')]", spec)
         self.assertIn('SetCurrentProcessExplicitAppUserModelID', gui)
 
     def test_no_player_text_editor(self):

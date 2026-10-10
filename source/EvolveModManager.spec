@@ -9,7 +9,8 @@ datas = [(str(p), '.') for p in root.glob('*.py') if not p.name.startswith(('tes
 datas += [(str(root/'launcher_support'), 'launcher_support')]
 datas += [(str(root/'assets'), 'assets')]
 datas += [(str(root/'reference'), 'reference')]
-datas += [(str(root/'ui_text.json'), '.')] 
+datas += [(str(root/'ui_text.json'), '.')]
+datas += [(str(root/'VERSION.txt'), '.')] 
 binaries = []
 hidden = ['evolve_pak_workspace', 'evolve_pak_rekey', 'evolve_gameplay_editor',
           'evolve_video_pak_tool_fixed', 'dds_texture', 'dds_png_import', 'dds_streaming', 'model_asset', 'model_preview', 'gpu_model_preview', 'material_preview', 'multi_pak_assets', 'decode_cryxml', 'universal_stage', 'refresh_originals', 'workspace_editor', 'workspace_file_actions', 'pak_browser', 'portable_bundle', 'first_run_setup', 'old_prepared', 'loose_game_files', 'loose_file_editor']

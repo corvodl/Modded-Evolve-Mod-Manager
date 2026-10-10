@@ -1,1 +1,1 @@
-2.10.6 - Human-Readable PAK Descriptions and Context Menu
+1.0.0 - First Official Release

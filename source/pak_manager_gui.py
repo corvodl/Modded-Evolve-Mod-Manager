@@ -25,6 +25,7 @@ from universal_stage import allowed_paks
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
 from dark_theme import apply_theme
 from ui_help import open_help_window
+from version_info import app_version
 from app_updater import discover as discover_update, download_and_prepare, launch_apply, installed_commit, report_startup_ready
 from ui_copy import load_text
 from workspace_editor import WorkspaceEditor
@@ -105,7 +106,7 @@ class Manager:
             self.window.after(2500, lambda: self.check_updates(silent=True))
         if self.bundle_error:self.window.after(300,lambda:self.fail(RuntimeError(self.bundle_error)))
         elif self.bundle and not self.bundle.get('configured'):self.window.after(300,self.configure_bundle)
-        elif not (Path(self.stage.get())/'stage_status.json').is_file():self.window.after(300,self.offer_initial_setup)
+        # Fresh installs open on Instructions; setup begins via its button.
 
     def read_settings(self):
         try:self.bundle=bind_home(APP_HOME)
@@ -286,8 +287,17 @@ class Manager:
         header.pack(fill='x', pady=(0, 13))
         brand = ttk.Frame(header)
         brand.pack(side='left', fill='x', expand=True)
-        ttk.Label(brand, text=self.t('header'), style='Brand.TLabel').pack(anchor='w')
-        ttk.Label(brand, text=self.t('subtitle'), style='Muted.TLabel').pack(anchor='w', pady=(2, 0))
+        brand_line = ttk.Frame(brand)
+        brand_line.pack(anchor='w')
+        # Native Tk image handling keeps the icon bundled and DPI independent.
+        try:
+            icon = tk.PhotoImage(file=str(ROOT/'assets'/'hunt.png'))
+            ratio = max(1, (max(icon.width(), icon.height()) + 35) // 36)
+            self.header_icon = icon.subsample(ratio, ratio) if ratio > 1 else icon
+            ttk.Label(brand_line, image=self.header_icon).pack(side='left', padx=(0, 10))
+        except (tk.TclError, OSError):
+            self.header_icon = None
+        ttk.Label(brand_line, text=self.t('header'), style='Brand.TLabel').pack(side='left')
         ttk.Button(header, text=self.t('setup_button'), style='Accent.TButton',
                    command=self.initial_setup).pack(side='right', padx=(8, 0))
         self.log_button = ttk.Button(header, text=self.t('details_show'),
@@ -298,15 +308,18 @@ class Manager:
 
         notebook = ttk.Notebook(base)
         notebook.pack(fill='both', expand=True)
+        self.instructions_tab = ttk.Frame(notebook, padding=12)
         self.edit_tab = ttk.Frame(notebook, padding=12)
         self.play_tab = ttk.Frame(notebook, padding=12)
         self.settings_tab = ttk.Frame(notebook, padding=12)
         self.credits_tab = ttk.Frame(notebook, padding=12)
+        notebook.add(self.instructions_tab, text='  ' + self.t('tab_instructions') + '  ')
         notebook.add(self.edit_tab, text='  ' + self.t('tab_edit') + '  ')
         notebook.add(self.play_tab, text='  ' + self.t('tab_play') + '  ')
         notebook.add(self.settings_tab, text='  ' + self.t('tab_settings') + '  ')
         notebook.add(self.credits_tab, text='  ' + self.t('tab_credits') + '  ')
         self.notebook = notebook
+        self.draw_instructions(self.instructions_tab)
         self.draw_edit(self.edit_tab)
         self.draw_play(self.play_tab)
         self.draw_settings(self.settings_tab)
@@ -333,7 +346,8 @@ class Manager:
         bottom = ttk.Frame(base)
         bottom.pack(fill='x')
         ttk.Label(bottom, textvariable=self.status, style='Status.TLabel').pack(side='left', fill='x', expand=True)
-        ttk.Label(bottom, text=self.t('footer_note'), style='AccentText.TLabel').pack(side='right')
+        self.version_label = ttk.Label(bottom, text=app_version(), style='AccentText.TLabel')
+        self.version_label.pack(side='right')
         self.write('Manager opened. No installed game files were changed.\n')
 
     def show_help(self, section=None):
@@ -345,9 +359,53 @@ class Manager:
         ]
         if section is None:
             current = self.notebook.select()
-            section = {str(self.edit_tab): 0, str(self.play_tab): 1,
-                       str(self.settings_tab): 2, str(self.credits_tab): 2}.get(current, 0)
+            section = {str(self.instructions_tab): 2, str(self.edit_tab): 0,
+                       str(self.play_tab): 1, str(self.settings_tab): 2,
+                       str(self.credits_tab): 2}.get(current, 0)
         open_help_window(self.window, self.t('help_title'), sections, selected=section)
+
+    def draw_instructions(self, parent):
+        """First-run guide: short steps, no hidden installation prerequisites."""
+        ttk.Label(parent, text=self.t('instructions_title'),
+                  style='Section.TLabel').pack(anchor='w', pady=(4, 8))
+        ttk.Label(parent, text=self.t('instructions_intro'),
+                  style='Muted.TLabel', wraplength=790, justify='left').pack(anchor='w', pady=(0, 14))
+
+        required = ttk.LabelFrame(parent, text=self.t('instructions_required_title'),
+                                  padding=(15, 12))
+        required.pack(fill='x', pady=(0, 12))
+        ttk.Label(required, text=self.t('instructions_required_body'),
+                  wraplength=780, justify='left').pack(anchor='w', pady=(0, 10))
+        actions = ttk.Frame(required)
+        actions.pack(fill='x')
+        ttk.Button(actions, text=self.t('instructions_website_button'),
+                   style='Accent.TButton',
+                   command=lambda: webbrowser.open('https://modded-evolve.com/', new=2)
+                   ).pack(side='left')
+        ttk.Button(actions, text=self.t('setup_button'), command=self.initial_setup
+                   ).pack(side='left', padx=(10, 0))
+
+        steps = ttk.LabelFrame(parent, text=self.t('instructions_steps_title'),
+                               padding=(15, 12))
+        steps.pack(fill='x', pady=(0, 12))
+        for title_key, body_key in (
+                ('instructions_step_setup', 'instructions_step_setup_body'),
+                ('instructions_step_mod', 'instructions_step_mod_body'),
+                ('instructions_step_play', 'instructions_step_play_body'),
+                ('instructions_step_restore', 'instructions_step_restore_body')):
+            item = ttk.Frame(steps)
+            item.pack(fill='x', pady=(0, 7))
+            ttk.Label(item, text=self.t(title_key), style='CardTitle.TLabel'
+                      ).pack(anchor='w')
+            ttk.Label(item, text=self.t(body_key), wraplength=770,
+                      justify='left', style='Muted.TLabel').pack(anchor='w', pady=(1, 0))
+
+        ttk.Label(parent, text=self.t('instructions_safety'),
+                  style='Muted.TLabel', wraplength=790,
+                  justify='left').pack(anchor='w', pady=(0, 9))
+        ttk.Button(parent, text=self.t('instructions_modding_button'),
+                   command=lambda: self.notebook.select(self.edit_tab)
+                   ).pack(anchor='w')
 
     def draw_credits(self, parent):
         github = 'https://github.com/corvodl/Modded-Evolve-Mod-Manager'
