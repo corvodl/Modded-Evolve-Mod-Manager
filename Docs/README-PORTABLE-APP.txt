@@ -286,3 +286,12 @@ HEADER POLISH v1.0.5
 The on-demand Menu / Close button uses the red accent style so it stands out
 against the dark header. The Help button displays only "Help" rather than
 "Help ?"; extracted-file editor Help is consistent. Actions are unchanged.
+
+ANIMATED OVERLAY / SHORTCUT v1.0.6
+----------------------------------
+The Menu drawer now slides over the content, retaining full page width.
+Its 188px panel follows a 12-frame, cubic-eased animation with cancellation
+of stale frames on rapid toggles. Settings > Create Desktop Shortcut creates
+Evolve Mod Manager.lnk using the Windows Desktop known folder, pointing to
+portable EvolveModManager.exe and the bundled red/black hunt.ico. It does not
+alter the game, mods, Data, or the location of manager binaries.

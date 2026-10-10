@@ -180,5 +180,10 @@
   "instructions_step_restore": "4  Restore original game files",
   "instructions_step_restore_body": "When finished, close Evolve and its launcher, then click Restore Game Files. If a previous swap lost its journal, the manager can recover original backups while preserving modified files.",
   "instructions_safety": "Keep the entire manager folder together. Do not delete your Data folder, signing keys, projects, original-file backups or recovery logs when updating.",
-  "instructions_modding_button": "Go to Modding  →"
+  "instructions_modding_button": "Go to Modding  →",
+  "desktop_shortcut_hint": "Create quick access to this portable manager on your Windows desktop.",
+  "desktop_shortcut_button": "Create Desktop Shortcut",
+  "desktop_shortcut_success_title": "Desktop shortcut created",
+  "desktop_shortcut_success_body": "Evolve Mod Manager is available on your Desktop.",
+  "desktop_shortcut_error_title": "Could not create desktop shortcut"
 }

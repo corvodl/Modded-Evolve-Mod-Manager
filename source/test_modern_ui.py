@@ -137,16 +137,27 @@ class ModernThemeTests(unittest.TestCase):
             self.assertTrue(manager.nav_open)
             self.assertEqual(manager.menu_button.cget('style'), 'Accent.TButton')
             self.assertIn('Close', manager.menu_button.cget('text'))
-            self.assertEqual(manager.nav_panel.winfo_manager(), 'pack')
-            self.assertLessEqual(manager.nav_panel.winfo_width(), 180)
+            self.assertEqual(manager.nav_panel.winfo_manager(), 'place')
+            self.assertEqual(manager.nav_panel.winfo_width(), manager.nav_width)
+            content_width = manager.notebook.winfo_width()
+            manager._animate_section_menu(manager._nav_generation, -manager.nav_width,
+                                          0, manager._nav_steps)
+            self.root.update()
+            self.assertEqual(manager.nav_panel.winfo_x(), 0)
+            self.assertEqual(manager.notebook.winfo_width(), content_width)
             self.assertEqual(manager.nav_buttons[str(manager.instructions_tab)].cget('style'),
                              'NavActive.TButton')
             # Selecting a section must automatically collapse the drawer.
             manager.nav_buttons[str(manager.edit_tab)].invoke()
             self.root.update()
             self.assertFalse(manager.nav_open)
+            self.assertEqual(manager.nav_panel.winfo_manager(), 'place')
+            manager._animate_section_menu(manager._nav_generation, 0,
+                                          -manager.nav_width, manager._nav_steps)
+            self.root.update()
             self.assertFalse(manager.nav_panel.winfo_manager())
             self.assertEqual(manager.notebook.index('current'), 1)
+            self.assertEqual(manager.notebook.winfo_width(), content_width)
             # Clicking the menu again, then Escape, also closes it.
             manager.menu_button.invoke()
             self.root.update()
@@ -155,8 +166,11 @@ class ModernThemeTests(unittest.TestCase):
             # exercise its dismiss handler without relying on OS focus.
             self.assertTrue(self.root.bind('<Escape>'))
             manager._dismiss_section_menu()
+            manager._animate_section_menu(manager._nav_generation, 0,
+                                          -manager.nav_width, manager._nav_steps)
             self.root.update()
             self.assertFalse(manager.nav_open)
+            self.assertFalse(manager.nav_panel.winfo_manager())
             manager.open_section(manager.instructions_tab)
             self.assertEqual(manager.notebook.index('current'), 0)
             # Navigation is now the only normal startup setup entry point.
@@ -165,7 +179,7 @@ class ModernThemeTests(unittest.TestCase):
             toolbar_buttons = [x.cget('text') for x in header.winfo_children()
                                if isinstance(x, ttk.Button)]
             self.assertNotIn('Set Up Manager', toolbar_buttons)
-            self.assertEqual(manager.version_label.cget('text'), 'v1.0.5')
+            self.assertEqual(manager.version_label.cget('text'), 'v1.0.6')
             self.assertTrue(manager.header_icon)
             self.assertGreater(manager.header_icon.width(), 0)
             self.assertLessEqual(manager.header_icon.width(), 36)
@@ -185,6 +199,73 @@ class ModernThemeTests(unittest.TestCase):
             self.assertEqual(len(manager.edit_split.panes()), 2)
         finally:
             manager.log_window.destroy()
+
+    def test_menu_animation_reverses_without_resizing_page(self):
+        from pak_manager_gui import Manager
+        manager = Manager.__new__(Manager)
+        manager.window = self.root
+        host = ttk.Frame(self.root)
+        host.pack(fill='both', expand=True)
+        manager.main_content = host
+        manager.notebook = ttk.Notebook(host, style='HiddenNav.TNotebook')
+        manager.notebook.pack(side='left', fill='both', expand=True)
+        manager.notebook.add(ttk.Frame(manager.notebook), text='Instructions')
+        manager.nav_panel = ttk.Frame(host, width=188)
+        manager.nav_panel.pack_propagate(False)
+        manager.menu_button = ttk.Button(self.root, text='☰ Menu')
+        manager.nav_open = False
+        manager.nav_width = 188
+        manager._nav_generation = 0
+        manager._nav_animating = False
+        manager._nav_steps = 12
+        manager._nav_frame_ms = 16
+        manager.sync_section_menu = lambda: None
+        self.root.update()
+        baseline = manager.notebook.winfo_width()
+        manager.toggle_section_menu()
+        self.assertEqual(manager.nav_panel.winfo_manager(), 'place')
+        old_token = manager._nav_generation
+        manager._animate_section_menu(old_token, -188, 0, 6)
+        self.root.update()
+        mid = manager.nav_panel.winfo_x()
+        self.assertLess(mid, 0)
+        self.assertGreater(mid, -188)
+        self.assertEqual(manager.notebook.winfo_width(), baseline)
+        manager.toggle_section_menu(False)
+        next_token = manager._nav_generation
+        manager._animate_section_menu(old_token, -188, 0, 12)
+        self.assertEqual(manager.nav_panel.winfo_manager(), 'place')
+        manager._animate_section_menu(next_token, mid, -188, 12)
+        self.root.update()
+        self.assertFalse(manager.nav_open)
+        self.assertFalse(manager.nav_panel.winfo_manager())
+        self.assertEqual(manager.notebook.winfo_width(), baseline)
+
+    def test_settings_create_desktop_shortcut_button(self):
+        from pak_manager_gui import Manager
+        manager = Manager.__new__(Manager)
+        manager.window = self.root
+        manager.copy, _ = load_text()
+        manager.t = lambda key: manager.copy.get(key, key)
+        manager.stage = tk.StringVar(master=self.root)
+        manager.swap = tk.StringVar(master=self.root)
+        manager.projects = tk.StringVar(master=self.root)
+        manager.update_status = tk.StringVar(master=self.root, value='Not checked')
+        manager.advanced_win = None
+        parent = ttk.Frame(self.root)
+        parent.pack()
+        with patch('pak_manager_gui.create_desktop_shortcut',
+                   return_value=Path('C:/Users/Test/Desktop/Evolve Mod Manager.lnk')) as create, \
+             patch('pak_manager_gui.messagebox.showinfo') as success, \
+             patch.object(manager, 'check_updates'), \
+             patch.object(manager, 'toggle_advanced'):
+            manager.draw_settings(parent)
+            self.root.update()
+            self.assertEqual(manager.shortcut_button.cget('text'),
+                             'Create Desktop Shortcut')
+            manager.shortcut_button.invoke()
+            create.assert_called_once_with()
+            self.assertEqual(success.call_args.args[0], 'Desktop shortcut created')
 
     def test_instructions_required_website_and_setup_actions(self):
         from pak_manager_gui import Manager

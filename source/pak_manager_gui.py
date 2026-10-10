@@ -28,6 +28,7 @@ from dark_theme import apply_theme
 from modern_surfaces import RoundedPanel
 from ui_help import open_help_window
 from version_info import app_version
+from desktop_shortcut import create_desktop_shortcut
 from app_updater import discover as discover_update, download_and_prepare, launch_apply, installed_commit, report_startup_ready
 from ui_copy import load_text
 from workspace_editor import WorkspaceEditor
@@ -352,9 +353,16 @@ class Manager:
         self.notebook = notebook
         self.nav_panel = ttk.Frame(self.main_content, style='Sidebar.TFrame',
                                    padding=(9, 12))
-        self.nav_panel.configure(width=170)
+        # Overlay does not participate in Notebook geometry; the page never
+        # shrinks when the menu opens. Animation is <220ms at ~60 FPS.
+        self.nav_width = 188
+        self.nav_panel.configure(width=self.nav_width)
         self.nav_panel.pack_propagate(False)
         self.nav_open = False
+        self._nav_generation = 0
+        self._nav_animating = False
+        self._nav_steps = 12
+        self._nav_frame_ms = 16
         ttk.Label(self.nav_panel, text='SECTIONS', style='NavHeading.TLabel'
                   ).pack(anchor='w', padx=(8, 0), pady=(0, 13))
         self.nav_buttons = {}
@@ -404,18 +412,45 @@ class Manager:
         self.write('Manager opened. No installed game files were changed.\n')
 
     def toggle_section_menu(self, show=None):
-        """Open a compact left drawer only when the user requests navigation."""
+        """Slide over the current page without resizing the page or file list.
+
+        Only Tk's event-loop callbacks are used. Rapid successive toggles
+        invalidate old animation frames so they cannot reopen a closed menu.
+        """
         should_open = not self.nav_open if show is None else bool(show)
         if should_open == self.nav_open:
             return
+        width = self.nav_width
+        start = self.nav_panel.winfo_x() if self.nav_panel.winfo_manager() == 'place' else -width
+        start = max(-width, min(0, start))
         self.nav_open = should_open
+        self._nav_generation += 1
+        token = self._nav_generation
+        self._nav_animating = True
+        self.nav_panel.place(in_=self.main_content, x=start, y=0,
+                             width=width, relheight=1)
+        self.nav_panel.lift(self.notebook)
         if should_open:
-            self.nav_panel.pack(side='left', fill='y', before=self.notebook,
-                                padx=(0, 10))
             self.sync_section_menu()
-        else:
-            self.nav_panel.pack_forget()
         self.menu_button.configure(text='✕  Close' if should_open else '☰  Menu')
+        self._animate_section_menu(token, start, 0 if should_open else -width, 0)
+
+    def _animate_section_menu(self, token, start_x, end_x, frame):
+        """Ease-out cubic animation over the Notebook at about 60 frames/s."""
+        if token != self._nav_generation or not self._nav_animating:
+            return
+        progress = min(1.0, frame / self._nav_steps)
+        eased = 1 - (1 - progress) ** 3
+        position = round(start_x + (end_x - start_x) * eased)
+        self.nav_panel.place_configure(x=position)
+        if frame >= self._nav_steps:
+            self._nav_animating = False
+            if not self.nav_open:
+                self.nav_panel.place_forget()
+            return
+        self.window.after(
+            self._nav_frame_ms,
+            lambda: self._animate_section_menu(token, start_x, end_x, frame + 1))
 
     def _dismiss_section_menu(self, _event=None):
         if self.nav_open:
@@ -688,6 +723,14 @@ class Manager:
         self.update_button = ttk.Button(update_row, text='Check for Updates', style='Quiet.TButton', command=self.check_updates)
         self.update_button.pack(side='right')
         # Check for Updates offers installation automatically when verified.
+        shortcut_row = ttk.Frame(parent)
+        shortcut_row.pack(fill='x', pady=(4, 10))
+        ttk.Label(shortcut_row, text=self.t('desktop_shortcut_hint'),
+                  style='Muted.TLabel').pack(side='left', fill='x', expand=True)
+        self.shortcut_button = ttk.Button(
+            shortcut_row, text=self.t('desktop_shortcut_button'),
+            style='Quiet.TButton', command=self.create_shortcut)
+        self.shortcut_button.pack(side='right')
         ttk.Separator(parent).pack(fill='x', pady=(8, 12))
         self.advanced_button = ttk.Button(parent, text=self.t('advanced_toggle_show'),
                                           style='Quiet.TButton', command=self.toggle_advanced)
@@ -695,6 +738,17 @@ class Manager:
         ttk.Button(parent, text=self.t('settings_help_action'), style='Quiet.TButton',
                    command=lambda: self.show_help(2)).pack(side='right')
         self.advanced_win = None
+
+    def create_shortcut(self):
+        """Explicit user action: create a Windows .lnk without changing game data."""
+        try:
+            location = create_desktop_shortcut()
+            messagebox.showinfo(self.t('desktop_shortcut_success_title'),
+                                self.t('desktop_shortcut_success_body') +
+                                '\n\n' + str(location), parent=self.window)
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+            messagebox.showerror(self.t('desktop_shortcut_error_title'),
+                                 str(exc), parent=self.window)
 
     def toggle_advanced(self):
         if self.advanced_win is not None and self.advanced_win.winfo_exists():
