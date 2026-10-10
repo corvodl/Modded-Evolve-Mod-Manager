@@ -127,3 +127,11 @@ and wait for completion. Edit Files then shows an Unpacked PAKs list at the top.
 Click an archive name to switch its Files/Text, Images and Models trees in the SAME
 window. Every workspace remains separate; Build Mod works on the currently selected
 archive only. The editor prompts before leaving unsaved text changes.
+
+Add Mod after first setup:
+- Fresh or restored setups may not yet have any per-PAK swap journal records.
+- Build Mod and Add Mod now work before the first Play with Mods action.
+- Mod installation changes staged PAKs only; installed game files are untouched.
+- Play with Mods generates the prepared swap journal when necessary.
+- Existing prepared swaps still require verified matching records and backups.
+- If recovery files are detected, restore your game instead of deleting the journal.
