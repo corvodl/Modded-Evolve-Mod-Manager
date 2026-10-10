@@ -22,7 +22,7 @@ hidden = [
     'workspace_file_actions', 'pak_browser', 'portable_bundle',
     'first_run_setup', 'old_prepared', 'loose_game_files',
     'loose_file_editor', 'qt_manager', 'qt_workspace_editor',
-    'qt_legacy_editor_bridge', 'desktop_shortcut', 'orphaned_swap_recovery',
+    'qt_legacy_editor_bridge', 'qt_gpu_viewer', 'desktop_shortcut', 'orphaned_swap_recovery',
 ]
 for package in ('cryptography', 'frida', 'twofish', 'PIL'):
     d, b, h = collect_all(package)

@@ -87,7 +87,7 @@ class QtMigrationTests(unittest.TestCase):
     def test_qpropertyanimation_is_an_overlay_and_does_not_resize(self):
         width = self.win.stack.width()
         self.assertFalse(self.win._drawer_open)
-        self.win.toggle_menu()
+        self.win.menu_button.click()
         self.assertTrue(self.win._drawer_open)
         self.assertEqual(self.win.menu_animation.duration(),205)
         self.assertTrue(self.win.drawer.isVisible())
@@ -142,7 +142,8 @@ class QtMigrationTests(unittest.TestCase):
             'Save','Find Text','Import / Replace File','Restore Original',
             'Export PNG','Import DDS','Import PNG','Export Native Model',
             'Import Same-Layout Model','Find Model Textures',
-            'Choose Texture Folder','Advanced GPU / full editor',
+            'Choose Texture Folder','Open GPU Viewer',
+            'Advanced compatibility editor',
         ):
             self.assertIn(expected,button_labels)
         editor.load('Game/settings.txt')
@@ -152,6 +153,22 @@ class QtMigrationTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(),b'hello Qt\n')
         self.assertTrue(any((ws/'EditorBackups').rglob('settings.txt')))
         self.assertFalse(editor._dirty())
+
+    def test_compiled_qt_stable_update_path_keeps_manual_previews_separate(self):
+        from qt_manager import QtManager
+        code = Path(__file__).with_name('qt_manager.py').read_text(encoding='utf-8')
+        self.assertIn("if not silent:", code)
+        self.assertIn("preview = discover_experimental()", code)
+        self.assertIn("QTimer.singleShot(2500, lambda: self.check_updates(silent=True))", code)
+        self.assertIn("report_startup_ready(APP_HOME)", code)
+        self.assertIn("launch_apply(candidate,staged,APP_HOME,os.getpid())", code)
+
+    def test_gpu_model_renderer_is_native_qt_without_tk_mainloop(self):
+        code = Path(__file__).with_name('qt_gpu_viewer.py').read_text(encoding='utf-8')
+        self.assertIn("class QtGLModelCanvas(QOpenGLWidget)", code)
+        self.assertIn("glDrawElements", code)
+        self.assertIn("glTexImage2D", code)
+        self.assertNotIn("tkinter", code)
 
     def test_advanced_bridge_is_explicit_and_separate_from_qt(self):
         source = Path(__file__).with_name('qt_legacy_editor_bridge.py').read_text('utf-8')

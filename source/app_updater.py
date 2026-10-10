@@ -39,6 +39,44 @@ class Update:
     size: int
 
 
+@dataclass(frozen=True)
+class ExperimentalUpdate:
+    """Browsable Qt test build; not valid input to the stable in-place installer."""
+    commit: str
+    run_id: int
+    artifact_id: int
+    url: str
+
+
+def discover_experimental() -> ExperimentalUpdate | None:
+    """Find latest successful, unexpired Qt experiment. Never auto-install it.
+
+    Actions artifacts are not the stable app's ZIP format; users must explicitly
+    opt in and extract the Qt preview into a separate directory.
+    """
+    runs = json.loads(_get(API + '/actions/workflows/qt-preview.yml/runs?'
+                           'branch=qt-migration&status=success&per_page=8'))
+    for run in runs.get('workflow_runs', []):
+        run_id = run.get('id')
+        commit = str(run.get('head_sha') or '').lower()
+        if (run.get('head_branch') != 'qt-migration' or
+                run.get('conclusion') != 'success' or
+                not isinstance(run_id, int) or run_id <= 0 or
+                len(commit) != 40 or any(c not in '0123456789abcdef' for c in commit)):
+            continue
+        artifact_data = json.loads(_get(API + f'/actions/runs/{run_id}/artifacts'))
+        for artifact in artifact_data.get('artifacts', []):
+            artifact_id = artifact.get('id')
+            if (artifact.get('name') == 'EvolveModManagerQt-Preview-Windows' and
+                    artifact.get('expired') is False and
+                    isinstance(artifact_id, int) and artifact_id > 0 and
+                    artifact.get('size_in_bytes', 0) > 0):
+                return ExperimentalUpdate(
+                    commit, run_id, artifact_id,
+                    f'https://github.com/{REPO}/actions/runs/{run_id}')
+    return None
+
+
 def _get(url: str, *, max_bytes=1_000_000) -> bytes:
     if not url.startswith('https://') or not (url.startswith(API + '/') or url.startswith(f'https://github.com/{REPO}/releases/download/Main/')):
         raise ValueError('Update URL is not the official project endpoint.')

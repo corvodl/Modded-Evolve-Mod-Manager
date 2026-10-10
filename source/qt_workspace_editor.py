@@ -126,6 +126,8 @@ class QtWorkspaceEditor(QDialog):
         self.mode = None
         self.mesh = None
         self.texture_folder = None
+        self.gpu_windows = []
+        self.materials = None
         self.setWindowTitle('Edit Files — Evolve PAK Workspace')
         self.resize(1210, 790)
         self.setMinimumSize(780, 530)
@@ -139,7 +141,7 @@ class QtWorkspaceEditor(QDialog):
         tools.addWidget(self._button('Open File Folder', self.explore))
         tools.addWidget(self._button('Reload', self.reload))
         tools.addWidget(self._button('Help', self.help))
-        tools.addWidget(self._button('Advanced GPU / full editor', self.open_advanced))
+        tools.addWidget(self._button('Advanced compatibility editor', self.open_advanced))
         main.addLayout(tools)
 
         self.archive_select = None
@@ -171,7 +173,8 @@ class QtWorkspaceEditor(QDialog):
                     widgets[text] = self._button(text, fn)
                     toolbar.addWidget(widgets[text])
             else:
-                for text, fn in (('Export Native Model', self.export_model),
+                for text, fn in (('Open GPU Viewer', self.open_gpu_viewer),
+                                 ('Export Native Model', self.export_model),
                                  ('Import Same-Layout Model', self.import_model),
                                  ('Find Model Textures', self.find_model_textures),
                                  ('Choose Texture Folder', self.choose_texture_folder)):
@@ -308,6 +311,8 @@ class QtWorkspaceEditor(QDialog):
     def load(self, rel):
         self.current = rel
         self.stream = None
+        self.mesh = None
+        self.materials = None
         self.mode = self._category(rel)
         path = checked_path(self.workspace, rel)
         self.raw = path.read_bytes()
@@ -361,7 +366,7 @@ class QtWorkspaceEditor(QDialog):
                 self.mesh = mesh
                 self._paint_model(view, mesh)
                 self.status.setText(rel + ' | ' + report +
-                                    ' | Qt software model preview (GPU preview in Advanced)')
+                                    ' | Open GPU Viewer for smooth hardware-accelerated 3D')
             except (ValueError, OSError) as exc:
                 view.setPixmap(QPixmap())
                 view.setText(rel + '\n\n' + report +
@@ -614,7 +619,41 @@ class QtWorkspaceEditor(QDialog):
         folder = QFileDialog.getExistingDirectory(self,'Choose an extracted texture folder')
         if folder:
             self.texture_folder = Path(folder)
-            self.status.setText('Model preview textures may be found under: '+folder)
+            self.materials = None
+            self.status.setText('GPU preview texture folder selected: '+folder)
+            # Existing GPU dialogs can be updated by reopening them.
+
+    def open_gpu_viewer(self):
+        if self.mode != 'models' or not self.current or self.mesh is None:
+            QMessageBox.information(self, 'GPU Model Viewer',
+                                    'Select a supported CryEngine model to load a 3D mesh first.')
+            return
+        try:
+            from material_preview import load_preview_materials
+            from qt_gpu_viewer import QtGPUModelDialog
+            material_note = ''
+            try:
+                materials = load_preview_materials(
+                    self.workspace, self.current, self.texture_folder,
+                    projects_root=self.manager.projects_path,
+                    stage_root=self.manager.stage_path)
+                material_note = (f' | GPU diffuse textures: {materials.count}'
+                                 f' | source: {materials.source}')
+            except (ValueError, OSError) as error:
+                # Models must still be inspectable without a texture archive.
+                materials = None
+                material_note = ' | Untextured: ' + str(error)[:180]
+            dialog = QtGPUModelDialog(self, self.mesh, materials)
+            dialog.setAttribute(Qt.WA_DeleteOnClose, False)
+            self.gpu_windows.append(dialog)
+            self.status.setText(self.current + material_note)
+            dialog.show()
+            dialog.raise_()
+        except Exception as error:
+            QMessageBox.warning(
+                self, 'GPU Model Viewer unavailable',
+                str(error) + '\\n\\nThe static Qt model preview is still available. '
+                'On Windows, verify that an OpenGL-capable graphics driver is installed.')
 
     def find_model_textures(self):
         if self.mode != 'models':
@@ -651,8 +690,9 @@ class QtWorkspaceEditor(QDialog):
             'Streaming .dds.0/.1 files are reassembled and replaced together.\n\n'
             'Models: inspect CryEngine structure, export native files, import only '
             'same-layout replacements, find linked textures and preview supported meshes.\n\n'
-            'Advanced GPU / full editor opens the proven existing model/texture editor '
-            'in a separate process during Qt migration.')
+            'Open GPU Viewer uses a Qt OpenGL window with rotate, zoom, wireframe '
+            'and approximate diffuse UV textures. The optional Advanced compatibility '
+            'editor remains available while final workflow parity is verified.')
 
     def closeEvent(self, event):
         if not self._confirm_buffer():

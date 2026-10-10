@@ -46,7 +46,8 @@ from PySide6.QtWidgets import (
 )
 
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
-from app_updater import discover, download_and_prepare, launch_apply, installed_commit
+from app_updater import (discover, discover_experimental, download_and_prepare,
+                         launch_apply, installed_commit, report_startup_ready)
 from version_info import app_version
 from pak_browser import archive_description, describe_archive, matching_archives, format_size, import_target
 from universal_stage import allowed_paks
@@ -55,7 +56,7 @@ from orphaned_swap_recovery import plan_recovery
 from multi_pak_assets import load_collection
 from old_prepared import scan_prepared
 from desktop_shortcut import create_desktop_shortcut
-from portable_bundle import MARKER
+from portable_bundle import MARKER, bind_home
 
 ROOT = Path(__file__).resolve().parent
 COLORS = {'bg':'#0b0b0d','surface':'#17171d','panel':'#202027',
@@ -81,7 +82,9 @@ def _button(text, callback, primary=False):
     b = QPushButton(text)
     b.setCursor(Qt.PointingHandCursor)
     b.setObjectName('primary' if primary else 'secondary')
-    b.clicked.connect(callback)
+    # Ignore Qt's clicked(bool) parameter: otherwise a Menu(bool show=None)
+    # handler receives False and the drawer never opens for real users.
+    b.clicked.connect(lambda _checked=False: callback())
     return b
 
 
@@ -179,13 +182,19 @@ class QtManager(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setObjectName('qtManager')
-        self.setWindowTitle('Evolve Mod Manager — Qt Preview')
+        self.setWindowTitle('Evolve Mod Manager')
         icon = ROOT / 'assets' / 'hunt.ico'
         if icon.is_file():
             self.setWindowIcon(QIcon(str(icon)))
         self.resize(1150, 785)
         self.setMinimumSize(880, 620)
         self.setStyleSheet(qt_style())
+        self.bundle_error = ''
+        self.bundle = None
+        try:
+            self.bundle = bind_home(APP_HOME)
+        except Exception as exc:
+            self.bundle_error = str(exc)
 
         self.settings = {}
         path = settings_source()
@@ -213,6 +222,10 @@ class QtManager(QMainWindow):
         self.signals = TaskSignals()
         self.signals.completed.connect(self._task_finished)
         self.signals.output.connect(self._log)
+        self.signals.update_checked.connect(self._on_update_checked)
+        self.signals.update_staged.connect(self._on_update_staged)
+        self.signals.progress.connect(self._update_progress)
+        self.update_progress_dialog = None
         self._success = None
         self._drawer_open = False
 
@@ -277,7 +290,7 @@ class QtManager(QMainWindow):
         self._credits_page()
         self.stack.setCurrentIndex(0)
         self._log_dialog = None
-        self.log_lines = ['Qt preview started. No installed game files were changed.']
+        self.log_lines = ['Manager started. No installed game files were changed.']
         self.status = _label('Ready — read Instructions before connecting an installed game.', muted=True)
         footer = QHBoxLayout()
         footer.addWidget(self.status, 1)
@@ -289,6 +302,24 @@ class QtManager(QMainWindow):
         self.refresh_archives()
         self.refresh_swap_status()
         QTimer.singleShot(0, self._position_drawer)
+        QTimer.singleShot(400, lambda: report_startup_ready(APP_HOME))
+        # Auto-check is stable-only; never discover or offer experimental CI.
+        if self.build_channel() == 'main' and self.setup_is_ready():
+            QTimer.singleShot(2500, lambda: self.check_updates(silent=True))
+        if self.bundle_error:
+            QTimer.singleShot(500, lambda: self.failure(self.bundle_error))
+
+    @staticmethod
+    def build_channel():
+        try:
+            return (APP_HOME/'BUILD_CHANNEL.txt').read_text(encoding='ascii').strip().lower()
+        except OSError:
+            return ''
+
+    def setup_is_ready(self):
+        if self.bundle and not self.bundle.get('configured', True):
+            return False
+        return (Path(self.stage_path)/'stage_status.json').is_file()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1450,19 +1481,134 @@ class QtManager(QMainWindow):
             self.failure(exc)
 
     def check_updates(self, silent=False):
+        """Stable-only background checks; explicit button also offers previews."""
         if self.busy or self.update_running:
             if not silent:
-                self.info('Updates','Finish the current operation first.')
+                self.info('Updates', 'Finish the current operation before updating.')
             return
-        if not (APP_HOME/'EvolveModManagerQt.exe').is_file():
+        if (self.build_channel() != 'main' or
+                not (APP_HOME/'EvolveModManager.exe').is_file()):
             self.update_status.setText(
-                'Qt preview builds do not install over the stable main release.')
+                'Verified automatic updates require the stable Main Windows release.')
             if not silent:
-                self.info('Updates', 'Use the stable main release to install verified updates. Qt preview does not replace it.')
+                self.info('Updates', 'This is an experimental or source build. '
+                          'It cannot automatically install a Main update.')
             return
-        # Do not offer a Tk update manifest for the unrelated experimental
-        # executable. Publishing requires a separately verified Qt manifest.
-        self.update_status.setText('Qt preview update channel not enabled yet.')
+        self.update_running = True
+        self.update_status.setText('Checking the verified Main channel…')
+        self.update_button.setEnabled(False)
+
+        def background():
+            candidate = None
+            preview = None
+            error = ''
+            try:
+                candidate = discover(installed_commit(APP_HOME))
+            except Exception as exc:
+                error = str(exc)
+            if not silent:
+                # Never call experimental discovery from the startup path.
+                try:
+                    preview = discover_experimental()
+                except Exception as exc:
+                    self.signals.output.emit(
+                        'Experimental preview lookup unavailable: ' + str(exc))
+            self.signals.update_checked.emit((candidate,preview),error,silent)
+        threading.Thread(target=background,daemon=True).start()
+
+    def _on_update_checked(self, choices, error, silent):
+        self.update_running = False
+        self.update_button.setEnabled(True)
+        stable, preview = choices
+        self.available_update = stable
+        if error:
+            self.update_status.setText('Update check unavailable')
+            if not silent:
+                QMessageBox.warning(self, 'Updates',
+                                    'Could not check the verified Main release:\n'+error)
+        elif stable is None:
+            self.update_status.setText('Stable release is current')
+            if not silent and preview is None:
+                self.info('Updates', 'You have the newest verified stable build, '
+                          'and no current experimental preview was found.')
+        else:
+            self.update_status.setText('Stable update: '+stable.version)
+            if self.confirm('Verified stable update available',
+                            stable.version+'\n\nDownload, verify, install and restart? '
+                            'The Data folder, keys, game files and projects are preserved.'):
+                self._install_stable_update(stable)
+
+        if not silent and preview is not None:
+            self.update_status.setText(
+                'Experimental Qt build available: '+preview.commit[:12])
+            if self.confirm('Experimental update available',
+                    'A Qt experimental build exists at '+preview.commit[:12]+'.\n\n'
+                    'It is NOT a stable update and must be extracted separately. '
+                    'Do not overwrite your normal installation.\n\n'
+                    'Open the GitHub artifact download page?'):
+                webbrowser.open(preview.url, new=2)
+
+    def _install_stable_update(self,candidate):
+        if self.busy or self.update_running or not self.flush_editors():
+            return
+        self.update_running = True
+        self.update_button.setEnabled(False)
+        self.update_progress_dialog = QProgressDialog(
+            'Downloading verified update…', '', 0, 100, self)
+        self.update_progress_dialog.setWindowTitle('Updating Evolve Mod Manager')
+        self.update_progress_dialog.setCancelButton(None)
+        self.update_progress_dialog.setValue(0)
+        self.update_progress_dialog.setMinimumDuration(0)
+        self.update_progress_dialog.show()
+        def progress(stage,current,total):
+            self.signals.progress.emit(stage,int(current),int(total))
+        def work():
+            try:
+                staged = download_and_prepare(candidate,progress=progress)
+                self.signals.update_staged.emit(candidate,staged,'')
+            except Exception as exc:
+                self.signals.update_staged.emit(candidate,None,str(exc))
+        threading.Thread(target=work,daemon=True).start()
+
+    def _update_progress(self,stage,current,total):
+        popup = self.update_progress_dialog
+        if popup is None:
+            return
+        fraction = max(0.0,min(1.0,current/max(1,total)))
+        if stage == 'Downloading':
+            percent = round(65*fraction)
+        elif stage == 'Verifying':
+            percent = 68
+        elif stage == 'Extracting':
+            percent = 70+round(29*fraction)
+        else:
+            percent = 100
+        popup.setLabelText(stage+'…')
+        popup.setValue(percent)
+
+    def _on_update_staged(self,candidate,staged,error):
+        self.update_running = False
+        self.update_button.setEnabled(True)
+        if self.update_progress_dialog is not None:
+            self.update_progress_dialog.close()
+            self.update_progress_dialog = None
+        if error:
+            self.update_status.setText('Verified update download failed')
+            QMessageBox.critical(self,'Update failed',
+                error+'\n\nCurrent installation and Data folder were not changed.')
+            return
+        if self.busy or not self.flush_editors():
+            self.info('Update postponed',
+                      'Save edits and finish current tasks before applying the update.')
+            return
+        try:
+            self.persist()
+            launch_apply(candidate,staged,APP_HOME,os.getpid())
+        except Exception as exc:
+            self.failure(exc)
+            return
+        self.status.setText('Installer started; restarting the manager…')
+        QApplication.instance().quit()
 
     def closeEvent(self, event):
         if self.busy or self.update_running:
