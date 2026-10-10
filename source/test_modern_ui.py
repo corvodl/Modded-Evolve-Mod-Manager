@@ -120,6 +120,10 @@ class ModernThemeTests(unittest.TestCase):
             # Instructions uses the whole workspace until Menu is clicked.
             self.assertEqual(ttk.Style(self.root).layout('HiddenNav.TNotebook'),
                              [('Notebook.client', {'sticky': 'nswe'})])
+            # Regression from the real v1.0.4 compiled screenshot: the page
+            # appeared ~50px down because the old tab strip was still drawn.
+            self.assertLessEqual(manager.instructions_tab.winfo_y(), 8,
+                                 'Hidden section pages must not leave a tab row')
             self.assertFalse(manager.nav_open)
             self.assertFalse(manager.nav_panel.winfo_manager())
             self.assertIn('Menu', manager.menu_button.cget('text'))

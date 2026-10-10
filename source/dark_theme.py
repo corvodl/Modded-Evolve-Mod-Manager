@@ -70,6 +70,10 @@ def apply_theme(root):
     # Native Notebook page switching remains functional; no top tab bar is
     # drawn. The five sections instead live in the optional left drawer.
     style.layout('HiddenNav.TNotebook', [('Notebook.client', {'sticky': 'nswe'})])
+    # Hiding Notebook.tabmargins alone does NOT hide the tab strip on Windows.
+    # Tk renders each tab using the separately named .Tab element layout.
+    # An empty tab layout forces the page client to start below the header.
+    style.layout('HiddenNav.TNotebook.Tab', [])
     style.configure('HiddenNav.TNotebook', background=BG, borderwidth=0)
     style.configure('Sidebar.TFrame', background='#16151b')
     style.configure('NavHeading.TLabel', background='#16151b',
