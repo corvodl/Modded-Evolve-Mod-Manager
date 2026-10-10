@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QScrollArea, QPushButton, QLineEdit, QComboBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QSplitter, QPlainTextEdit, QMessageBox,
     QFileDialog, QDialog, QDialogButtonBox, QFormLayout, QProgressDialog,
-    QCheckBox, QMenu, QAbstractItemView, QSizePolicy, QProgressBar,
+    QCheckBox, QMenu, QAbstractItemView, QSizePolicy, QProgressBar, QTabWidget,
 )
 
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
@@ -56,6 +56,7 @@ from orphaned_swap_recovery import plan_recovery
 from multi_pak_assets import load_collection
 from old_prepared import scan_prepared
 from desktop_shortcut import create_desktop_shortcut
+from ui_copy import load_text
 from portable_bundle import MARKER, bind_home
 
 ROOT = Path(__file__).resolve().parent
@@ -189,6 +190,7 @@ class QtManager(QMainWindow):
         self.resize(1150, 785)
         self.setMinimumSize(880, 620)
         self.setStyleSheet(qt_style())
+        self.copy, self.ui_warning = load_text()
         self.bundle_error = ''
         self.bundle = None
         try:
@@ -373,30 +375,38 @@ class QtManager(QMainWindow):
             return
         super().keyPressEvent(event)
 
+    def t(self, key):
+        return self.copy.get(key, key.replace('_',' ').capitalize())
+
     def _instructions_page(self):
         scroll, lay = _scroll_page()
-        heading = _label('WELCOME TO EVOLVE MOD MANAGER')
+        heading = _label(self.t('instructions_title'))
         heading.setObjectName('sectionTitle')
         lay.addWidget(heading)
-        lay.addWidget(_label('Install Stage 2 through the normal Modded Evolve client, then configure your modding workspace.', muted=True))
-        card, row = _card('STEP 01 / INSTALL EVOLVE STAGE 2',
-            'The manager does not include or download Evolve. Install the game from modded-evolve.com before selecting any folders. The Steam/Legacy game is not a replacement.')
+        lay.addWidget(_label(self.t('instructions_intro'), muted=True))
+        card, panel = _card(self.t('instructions_required_title'),
+                            self.t('instructions_required_body'))
         lay.addWidget(card)
-        buttons = QWidget()
-        buttons.setLayout(_row(_button('Get Evolve Stage 2 ↗',
-                            lambda: webbrowser.open('https://modded-evolve.com/'), primary=True),
-                               _button('Set Up Manager', self.initial_setup)))
-        row.addWidget(buttons)
-        for title, content in (
-            ('02 / CONNECT YOUR GAME', 'Close Evolve and the client; choose the installed EvolveGame folder and the normal Modded Evolve launcher. Setup generates private signing resources.'),
-            ('03 / UNPACK AND EDIT', 'Search PAK names or readable descriptions; inspect, unpack, edit XML/DDS/models, review changes, build and add mods.'),
-            ('04 / PLAY OFFLINE', 'Use Play & Restore to prepare modded files and launch. Modified files are intended for private/offline testing.'),
-            ('05 / RESTORE ORIGINALS', 'Close Evolve and its launcher. Restore original PAKs, or use backup recovery if a prior swap lost its journal.'),
+        row = QWidget()
+        row.setLayout(_row(
+            _button(self.t('instructions_website_button'),
+                    lambda: webbrowser.open('https://modded-evolve.com/'),
+                    primary=True),
+            _button(self.t('setup_button'), self.initial_setup)))
+        panel.addWidget(row)
+        workflow = _label(self.t('instructions_steps_title'),muted=True)
+        lay.addWidget(workflow)
+        for title_key, body_key in (
+            ('instructions_step_setup','instructions_step_setup_body'),
+            ('instructions_step_mod','instructions_step_mod_body'),
+            ('instructions_step_play','instructions_step_play_body'),
+            ('instructions_step_restore','instructions_step_restore_body'),
         ):
-            c, l = _card(title, content)
-            lay.addWidget(c)
-        lay.addWidget(_label('Keep the entire portable folder together. Never discard Data, signing keys, projects, original backups or recovery manifests.', muted=True))
-        lay.addWidget(_button('Go to Modding →', lambda: self.open_page(1)))
+            step, _ = _card(self.t(title_key), self.t(body_key))
+            lay.addWidget(step)
+        lay.addWidget(_label(self.t('instructions_safety'),muted=True))
+        lay.addWidget(_button(self.t('instructions_modding_button'),
+                              lambda: self.open_page(1)))
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['instructions'] = scroll
@@ -532,7 +542,7 @@ class QtManager(QMainWindow):
         controls = QWidget()
         controls.setLayout(_row(_button('Export Complete Manager ZIP', self.export_bundle),
                                 _button('Configure Bundled Setup', self.configure_bundle),
-                                _button('Settings Help', lambda: self.show_help(3))))
+                                _button('Settings Help', lambda: self.show_help(2))))
         advanced_row.addWidget(controls)
         lay.addStretch()
         self.stack.addWidget(scroll)
@@ -540,31 +550,57 @@ class QtManager(QMainWindow):
 
     def _credits_page(self):
         scroll, lay = _scroll_page()
-        heading = _label('Credits')
+        heading = _label(self.t('credits_heading'))
         heading.setObjectName('sectionTitle')
         lay.addWidget(heading)
-        card, panel = _card('EVOLVE MOD MANAGER', 'Project by @CorvoDL. A portable modding utility for the restored Evolve Stage 2 client.')
+        card, panel = _card(self.t('credits_discord'),
+                             self.t('credits_author_role'))
         lay.addWidget(card)
-        panel.addWidget(_button('Project on GitHub ↗',
-                         lambda: webbrowser.open('https://github.com/corvodl/Modded-Evolve-Mod-Manager')))
-        panel.addWidget(_button('Required Modded Evolve client ↗',
-                         lambda: webbrowser.open('https://modded-evolve.com/')))
-        panel.addWidget(_label('Qt migration preview: the stable Tkinter release remains the primary executable until editor feature parity is verified.', muted=True))
+        panel.addWidget(_label(self.t('credits_github_label'),muted=True))
+        panel.addWidget(_button(
+            'https://github.com/corvodl/Modded-Evolve-Mod-Manager',
+            lambda: webbrowser.open(
+                'https://github.com/corvodl/Modded-Evolve-Mod-Manager')))
+        panel.addWidget(_label(self.t('credits_website_label'),muted=True))
+        panel.addWidget(_button(
+            'https://modded-evolve.com/',
+            lambda: webbrowser.open('https://modded-evolve.com/')))
+        lay.addWidget(_label(self.t('credits_install_note'), muted=True))
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['credits'] = scroll
 
     def show_help(self, section=None):
-        detail = (
-            'Instructions: install Evolve Stage 2 from modded-evolve.com, then connect the game and client.',
-            'Modding: select a signed PAK, unpack, inspect files, edit resources, review changes, build and stage your mod.',
-            'Play & Restore: launch mods for private/offline testing. Close Evolve and its launcher before restoring originals.',
-            'Settings: check stage/swap/project locations, update, create shortcuts, export complete bundles and refresh signed resources.',
-            'Credits: project, backend and safety information.',
+        """Keep complete original help, including offline safety and recovery."""
+        headings = (
+            ('help_mod_title','help_mod_body'),
+            ('help_play_title','help_play_body'),
+            ('help_setup_title','help_setup_body'),
+            ('help_safety_title','help_safety_body'),
         )
         if section is None:
-            section = self.stack.currentIndex()
-        self.info('Help — ' + SECTIONS[section], detail[section])
+            section = {0:2,1:0,2:1,3:2,4:2}.get(self.stack.currentIndex(),2)
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self.t('help_title'))
+        dialog.setStyleSheet(qt_style())
+        dialog.resize(760,540)
+        dialog.setMinimumSize(520,380)
+        frame = QVBoxLayout(dialog)
+        frame.addWidget(_label(self.t('help_title')))
+        tabs = QTabWidget()
+        for title_key, body_key in headings:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            content = QWidget()
+            layout = QVBoxLayout(content)
+            layout.addWidget(_label(self.t(body_key)))
+            layout.addStretch()
+            scroll.setWidget(content)
+            tabs.addTab(scroll, self.t(title_key))
+        tabs.setCurrentIndex(max(0,min(3,section)))
+        frame.addWidget(tabs,1)
+        frame.addWidget(_button('Close',dialog.accept))
+        dialog.exec()
 
     def info(self, title, message):
         QMessageBox.information(self, title, str(message))

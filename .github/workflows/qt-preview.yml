@@ -41,11 +41,17 @@ jobs:
           & $exe --capture-screenshot $png
           $exit = $LASTEXITCODE
           $startupLog = Join-Path $env:LOCALAPPDATA "EvolveModManagerQtPreview/startup.log"
+          Write-Host "Frozen Qt exit code: $exit"
+          $runtimeLog = Join-Path $env:LOCALAPPDATA "EvolveModManagerQtPreview/runtime.log"
+          if (Test-Path -LiteralPath $runtimeLog) {
+            Write-Host 'Qt bootloader / runtime hook diagnostics:'
+            Get-Content -LiteralPath $runtimeLog | Select-Object -Last 120
+          }
           if (Test-Path -LiteralPath $startupLog) {
             Write-Host 'Qt frozen app startup diagnostics:'
             Get-Content -LiteralPath $startupLog | Select-Object -Last 65
           }
-          if ($exit -ne 0) { throw "Compiled Qt app failed to capture a screenshot." }
+          if ($exit -ne 0) { throw "Compiled Qt app failed to capture a screenshot (exit code $exit)." }
           if (!(Test-Path $png -PathType Leaf)) { throw "No real Qt screenshot was captured." }
           & ".build/venv/Scripts/python.exe" -c "from PIL import Image; i=Image.open(r'dist/EvolveModManagerQt-compiled-screenshot.png'); print('Compiled Qt window:',i.size); assert i.width >= 850 and i.height >= 600"
           if ($LASTEXITCODE -ne 0) { throw "Qt screenshot validation failed." }

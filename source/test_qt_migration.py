@@ -57,7 +57,7 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIn('modded-evolve.com',
             ' '.join(widget.text() for widget in
                      self.win.pages['instructions'].findChildren(QLabel)))
-        self.assertIn('RESTORE ORIGINALS',
+        self.assertIn('Restore original game files',
             ' '.join(widget.text() for widget in
                      self.win.pages['instructions'].findChildren(QLabel)))
         self.assertEqual(self.win.table.columnCount(),5)
@@ -70,8 +70,8 @@ class QtMigrationTests(unittest.TestCase):
     def test_complete_manager_controls_present_not_hidden_by_redesign(self):
         names = [button.text() for button in self.win.findChildren(QPushButton)]
         required = [
-            'Help','Activity','Set Up Manager','Get Evolve Stage 2 ↗',
-            'Go to Modding →','Refresh','External PAK…',
+            'Help','Activity','Set Up Manager','Get Evolve Stage 2  ↗',
+            'Go to Modding  →','Refresh','External PAK…',
             'Unpack PAK','Unpack Selected PAKs','Edit Files','Review Changes',
             'Build Mod','Add Mod','Import Modified PAK','Undo Staged Mod',
             'Play With Mods','Restore Game Files','Refresh Status',
