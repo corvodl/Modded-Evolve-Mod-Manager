@@ -1,1 +1,1 @@
-1.0.4 - On-Demand Left Navigation Menu
+1.0.5 - Red Navigation Button and Clear Help Label

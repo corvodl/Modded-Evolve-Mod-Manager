@@ -304,7 +304,7 @@ class Manager:
         header.pack(fill='x', pady=(0, 17))
         # One compact navigation control replaces permanent tab buttons.
         self.menu_button = ttk.Button(header, text='☰  Menu',
-                                      style='Quiet.TButton',
+                                      style='Accent.TButton',
                                       command=self.toggle_section_menu)
         self.menu_button.pack(side='left', padx=(0, 12))
         brand = ttk.Frame(header)
@@ -328,8 +328,9 @@ class Manager:
         self.log_button = ttk.Button(header, text=self.t('details_show'),
                                      style='Quiet.TButton', command=self.toggle_log)
         self.log_button.pack(side='right', padx=(8, 0))
-        ttk.Button(header, text=self.t('help_button'), style='Quiet.TButton',
-                   command=self.show_help).pack(side='right')
+        self.help_button = ttk.Button(header, text=self.t('help_button'),
+                                      style='Quiet.TButton', command=self.show_help)
+        self.help_button.pack(side='right')
 
         # The Notebook still owns all five pages, but its tab strip is hidden.
         # A left drawer opens ONLY when Menu is clicked and otherwise gives

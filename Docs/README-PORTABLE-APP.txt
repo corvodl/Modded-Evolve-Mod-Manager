@@ -280,3 +280,9 @@ compact Menu button beside the Evolve logo to show the five navigation
 sections in a temporary left panel. Choosing a section or pressing Escape
 closes the panel. Existing edit, play, restore, update, and setup behavior
 remains unchanged. The menu is collapsed when the program starts.
+
+HEADER POLISH v1.0.5
+--------------------
+The on-demand Menu / Close button uses the red accent style so it stands out
+against the dark header. The Help button displays only "Help" rather than
+"Help ?"; extracted-file editor Help is consistent. Actions are unchanged.
