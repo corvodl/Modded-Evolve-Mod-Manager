@@ -13,6 +13,7 @@ import queue
 import subprocess
 import sys
 import threading
+import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -130,13 +131,16 @@ class Manager:
         self.edit_tab = ttk.Frame(notebook, padding=10)
         self.play_tab = ttk.Frame(notebook, padding=10)
         self.settings_tab = ttk.Frame(notebook, padding=10)
+        self.credits_tab = ttk.Frame(notebook, padding=10)
         notebook.add(self.edit_tab, text='  '+self.t('tab_edit')+'  ')
         notebook.add(self.play_tab, text='  '+self.t('tab_play')+'  ')
         notebook.add(self.settings_tab, text='  '+self.t('tab_settings')+'  ')
+        notebook.add(self.credits_tab, text='  '+self.t('tab_credits')+'  ')
         self.notebook = notebook
         self.draw_edit(self.edit_tab)
         self.draw_play(self.play_tab)
         self.draw_settings(self.settings_tab)
+        self.draw_credits(self.credits_tab)
         self.log_visible = False
         self.log_window = tk.Toplevel(root)
         self.log_window.withdraw()
@@ -156,6 +160,20 @@ class Manager:
         ttk.Label(bottom, textvariable=self.status).pack(side='left')
         ttk.Label(bottom, text=self.t('footer_note'), foreground='#b5b5bf').pack(side='right')
         self.write('Manager opened. No installed game files were changed.\n')
+
+    def draw_credits(self, parent):
+        """Visible project credits and official download links (no browser at startup)."""
+        github = 'https://github.com/corvodl/Modded-Evolve-Mod-Manager'
+        website = 'https://modded-evolve.com/'
+        panel = ttk.LabelFrame(parent, text=self.t('credits_heading'), padding=18)
+        panel.pack(fill='x', pady=8)
+        ttk.Label(panel, text=self.t('credits_discord'), font=('Segoe UI', 12, 'bold')).pack(anchor='w', pady=(0, 12))
+        ttk.Label(panel, text=self.t('credits_github_label')).pack(anchor='w')
+        ttk.Button(panel, text=github, command=lambda: webbrowser.open(github, new=2)).pack(anchor='w', pady=(3, 14))
+        ttk.Label(panel, text=self.t('credits_website_label')).pack(anchor='w')
+        ttk.Button(panel, text=website, command=lambda: webbrowser.open(website, new=2)).pack(anchor='w', pady=(3, 14))
+        ttk.Label(panel, text=self.t('credits_install_note'), wraplength=800,
+                  foreground='#b5b5bf', justify='left').pack(anchor='w')
 
     def toggle_log(self, show=None):
         show = not self.log_visible if show is None else bool(show)

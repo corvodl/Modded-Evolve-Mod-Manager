@@ -1,1 +1,1 @@
-2.9.7 - Goliath UV Diffuse Materials & Visible Activity Log (Experimental)
+2.9.8 - Automatic Cross-PAK Texture Discovery and Credits (Experimental)

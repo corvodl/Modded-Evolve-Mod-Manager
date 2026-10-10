@@ -439,6 +439,13 @@ class WorkspaceEditor:
         except Exception as error:
             messagebox.showerror('PNG import rejected', str(error), parent=self.window)
 
+    def _asset_roots(self):
+        """Only search extracted workspaces under the current manager stage."""
+        def configured(name):
+            field = getattr(self.manager, name, None)
+            return field.get() if field is not None and hasattr(field, 'get') else None
+        return {'projects_root': configured('projects'), 'stage_root': configured('stage')}
+
     def show_model(self, rel, raw):
         self.reset_views()
         self.path = rel
@@ -453,7 +460,7 @@ class WorkspaceEditor:
         except ValueError as error:
             report = 'Experimental model support\n' + str(error) + '\nExport the native file to inspect it with an external application.'
         try:
-            mesh = find_preview_mesh(self.workspace, rel, raw)
+            mesh = find_preview_mesh(self.workspace, rel, raw, **self._asset_roots())
         except ValueError as error:
             self.model_label.configure(text=rel + '\n\n' + report +
                                        '\n\n3D preview unavailable: ' + str(error) +
@@ -470,10 +477,10 @@ class WorkspaceEditor:
         # Missing textures are common and must not prevent mesh inspection.
         try:
             from material_preview import load_preview_materials
-            material = load_preview_materials(self.workspace, rel, self.texture_folder)
+            material = load_preview_materials(self.workspace, rel, self.texture_folder, **self._asset_roots())
         except (ValueError, OSError) as error:
             self.model_preview.set_materials(None)
-            self.model_preview.details.set('Untextured | ' + str(error)[:180] + ' | Choose Texture Folder…')
+            self.model_preview.details.set('Untextured | ' + str(error)[:180] + ' | Unpack the texture PAK or choose a texture folder')
         else:
             self.model_preview.set_materials(material)
             self.info.set('UV material preview: ' + material.source +
@@ -493,10 +500,10 @@ class WorkspaceEditor:
         if self.active_tab != 'models' or self.view_mode != 'model' or not self.path:
             return
         try:
-            report = model_material_links(self.workspace, self.path)
+            report = model_material_links(self.workspace, self.path, **self._asset_roots())
             lines = ['Model: ' + self.path, 'Material: ' + report['material'],
                      'Material status: ' + report['status'],
-                     'Batch links: ' + ('yes' if report['collection'] else 'no (current PAK only)'), '']
+                     'Cross-PAK links: ' + ('yes' if report['collection'] else 'no (current PAK only)'), '']
             for item in report['textures']:
                 lines.append(f"{item['map']}: {item['reference']}")
                 lines.append('  ' + item['status'] +

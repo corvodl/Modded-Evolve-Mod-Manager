@@ -104,7 +104,7 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
     return PreviewMesh(tuple(positions), triangles, center, radius, source_name, uv_coordinates, subsets)
 
 
-def find_preview_mesh(workspace, relative, raw):
+def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_root=None):
     """Prefer the selected render mesh; fall back to its same-folder companion."""
     suffix = Path(relative).suffix.lower()
     if suffix in ('.skin', '.chr', '.cgf', '.cga'):
@@ -114,8 +114,8 @@ def find_preview_mesh(workspace, relative, raw):
         if file.is_relative_to(root) and file.is_file() and not file.is_symlink():
             return read_preview_mesh(file.read_bytes(), companion_rel)
         # Companion assets can live in another extracted PAK from the same batch.
-        from multi_pak_assets import locate_batch_asset
-        linked = locate_batch_asset(workspace, companion_rel)
+        from multi_pak_assets import locate_related_asset
+        linked = locate_related_asset(workspace, companion_rel, projects_root, stage_root)
         if linked is not None:
             return read_preview_mesh(linked.read_bytes(), companion_rel)
         raise ValueError('This character file stores skeleton/metadata. A .skinm or .chrm render-mesh companion is needed for preview.')

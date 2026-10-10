@@ -113,3 +113,11 @@ Activity Log visibility:
 - The Activity Log opens automatically when the manager opens.
 - Closing it is optional; it reopens whenever you start a manager operation,
   so progress and errors are visible even if the main window is busy.
+
+Automatic model texture lookup:
+- Unpack the model/material PAK and the texture PAK using the same manager setup.
+- Both an extracted batch and separate complete workspaces inside Settings > Editing projects are scanned.
+- Re-select the model in the Models tab to refresh preview after extracting another PAK.
+- If two workspaces contain the same texture path, lookup stops as ambiguous rather than guessing.
+- The Credits tab lists @CorvoDL, the GitHub repository and the Modded Evolve website.
+- Install Evolve Stage 2 through https://modded-evolve.com/ before using the manager.

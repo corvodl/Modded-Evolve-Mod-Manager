@@ -16,7 +16,7 @@ from PIL import Image
 
 from dds_streaming import inspect_stream, inspect_whole_part0
 from dds_texture import parse_dds
-from multi_pak_assets import collection_for_workspace, _asset_index, _resolve, load_workspace, normalized_name
+from multi_pak_assets import related_asset_index, _resolve, load_workspace, normalized_name
 
 MAX_MATERIAL_BYTES = 5 * 1024 * 1024
 MAX_TEXTURE_BYTES = 64 * 1024 * 1024
@@ -34,11 +34,11 @@ class PreviewMaterials:
         return sum(tex is not None for tex in self.textures)
 
 
-def _workspace_index(workspace):
+def _workspace_index(workspace, projects_root=None, stage_root=None):
     workspace = Path(workspace).resolve()
-    batch = collection_for_workspace(workspace)
-    if batch:
-        return _asset_index(*batch)
+    linked = related_asset_index(workspace, projects_root, stage_root)
+    if linked is not None:
+        return linked
     # Build an index from the workspace manifest; avoid scanning arbitrary files.
     index = {}
     root = (workspace / 'files').resolve()
@@ -132,8 +132,8 @@ def _decode_texture(item):
     return tex
 
 
-def load_preview_materials(workspace, model_relative, texture_folder=None):
-    index = _workspace_index(workspace)
+def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None):
+    index = _workspace_index(workspace, projects_root, stage_root)
     stem = Path(model_relative).with_suffix('').as_posix()
     bases = [stem, re.sub(r'_lod\d+$', '', stem, flags=re.IGNORECASE)]
     material = next((item for b in bases if (item := _find_unique(index, b+'.mtl')) is not None), None)

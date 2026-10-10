@@ -166,6 +166,118 @@ def _resolve(index, ref):
     return [], 'missing'
 
 
+MAX_DISCOVERY_PROJECTS = 200
+MAX_DISCOVERY_WORKSPACES = 256
+
+
+def _is_stage_workspace(workspace, stage_paks, expected_key=None):
+    """Only index completed extractions of PAKs under this manager's stage.
+
+    Read-only discovery never follows symlinked workspace directories or files,
+    nor mixes signing keys from a previous manager installation.
+    """
+    workspace = Path(workspace)
+    if not workspace.is_dir() or workspace.is_symlink():
+        return None
+    try:
+        data = load_workspace(workspace)
+        source = Path(data['source_pak']).resolve()
+        if (not source.is_relative_to(stage_paks) or
+                source.suffix.casefold() != '.pak' or not source.is_file()):
+            return None
+        if expected_key and data.get('public_key_sha256') != expected_key:
+            return None
+        if not isinstance(data.get('entries'), list):
+            return None
+        return data
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def project_asset_index(workspace, projects_root, stage_root):
+    """Build a safe read-only index of separately unpacked and batch PAK projects.
+
+    Returns None if the model workspace isn't in the selected project directory
+    or doesn't originate from the selected custom-signing stage. Ambiguities are
+    retained for the caller to report rather than guessing between assets.
+    """
+    if not projects_root or not stage_root:
+        return None
+    workspace = Path(workspace).resolve()
+    projects = Path(projects_root).resolve()
+    stage = Path(stage_root).resolve()
+    stage_paks = (stage / 'paks').resolve()
+    if (not projects.is_dir() or not stage_paks.is_dir() or
+            not workspace.is_relative_to(projects)):
+        return None
+    from universal_stage import digest
+    key = stage / 'mykeys' / 'public_key.bin'
+    key_hash = digest(key) if key.is_file() else None
+    if _is_stage_workspace(workspace, stage_paks, key_hash) is None:
+        return None
+    workspace_dirs = []
+    roots = sorted(projects.iterdir(), key=lambda p: p.name.casefold())
+    if len(roots) > MAX_DISCOVERY_PROJECTS:
+        raise ValueError('Too many project folders for automatic lookup; select a texture folder.')
+    for child in roots:
+        if not child.is_dir() or child.is_symlink():
+            continue
+        if (child / '.evolve-pak-workspace.json').is_file():
+            workspace_dirs.append(child)
+        batch_manifest = child / BATCH_FILE
+        if batch_manifest.is_file():
+            # Incomplete/broken batches must not contribute stale resources.
+            try:
+                collection = load_collection(child)
+                if Path(collection['stage']).resolve() != stage:
+                    continue
+                for item in collection['archives']:
+                    workspace_dirs.append(_safe_workspace(child, item['workspace']))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    if len(workspace_dirs) > MAX_DISCOVERY_WORKSPACES:
+        raise ValueError('Too many unpacked PAK workspaces for automatic lookup.')
+    catalog = defaultdict(list)
+    for other in workspace_dirs:
+        data = _is_stage_workspace(other, stage_paks, key_hash)
+        if not data:
+            continue
+        folder = (other / 'files').resolve()
+        for entry in data['entries']:
+            try:
+                rel = normalized_name(entry['path'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            original = folder / rel
+            path = original.resolve()
+            if (not path.is_relative_to(folder) or not path.is_file() or
+                    original.is_symlink()):
+                continue
+            catalog[rel.casefold()].append({'archive': Path(data['source_pak']).name,
+                                             'workspace': other.resolve(),
+                                             'relative': rel, 'file': path})
+    return catalog
+
+
+def related_asset_index(workspace, projects_root=None, stage_root=None):
+    """Prefer all compatible extracted projects; otherwise use a verified batch."""
+    index = project_asset_index(workspace, projects_root, stage_root)
+    if index is not None:
+        return index
+    collection = collection_for_workspace(workspace)
+    return _asset_index(*collection) if collection else None
+
+
+def locate_related_asset(workspace, virtual_path, projects_root=None, stage_root=None):
+    index = related_asset_index(workspace, projects_root, stage_root)
+    if index is None:
+        return None
+    hits, status = _resolve(index, virtual_path)
+    if status == 'ambiguous':
+        raise ValueError('Companion asset is ambiguous across extracted PAKs: ' + virtual_path)
+    return hits[0]['file'] if status == 'found' else None
+
+
 def locate_batch_asset(workspace, virtual_path):
     """Read-only lookup for a uniquely named asset from another batch workspace.
 
@@ -182,7 +294,7 @@ def locate_batch_asset(workspace, virtual_path):
     return hits[0]['file'] if state == 'found' else None
 
 
-def model_material_links(workspace, model_relative):
+def model_material_links(workspace, model_relative, projects_root=None, stage_root=None):
     """Locate material texture references across a batch, WITHOUT applying shaders.
 
     Results are for the UI and manual selection only. Ambiguous paths are never
@@ -191,11 +303,9 @@ def model_material_links(workspace, model_relative):
     from xml.etree import ElementTree as ET
     workspace = Path(workspace).resolve()
     normalized_name(model_relative)
-    lookup = collection_for_workspace(workspace)
-    if lookup:
-        batch, data = lookup
-        index = _asset_index(batch, data)
-    else:
+    index = related_asset_index(workspace, projects_root, stage_root)
+    has_links = index is not None
+    if index is None:
         index = defaultdict(list)
         for item in load_workspace(workspace)['entries']:
             rel = normalized_name(item['path'])
@@ -221,16 +331,16 @@ def model_material_links(workspace, model_relative):
             material=hits[0]
             break
         if state=='ambiguous':
-            return {'material':path,'status':'ambiguous','textures':[],'collection':bool(lookup)}
+            return {'material':path,'status':'ambiguous','textures':[],'collection':has_links}
     if material is None:
-        return {'material':', '.join(possible), 'status':'missing', 'textures':[], 'collection':bool(lookup)}
+        return {'material':', '.join(possible), 'status':'missing', 'textures':[], 'collection':has_links}
     raw=material['file'].read_bytes()
     if len(raw)>MAX_MATERIAL_BYTES or b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
-        return {'material':material['relative'],'status':'invalid-material','textures':[], 'collection':bool(lookup)}
+        return {'material':material['relative'],'status':'invalid-material','textures':[], 'collection':has_links}
     try:
         root=ET.fromstring(raw)
     except ET.ParseError:
-        return {'material':material['relative'],'status':'invalid-material','textures':[], 'collection':bool(lookup)}
+        return {'material':material['relative'],'status':'invalid-material','textures':[], 'collection':has_links}
     textures=[]
     seen=set()
     for node in root.iter():
@@ -249,7 +359,7 @@ def model_material_links(workspace, model_relative):
                          'archives':[m['archive'] for m in matches],
                          'paths':[m['relative'] for m in matches]})
     return {'material':material['relative'],'material_archive':material['archive'],
-            'status':'found','textures':textures,'collection':bool(lookup)}
+            'status':'found','textures':textures,'collection':has_links}
 
 
 def main():
