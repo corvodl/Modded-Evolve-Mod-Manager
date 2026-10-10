@@ -151,3 +151,14 @@ project copies from the Projects folder can help. Never remove live swap backups
 - Wireframe and Textures switches remain available, with no change to game files.
 - This is still a software rasterizer; real-time textured 3D during dragging
   would require a separate hardware-accelerated renderer.
+
+GPU model viewer (experimental, Windows):
+- Models tab uses hardware OpenGL when a compatible graphics driver is present.
+- Fully textured meshes rotate and zoom live with GPU depth testing and indexed triangles.
+- Renderer selector: GPU (Auto), or Software for unsupported drivers.
+- On Microsoft GDI Generic / Basic Render Driver or failed GPU initialization, the existing
+  slower software viewer is used safely instead.
+- Fast/Balanced/Detailed control texture resolution for the GPU viewer.
+- Driver-based OpenGL needs a supported GPU driver; WSL, remote desktop, headless VMs
+  and some older GPUs may not have a usable accelerated OpenGL context.
+- Rendering is read-only. It is approximate diffuse shading, not CryEngine shader parity.

@@ -39,3 +39,9 @@ This archive is a **Windows build kit**, not a precompiled EXE. Run `Build-Windo
 - **Discord:** @CorvoDL
 - **GitHub:** https://github.com/corvodl/Modded-Evolve-Mod-Manager
 - **Modded Evolve / required game installation:** https://modded-evolve.com/
+
+## Hardware-accelerated 3D preview (experimental)
+
+The Models tab defaults to **GPU (Auto)** on Windows. With a compatible accelerated OpenGL driver, it uses GPU-indexed triangles, depth testing and live diffuse UV textures while rotating or zooming the mesh. Use **Renderer → Software** to force the original CPU renderer, or let it automatically fall back when hardware OpenGL is unavailable. **Fast / Balanced / Detailed** adjust GPU texture quality. A GPU driver, not just WSL, is required.
+
+This is still an approximate, read-only material preview; it does not reproduce all CryEngine effects or convert Blender-edited geometry back to Evolve.

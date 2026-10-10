@@ -91,7 +91,7 @@ class MeshPreviewTests(unittest.TestCase):
                     self.assertEqual(len(editor.model_preview.mesh.triangles),4)
                     error_popup.assert_not_called()
                     editor.model_preview.yaw+=1; editor.model_preview.render()
-                    self.assertIsNotNone(editor.model_preview._photo)
+                    self.assertTrue(editor.model_preview._photo is not None or editor.model_preview._gpu is not None)
             finally:
                 if editor:editor.window.destroy()
                 root.destroy()

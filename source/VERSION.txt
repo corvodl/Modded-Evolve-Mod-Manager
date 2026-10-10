@@ -1,1 +1,1 @@
-2.9.12 - Responsive 3D Preview, Quality Levels, and Render Cancellation (Experimental)
+2.9.13 - Hardware OpenGL GPU Model Preview (Experimental)

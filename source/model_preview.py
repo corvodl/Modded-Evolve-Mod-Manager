@@ -197,12 +197,20 @@ class ModelPreview:
         toolbar.pack(fill='x', padx=5, pady=(4, 2))
         self.details = tk.StringVar(value='Choose a supported mesh')
         ttk.Label(toolbar, textvariable=self.details).pack(side='left', fill='x', expand=True)
+        # Prefer GPU rendering on Windows with a real OpenGL driver. Leave the
+        # software renderer available on unsupported PCs and remote desktops.
+        self.renderer_mode = tk.StringVar(value='GPU (Auto)')
+        self.renderer_picker = ttk.Combobox(toolbar, width=12,
+            textvariable=self.renderer_mode, values=('GPU (Auto)', 'Software'),
+            state='readonly')
+        self.renderer_picker.pack(side='right', padx=3)
+        self.renderer_picker.bind('<<ComboboxSelected>>', lambda _: self._change_renderer())
         self.quality = tk.StringVar(value='Balanced')
         ttk.Label(toolbar, text='Quality').pack(side='right', padx=(4, 2))
         self.quality_picker = ttk.Combobox(toolbar, width=9, textvariable=self.quality,
                                            values=tuple(self.QUALITY_LIMITS), state='readonly')
         self.quality_picker.pack(side='right', padx=3)
-        self.quality_picker.bind('<<ComboboxSelected>>', lambda _: self.schedule())
+        self.quality_picker.bind('<<ComboboxSelected>>', lambda _: self._quality_changed())
         self.wireframe = tk.BooleanVar(value=False)
         self.use_textures = tk.BooleanVar(value=True)
         self.textures_button = ttk.Checkbutton(toolbar, text='Textures', variable=self.use_textures,
@@ -240,6 +248,8 @@ class ModelPreview:
         self._polling = False
         self._poll_pending = None
         self._want_textured = False
+        self._gpu = None
+        self._gpu_unavailable = None
         self.yaw = -.5
         self.elevation = .24
         self.zoom = 1.0
@@ -248,11 +258,77 @@ class ModelPreview:
         if event.widget is not self.label:
             return
         self._cancel_inflight()
+        self._close_gpu()
         for name in ('_pending', '_settle_pending', '_poll_pending'):
             try:
                 self._cancel_timer(name)
             except Exception:
                 pass  # Widget is closing; don't register new Tk work.
+
+    def _close_gpu(self):
+        if self._gpu is not None:
+            self._gpu.close()
+            self._gpu = None
+        try:
+            if self.label.winfo_exists():
+                self.label.pack(fill='both', expand=True)
+        except Exception:
+            pass
+
+    def _quality_changed(self):
+        if self._gpu is not None:
+            self._gpu.set_quality(self.quality.get())
+        self.schedule()
+
+    def _change_renderer(self):
+        self._cancel_inflight()
+        if self.renderer_mode.get() == 'Software':
+            self._close_gpu()
+        else:
+            # Explicit retry after switching from Software to GPU.
+            self._gpu_unavailable = None
+        self.schedule()
+
+    def _render_gpu(self):
+        if self.renderer_mode.get() != 'GPU (Auto)' or self._gpu_unavailable is not None:
+            return False
+        from gpu_model_preview import Win32GPUPreview, GPUUnavailable, gpu_supported_platform
+        if not gpu_supported_platform():
+            self._gpu_unavailable = 'GPU preview is supported on Windows only.'
+            return False
+        try:
+            if self._gpu is None:
+                viewer = Win32GPUPreview(self.frame)
+                try:
+                    viewer.set_mesh(self.mesh)
+                    viewer.set_quality(self.quality.get())
+                    self._gpu = viewer
+                    self.label.pack_forget()
+                    for event, handler in (
+                        ('<ButtonPress-1>', self.press), ('<B1-Motion>', self.drag),
+                        ('<ButtonRelease-1>', self.release), ('<MouseWheel>', self.scroll),
+                        ('<Configure>', self.configure),
+                        ('<Expose>', lambda _: self.schedule()),
+                    ):
+                        viewer.frame.bind(event, handler)
+                    viewer.frame.bind('<Button-4>', lambda _: self.change_zoom(1.15))
+                    viewer.frame.bind('<Button-5>', lambda _: self.change_zoom(1/1.15))
+                except BaseException:
+                    viewer.close()
+                    raise
+            self._cancel_inflight()  # No CPU UV worker should keep rendering.
+            # Rendering requires the OpenGL context on the Tk event thread.
+            self._gpu.draw(self.mesh, self.materials, yaw=self.yaw,
+                           elevation=self.elevation, zoom=self.zoom,
+                           wireframe=self.wireframe.get(),
+                           textured=self.use_textures.get() and bool(self.materials))
+            self.details.set(self._base_details + ' | GPU OpenGL: ' + self._gpu.renderer)
+            return True
+        except Exception as error:
+            # Any unsupported Win32/OpenGL function should safely fall back.
+            self._gpu_unavailable = str(error)
+            self._close_gpu()
+            return False
 
     def _schedule_poll(self):
         if self._poll_pending is None:
@@ -283,6 +359,8 @@ class ModelPreview:
     def set_mesh(self, mesh):
         self._cancel_inflight()
         self.mesh = mesh
+        if self._gpu is not None:
+            self._gpu.set_mesh(mesh)
         self._base_details = f'{Path(mesh.source_name).name} | {mesh.description} | Drag to rotate, wheel to zoom'
         self.details.set(self._base_details)
         self.materials = None
@@ -292,6 +370,8 @@ class ModelPreview:
     def set_materials(self, materials):
         self._cancel_inflight()
         self.materials = materials
+        if self._gpu is not None:
+            self._gpu.set_materials(materials)
         self.use_textures.set(True)
         self.textures_button.state(['!disabled'] if materials is not None else ['disabled'])
         self.schedule()
@@ -346,8 +426,9 @@ class ModelPreview:
 
     def schedule(self):
         if self._pending is None:
-            # Coalesce redraws rather than scheduling one per mouse movement.
-            self._pending = self.label.after(40, self.render)
+            # GPU frames can refresh on the next display tick (about 60 FPS).
+            delay = 16 if self._gpu is not None else 40
+            self._pending = self.label.after(delay, self.render)
 
     def _textured_requested(self):
         return (self.mesh is not None and self.materials is not None
@@ -359,6 +440,8 @@ class ModelPreview:
         # rather than losing the after-id and leaving a Tcl callback behind.
         self._cancel_timer('_pending')
         if self.mesh is None:
+            return
+        if self._render_gpu():
             return
         self._texture_generation += 1
         self._want_textured = self._textured_requested()
@@ -468,6 +551,7 @@ class ModelPreview:
         self._want_textured = False
         self._interacting = False
         self._scrolling = False
+        self._close_gpu()
         self.mesh = None
         self._photo = None
         self.materials = None

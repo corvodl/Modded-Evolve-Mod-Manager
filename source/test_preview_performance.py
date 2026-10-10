@@ -49,6 +49,7 @@ class PerformanceTests(unittest.TestCase):
             viewer = ModelPreview(root)
             viewer.frame.pack(fill='both', expand=True)
             root.update()
+            viewer.renderer_mode.set('Software')  # Exercise the CPU fallback deliberately.
             with patch.object(viewer, '_render_textured_async') as textured:
                 viewer.set_mesh(self.mesh)
                 viewer.set_materials(self.mats)
