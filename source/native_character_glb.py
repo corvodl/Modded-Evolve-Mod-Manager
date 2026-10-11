@@ -17,7 +17,7 @@ from multi_pak_assets import _resolve
 
 def create_character_glb(workspace, relative, index, *, character=None,
                          texture_folder=None, projects_root=None, stage_root=None,
-                         clip=None):
+                         clip=None, clips=None):
     """Return (GLB bytes, details), optionally containing an original CAF clip.
 
     The preview and rigged export use the same character assembly selection.
@@ -49,10 +49,16 @@ def create_character_glb(workspace, relative, index, *, character=None,
         blob, rig = skin_glb_composite(blob,parts,skeleton)
         details = {'texture_count':textures,'rig_status':'Rigged CDF assembly',
                    'bone_count':rig['bone_count'],'part_count':rig['part_count']}
-    if clip is not None:
-        if not clip.available or clip.file is None or clip.kind != 'caf':
-            raise ValueError('Select an extracted CAF clip mapped to this skeleton')
-        blob, anim_report = append_caf_animations(blob,[(clip.name,clip.file.read_bytes())])
+    selected_clips = (tuple(clips) if clips is not None
+                      else (clip,) if clip is not None else ())
+    if selected_clips:
+        if len(selected_clips) > 256:
+            raise ValueError('Export at most 256 animation clips per model')
+        for entry in selected_clips:
+            if not entry.available or entry.file is None or entry.kind != 'caf':
+                raise ValueError('Native animation missing or incompatible: ' + entry.name)
+        blob, anim_report = append_caf_animations(
+            blob, ((entry.name,entry.file.read_bytes()) for entry in selected_clips))
         details['animations'] = anim_report['clips']
         details['bone_channels'] = anim_report['bone_channels']
     return blob, details
