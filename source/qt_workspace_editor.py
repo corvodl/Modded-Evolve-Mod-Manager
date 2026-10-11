@@ -1367,20 +1367,31 @@ class QtWorkspaceEditor(QMainWindow):
             source_game = self.manager.game_root or self.manager._find_game_root()
             source_loose = self.loose_animation_index
 
-            def build_native_clip(ref):
-                # QThreadPool worker: verify/index archive metadata and decode
-                # ONLY this CAF when it is first requested by the user.
+            def build_native_clip(ref, *, base_ref=None):
+                # QThreadPool worker: use the exact model skeleton for both
+                # clips. Layered aim poses must never run alone.
                 from animation_on_demand import resolve_caf_for_play
                 selected, extracted, origin = resolve_caf_for_play(
                     ref, stage_root=source_stage, game_root=source_game,
                     asset_index=source_index,
                     preferred_workspace=source_workspace,
                     loose_index=source_loose)
+                base_selected = None
+                if base_ref is not None:
+                    base_selected, _, _ = resolve_caf_for_play(
+                        base_ref, stage_root=source_stage, game_root=source_game,
+                        asset_index=source_index,
+                        preferred_workspace=source_workspace,
+                        loose_index=source_loose)
                 blob, details = create_character_glb(
                     source_workspace, source_relative, source_index,
                     character=source_character, texture_folder=source_textures,
                     projects_root=source_projects, stage_root=source_stage,
-                    clip=selected)
+                    clips=(base_selected, selected) if base_selected is not None else None,
+                    clip=selected if base_selected is None else None,
+                    allow_layered=base_selected is not None)
+                if base_selected is not None:
+                    details['_layered_pair'] = (base_selected.name, selected.name)
                 from model_animation import AnimatedGLB
                 from gpu_model_preview import prepare_geometry
                 imported = AnimatedGLB(blob,'Original Evolve animation')
