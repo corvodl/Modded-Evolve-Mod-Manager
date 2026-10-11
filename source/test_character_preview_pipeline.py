@@ -49,7 +49,7 @@ class CharacterPipelineTests(unittest.TestCase):
             state, hint = native_clip_playability(ref)
             self.assertEqual('converter', state)
             self.assertIn('converter', hint)
-            self.assertIn('No native DBA decoder', hint)
+            self.assertIn('bundled converter', hint)
 
     def test_layered_aimposes_are_not_claimed_as_standalone_playback(self):
         layered = AnimationReference(
