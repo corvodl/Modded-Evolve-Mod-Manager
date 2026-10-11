@@ -2072,8 +2072,19 @@ class QtWorkspaceEditor(QMainWindow):
                 except (OSError, ValueError) as exc:
                     lines.append('  Lookup unavailable: ' + str(exc)[:160])
                     continue
-                lines.append('  Material: ' + str(links.get('material')))
+                lines.append('  Material: ' + str(links.get('material') or '(not found)'))
                 lines.append('  Status: ' + str(links.get('status')))
+                if links.get('basis') and links['basis'] != 'unresolved':
+                    lines.append('  Association: ' + links['basis'])
+                if links.get('status') == 'missing':
+                    nearby = links.get('nearby_materials') or ()
+                    if nearby:
+                        lines.append('  Other .mtl files in this character folder '
+                                     '(not automatically assigned):')
+                        lines.extend('    ' + name for name in nearby[:8])
+                    lines.append('  The equipment has no verified material link '
+                                 'in the indexed PAKs; this is not necessarily a '
+                                 'missing DDS texture.')
                 for record in links.get('textures', ()):
                     lines.append('  %s: %s — %s' % (
                         record.get('map'), record.get('reference'),
