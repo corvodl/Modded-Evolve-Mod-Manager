@@ -57,7 +57,7 @@ class AssetLibraryController(QObject):
                          name="AssetLibrary-" + action).start()
         return True
 
-    def import_files(self, paths, stage, *, automatic=False):
+    def import_files(self, paths, stage, *, automatic=False, extra_keys=()):
         files = tuple(Path(p) for p in paths)
         if not files:
             return False
@@ -71,7 +71,8 @@ class AssetLibraryController(QObject):
                                    (i, len(files), path.name), 0, 1)
                 try:
                     result = import_pak(
-                        path, stage=stage, cancelled=self._cancel.is_set,
+                        path, stage=stage, extra_keys=extra_keys,
+                        cancelled=self._cancel.is_set,
                         progress=lambda name, done, total:
                             self.progress.emit(name, done, total))
                     results.append(result)
@@ -136,6 +137,11 @@ class AssetLibraryDialog(QDialog):
         self.add_button = QPushButton("Add PAKs…")
         self.add_button.clicked.connect(self.add_paks)
         controls.addWidget(self.add_button)
+        self.key_button = QPushButton("Add with Public Key…")
+        self.key_button.setToolTip(
+            "Import signed Evolve PAKs that use a different public verification key.")
+        self.key_button.clicked.connect(self.add_with_key)
+        controls.addWidget(self.key_button)
         self.default_button = QPushButton("Import shared + animation PAKs")
         self.default_button.clicked.connect(self.import_defaults)
         controls.addWidget(self.default_button)
@@ -181,8 +187,8 @@ class AssetLibraryDialog(QDialog):
 
     def _sync(self):
         running = self.controller.busy
-        for button in (self.add_button, self.default_button,
-                       self.verify_button, self.remove_button):
+        for button in (self.add_button, self.key_button,
+                       self.default_button, self.verify_button, self.remove_button):
             button.setEnabled(not running)
         self.remove_button.setEnabled(not running and bool(self.table.selectedItems()))
         self.cancel_button.setEnabled(running)
@@ -193,6 +199,18 @@ class AssetLibraryDialog(QDialog):
             str(self.game or Path.home()), "Evolve PAKs (*.pak);;All files (*)")
         if names:
             self.controller.import_files(names, self.stage)
+
+    def add_with_key(self):
+        names, _ = QFileDialog.getOpenFileNames(
+            self, "Select Evolve PAKs to add",
+            str(self.game or Path.home()), "Evolve PAKs (*.pak)")
+        if not names:
+            return
+        key, _ = QFileDialog.getOpenFileName(
+            self, "Choose RSA public verification key (never a private key)",
+            str(self.game or Path.home()), "RSA Public Key (*.bin *.der)")
+        if key:
+            self.controller.import_files(names, self.stage, extra_keys=(key,))
 
     def import_defaults(self):
         files = installed_defaults(self.game)
