@@ -64,6 +64,32 @@ class SharedCatalog:
         self.installed_game = Path(installed_game).resolve() if installed_game else None
         self.warnings = []
 
+    def _candidate_files(self):
+        if self.installed_game is None:
+            from universal_stage import allowed_paks
+            base = (self.stage / "paks").resolve()
+            return [(rel, base / rel) for rel in allowed_paks(self.stage).values()
+                    if Path(rel).name.casefold() in self.archive_names]
+        root = self.installed_game
+        if not (root / "bin64_SteamRetail" / "Evolve.exe").is_file():
+            raise ValueError("An installed EvolveGame folder is required.")
+        result = []
+        visited = 0
+        for folder, dirs, files in os.walk(root, followlinks=False):
+            dirs[:] = [n for n in dirs if not (Path(folder) / n).is_symlink()]
+            visited += 1
+            if visited > 6000:
+                raise ValueError("Shared asset directory scan limit exceeded.")
+            for name in files:
+                if name.casefold() not in self.archive_names:
+                    continue
+                path = Path(folder) / name
+                if path.is_file() and not path.is_symlink():
+                    result.append((path.relative_to(root).as_posix(), path))
+                if len(result) > 48:
+                    raise ValueError("Unexpected number of shared PAK copies.")
+        return result
+
     def scan(self):
         from universal_stage import allowed_paks
         from evolve_pak_rekey import extract_plain_cdr
