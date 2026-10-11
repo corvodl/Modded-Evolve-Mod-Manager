@@ -35,7 +35,7 @@ DEFAULT_NAMES = frozenset({
     "animationsconfig.pak",
     "animationsdba.pak",
 })
-MAX_ARCHIVES = 300
+MAX_ARCHIVES = 4096  # opt-in full-game library; imports remain individually bounded
 MAX_ENTRIES = 250_000
 MAX_ENTRY_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 100 * 1024 * 1024 * 1024
