@@ -1096,6 +1096,9 @@ class QtGPUModelPanel(QWidget):
 
     def _native_selection(self, index):
         from character_animation_catalog import native_clip_playability
+        # A pending asynchronous conversion belongs to the previous choice.
+        # Do not let it replace the currently selected animation after a click.
+        self._native_generation += 1
         ref_index = self.native_clip_select.itemData(index)
         if not isinstance(ref_index, int) or ref_index < 0 or ref_index >= len(self._native_references):
             self.play_native_button.setEnabled(False)
