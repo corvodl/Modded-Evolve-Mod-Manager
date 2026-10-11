@@ -73,6 +73,15 @@ class QtMigrationTests(unittest.TestCase):
         self.assertEqual(self.win.stack.count(), 8)
         self.assertLess(SECTIONS.index('Asset Library'), SECTIONS.index('Modding'))
         self.assertEqual(self.win.asset_table.columnCount(), 6)
+        self.assertTrue(any(
+            button.text() == 'Open Asset Library Folder'
+            for button in self.win.pages['asset_library'].findChildren(QPushButton)))
+        with patch('qt_manager.QDesktopServices.openUrl', return_value=True) as opener:
+            from asset_library import LIBRARY_HOME
+            with patch('asset_library.LIBRARY_HOME', self.base):
+                self.win.open_library_folder()
+            opener.assert_called_once()
+            self.assertEqual(opener.call_args.args[0].toLocalFile(), str(self.base))
         self.assertIn('preview and export', ' '.join(
             item.text() for item in
             self.win.pages['asset_library'].findChildren(QLabel)).casefold())
