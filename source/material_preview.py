@@ -245,17 +245,38 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 return None
         return next(iter(hits.values()))
 
+    def find_texture(ref):
+        """Try exact game path, then material-relative refs, without guessing."""
+        hit = _find_unique(index, ref, preferred_workspace=material['workspace'])
+        if hit is not None:
+            return hit
+        # Some character .mtl files refer to 'textures/foo.tif' relative
+        # to their own virtual folder; the imported PAK stores the complete
+        # 'characters/hunters/merc_x/textures/foo.dds.0' path.
+        normalized_ref = ref.strip().replace('\\', '/')
+        # A virtual relative path is safe only when it contains no traversal.
+        if (normalized_ref and not normalized_ref.startswith('/')
+                and ':' not in normalized_ref and
+                '..' not in normalized_ref.split('/')):
+            parent = Path(material['relative']).parent.as_posix()
+            if parent != '.':
+                try:
+                    hit = _find_unique(index, parent + '/' + normalized_ref,
+                                       preferred_workspace=material['workspace'])
+                except ValueError:
+                    raise
+                if hit is not None:
+                    return hit
+        hit = _external_lookup(texture_folder, ref)
+        return hit if hit is not None else recover_unique_dds(ref)
+
     def optional_map(item, names):
         ref = next((child.get('File') or child.get('file')
                     for child in item.findall('./Textures/Texture')
                     if (child.get('Map') or child.get('map') or '').casefold() in names),None)
         if not ref:
             return None
-        hit = _find_unique(index,ref,preferred_workspace=material['workspace'])
-        if hit is None:
-            hit = _external_lookup(texture_folder,ref)
-        if hit is None:
-            hit = recover_unique_dds(ref)
+        hit = find_texture(ref)
         if hit is None:
             return None
         return _decode_texture(hit)
@@ -291,14 +312,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             result.append(None)
             continue
         try:
-            found = _find_unique(index, diffuse, preferred_workspace=material['workspace'])
-            if found is None:
-                found = _external_lookup(texture_folder, diffuse)
-            if found is None:
-                found = recover_unique_dds(diffuse)
-                if found is not None:
-                    issues.append(name + ': recovered missing prefix using uniquely named DDS '
-                                  + str(found.get('relative','')))
+            found = find_texture(diffuse)
             if found is None:
                 issues.append(name + ': DDS missing for ' + diffuse)
                 result.append(None)
