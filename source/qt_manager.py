@@ -577,6 +577,7 @@ class QtManager(QMainWindow):
         actions.addWidget(_button('PAK Diff…', self.open_pak_diff))
         actions.addWidget(_button('Projects', self.open_project_dashboard))
         actions.addWidget(_button('Tasks', self.open_task_manager))
+        actions.addWidget(_button('Offline Test…', self.build_offline_test))
         root.addLayout(actions)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(('Folder', 'Description', 'File', 'Type / Project', 'Size'))
@@ -1674,6 +1675,72 @@ class QtManager(QMainWindow):
                            lambda: self._after_build(dest))
         except Exception as exc:
             self.failure(exc)
+
+    def build_offline_test(self):
+        """Guided private/offline build, signed stage and isolated game launch.
+
+        Restoration remains explicit until the client confirms game exit;
+        never assume the launcher process lifetime is the game lifetime.
+        """
+        try:
+            if self.busy or not self.flush_editors():
+                return
+            from asset_intelligence import validate_project
+            workspace=self._workspace_for_selected_archive()
+            if workspace is None:
+                raise ValueError('Unpack the selected signed PAK first.')
+            st=self.refresh_swap_status()
+            if st.phase not in ('missing','prepared','restored'):
+                raise RuntimeError('Restore originals before an offline test.')
+            changed,problems=validate_project(workspace)
+            if problems:
+                raise ValueError('Preflight found problems:\n'+'\n'.join(problems[:8]))
+            if not changed:
+                raise ValueError('There are no modified assets to test.')
+            pak,relative=self._selected_stage_pak()
+            pub,priv=self._pub_priv()
+            if not priv.is_file():
+                raise FileNotFoundError('Signing private key not configured.')
+            meta=json.loads((workspace/'.evolve-pak-workspace.json').read_text('utf-8'))
+            if Path(meta['source_pak']).resolve()!=pak.resolve():
+                raise ValueError('Selected PAK does not match this workspace.')
+            if not self.confirm('Offline mod test',
+                'Validate and build %d edited asset(s), sign the selected PAK, '
+                'and stage it before launching in offline mode?\n\n'
+                'Restore Game Files remains required after testing. '
+                'No public multiplayer traffic will be enabled.'%len(changed)):
+                return
+            output=(Path(self.projects_path)/'Built'/
+                relative.replace('/','_')/
+                datetime.now().strftime('%Y%m%d_%H%M%S_%f')/pak.name)
+            output.parent.mkdir(parents=True,exist_ok=False)
+            cmd=[sys.executable,'-u',str(ROOT/'evolve_pak_workspace.py'),
+                 'build','--workspace',str(workspace),
+                 '--public-key',str(pub),'--private-key',str(priv),
+                 '--out',str(output)]
+            self.run_steps([('Validate and sign offline test PAK',cmd)],
+                'Build Offline Test',
+                lambda:self._stage_offline_test(output,relative))
+        except (ValueError,OSError,RuntimeError) as exc:
+            self.failure(exc)
+
+    def _stage_offline_test(self,pak,relative):
+        self.output_pak=str(pak)
+        self.output_input.setText(self.output_pak)
+        self.persist()
+        self._stage_install(pak,relative,'Stage Offline Test',
+                            self._start_offline_test)
+
+    def _start_offline_test(self):
+        self.refresh_archives()
+        self.refresh_swap_status()
+        if self.confirm('Offline test staged',
+            'The signed PAK is staged. Start a private/offline test session now? '
+            'Your game will be network-blocked using the existing firewall '
+            'safeguard. After testing, return to Play & Restore and restore '
+            'your original files.'):
+            self._developer_allow_online=False
+            self.launch()
 
     def _after_build(self, result):
         self.output_pak = str(result)
