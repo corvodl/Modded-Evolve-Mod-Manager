@@ -7,6 +7,7 @@ RELEASE_NOTES = (
     ('1.1.18-beta.2', (
         'Add a permanent extracted PAK Asset Library with custom archive imports.',
         'Improve animation asset lookup and simplify the model editor explorer.',
+        'Open a Level Editor 1.0 with an Unreal-inspired layout and object transforms.',
     )),
     ('1.1.18-beta.1', (
         'Add a separate experimental Beta release with a Windows installer.',
