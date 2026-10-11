@@ -18,6 +18,12 @@ _MAX_EMBEDDED = 16 * 1024 * 1024
 _MTL_TOKEN = re.compile(rb'([a-zA-Z0-9_./\\-]{3,210}\.mtl)', re.I)
 
 
+class AmbiguousMaterialError(ValueError):
+    def __init__(self, virtual):
+        self.virtual = virtual
+        super().__init__('Different versions of model material exist in multiple PAKs: ' + virtual)
+
+
 def _material_path(value, parent):
     value = str(value or '').strip().replace('\\', '/')
     if not value:
@@ -35,7 +41,7 @@ def _material_path(value, parent):
 def _found(index, candidate, preferred_workspace):
     hits, status = _resolve(index, candidate, preferred_workspace=preferred_workspace)
     if status == 'ambiguous':
-        raise ValueError('Conflicting copies of model material: ' + candidate)
+        raise AmbiguousMaterialError(candidate)
     if status == 'found':
         return hits[0]
     return None
