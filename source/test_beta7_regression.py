@@ -51,7 +51,7 @@ class IndexedMaterialsTests(TestCase):
     def _texture(self, filename, different=False):
         file = self.root / filename
         data = fixture_dds('DXT5', (16, 16), 1)
-        file.write_bytes(data[:-1] + bytes([1]) if different else data)
+        file.write_bytes(data[:-1] + bytes([data[-1] ^ 0xff]) if different else data)
         return file
 
     def _record(self, file, virtual):
