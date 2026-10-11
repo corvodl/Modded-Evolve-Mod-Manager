@@ -1135,6 +1135,7 @@ class QtGPUModelPanel(QWidget):
             self.anim_timer.stop()
             self.anim_playing = False
             self.play_button.setText('Play')
+            self._play_shortcut.setText('▶  Play')
             self.anim_status.setText('Animation stopped: '+str(exc))
 
     def toggle_play(self):
@@ -1146,6 +1147,7 @@ class QtGPUModelPanel(QWidget):
             return
         self.anim_playing = not self.anim_playing
         self.play_button.setText('Pause' if self.anim_playing else 'Play')
+        self._play_shortcut.setText('❚❚  Pause' if self.anim_playing else '▶  Play')
         if self.anim_playing:
             self.anim_clock.start()
             self.anim_timer.start()
