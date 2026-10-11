@@ -1066,7 +1066,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             chosen = self.selected()
-            if chosen.casefold().endswith('.lyr'):
+            if chosen.casefold().endswith('.lyr') and not self.read_only_library:
                 self.manager.open_level_editor(self.workspace)
             else:
                 self.load(chosen)
@@ -1995,6 +1995,12 @@ class QtWorkspaceEditor(QMainWindow):
                 materials = None
                 material_note = ' | Untextured: ' + str(error)[:180]
             dialog = QtGPUModelDialog(self, self.mesh, materials)
+            if self.read_only_library:
+                for button in dialog.panel.findChildren(QPushButton):
+                    if button.text() in (
+                            'Import Original CAF/DBA…', 'Load Animation GLB…'):
+                        button.hide()
+                        button.setEnabled(False)
             if self.model_panel is not None:
                 from character_animation_catalog import discover_animations
                 anim_model = (self.character_preview.skeleton if self.character_preview
