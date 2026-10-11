@@ -49,7 +49,7 @@ class NativeCafTests(unittest.TestCase):
         q = packed.to_bytes(6,'little')
         header = struct.pack('<IHHBBBBBBH',
             zlib.crc32(b'root'),2,0,5,2,0,0,0,1,0)
-        source = crchf([(0x0829100d, header+q+q+b'\\x00\\x01')])
+        source = crchf([(0x0829100d, header+q+q+bytes([0,1]))])
         track = decode_caf(source).tracks[0]
         self.assertEqual(len(track.rotations),2)
         self.assertEqual(track.position_times,())
@@ -59,7 +59,7 @@ class NativeCafTests(unittest.TestCase):
         header = struct.pack('<IHHBBBBBBH',
             zlib.crc32(b'root'),0,2,0,0,2,1,2,1,0)
         source = crchf([(0x0829100d,header +
-            struct.pack('<6f',0,0,0,.1,0,0) + b'\\x00\\x01')])
+            struct.pack('<6f',0,0,0,.1,0,0) + bytes([0,1]))])
         track = decode_caf(source).tracks[0]
         self.assertEqual(track.rotation_times,())
         self.assertEqual(track.position_times,(0.,1.))
