@@ -944,6 +944,13 @@ class QtWorkspaceEditor(QMainWindow):
         index = self.preview_index
         projects = self.manager.projects_path
         stage = self.manager.stage_path
+        # Character-specific animation CAFs may live in their own signed PAK,
+        # separate from the six shared texture/skeleton packages.
+        try:
+            from shared_pak_cache import start_character_catalog
+            start_character_catalog(stage, rel)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.status.setText('Character index unavailable: ' + str(exc)[:120])
         tex = self.texture_folder
         ani = self.loose_animation_index
         equipment = self.character_skin_choice
