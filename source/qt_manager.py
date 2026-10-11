@@ -35,7 +35,7 @@ if os.name == 'nt' and getattr(sys, 'frozen', False):
         sys.stderr = sys.stderr or open(os.devnull, 'w')
 
 
-from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QUrl
+from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl
 from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout,
@@ -306,6 +306,7 @@ class QtManager(QMainWindow):
         self.keep_original_snapshots = bool(self.settings.get('keep_original_snapshots', True))
         self.show_activity_on_tasks = bool(self.settings.get('show_activity_on_tasks', True))
         self._developer_allow_online = False
+        self._dev_trace_env = {}
         self.external_pak = ''
         self.game_root = None
         self.archive_entries = []
@@ -932,7 +933,8 @@ class QtManager(QMainWindow):
             'Live pointer/snapshot tools and isolated relay, session and '
             'trace diagnostics. Local fixture services cannot target public endpoints.')
         from qt_developer_lab import DeveloperLabPanel
-        self.dev_lab_panel = DeveloperLabPanel(self._developer_game)
+        self.dev_lab_panel = DeveloperLabPanel(
+            self._developer_game,trace_env_callback=self._set_dev_trace_env)
         panel.addWidget(self.dev_lab_panel)
         lay.addWidget(card)
         lay.addWidget(_button('Lock and leave',
@@ -942,6 +944,13 @@ class QtManager(QMainWindow):
         self.pages['developer'] = scroll
         QTimer.singleShot(0, self.dev_memory_panel.start)
         QTimer.singleShot(0, self.dev_lab_panel.refresh_pids)
+
+    def _set_dev_trace_env(self,name,value):
+        from developer_network_lab import validate_trace_environment
+        name,value=validate_trace_environment(name,value)
+        if len(self._dev_trace_env)>=32 and name not in self._dev_trace_env:
+            raise ValueError('At most 32 developer trace flags per session.')
+        self._dev_trace_env[name]=value
 
     def _developer_game(self):
         state = state_status(Path(self.swap_path))
@@ -1094,6 +1103,12 @@ class QtManager(QMainWindow):
         self.process.setProgram(str(wrapped[0]))
         self.process.setArguments([str(x) for x in wrapped[1:]])
         self.process.setWorkingDirectory(str(self._task_cwd))
+        if (self._task_label=='Play with Mods' and
+                not self._developer_allow_online and self._dev_trace_env):
+            environment=QProcessEnvironment.systemEnvironment()
+            for name,value in self._dev_trace_env.items():
+                environment.insert(name,value)
+            self.process.setProcessEnvironment(environment)
         self.process.setProcessChannelMode(QProcess.MergedChannels)
         self.process.readyReadStandardOutput.connect(self._process_output)
         self.process.finished.connect(self._process_finished)
