@@ -52,7 +52,7 @@ class _Archive:
 
 
 class SharedCatalog:
-    def __init__(self, stage, cache_root, key, archive_names=None):
+    def __init__(self, stage, cache_root, key, archive_names=None, installed_game=None):
         self.stage = Path(stage).resolve()
         self.cache_root = Path(cache_root).resolve()
         self.key = Path(key).resolve()
@@ -61,6 +61,8 @@ class SharedCatalog:
         self.index = defaultdict(list)
         self._read_lock = threading.RLock()
         self._retained = 0
+        self.installed_game = Path(installed_game).resolve() if installed_game else None
+        self.warnings = []
 
     def scan(self):
         from universal_stage import allowed_paks
