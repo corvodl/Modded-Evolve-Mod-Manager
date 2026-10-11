@@ -73,10 +73,12 @@ class QtMigrationTests(unittest.TestCase):
         self.assertEqual(self.win.stack.count(), 8)
         self.assertLess(SECTIONS.index('Asset Library'), SECTIONS.index('Modding'))
         self.assertEqual(self.win.asset_table.columnCount(), 6)
-        self.assertIn('previewing and exporting', ' '.join(
+        self.assertIn('preview and export', ' '.join(
             item.text() for item in
-            self.win.pages['asset_library'].findChildren(QLabel)).casefold()
-            .replace('preview and export', 'previewing and exporting'))
+            self.win.pages['asset_library'].findChildren(QLabel)).casefold())
+        self.assertIn('read-only', ' '.join(
+            item.text() for item in
+            self.win.pages['asset_library'].findChildren(QLabel)).casefold())
         self.assertEqual(self.win.stack.currentIndex(), 0)
         self.assertTrue(self.win.menu_button.text().startswith('☰'))
         self.assertIn('modded-evolve.com',
