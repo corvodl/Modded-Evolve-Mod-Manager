@@ -411,6 +411,10 @@ class QtManager(QMainWindow):
         self._instructions_page()
         self._modding_page()
         self._play_page()
+        from qt_asset_library import AssetLibraryController
+        self.asset_library_controller = AssetLibraryController(self)
+        self.asset_library_controller.finished.connect(self._asset_library_finished)
+        self._auto_library_scanned_game = None
         self._settings_page()
         self._credits_page()
         self._whats_new_page()
@@ -424,8 +428,8 @@ class QtManager(QMainWindow):
         self.status = _label('Ready — read Instructions before connecting an installed game.', muted=True)
         footer = QHBoxLayout()
         footer.addWidget(self.status, 1)
-        self.shared_asset_label = _label('Shared: indexing…', muted=True)
-        self.shared_asset_label.setToolTip('Six shared Hunter / Monster / Creature archives are indexed in the background.')
+        self.shared_asset_label = _label('Asset Library: ready to import', muted=True)
+        self.shared_asset_label.setToolTip('Extracted files from verified shared, animation and user-added PAKs.')
         footer.addWidget(self.shared_asset_label)
         self.version_label = _label(app_version())
         self.version_label.setObjectName('version')
@@ -437,6 +441,7 @@ class QtManager(QMainWindow):
         self.refresh_swap_status()
         # Verify the six Shared asset directories off the GUI thread.
         QTimer.singleShot(150, self._warm_shared_assets)
+        QTimer.singleShot(700, self._warm_asset_library)
         self._shared_catalog_last_status = ''
         self._shared_catalog_timer = QTimer(self)
         self._shared_catalog_timer.setInterval(1000)
@@ -796,6 +801,23 @@ class QtManager(QMainWindow):
                              _button('Save Settings', self.save_settings)))
         inside.addWidget(btns)
 
+        _settings_heading(lay, 'ASSET LIBRARY',
+            'Keep fully extracted reference PAKs for characters, textures, animations and level data.')
+        asset_card, asset_card_row = _card('EXTRACTED PAK LIBRARY',
+            'Automatically imports the nine standard shared/animation PAKs '
+            'from EvolveGame once. Add any other supported signed PAK manually. '
+            'Files stay extracted under Data/AssetLibrary; no repeated unpacking for previews.')
+        lay.addWidget(asset_card)
+        self.asset_library_settings_status = _label(
+            'Extracted PAK assets are stored separately from mod projects.', muted=True)
+        asset_card_row.addWidget(self.asset_library_settings_status)
+        asset_card_row.addWidget(_button('Manage Asset Library / Add PAKs…',
+                                        self.open_asset_library))
+        asset_card_row.addWidget(_label(
+            'Add one or multiple PAKs; verify extracted assets, remove imported '
+            'packages, or re-import the standard shared/animation collection. '
+            'This never edits your game installation.', muted=True))
+
         _settings_heading(lay, 'BACKUPS & RECOVERY',
                           'Save disk space safely without sacrificing quick local restoration.')
         backups, backup_row = _card('ORIGINAL GAME FILES',
@@ -875,7 +897,7 @@ class QtManager(QMainWindow):
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['settings'] = scroll
-        self.settings_sections = ('GENERAL', 'GAME & FILES',
+        self.settings_sections = ('GENERAL', 'GAME & FILES', 'ASSET LIBRARY',
                                   'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
                                   'UPDATES & ADVANCED')
 
@@ -1626,6 +1648,64 @@ class QtManager(QMainWindow):
         except (ValueError, KeyError, TypeError, OSError):
             pass
 
+    def open_asset_library(self):
+        from qt_asset_library import AssetLibraryDialog
+        dialog = AssetLibraryDialog(
+            self, self.asset_library_controller, self.stage_path,
+            self.game_root or self._find_game_root())
+        dialog.exec()
+
+    def _warm_asset_library(self):
+        from asset_library import installed_defaults, imported_archives
+        game = self.game_root or self._find_game_root()
+        if not game:
+            return
+        key = str(Path(game).resolve())
+        if self._auto_library_scanned_game == key:
+            return
+        if self.asset_library_controller.busy:
+            return
+        files = installed_defaults(game)
+        if not files:
+            return
+        if self.asset_library_controller.import_files(
+                files, self.stage_path, automatic=True):
+            self._auto_library_scanned_game = key
+            self.shared_asset_label.setText('Asset Library: importing…')
+
+    def _asset_library_finished(self, action, result, error):
+        from asset_library import imported_archives
+        archives = imported_archives()
+        self.shared_asset_label.setText(
+            'Asset Library: %d PAKs' % len(archives))
+        self.shared_asset_label.setToolTip(
+            self.asset_library_controller.status)
+        if hasattr(self, 'asset_library_settings_status'):
+            self.asset_library_settings_status.setText(
+                '%d extracted archives • %.1f MiB stored' %
+                (len(archives), sum(item['bytes'] for item in archives) / 1048576))
+        if error:
+            self._log('Asset Library: ' + str(error)[:200])
+            return
+        if isinstance(result, list):
+            failed = [row for row in result if row.get('status') == 'error']
+            self._log('Asset Library: %d imported or already present, %d failures' %
+                      (len(result) - len(failed), len(failed)))
+            if failed:
+                self._log('First failed PAK: ' + failed[0]['name'] +
+                          ': ' + failed[0]['error'][:180])
+        # Loaded editor previews use a snapshot of the asset index. Refresh
+        # model dependencies when the extracted library changes; do not
+        # interrupt a playing animation or dirty text buffer.
+        for editor in tuple(self.editors):
+            try:
+                if (editor.isVisible() and editor.mode == 'models'
+                        and editor.current and not
+                        (editor.model_panel and editor.model_panel.anim_playing)):
+                    editor.load(editor.current)
+            except (OSError, ValueError, RuntimeError) as exc:
+                self._log('Model reference refresh: ' + str(exc)[:120])
+
     def _warm_shared_assets(self):
         from shared_pak_cache import start_shared_catalog
         try:
@@ -1666,6 +1746,7 @@ class QtManager(QMainWindow):
             self._log('Archive scan: ' + str(exc))
         self.refresh_table()
         self._warm_shared_assets()
+        self._warm_asset_library()
 
     def refresh_table(self):
         if not hasattr(self, 'table'):
@@ -2689,6 +2770,11 @@ class QtManager(QMainWindow):
         QApplication.instance().quit()
 
     def closeEvent(self, event):
+        if self.asset_library_controller.busy:
+            self.info('Asset Library import running',
+                      'Finish or cancel extracted PAK import before closing the manager.')
+            event.ignore()
+            return
         if self.busy or self.update_running:
             self.info('Still running', 'Finish the current operation before closing; interrupted swaps are unsafe.')
             event.ignore()
