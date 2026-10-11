@@ -87,6 +87,12 @@ class PakLifecycleTests(unittest.TestCase):
             self.assertGreater(saved,0)
             self.assertFalse(stale.exists())
             self.assertTrue(edited.exists())
+            backups=project(projects,'backups',source,{'entry.xml':b'<A/>'})
+            (backups/'EditorBackups'/'snapshot').mkdir(parents=True)
+            (backups/'EditorBackups'/'snapshot'/'entry.xml').write_bytes(b'<B/>')
+            with self.assertRaises(ValueError):
+                delete_abandoned_project(projects,backups,min_age_days=0)
+            self.assertTrue(backups.exists())
             self.assertTrue(source.is_file())
 
     def test_compare_extracted_pak_projects_and_xml_text(self):
