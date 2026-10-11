@@ -404,6 +404,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('Tools', 'Recovery Snapshot Now', self._autosave_recovery)
         action('Tools', 'Review Project History…', self.open_project_history)
         action('Tools', 'PAK Difference Inspector…', self.manager.open_pak_diff)
+        action('Tools', 'Open Level Editor 1.0…', lambda: self.manager.open_level_editor(self.workspace))
         action('Tools', 'Search All Extracted Assets…', self.open_asset_search)
         action('Tools', 'Batch Export Assets…', self.open_asset_search)
         action('Tools', 'Visual Gameplay Editor…', self.open_gameplay_editor)
@@ -949,7 +950,11 @@ class QtWorkspaceEditor(QMainWindow):
         if not self._confirm_buffer():
             return
         try:
-            self.load(self.selected())
+            chosen = self.selected()
+            if chosen.casefold().endswith('.lyr'):
+                self.manager.open_level_editor(self.workspace)
+            else:
+                self.load(chosen)
         except ValueError as exc:
             self.status.setText(str(exc))
 
