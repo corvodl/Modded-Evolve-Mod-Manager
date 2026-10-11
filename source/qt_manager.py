@@ -1922,9 +1922,18 @@ class QtManager(QMainWindow):
         if rel.startswith('loose-file:'):
             menu.addAction('Edit Game File Copy', self.open_editor)
         else:
-            menu.addAction('Unpack Selected PAKs' if len(ids) > 1 else 'Unpack PAK',
+            from pak_dependencies import is_level_pak
+            if len(ids) == 1 and is_level_pak(rel):
+                submenu = menu.addMenu('Open With…')
+                submenu.addAction('Level Editor 1.0',
+                                  lambda: self.open_level_editor())
+                submenu.addAction('Extracted File Editor',
+                                  lambda: self.open_editor_or_unpack_as_files())
+                menu.addSeparator()
+            menu.addAction('Unpack Selected PAKs + Dependencies'
+                           if len(ids) > 1 else 'Unpack PAK + Dependencies',
                            self.extract_batch if len(ids) > 1 else self.extract)
-            menu.addAction('Inspect PAK Details', self.inspect_pak)
+            menu.addAction('Information / Known Dependencies', self.inspect_pak)
             menu.addSeparator()
             menu.addAction('Show Original Game File in Explorer',
                            lambda: self.reveal_pak(original=True))
@@ -1942,15 +1951,28 @@ class QtManager(QMainWindow):
         rels = [r for r in self.selected_archives() if not r.startswith('loose-file:')]
         return self.archive_label if self.archive_label in rels else (rels[0] if rels else self.archive_label)
 
+    def open_editor_or_unpack_as_files(self):
+        try:
+            matching = self._workspace_for_selected_archive()
+            if matching is not None:
+                self.open_editor()
+            else:
+                self.extract()
+        except (OSError, ValueError) as exc:
+            self.failure(exc)
+
     def inspect_pak(self):
         rel = self._selected_rel()
         staged, original = self._pak_locations(rel)
         size = format_size(staged.stat().st_size) if staged.is_file() else 'Missing'
+        from pak_dependencies import plan_dependencies, plan_report
+        report = plan_report(plan_dependencies(rel, self.archive_entries))
         self.info('PAK details: ' + Path(rel).name,
                   f'Description (filename-derived): {archive_description(rel)}\n'
                   f'Archive: {rel}\nStaged size: {size}\nStaged: {staged}\n'
                   f'Installed original: {original or "Unknown"}\n'
-                  f'Unpacked workspace: {self._workspace_for_selected_archive() or "Not unpacked"}')
+                  f'Unpacked workspace: {self._workspace_for_selected_archive() or "Not unpacked"}\n\n'
+                  + report)
 
     def reveal_pak(self, original=True):
         try:
@@ -2027,17 +2049,66 @@ class QtManager(QMainWindow):
             raise ValueError('Unpack a signed PAK first.')
         return path
 
-    def extract(self):
+    def _start_batch_with_dependencies(self, selected, primary, auto_level=False):
+        """Unpack exactly checked signed PAKs and their recognized companions."""
+        from pak_dependencies import plan_dependencies, plan_report
+        known = set()
+        union = []
+        details = []
+        for item in selected:
+            plan = plan_dependencies(item, self.archive_entries)
+            details.append(plan)
+            for name in plan.all_paks:
+                if name.casefold() not in known:
+                    known.add(name.casefold())
+                    union.append(name)
+        if len(union) > 30:
+            raise ValueError('Dependency selection exceeds the 30-PAK safe batch limit.')
+        if self.filter_input.text().strip():
+            raise ValueError('Clear the extraction filter to unpack dependencies completely.')
+        if not self.confirm(
+                'Extract PAKs with dependencies?',
+                'The following %d signed PAKs will be extracted as separate '
+                'editable projects (original game files stay unchanged):\n\n%s\n\n'
+                'Other game-wide or dynamic dependencies may not be listed. '
+                'Proceed?' %
+                (len(union), '\n'.join('  • ' + item for item in union))):
+            return False
+        pub, _ = self._pub_priv()
+        dest = self._new_folder('PAK_Family')
+        cmd = [sys.executable, '-u', str(ROOT/'multi_pak_assets.py'),
+               '--stage', self.stage_path, '--public-key', str(pub),
+               '--destination', str(dest)]
+        for rel in union:
+            cmd += ['--pak', rel]
+        self._batch_primary = primary
+        self._batch_open_level = bool(auto_level)
+        self.run_steps([('Extracting PAKs and known companions', cmd)],
+                       'Dependency batch unpack', lambda: self._after_batch(dest))
+        return True
+
+    def extract(self, auto_level=False):
         try:
             pak, rel = self._selected_stage_pak()
+            if rel in self.archive_entries:
+                from pak_dependencies import plan_dependencies
+                plan = plan_dependencies(rel, self.archive_entries)
+                if plan.companions:
+                    self._start_batch_with_dependencies(
+                        [rel], rel, auto_level=auto_level)
+                    return
             pub, _ = self._pub_priv()
-            folder = self._new_folder((rel or 'External/'+pak.name).replace('/','_').replace('.pak',''))
+            folder = self._new_folder(
+                (rel or 'External/'+pak.name).replace('/','_').replace('.pak',''))
             cmd = [sys.executable,'-u',str(ROOT/'evolve_pak_workspace.py'),
                    'extract','--pak',str(pak),'--public-key',str(pub),
                    '--workspace',str(folder),'--skip-unsupported']
             filter_text = self.filter_input.text().strip()
             if filter_text:
                 cmd += ['--filter', filter_text]
+            if auto_level and filter_text:
+                raise ValueError('Clear the extraction filter for a complete level project.')
+            self._single_open_level = bool(auto_level)
             self._extraction_timer = (time.perf_counter(), pak.stat().st_size, pak.name)
             self.run_steps([('Unpacking archive',cmd)], 'Unpack archive',
                            lambda: self._after_extract(folder))
@@ -2059,27 +2130,20 @@ class QtManager(QMainWindow):
         self.output_pak = ''
         self.output_input.setText('')
         self.persist()
-        self.open_editor()
+        open_level = bool(getattr(self, '_single_open_level', False))
+        self._single_open_level = False
+        if open_level:
+            self.open_level_editor(folder)
+        else:
+            self.open_editor()
 
     def extract_batch(self):
         try:
-            chosen = [s for s in self.selected_archives() if not s.startswith('loose-file:')]
+            chosen = [s for s in self.selected_archives()
+                      if not s.startswith('loose-file:')]
             if not 2 <= len(chosen) <= 30:
                 raise ValueError('Select 2–30 PAKs for a batch.')
-            if self.filter_input.text().strip():
-                raise ValueError('Clear the extraction filter before batch extraction.')
-            if not self.confirm('Unpack selected PAKs?',
-                                f'Unpack {len(chosen)} archives into separate projects? This may use considerable space.'):
-                return
-            pub, _ = self._pub_priv()
-            dest = self._new_folder('Batch_Assets')
-            cmd = [sys.executable,'-u',str(ROOT/'multi_pak_assets.py'),
-                   '--stage',self.stage_path,'--public-key',str(pub),
-                   '--destination',str(dest)]
-            for rel in chosen:
-                cmd += ['--pak',rel]
-            self.run_steps([('Unpacking selected PAKs',cmd)], 'Batch unpack',
-                           lambda: self._after_batch(dest))
+            self._start_batch_with_dependencies(chosen, chosen[0])
         except Exception as exc:
             self.failure(exc)
 
@@ -2087,11 +2151,46 @@ class QtManager(QMainWindow):
         data = load_collection(folder)
         self.batch_root = str(folder)
         self._load_batch()
-        self.archive_label = data['archives'][0]['archive']
-        self.current_workspace = str(self.batch_workspaces[self.archive_label])
+        preferred = getattr(self, '_batch_primary', '')
+        archive_map = {row['archive']: Path(folder)/row['workspace']
+                       for row in data['archives']}
+        if preferred not in archive_map:
+            preferred = data['archives'][0]['archive']
+        self.archive_label = preferred
+        self.current_workspace = str(archive_map[preferred])
         self.workspace_input.setText(self.current_workspace)
         self.persist()
-        self.open_editor()
+        level = bool(getattr(self, '_batch_open_level', False))
+        self._batch_primary = ''
+        self._batch_open_level = False
+        if level:
+            from level_editor_core import LevelProject
+            # Prefer editor .lyr data when provided in a companion PAK;
+            # the selected runtime level.pak may instead use mission XML.
+            available = [item for item in archive_map.items()
+                         if LevelProject.contains_levels(item[1])]
+            if available:
+                with_layers = []
+                for name, ws in available:
+                    from evolve_pak_workspace import load_workspace
+                    manifest = load_workspace(ws)
+                    if any(entry['path'].casefold().endswith('.lyr')
+                           for entry in manifest['entries']):
+                        with_layers.append((name,ws))
+                matching = with_layers or available
+                from pak_dependencies import level_identity
+                intended = level_identity(preferred)
+                match = next((ws for name,ws in matching
+                              if level_identity(name) == intended),
+                             matching[0][1])
+                self.open_level_editor(match)
+            else:
+                self.info('Level extracted, no recognized placement file',
+                          'Companion PAKs were extracted, but no supported .lyr or '
+                          'mission_*.xml + leveldata.xml files were found. '
+                          'Open the extraction projects in Edit Files to inspect them.')
+        else:
+            self.open_editor()
 
     def _workspace_for_selected_archive(self):
         from project_selection import workspace_for_archive, workspace_matches
@@ -2108,6 +2207,12 @@ class QtManager(QMainWindow):
 
     def open_editor_or_unpack(self):
         try:
+            from pak_dependencies import is_level_pak
+            picked = [p for p in self.selected_archives()
+                      if not p.startswith('loose-file:')]
+            if len(picked) == 1 and is_level_pak(picked[0]):
+                self.open_level_editor()
+                return
             if any(p.startswith('loose-file:') for p in self.selected_archives()):
                 self.open_editor()
                 return
@@ -2153,24 +2258,28 @@ class QtManager(QMainWindow):
         return True
 
     def open_level_editor(self, workspace=None):
-        """Open a UE-style object placement editor for an extracted .lyr PAK."""
+        """Open a UE-style level project, extracting unprepared level families."""
         try:
             if self.busy:
                 raise RuntimeError('Wait for the current extraction or build to finish.')
             from level_editor_core import LevelProject
             from qt_level_editor import UnrealStyleLevelEditor
-            folder = None
-            if workspace is not None:
-                folder = Path(workspace)
-            else:
+            from pak_dependencies import is_level_pak
+            folder = Path(workspace) if workspace is not None else None
+            selected = self._selected_rel() if workspace is None else ''
+            if workspace is None:
                 try:
                     folder = self._workspace_for_selected_archive()
                 except (OSError, ValueError):
                     folder = None
-                if folder is None and self.current_workspace:
-                    candidate = Path(self.current_workspace)
-                    if candidate.is_dir() and LevelProject.contains_levels(candidate):
-                        folder = candidate
+                # Never reuse a workspace from an unrelated selected PAK.
+                if folder is None and selected in self.archive_entries and is_level_pak(selected):
+                    self.extract(auto_level=True)
+                    return
+                if folder is not None and not LevelProject.contains_levels(folder):
+                    if selected in self.archive_entries and is_level_pak(selected):
+                        self.extract(auto_level=True)
+                        return
             if folder is None or not LevelProject.contains_levels(folder):
                 chosen = QFileDialog.getExistingDirectory(
                     self, 'Select an extracted level PAK project',
@@ -2179,8 +2288,9 @@ class QtManager(QMainWindow):
                     return
                 folder = Path(chosen)
             if not LevelProject.contains_levels(folder):
-                raise ValueError('The extracted project has no editable .lyr object layers. '
-                                 'Unpack a level PAK first.')
+                raise ValueError(
+                    'No supported level placement data found in this project. '
+                    'Select a PAK with .lyr layers or mission_*.xml and leveldata.xml.')
             folder = Path(folder).resolve()
             for editor in self.level_editors:
                 if editor.isVisible() and editor.project.workspace == folder:
