@@ -2429,8 +2429,11 @@ class QtManager(QMainWindow):
                         editor.raise_()
                         editor.activateWindow()
                         return
+                from project_selection import editor_collection_for_workspace
+                archive_map = editor_collection_for_workspace(
+                    ws, self._editor_collection())
                 editor = QtWorkspaceEditor(
-                    self, ws, archive_map=self._editor_collection())
+                    self, ws, archive_map=archive_map)
             editor.setAttribute(Qt.WA_DeleteOnClose, False)
             self.editors.append(editor)
             editor.show()
