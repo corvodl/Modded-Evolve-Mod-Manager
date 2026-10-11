@@ -419,6 +419,10 @@ def shared_asset_index(stage):
             if path == str(stage):
                 for key, records in catalog.index.items():
                     combined[key].extend(records)
+        if _installed is not None and _installed.stage == stage:
+            for key, records in _installed.index.items():
+                if key not in combined:
+                    combined[key].extend(records)
         return dict(combined)
 
 
