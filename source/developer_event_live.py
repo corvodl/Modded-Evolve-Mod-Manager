@@ -187,7 +187,7 @@ class EventBridgeClient:
                 if welcome.get("status") != "ready":
                     raise EventBridgeError("Game bridge is not ready.")
                 capabilities = welcome.get("events")
-                if (not isinstance(capabilities, list) or len(capabilities) > 357
+                if (not isinstance(capabilities, list) or len(capabilities) > 534
                         or any(not isinstance(n, str) for n in capabilities)):
                     raise EventBridgeError("Game bridge returned invalid event capabilities.")
                 if event is None:
