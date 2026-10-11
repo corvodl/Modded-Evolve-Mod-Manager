@@ -1243,8 +1243,14 @@ class QtGPUModelPanel(QWidget):
         preferred = 0
         for position, (i, ref, state) in enumerate(shown, 1):
             self.native_clip_select.addItem(ref.name + suffixes[state], i)
+            source = ('\nExtracted: ' + str(ref.file)
+                      if ref.file is not None else '')
+            if ref.dba_file is not None:
+                source += ('\nPacked database: ' + str(ref.dba_file) +
+                           '\nVirtual DBA: ' + str(ref.dba_virtual_path))
             self.native_clip_select.setItemData(
-                position, native_clip_playability(ref)[1] + '\n' + ref.virtual_path,
+                position, native_clip_playability(ref)[1] +
+                '\nVirtual: ' + ref.virtual_path + source,
                 Qt.ToolTipRole)
             if i == selected:
                 preferred = position
@@ -1293,7 +1299,10 @@ class QtGPUModelPanel(QWidget):
                 'Ready to test: ' + ref.virtual_path +
                 '\nNative decoder checks skeleton compatibility before playback.')
         else:
-            self.native_info.setText(detail + '\n' + ref.virtual_path)
+            source = str(ref.file or ref.dba_file or 'Not indexed')
+            self.native_info.setText(
+                detail + '\nGame path: ' + ref.virtual_path +
+                '\nAsset Library path: ' + source)
 
     def load_native(self):
         from character_animation_catalog import native_clip_playability
