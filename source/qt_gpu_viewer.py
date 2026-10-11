@@ -227,7 +227,12 @@ class QtGLModelCanvas(QOpenGLWidget):
                     uploads.append(0)
                     continue
                 rgba = 'A' in im.getbands()
-                if target == 'textures' and rgba and im.getchannel('A').getextrema()[0] < 255:
+                # A diffuse texture's alpha may encode a mask unrelated to
+                # transparency. Trust the material flag, not raw alpha bytes.
+                if (target == 'textures' and rgba and self.materials and
+                        index < len(getattr(self.materials, 'alpha_modes', ())) and
+                        self.materials.alpha_modes[index] and
+                        im.getchannel('A').getextrema()[0] < 255):
                     self.translucent_slots.add(index)
                 mode = 'RGBA' if rgba else 'RGB'
                 sample = im.convert(mode).transpose(PILImage.Transpose.FLIP_TOP_BOTTOM)
@@ -370,7 +375,8 @@ class QtGLModelCanvas(QOpenGLWidget):
                     shader.bind(opacity=alpha,gloss=self.specular_intensity,
                                 illumination=strength,diffuse=bool(tex),
                                 normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
-                                specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]))
+                                specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
+                                alpha_texture=slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot]))
                 if tex:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D,tex)
