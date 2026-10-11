@@ -2046,7 +2046,16 @@ class QtManager(QMainWindow):
         staged, original = self._pak_locations(rel)
         size = format_size(staged.stat().st_size) if staged.is_file() else 'Missing'
         from pak_dependencies import plan_dependencies, plan_report
-        report = plan_report(plan_dependencies(rel, self.archive_entries))
+        plan = plan_dependencies(rel, self.archive_entries)
+        from asset_library import covered_stage_archives
+        in_library = covered_stage_archives(plan.companions)
+        report = plan_report(plan)
+        report += '\n\nAsset Library dependencies: %d/%d reusable\n' % (
+            len(in_library), len(plan.companions))
+        report += '\n'.join(
+            '  ✓ ' + item + ' (already extracted)' if item in in_library
+            else '  • ' + item + ' (will extract on unpack)'
+            for item in plan.companions)
         self.info('PAK details: ' + Path(rel).name,
                   f'Description (filename-derived): {archive_description(rel)}\n'
                   f'Archive: {rel}\nStaged size: {size}\nStaged: {staged}\n'
@@ -2131,28 +2140,29 @@ class QtManager(QMainWindow):
 
     def _start_batch_with_dependencies(self, selected, primary, auto_level=False):
         """Unpack exactly checked signed PAKs and their recognized companions."""
-        from pak_dependencies import plan_dependencies, plan_report
-        known = set()
-        union = []
-        details = []
-        for item in selected:
-            plan = plan_dependencies(item, self.archive_entries)
-            details.append(plan)
-            for name in plan.all_paks:
-                if name.casefold() not in known:
-                    known.add(name.casefold())
-                    union.append(name)
+        from pak_dependencies import plan_dependencies, remaining_companions
+        from asset_library import covered_stage_archives
+        plans = [plan_dependencies(item, self.archive_entries) for item in selected]
+        implicit = tuple(dict.fromkeys(
+            name for plan in plans for name in plan.companions))
+        covered = covered_stage_archives(implicit)
+        union, reused = remaining_companions(
+            selected, self.archive_entries, covered)
         if len(union) > 30:
             raise ValueError('Dependency selection exceeds the 30-PAK safe batch limit.')
         if self.filter_input.text().strip():
             raise ValueError('Clear the extraction filter to unpack dependencies completely.')
         if not self.confirm(
                 'Extract PAKs with dependencies?',
-                'The following %d signed PAKs will be extracted as separate '
-                'editable projects (original game files stay unchanged):\n\n%s\n\n'
-                'Other game-wide or dynamic dependencies may not be listed. '
-                'Proceed?' %
-                (len(union), '\n'.join('  • ' + item for item in union))):
+                '%d signed PAK(s) will be extracted as separate editable '
+                'projects (originals unchanged):\n\n%s\n\n'
+                '%d dependencies are already fully extracted in the Asset Library '
+                'and will be reused as read-only references:\n%s\n\n'
+                'Only known PAK families are checked; other dynamic '
+                'dependencies may remain. Proceed?' %
+                (len(union), '\n'.join('  • ' + item for item in union),
+                 len(reused), '\n'.join('  ✓ ' + name for name in reused)
+                 or '  None')):
             return False
         pub, _ = self._pub_priv()
         dest = self._new_folder('PAK_Family')
@@ -2178,9 +2188,12 @@ class QtManager(QMainWindow):
                 from pak_dependencies import plan_dependencies
                 plan = plan_dependencies(rel, self.archive_entries)
                 if plan.companions:
-                    self._start_batch_with_dependencies(
-                        [rel], rel, auto_level=auto_level)
-                    return
+                    from asset_library import covered_stage_archives
+                    imported = covered_stage_archives(plan.companions)
+                    if any(p not in imported for p in plan.companions):
+                        self._start_batch_with_dependencies(
+                            [rel], rel, auto_level=auto_level)
+                        return
             pub, _ = self._pub_priv()
             folder = self._new_folder(
                 (rel or 'External/'+pak.name).replace('/','_').replace('.pak',''))
