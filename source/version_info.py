@@ -8,7 +8,7 @@ def app_version(path=None):
         path = Path(__file__).resolve().parent / 'VERSION.txt'
     try:
         first = Path(path).read_text(encoding='utf-8').strip().split(' - ', 1)[0]
-        if re.fullmatch(r'\d+\.\d+(?:\.\d+)?', first):
+        if re.fullmatch(r'\d+\.\d+(?:\.\d+){0,2}', first):
             return 'v' + first
     except OSError:
         pass
