@@ -1717,16 +1717,23 @@ class QtManager(QMainWindow):
             self.shared_asset_label.setText('Asset Library: importing…')
 
     def _asset_library_finished(self, action, result, error):
-        from asset_library import imported_archives
+        from asset_library import imported_archives, required_archive_status
         archives = imported_archives()
+        coverage = required_archive_status()
         self.shared_asset_label.setText(
-            'Asset Library: %d PAKs' % len(archives))
-        self.shared_asset_label.setToolTip(
-            self.asset_library_controller.status)
+            'Shared: %d/6 • Animations: %d/3' %
+            (coverage['shared'], coverage['animations']))
+        details = self.asset_library_controller.status
+        if coverage['missing']:
+            details += '\nMissing required PAKs: ' + ', '.join(coverage['missing'])
+        if coverage['warnings']:
+            details += '\n%d skipped PAK entries; verify imported contents.' % coverage['warnings']
+        self.shared_asset_label.setToolTip(details)
         if hasattr(self, 'asset_library_settings_status'):
             self.asset_library_settings_status.setText(
-                '%d extracted archives • %.1f MiB stored' %
-                (len(archives), sum(item['bytes'] for item in archives) / 1048576))
+                '%d imported archives (required: %d/9) • %.1f MiB stored' %
+                (len(archives), coverage['present'],
+                 sum(item['bytes'] for item in archives) / 1048576))
         if error:
             self._log('Asset Library: ' + str(error)[:200])
             return
@@ -1737,6 +1744,12 @@ class QtManager(QMainWindow):
             if failed:
                 self._log('First failed PAK: ' + failed[0]['name'] +
                           ': ' + failed[0]['error'][:180])
+                if action == 'automatic-import':
+                    # Retry on the next user-initiated archive Refresh.
+                    self._auto_library_scanned_game = None
+        if coverage['missing']:
+            self._log('Asset Library missing required archives: ' +
+                      ', '.join(coverage['missing']))
         # Loaded editor previews use a snapshot of the asset index. Refresh
         # model dependencies when the extracted library changes; do not
         # interrupt a playing animation or dirty text buffer.
@@ -1745,6 +1758,12 @@ class QtManager(QMainWindow):
                 if (editor.isVisible() and editor.mode == 'models'
                         and editor.current and not
                         (editor.model_panel and editor.model_panel.anim_playing)):
+                    # An imported shared PAK previously left this editor
+                    # holding its old index + a 30-second model result cache.
+                    # Re-resolve dependencies instead of replaying stale Kala.
+                    from studio_polish_117 import clear_model_cache
+                    clear_model_cache(editor.workspace)
+                    editor.preview_index = None
                     editor.load(editor.current)
             except (OSError, ValueError, RuntimeError) as exc:
                 self._log('Model reference refresh: ' + str(exc)[:120])
