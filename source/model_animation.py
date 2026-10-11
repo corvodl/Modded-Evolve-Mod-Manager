@@ -210,6 +210,7 @@ class AnimatedGLB:
         if len(self.positions)>250_000 or len(self.faces)>500_000:
             raise ValueError('Animated mesh exceeds render limits.')
         self.clips={}
+        self.clip_modes={}
         for i,animation in enumerate(doc.get('animations',[])):
             tracks=[];duration=0.
             for channel in animation.get('channels',[]):
@@ -235,6 +236,11 @@ class AnimatedGLB:
                 while name in self.clips:
                     name+=' (copy)'
                 self.clips[name]=(duration,tracks)
+                info = animation.get('extras') or {}
+                self.clip_modes[name] = {
+                    'layered': bool(info.get('evolveLayered')),
+                    'additive': bool(info.get('evolveAdditive')),
+                }
         if not self.clips:
             raise ValueError('No supported skeletal animation tracks in this GLB.')
         self.basename=name
@@ -324,13 +330,70 @@ class AnimatedGLB:
         return self.groups if hasattr(self,'groups') else (
             (0,len(self.faces)*3,0),)
 
-    def sample(self,clip,seconds):
+    def _clip_changes(self, clip, seconds):
         if clip not in self.clips:
             raise ValueError('Select an available animation clip.')
-        duration,tracks=self.clips[clip]
-        seconds=float(seconds)%max(.001,duration)
-        changes={}
+        duration, tracks = self.clips[clip]
+        seconds = float(seconds) % max(.001, duration)
+        changes = {}
         for track in tracks:
-            changes.setdefault(track.node,{})[track.path]=track.sample(seconds)
-        pose=self._transform_pose(changes)
-        return np.stack((pose[:,0],-pose[:,2],pose[:,1]),axis=1).astype(np.float32)
+            changes.setdefault(track.node, {})[track.path] = track.sample(seconds)
+        return changes
+
+    def sample(self, clip, seconds):
+        pose = self._transform_pose(self._clip_changes(clip, seconds))
+        return np.stack((pose[:,0], -pose[:,2], pose[:,1]), axis=1).astype(np.float32)
+
+    def sample_layered(self, base_clip, overlay_clip, seconds, weight=0.65):
+        """Blend a verified aim/additive controller over a base pose.
+
+        This is a simplified glTF rig preview, not CryEngine's full directional
+        aim-IK/blendspace solver. Both clips must belong to this very same
+        skinned model; overlay channels affect only explicitly keyed joints.
+        """
+        if not (base_clip in self.clips and overlay_clip in self.clips):
+            raise ValueError('Both base and layered clips must use the same rigged GLB.')
+        if self.clip_modes.get(base_clip, {}).get('layered'):
+            raise ValueError('The base clip must not be a layered pose.')
+        mode = self.clip_modes.get(overlay_clip, {})
+        if not mode.get('layered'):
+            raise ValueError('Choose a marked layered/additive overlay clip.')
+        alpha = float(weight)
+        if not np.isfinite(alpha) or alpha < 0 or alpha > 1:
+            raise ValueError('Layer weight must be between 0 and 1.')
+        base_changes = self._clip_changes(base_clip, seconds)
+        overlay_changes = self._clip_changes(overlay_clip, seconds)
+        identity = np.asarray((0., 0., 0., 1.), dtype=np.float64)
+        blended = {node: dict(channels) for node, channels in base_changes.items()}
+        for node, channels in overlay_changes.items():
+            current = blended.setdefault(node, {})
+            rest = self.nodes[node]
+            if 'matrix' in rest:
+                raise ValueError('Layered glTF joint must use TRS, not a matrix.')
+            for path, value in channels.items():
+                sampled = np.asarray(value, dtype=np.float64)
+                start = np.asarray(current.get(
+                    path, rest.get(path, {'rotation': identity,
+                                          'translation': [0., 0., 0.],
+                                          'scale': [1., 1., 1.]}[path])), dtype=np.float64)
+                if path == 'rotation':
+                    if mode.get('additive'):
+                        delta = _slerp(identity, sampled, alpha)
+                        x1,y1,z1,w1 = start
+                        x2,y2,z2,w2 = delta
+                        output = np.asarray((
+                            w1*x2 + x1*w2 + y1*z2 - z1*y2,
+                            w1*y2 - x1*z2 + y1*w2 + z1*x2,
+                            w1*z2 + x1*y2 - y1*x2 + z1*w2,
+                            w1*w2 - x1*x2 - y1*y2 - z1*z2))
+                        current[path] = output / max(1e-12, np.linalg.norm(output))
+                    else:
+                        current[path] = _slerp(start, sampled, alpha)
+                elif mode.get('additive') and path == 'translation':
+                    current[path] = start + alpha * sampled
+                elif mode.get('additive') and path == 'scale':
+                    current[path] = start * (1. + alpha * (sampled - 1.))
+                else:
+                    current[path] = start * (1. - alpha) + sampled * alpha
+        pose = self._transform_pose(blended)
+        return np.stack((pose[:,0], -pose[:,2], pose[:,1]), axis=1).astype(np.float32)
