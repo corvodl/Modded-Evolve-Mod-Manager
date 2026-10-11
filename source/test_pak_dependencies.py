@@ -52,6 +52,30 @@ class DependencyGrouping(unittest.TestCase):
         self.assertEqual(len(plan.missing),2)
         self.assertIn('terraintexture.pak',plan_report(plan))
 
+    def test_unpacked_library_dependencies_are_not_re_extracted(self):
+        from pak_dependencies import remaining_companions
+        primary = ARCHIVES[6]
+        imported = (ARCHIVES[7], ARCHIVES[9], ARCHIVES[10],
+                    ARCHIVES[11], ARCHIVES[12], ARCHIVES[13])
+        unpack, reused = remaining_companions([primary], ARCHIVES, imported)
+        self.assertEqual(unpack, (primary,))
+        self.assertEqual(set(reused), set(imported))
+        # Explicitly selecting a companion means making an editable project;
+        # its read-only library version must not suppress that extraction.
+        unpack, reused = remaining_companions(
+            [primary, ARCHIVES[7]], ARCHIVES, imported)
+        self.assertIn(primary, unpack)
+        self.assertIn(ARCHIVES[7], unpack)
+        self.assertNotIn(ARCHIVES[7], reused)
+        self.assertNotIn(ARCHIVES[8], unpack)
+
+    def test_missing_companion_is_extracted_only_once(self):
+        from pak_dependencies import remaining_companions
+        unpack, reused = remaining_companions(
+            [ARCHIVES[0]], ARCHIVES, [ARCHIVES[1]])
+        self.assertEqual(unpack, (ARCHIVES[0], ARCHIVES[2]))
+        self.assertEqual(reused, (ARCHIVES[1],))
+
     def test_unrelated_pak_unmodified(self):
         plan=plan_dependencies('Game/libs.pak',ARCHIVES)
         self.assertEqual(plan.companions,())
