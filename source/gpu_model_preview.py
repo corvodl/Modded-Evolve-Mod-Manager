@@ -33,7 +33,7 @@ class GPUArrays:
     draws: tuple   # (index offset, index count, submaterial slot)
 
 
-def prepare_geometry(mesh):
+def prepare_geometry(mesh, shading='faceted'):
     """Validate and prepare tightly packed indexed buffers once per model.
 
     The GPU receives all triangles, unlike the previous drag-time CPU sampler.
@@ -57,13 +57,26 @@ def prepare_geometry(mesh):
         uvs = np.zeros((len(vertices), 2), dtype=np.float32)
     tris = vertices[faces]
     face_normals = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
-    normals = np.zeros_like(vertices)
-    for column in range(3):
-        np.add.at(normals, faces[:, column], face_normals)
-    sizes = np.linalg.norm(normals, axis=1)
-    np.divide(normals, np.maximum(sizes[:, None], 1e-6), out=normals)
-    normals = np.ascontiguousarray(normals, dtype=np.float32)
-    indices = np.ascontiguousarray(faces.astype(np.uint32, copy=False).ravel())
+    face_sizes = np.linalg.norm(face_normals, axis=1)
+    face_normals = face_normals / np.maximum(face_sizes[:, None], 1e-8)
+    if shading == 'faceted':
+        # Geometry-only CryEngine streams often have split hard edges. Averaging
+        # every face normal together makes armor and machinery look like clay.
+        # Split render vertices per triangle to preserve flat surface planes.
+        normals = np.repeat(face_normals, 3, axis=0).astype(np.float32)
+        vertices = np.ascontiguousarray(tris.reshape(-1, 3), dtype=np.float32)
+        uvs = np.ascontiguousarray(uvs[faces].reshape(-1, 2), dtype=np.float32)
+        indices = np.arange(len(vertices), dtype=np.uint32)
+    elif shading == 'smooth':
+        normals = np.zeros_like(vertices)
+        for column in range(3):
+            np.add.at(normals, faces[:, column], face_normals * face_sizes[:,None])
+        norms = np.linalg.norm(normals, axis=1)
+        np.divide(normals, np.maximum(norms[:,None], 1e-8), out=normals)
+        normals = np.ascontiguousarray(normals, dtype=np.float32)
+        indices = np.ascontiguousarray(faces.astype(np.uint32,copy=False).ravel())
+    else:
+        raise ValueError('Unknown preview shading mode.')
     draws = tuple(mesh.subsets) if mesh.subsets else ((0, len(indices), 0),)
     at = 0
     for first, count, slot in draws:
