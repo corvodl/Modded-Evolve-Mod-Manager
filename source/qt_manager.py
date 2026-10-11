@@ -570,6 +570,7 @@ class QtManager(QMainWindow):
         actions.addWidget(_button('External PAK…', self.browse_external_pak))
         actions.addWidget(_button('Mod Profiles', self.open_mod_profiles, primary=True))
         actions.addWidget(_button('Export Model Folder', self.export_model_folder))
+        actions.addWidget(_button('PAK Diff…', self.open_pak_diff))
         root.addLayout(actions)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(('Folder', 'Description', 'File', 'Type / Project', 'Size'))
@@ -710,6 +711,7 @@ class QtManager(QMainWindow):
         btns.setLayout(_row(_button('Set Up Manager', self.initial_setup, primary=True),
                              _button('Check Setup', self.check_setup),
                              _button('Open Projects', self.open_projects),
+                             _button('Clean Old Projects…', self.open_project_cleanup),
                              _button('Save Settings', self.save_settings)))
         inside.addWidget(btns)
 
@@ -1989,6 +1991,23 @@ class QtManager(QMainWindow):
         self.info('Setup check', ('Setup looks ready.' if not notes else
                   'Things requiring attention:\n' + '\n'.join('• '+x for x in notes)) +
                   '\n\n' + st.message)
+
+    def open_project_cleanup(self):
+        if self.busy:
+            self.info('Projects cleanup','Finish the current manager task first.')
+            return
+        try:
+            from qt_asset_intelligence import ProjectCleanupDialog
+            ProjectCleanupDialog(self).exec()
+        except (ValueError,OSError) as exc:
+            self.failure(exc)
+
+    def open_pak_diff(self):
+        try:
+            from qt_asset_intelligence import PakDiffDialog
+            PakDiffDialog(self).exec()
+        except (ValueError,OSError) as exc:
+            self.failure(exc)
 
     def open_projects(self):
         try:
