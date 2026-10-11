@@ -926,7 +926,7 @@ class QtManager(QMainWindow):
         card, panel = _card('Live Evolve memory',
                             'Browse loaded modules, committed memory regions, scan '
                             'values and inspect or edit hex bytes in a running game.')
-        self.dev_memory_panel = DeveloperMemoryPanel()
+        self.dev_memory_panel = DeveloperMemoryPanel(offline_game_provider=self._developer_game)
         panel.addWidget(self.dev_memory_panel)
         lay.addWidget(card)
         card, panel = _card('Developer diagnostics',
