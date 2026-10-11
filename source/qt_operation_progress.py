@@ -38,7 +38,7 @@ def copy_file_progress(source, destination, *, parent=None, title='Export file')
     if source == destination or not source.is_file() or not destination.parent.is_dir():
         raise ValueError('Choose distinct source and destination files.')
     total = source.stat().st_size
-    ui = progress_dialog(parent, title, source.name, max(1, total))
+    ui = progress_dialog(parent, title, source.name, 1000)
     tempname = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -52,7 +52,9 @@ def copy_file_progress(source, destination, *, parent=None, title='Export file')
                         raise InterruptedError('File export cancelled; partial file removed.')
                     tmp.write(block)
                     transferred += len(block)
-                    ui.setValue(max(1, transferred))
+                    ui.setValue(min(1000, round(transferred * 1000 / max(1, total))))
+                    ui.setLabelText('%s • %.1f / %.1f MiB' % (
+                        source.name, transferred / 1048576, total / 1048576))
                     QApplication.processEvents()
             tmp.flush()
             os.fsync(tmp.fileno())
@@ -60,7 +62,7 @@ def copy_file_progress(source, destination, *, parent=None, title='Export file')
             raise InterruptedError('File export cancelled; partial file removed.')
         os.replace(tempname, destination)
         tempname = None
-        ui.setValue(max(1, total))
+        ui.setValue(1000)
         return destination
     finally:
         ui.close()
