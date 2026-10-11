@@ -5,15 +5,11 @@ import struct
 import tempfile
 import unittest
 from unittest.mock import patch
-from xml.etree import ElementTree as ET
-
 import animation_on_demand as demand
 from character_animation_catalog import (
     AnimationReference, caf_header, parse_animation_references,
     native_clip_playability, discover_animations,
 )
-from shared_pak_cache import SharedCatalog
-from test_shared_pak_cache import SharedPAKCacheTests
 
 HEADER = b"CrChF\x07\x00\x00" + struct.pack("<II", 1, 16) + b"\0" * 16
 VIRTUAL = "characters/hunters/merc_tech/animations/3p/tech_nw_alert_stand_idle.caf"
@@ -41,6 +37,10 @@ class OnDemandCAFs(unittest.TestCase):
                 "original_size": len(HEADER),
                 "compressed_size": len(HEADER)}}}
         demand._CATALOGS.clear()
+        cache = patch('shared_pak_cache._default_cache',
+                      return_value=self.root / 'cache' / 'SharedReferences')
+        cache.start()
+        self.addCleanup(cache.stop)
 
     def test_discovery_does_not_decrypt_unextracted_caf(self):
         ref = AnimationReference("stand_idle", VIRTUAL, "caf", False,
