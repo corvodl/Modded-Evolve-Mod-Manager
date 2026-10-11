@@ -1899,9 +1899,17 @@ class QtManager(QMainWindow):
             return
         try:
             from model_textured_export import export_extracted_folder
-            exported, skipped = export_extracted_folder(
-                Path(input_folder), Path(output_folder),
-                projects_root=self.projects_path, stage_root=self.stage_path)
+            self._show_file_progress('Exporting Blender models')
+            def progress(label, done, total):
+                self._set_file_progress(label, done, total)
+                QApplication.processEvents()
+            try:
+                exported, skipped = export_extracted_folder(
+                    Path(input_folder), Path(output_folder),
+                    projects_root=self.projects_path, stage_root=self.stage_path,
+                    progress=progress)
+            finally:
+                self.operation_progress.hide()
             with_textures = sum(bool(info['texture_count']) for _, _, _, info in exported)
             with_rigs = sum(bool(info.get('bone_count')) for _, _, _, info in exported)
             summary = (f'{len(exported)} models exported to .glb '
