@@ -65,7 +65,7 @@ class BulkGamePAKTests(unittest.TestCase):
     def test_recursive_game_scan_only_reads_pak_files(self):
         (self.game / "another.zip").write_bytes(b"zip")
         (self.game / "Game" / "ignore.pak.modbackup").write_bytes(b"backup")
-        with patch("asset_library_bulk.imported_archives", return_value=[]):
+        with patch("asset_library.imported_archives", return_value=[]):
             result = discover_game_paks(self.game, library_root=self.library)
         self.assertEqual(len(result.files), 2)
         self.assertEqual(set(result.files), {self.original, self.other})
@@ -75,7 +75,7 @@ class BulkGamePAKTests(unittest.TestCase):
 
     def test_import_scan_reuses_owned_imports_on_retry(self):
         ident = self._manifest()
-        with patch("asset_library_bulk.imported_archives", return_value=[
+        with patch("asset_library.imported_archives", return_value=[
             {"source": str(self.original)}]):
             scan = discover_game_paks(self.game, library_root=self.library)
         self.assertEqual(scan.already_imported, 1)
