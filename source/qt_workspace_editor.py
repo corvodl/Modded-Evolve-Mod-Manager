@@ -1899,36 +1899,60 @@ class QtWorkspaceEditor(QMainWindow):
                 'On Windows, verify that an OpenGL-capable graphics driver is installed.')
 
     def find_model_textures(self):
-        if self.mode != 'models' or self.mesh is None:
+        """Diagnose real virtual paths, never generated character mesh labels."""
+        if self.mode != 'models' or not self.current:
             return
         try:
-            result = model_material_links(
-                self.workspace, self.mesh.source_name or self.current,
-                projects_root=self.manager.projects_path,
-                stage_root=self.manager.stage_path)
+            # Composite previews deliberately have a descriptive source_name
+            # like "Character assembly: maggiebody, flashlight". That is NOT
+            # a CryEngine path and must not be passed to normalized_name().
+            targets = [self.current]
+            if self.character_preview:
+                targets.extend(part[0] for part in
+                               self.character_preview.rig_parts)
+            targets = list(dict.fromkeys(targets))
+            from material_preview import _workspace_index
+            from multi_pak_assets import model_material_links
+            index = self.preview_index
+            if index is None:
+                index = _workspace_index(
+                    self.workspace, self.manager.projects_path,
+                    self.manager.stage_path)
             lines = [
-                'Model: '+str(self.mesh.source_name or self.current),
-                'Material: '+str(result.get('material')),
-                'Status: '+str(result.get('status')),
-                'Cross-PAK links: '+str(result.get('collection')),
+                'Character model: ' + self.current,
+                'Preview: ' + str(self.mesh.source_name if self.mesh else ''),
+                'Inspecting %d real model / attachment paths.' % len(targets),
             ]
-            for record in result.get('textures', []):
-                lines.append('\n'+str(record.get('map'))+': '+str(record.get('reference')))
-                lines.append('  '+str(record.get('status')))
-                lines.append('  Paths: '+', '.join(record.get('paths', [])))
-                if record.get('archives'):
-                    lines.append('  Archives: '+', '.join(record.get('archives', [])))
-            if result.get('status') == 'ambiguous':
-                lines.append('\nMultiple different versions of the material were found:')
-                for candidate in result.get('candidates', []):
-                    lines.append('  '+str(candidate.get('archive',''))+' | '+
-                                 str(candidate.get('workspace','')))
-            elif result.get('status') == 'missing':
-                lines.append('\nMaterial missing: unpack the PAK containing its .mtl file.')
-            lines.append('\nCryEngine .tif references may correspond to .dds/.dds.0 textures.')
-            QMessageBox.information(self,'Model textures','\n'.join(lines))
+            for path in targets[:12]:
+                lines.append('\n' + path)
+                try:
+                    links = model_material_links(
+                        self.workspace, path,
+                        projects_root=self.manager.projects_path,
+                        stage_root=self.manager.stage_path, index=index)
+                except (OSError, ValueError) as exc:
+                    lines.append('  Lookup unavailable: ' + str(exc)[:160])
+                    continue
+                lines.append('  Material: ' + str(links.get('material')))
+                lines.append('  Status: ' + str(links.get('status')))
+                for record in links.get('textures', ()):
+                    lines.append('  %s: %s — %s' % (
+                        record.get('map'), record.get('reference'),
+                        record.get('status')))
+                    if record.get('paths'):
+                        lines.append('     Source: ' +
+                                     ', '.join(record['paths'][:4]))
+                    if record.get('archives'):
+                        lines.append('     PAKs: ' +
+                                     ', '.join(record['archives'][:4]))
+            if self.materials and self.materials.issues:
+                lines.append('\nMaterial decode issues:')
+                lines.extend('  ' + issue for issue in self.materials.issues[:16])
+            lines.append('\nThe Asset Library is read-only. Create a Modding '
+                         'project to make changes.')
+            QMessageBox.information(self, 'Model textures', '\n'.join(lines))
         except Exception as exc:
-            QMessageBox.critical(self,'Model textures',str(exc))
+            QMessageBox.critical(self, 'Model textures', str(exc))
 
     def help(self):
         QMessageBox.information(
