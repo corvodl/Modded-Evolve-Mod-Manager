@@ -142,10 +142,19 @@ class QtWorkspaceEditor(QMainWindow):
         self.preview_index = None
         self.character_preview = None
         self.character_skin_choice = None
+        self._model_generation += 1
+        self._prepared_animation = None
         self.gpu_windows = []
         self._export_native_pool = None
         self._export_native_signals = None
         self._export_native_target = None
+        self._model_pool = None
+        self._model_signals = None
+        self._model_generation = 0
+        self._model_prepared = False
+        self._prepared_geometry = None
+        self._prepared_animation = None
+        self._materials_error = ''
         self.materials = None
         self.texture_message = 'No model selected'
         # A main window has the standard Win32 maximize/restore non-dialog frame.
@@ -462,7 +471,11 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.texture_message = 'No texture lookup has run'
         self.mode = self._category(rel)
+        self._model_generation += 1
         path = checked_path(self.workspace, rel)
+        if self.mode == 'models':
+            self._load_model_background(rel)
+            return
         self.raw = path.read_bytes()
         if self.mode == 'files':
             control = self.views['files']
@@ -499,46 +512,75 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(rel + ' | ' + info.description +
                                 ' | largest mip only' +
                                 (' | streaming fragments' if self.stream else ''))
-        else:
-            view = self.views['models']
+
+    def _load_model_background(self, rel):
+        """Load heavy CryEngine files and textures away from the GUI thread."""
+        from async_model_resolve import resolve_model
+        self._model_prepared = False
+        view = self.views['models']
+        self.model_fallback.setPixmap(QPixmap())
+        self.model_fallback.setText('Loading character and textures…')
+        view.setCurrentWidget(self.model_fallback)
+        self.status.setText(rel + ' | Preparing GPU model…')
+        source_workspace = self.workspace
+        index = self.preview_index
+        projects = self.manager.projects_path
+        stage = self.manager.stage_path
+        tex = self.texture_folder
+        ani = self.loose_animation_index
+        equipment = self.character_skin_choice
+        token = self._model_generation
+
+        def resolve(_unused):
+            result = resolve_model(source_workspace, rel,
+                projects_root=projects, stage_root=stage,
+                texture_folder=tex, animation_index=ani,
+                equipment=equipment, index=index)
+            return result, None
+
+        # Tests and headless software previews retain deterministic synchronous
+        # behavior. Real GPU viewing runs all expensive preparation in a worker.
+        platform = os.environ.get('QT_QPA_PLATFORM','').casefold()
+        if platform in ('offscreen','minimal') or not self.isVisible():
             try:
-                info = inspect_model(self.raw)
-                report = info.description
-            except ValueError as exc:
-                report = str(exc) + '\nNative export remains available.'
-            try:
-                # A CDF can define a full visible body (and a selected skin).
-                # Prefer that over showing an isolated attachment when resolvable.
-                from material_preview import _workspace_index
-                from character_assembly import assemble_character
-                if self.preview_index is None:
-                    self.preview_index = _workspace_index(
-                        self.workspace, self.manager.projects_path, self.manager.stage_path)
-                try:
-                    self.character_preview = assemble_character(
-                        self.workspace, rel, self.preview_index,
-                        texture_folder=self.texture_folder,
-                        projects_root=self.manager.projects_path,
-                        stage_root=self.manager.stage_path,
-                        equipment=self.character_skin_choice)
-                except (ValueError, OSError) as exc:
-                    self.texture_message = 'Character assembly unavailable: ' + str(exc)
-                mesh = (self.character_preview.mesh if self.character_preview else
-                        find_preview_mesh(
-                            self.workspace, rel, self.raw,
-                            projects_root=self.manager.projects_path,
-                            stage_root=self.manager.stage_path))
-                self.mesh = mesh
-                self._update_equipment_menu()
-                self._paint_model(view, mesh)
-                self.status.setText(
-                    rel + ' | ' + report + ' | ' + self.texture_message)
+                self._model_ready(token, resolve(None), None)
             except (ValueError, OSError) as exc:
-                self.model_fallback.setPixmap(QPixmap())
-                self.model_fallback.setText(rel + '\n\n' + report +
-                                            '\n\n3D preview unavailable: ' + str(exc))
-                view.setCurrentWidget(self.model_fallback)
-                self.status.setText(rel + ' | Native model inspection')
+                self._model_ready(token, None, str(exc))
+            return
+        from qt_gpu_viewer import _NativeConversion, _NativeResult
+        from PySide6.QtCore import QThreadPool
+        if self._model_pool is None:
+            self._model_pool = QThreadPool(self)
+            self._model_pool.setMaxThreadCount(2)
+            self._model_signals = _NativeResult(self)
+            self._model_signals.completed.connect(self._model_ready)
+        self._model_pool.start(
+            _NativeConversion(resolve, None, token, self._model_signals))
+
+    def _model_ready(self, token, result, error):
+        if token != self._model_generation or self.mode != 'models':
+            return
+        view = self.views['models']
+        if error:
+            self.model_fallback.setPixmap(QPixmap())
+            self.model_fallback.setText(self.current + '\\n\\n3D preview unavailable: ' + error)
+            view.setCurrentWidget(self.model_fallback)
+            self.status.setText('3D preview unavailable: ' + error[:260])
+            return
+        data, _unused = result
+        self.raw = data['raw']
+        self.mesh = data['mesh']
+        self.materials = data['materials']
+        self.preview_index = data['index']
+        self.character_preview = data['character']
+        self._prepared_geometry = data['geometry']
+        self._prepared_animation = data['animation']
+        self._materials_error = data['materials_error']
+        self._model_prepared = True
+        self._update_equipment_menu()
+        self._paint_model(view, self.mesh)
+        self.status.setText(
+            self.current + ' | ' + data['report'] + ' | ' + self.texture_message)
 
     def _update_equipment_menu(self):
         self.equipment_menu.clear()
@@ -567,8 +609,11 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             from qt_gpu_viewer import QtGPUModelPanel
-            materials = self.character_preview.materials if self.character_preview else None
+            materials = self.materials if self._model_prepared else (
+                self.character_preview.materials if self.character_preview else None)
             try:
+                if materials is None and self._model_prepared:
+                    raise ValueError(self._materials_error or 'No model diffuse textures available')
                 if materials is None:
                     from material_preview import load_preview_materials
                     materials = load_preview_materials(
@@ -590,21 +635,25 @@ class QtWorkspaceEditor(QMainWindow):
                 self.texture_message = 'Untextured: ' + str(error)
             self.materials = materials
             if self.model_panel is None:
-                self.model_panel = QtGPUModelPanel(view, mesh, materials, compact=True)
+                self.model_panel = QtGPUModelPanel(view, mesh, materials, compact=True,
+                                                  prepared_geometry=self._prepared_geometry)
                 self.model_panel.setObjectName('primaryGpuModelViewer')
                 view.addWidget(self.model_panel)
                 self.model_gpu = self.model_panel.canvas
                 self.model_gpu.setObjectName('defaultGpuModelPreview')
             else:
-                self.model_panel.set_static_mesh(mesh, materials)
+                self.model_panel.set_static_mesh(mesh, materials,
+                                                 prepared_geometry=self._prepared_geometry)
             view.setCurrentWidget(self.model_panel)
             from character_animation_catalog import discover_animations
             anim_model = (self.character_preview.skeleton if self.character_preview
                           else self.current)
-            refs, idle, config = discover_animations(
-                anim_model, self.preview_index,
-                preferred_workspace=self.workspace,
-                loose_index=self.loose_animation_index)
+            refs, idle, config = (
+                self._prepared_animation if self._prepared_animation is not None
+                else discover_animations(
+                    anim_model, self.preview_index,
+                    preferred_workspace=self.workspace,
+                    loose_index=self.loose_animation_index))
             from native_character_glb import create_character_glb
             # Capture plain paths and immutable preview objects; background
             # decoding never touches a QWidget or live Qt project state.
@@ -686,6 +735,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.tabs.setCurrentIndex(0)
                 self.tabs.blockSignals(False)
                 return
+        self._model_generation += 1
         self.current, self.mode = None, None
 
     def save(self):
@@ -1258,6 +1308,7 @@ class QtWorkspaceEditor(QMainWindow):
         if not self._confirm_buffer():
             event.ignore()
             return
+        self._model_generation += 1
         if self.model_panel is not None and not self.model_panel.close():
             event.ignore()
             return
