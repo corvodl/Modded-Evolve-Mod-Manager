@@ -1,1 +1,1 @@
-1.1.11 - Model Menus and Texture Diagnostics
+1.1.12 - Native CAF Animation and Character Viewer
