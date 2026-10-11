@@ -3,7 +3,7 @@ name: Verify Qt production candidate (no publication)
 on:
   workflow_dispatch:
   push:
-    branches: [qt-migration, fix-qt-font-glyphs, settings-sections-fast-launch, feature/mod-profiles-foundation, feature/blender-model-export-gpu-default, feature/cross-pak-textures-rig-readiness, feature/cryengine-rigged-gltf, feature/animation-playback-model-editor-ux, feature/embedded-full-gpu-viewer-maximize, feature/model-menubar-texture-diagnostics, feature/character-animation-catalog-composite, feature/visual-gameplay-profiles-assets-studio-v1-1-13, feature/v1-1-14-asset-intelligence-project-lifecycle, feature/v1-1-15-workflow-developer-lab]
+    branches: [qt-migration, fix-qt-font-glyphs, settings-sections-fast-launch, feature/mod-profiles-foundation, feature/blender-model-export-gpu-default, feature/cross-pak-textures-rig-readiness, feature/cryengine-rigged-gltf, feature/animation-playback-model-editor-ux, feature/embedded-full-gpu-viewer-maximize, feature/model-menubar-texture-diagnostics, feature/character-animation-catalog-composite, feature/visual-gameplay-profiles-assets-studio-v1-1-13, feature/v1-1-14-asset-intelligence-project-lifecycle, feature/v1-1-15-workflow-developer-lab, feature/v1-1-15-1-developer-write-optin-ui-captures]
 
 permissions:
   contents: read
@@ -33,6 +33,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Production-candidate compiled Qt GUI failed to render.' }
           & '.build/venv/Scripts/python.exe' -c "from PIL import Image,ImageStat; im=Image.open('dist/EvolveModManager-compiled-screenshot.png').convert('RGB'); print(im.size); assert im.width>=850 and im.height>=600 and max(ImageStat.Stat(im).stddev)>14"
           if ($LASTEXITCODE -ne 0) { throw 'Compiled Qt screenshot is invalid.' }
+          & '.build/app-dist/EvolveModManager/EvolveModManager.exe' --capture-modding-screenshot 'dist/EvolveModManager-Modding-screenshot.png'
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path 'dist/EvolveModManager-Modding-screenshot.png')) { throw 'Compiled Modding page screenshot is invalid.' }
       - name: Validate portable ZIP and absence of private data
         shell: pwsh
         run: |
@@ -64,5 +66,6 @@ jobs:
           path: |
             dist/EvolveModManager-Windows.zip
             dist/EvolveModManager-compiled-screenshot.png
+            dist/EvolveModManager-Modding-screenshot.png
           if-no-files-found: error
           retention-days: 14
