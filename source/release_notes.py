@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.6', (
+        'Group character model variants into expandable families without hiding original files.',
+        'Improve persistent Asset Library texture and game animation lookup.',
+        'Show indexed blendspace/combination metadata; native graph playback is not yet supported.',
+    )),
     ('1.1.18-beta.5', (
         'Show newly imported CAF animations from the persistent Asset Library.',
         'Add searchable Game Animations with availability and motion filters.',
