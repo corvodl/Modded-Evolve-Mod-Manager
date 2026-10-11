@@ -67,8 +67,26 @@ def inspect_project(project_root, candidate, *, active=(), min_age_days=30, now=
     age = max(0.,((time.time() if now is None else now)-last)/86400.)
     reason = ''
     try:
-        has_changes = any(bool(get_changes(child,manifest))
-                          for child,manifest in reports)
+        has_changes = False
+        for child,manifest in reports:
+            if get_changes(child,manifest):
+                has_changes = True
+            # The manifest does not list new files or backups from editing.
+            # Treat either as valuable user work even if all tracked files
+            # were later reverted to their original checksums.
+            if (child/'EditorBackups').exists() or (
+                    child/'.EXTRACTION-INCOMPLETE.txt').exists():
+                has_changes = True
+            expected = {entry['path'].casefold() for entry in manifest['entries']}
+            files_root = child/'files'
+            for base,dirs,files in os.walk(files_root,followlinks=False):
+                for name in files:
+                    rel=(Path(base)/name).relative_to(files_root).as_posix()
+                    if rel.casefold() not in expected:
+                        has_changes = True
+                        break
+                if has_changes:
+                    break
     except (ValueError,OSError) as exc:
         has_changes = True
         reason = 'Files missing or verification failed: '+str(exc)[:160]
