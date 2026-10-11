@@ -182,7 +182,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
     return PreviewMaterials(tuple(result),tuple(names),material['relative'])
 
 
-def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevation=.24, zoom=1., *, cancel=None):
+def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevation=.24, zoom=1., *, pan=(0.,0.), cancel=None):
     """Depth-tested diffuse/UV CPU rasterizer. This is NOT CryEngine shader parity."""
     import math
     import numpy as np
@@ -204,8 +204,8 @@ def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevat
     ca,sa=math.cos(yaw),math.sin(yaw)
     ce,se=math.cos(elevation),math.sin(elevation)
     scale=min(width,height)*.42 / mesh.radius * zoom
-    sx=width*.5 + (offset[:,0]*ca-offset[:,1]*sa)*scale
-    sy=height*.5 + (-offset[:,2]*ce+(offset[:,0]*sa+offset[:,1]*ca)*se)*scale
+    sx=width*.5 + float(pan[0]) + (offset[:,0]*ca-offset[:,1]*sa)*scale
+    sy=height*.5 + float(pan[1]) + (-offset[:,2]*ce+(offset[:,0]*sa+offset[:,1]*ca)*se)*scale
     dz=(offset[:,0]*sa+offset[:,1]*ca)*ce+offset[:,2]*se
     screen=np.column_stack((sx,sy))
     buffer=np.full((height,width,3),(32,33,42),dtype=np.uint8)

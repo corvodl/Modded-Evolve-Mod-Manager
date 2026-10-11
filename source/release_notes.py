@@ -4,6 +4,10 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.9', (
+        'Editors can maximize; model cameras now support panning and sharper shading.',
+        'Added skeletal GLB animation playback and optional CryEngine clip conversion.',
+    )),
     ('1.1.8', (
         'Blender exports can now include original CryEngine rigs and skin weights.',
         'Added verified bone hierarchy and bind-pose conversion for supported models.',

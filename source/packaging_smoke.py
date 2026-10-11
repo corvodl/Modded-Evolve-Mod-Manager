@@ -18,6 +18,9 @@ import model_preview
 import model_blender_export
 import model_textured_export
 import model_rigging
+import model_animation
+import animation_converter_bridge
+import qt_cpu_model_viewer
 import gpu_model_preview
 import material_preview
 import numpy
@@ -41,6 +44,7 @@ assert gpu_model_preview.prepare_geometry and gpu_model_preview.Win32GPUPreview
 assert model_blender_export.glb_bytes and model_blender_export.convert_folder
 assert model_textured_export.textured_model_from_workspace
 assert model_rigging.skin_glb and model_rigging.parse_compiled_bones
+assert model_animation.AnimatedGLB and animation_converter_bridge.validate_conversion
 print('Bundled crypto, Twofish, Frida, GPU preview, Pillow DDS and PAK workspace imports passed.')
 
 # File context-menu helpers must be bundled for all three editor tabs.

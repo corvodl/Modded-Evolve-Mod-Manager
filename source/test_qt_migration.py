@@ -370,12 +370,18 @@ class QtMigrationTests(unittest.TestCase):
         editor = QtWorkspaceEditor(self.win,ws)
         self.addCleanup(editor.close)
         self.assertEqual(editor.tabs.count(),3)
+        self.assertTrue(editor.windowFlags() & Qt.WindowMaximizeButtonHint)
+        self.assertTrue(editor.isSizeGripEnabled())
+        from qt_cpu_model_viewer import QtCPUModelCanvas
+        self.assertIsInstance(editor.model_cpu, QtCPUModelCanvas)
+        self.assertIsNotNone(editor.model_fallback)
         button_labels = [b.text() for b in editor.findChildren(QPushButton)]
         for expected in (
             'Save','Find Text','Import / Replace File','Restore Original',
             'Export PNG','Import DDS','Import PNG','Export Native Model',
             'Import Same-Layout Model','Find Model Textures',
             'Choose Texture Folder','Open GPU Viewer',
+            'Export for Blender (.glb)','Export Model Folder',
         ):
             self.assertIn(expected,button_labels)
         editor.load('Game/settings.txt')

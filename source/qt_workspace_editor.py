@@ -29,6 +29,7 @@ from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
 from dds_png_import import encode_png_as_dds, compression_for_dds
 from model_asset import is_model, inspect_model, export_model, replace_model
 from model_preview import find_preview_mesh, render_mesh
+from qt_cpu_model_viewer import QtCPUModelCanvas
 from model_blender_export import glb_bytes, convert_folder
 from model_textured_export import (
     textured_model_from_workspace, export_extracted_folder, weight_stream_status)
@@ -58,6 +59,8 @@ class QtLooseFileEditor(QDialog):
         self.relative = relative
         self.projects = Path(projects).resolve()
         self.copy = copy_to_project(game_root, relative, self.projects)
+        self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+        self.setSizeGripEnabled(True)
         self.setWindowTitle('Game File Copy — ' + self.copy.name)
         self.resize(850, 590)
         self.text = QPlainTextEdit()
@@ -129,12 +132,15 @@ class QtWorkspaceEditor(QDialog):
         self.mesh = None
         self.model_gpu = None
         self.model_fallback = None
+        self.model_cpu = None
         self.texture_folder = None
         self.gpu_windows = []
         self.materials = None
+        self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+        self.setSizeGripEnabled(True)
         self.setWindowTitle('Edit Files — Evolve PAK Workspace')
         self.resize(1210, 790)
-        self.setMinimumSize(780, 530)
+        self.setMinimumSize(660, 460)
         self.setStyleSheet(manager.styleSheet())
         main = QVBoxLayout(self)
         tools = QHBoxLayout()
@@ -164,6 +170,7 @@ class QtWorkspaceEditor(QDialog):
             tab = QWidget()
             box = QVBoxLayout(tab)
             toolbar = QHBoxLayout()
+            more_toolbar = QHBoxLayout() if section == 'models' else None
             widgets = {}
             if section == 'files':
                 for text, fn in (('Save', self.save), ('Find Text', self.find_text),
@@ -184,9 +191,12 @@ class QtWorkspaceEditor(QDialog):
                                  ('Find Model Textures', self.find_model_textures),
                                  ('Choose Texture Folder', self.choose_texture_folder)):
                     widgets[text] = self._button(text, fn)
-                    toolbar.addWidget(widgets[text])
+                    (toolbar if len(widgets) <= 4 else more_toolbar).addWidget(widgets[text])
             toolbar.addStretch()
             box.addLayout(toolbar)
+            if more_toolbar is not None:
+                more_toolbar.addStretch()
+                box.addLayout(more_toolbar)
             split = QSplitter(Qt.Horizontal)
             tree = QTreeWidget()
             tree.setHeaderHidden(True)
@@ -209,6 +219,9 @@ class QtWorkspaceEditor(QDialog):
                 self.model_fallback.setAlignment(Qt.AlignCenter)
                 self.model_fallback.setWordWrap(True)
                 view.addWidget(self.model_fallback)
+                self.model_cpu = QtCPUModelCanvas(view)
+                self.model_cpu.setObjectName('cpuModelPreview')
+                view.addWidget(self.model_cpu)
             split.addWidget(view)
             split.setStretchFactor(0, 1)
             split.setStretchFactor(1, 4)
@@ -377,8 +390,8 @@ class QtWorkspaceEditor(QDialog):
                 self.mesh = mesh
                 self._paint_model(view, mesh)
                 self.status.setText(rel + ' | ' + report +
-                                    ' | GPU preview: drag to rotate, scroll to zoom; '
-                                    'Open GPU Viewer for extended materials controls.')
+                                    ' | Drag: rotate; right/middle/Shift-drag: pan; '
+                                    'wheel: zoom; Open GPU Viewer for animation controls.')
             except (ValueError, OSError) as exc:
                 self.model_fallback.setPixmap(QPixmap())
                 self.model_fallback.setText(rel + '\n\n' + report +
@@ -394,12 +407,21 @@ class QtWorkspaceEditor(QDialog):
             return
         try:
             from qt_gpu_viewer import QtGLModelCanvas
+            materials = None
+            try:
+                from material_preview import load_preview_materials
+                materials = load_preview_materials(
+                    self.workspace, mesh.source_name or self.current,
+                    self.texture_folder, projects_root=self.manager.projects_path,
+                    stage_root=self.manager.stage_path)
+            except (ValueError, OSError):
+                pass
             if self.model_gpu is None:
-                self.model_gpu = QtGLModelCanvas(mesh, parent=view)
+                self.model_gpu = QtGLModelCanvas(mesh, materials, parent=view)
                 self.model_gpu.setObjectName('defaultGpuModelPreview')
                 view.addWidget(self.model_gpu)
             else:
-                self.model_gpu.set_mesh(mesh)
+                self.model_gpu.set_mesh(mesh, materials)
             view.setCurrentWidget(self.model_gpu)
             self.model_gpu.update()
             QTimer.singleShot(450, self._check_gpu_preview)
@@ -418,9 +440,8 @@ class QtWorkspaceEditor(QDialog):
             view.setCurrentWidget(self.model_fallback)
             self.model_gpu.deleteLater()
             self.model_gpu = None
-        result = render_mesh(mesh, width=720, height=490)
-        self.model_fallback.setPixmap(_image_pixmap(result))
-        view.setCurrentWidget(self.model_fallback)
+        self.model_cpu.set_mesh(mesh, reason)
+        view.setCurrentWidget(self.model_cpu)
         if reason:
             self.status.setText('Software preview (GPU unavailable: ' + reason[:140] + ')')
 
@@ -845,7 +866,10 @@ class QtWorkspaceEditor(QDialog):
             'tracks must be present separately. Unsupported rig formats are '
             'reported as unrigged rather than silently inventing bones.\n\n'
             'Native export and same-layout native import remain available. '
-            'Open GPU Viewer offers additional lighting and texture controls.')
+            'Viewer: left-drag rotates, right/middle-drag pans, wheel zooms. '
+            'Faceted shading preserves armor edges; smooth shading is optional. '
+            'Original CAF/DBA clips can be converted by a separately installed '
+            'CryEngine converter, then imported as animated GLB files.')
 
     def closeEvent(self, event):
         if not self._confirm_buffer():

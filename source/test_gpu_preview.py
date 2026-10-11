@@ -25,8 +25,8 @@ class GPUViewerTests(unittest.TestCase):
 
     def test_buffers_are_contiguous_valid_and_usable_by_opengl(self):
         obj = prepare_geometry(self.mesh)
-        self.assertEqual(obj.vertices.shape, (len(self.mesh.vertices), 3))
-        self.assertEqual(obj.uvs.shape, (len(self.mesh.vertices), 2))
+        self.assertEqual(obj.vertices.shape, (len(self.mesh.triangles)*3, 3))
+        self.assertEqual(obj.uvs.shape, (len(self.mesh.triangles)*3, 2))
         self.assertEqual(obj.normals.shape, obj.vertices.shape)
         self.assertEqual(len(obj.indices), len(self.mesh.triangles)*3)
         self.assertEqual(obj.vertices.dtype, np.float32)
@@ -36,6 +36,11 @@ class GPUViewerTests(unittest.TestCase):
         self.assertEqual(sum(sub[1] for sub in obj.draws), len(obj.indices))
         self.assertTrue(np.isfinite(obj.normals).all())
         self.assertEqual(ctypes.sizeof(PIXELFORMATDESCRIPTOR), 40)
+        smooth = prepare_geometry(self.mesh, shading='smooth')
+        self.assertEqual(smooth.vertices.shape, (len(self.mesh.vertices), 3))
+        self.assertEqual(len(smooth.indices), len(obj.indices))
+        with self.assertRaises(ValueError):
+            prepare_geometry(self.mesh, shading='unsupported')
 
     def test_invalid_indices_are_never_passed_to_gpu(self):
         from dataclasses import replace

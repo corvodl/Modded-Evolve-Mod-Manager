@@ -132,7 +132,8 @@ def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_roo
 
 
 def render_mesh(mesh: PreviewMesh, width=720, height=480, yaw=-0.5, elevation=0.24,
-                zoom=1.0, wireframe=False, max_draw_triangles=MAX_DRAW_TRIANGLES) -> Image.Image:
+                zoom=1.0, wireframe=False, max_draw_triangles=MAX_DRAW_TRIANGLES,
+                pan=(0., 0.)) -> Image.Image:
     """Simple non-GPU shaded/outline render. No material/texture decoding."""
     width = max(128, min(int(width), 1600))
     height = max(128, min(int(height), 1200))
@@ -148,8 +149,8 @@ def render_mesh(mesh: PreviewMesh, width=720, height=480, yaw=-0.5, elevation=0.
         a,b,c=x-cx,y-cy,z-cz
         rx=a*ca - b*sa
         ry=a*sa + b*ca
-        screen_x=width*.5 + rx*scale
-        screen_y=height*.5 + (-c*ce + ry*se)*scale
+        screen_x=width*.5 + float(pan[0]) + rx*scale
+        screen_y=height*.5 + float(pan[1]) + (-c*ce + ry*se)*scale
         depth=ry*ce + c*se
         points.append((screen_x, screen_y))
         depths.append(depth)
@@ -235,6 +236,10 @@ class ModelPreview:
         self.label.bind('<ButtonPress-1>', self.press)
         self.label.bind('<B1-Motion>', self.drag)
         self.label.bind('<ButtonRelease-1>', self.release)
+        for button in (2, 3):
+            self.label.bind(f'<ButtonPress-{button}>', self.press)
+            self.label.bind(f'<B{button}-Motion>', self.drag_pan)
+            self.label.bind(f'<ButtonRelease-{button}>', self.release)
         self.label.bind('<MouseWheel>', self.scroll)
         self.label.bind('<Button-4>', lambda _: self.change_zoom(1.15))
         self.label.bind('<Button-5>', lambda _: self.change_zoom(1/1.15))
@@ -262,6 +267,7 @@ class ModelPreview:
         self.yaw = -.5
         self.elevation = .24
         self.zoom = 1.0
+        self.pan = [0., 0.]
 
     def _on_destroy(self, event):
         if event.widget is not self.label:
@@ -392,6 +398,7 @@ class ModelPreview:
         self.yaw = -.5
         self.elevation = .24
         self.zoom = 1.0
+        self.pan[:] = [0., 0.]
         self.schedule()
 
     def press(self, event):
@@ -408,6 +415,16 @@ class ModelPreview:
             return
         self.yaw += dx * .012
         self.elevation = max(-1.45, min(1.45, self.elevation + dy * .008))
+        self._cancel_inflight()
+        self.schedule()
+
+    def drag_pan(self, event):
+        if self._last is None or self.mesh is None:
+            return
+        dx, dy = event.x-self._last[0], event.y-self._last[1]
+        self._last = (event.x, event.y)
+        self.pan[0] += dx
+        self.pan[1] += dy
         self._cancel_inflight()
         self.schedule()
 
@@ -466,12 +483,14 @@ class ModelPreview:
             ratio = min(1.0, 440 / max(width, height))
             w, h = max(160, int(width * ratio)), max(130, int(height * ratio))
             image = render_mesh(self.mesh, w, h, self.yaw, self.elevation,
-                                self.zoom, self.wireframe.get(), max_draw_triangles=2100)
+                                self.zoom, self.wireframe.get(), max_draw_triangles=2100,
+                                pan=(self.pan[0]*ratio,self.pan[1]*ratio))
             self.details.set(self._base_details + ' | Fast rotation preview')
             self._show_image(image, scale_to_window=True)
         else:
             image = render_mesh(self.mesh, width, height, self.yaw,
-                                self.elevation, self.zoom, self.wireframe.get())
+                                self.elevation, self.zoom, self.wireframe.get(),
+                                pan=tuple(self.pan))
             self.details.set(self._base_details)
             self._show_image(image)
 
@@ -508,11 +527,12 @@ class ModelPreview:
         scale = min(1., quality[0] / width, quality[1] / height)
         w, h = max(128, round(width * scale)), max(128, round(height * scale))
         args = (self.mesh, self.materials, w, h, self.yaw, self.elevation, self.zoom)
+        pan = (self.pan[0]*scale, self.pan[1]*scale)
 
         def work():
             try:
                 from material_preview import render_textured_mesh, RenderCancelled
-                image = render_textured_mesh(*args, cancel=event.is_set)
+                image = render_textured_mesh(*args, pan=pan, cancel=event.is_set)
             except Exception as exc:
                 image = exc
             self._result_queue.put((generation, image))
