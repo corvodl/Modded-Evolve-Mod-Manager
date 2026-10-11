@@ -110,8 +110,9 @@ class CharacterPipelineTests(unittest.TestCase):
                 body = assemble_character(root, prefix+'tech_3p.skinm', index)
                 selected = assemble_character(
                     root, prefix+'techpistol_3p.skinm', index)
-            self.assertEqual(('body',), body.included)
+            self.assertEqual(('body','pistol'), body.included)
             self.assertEqual(('body','pistol'), selected.included)
+            self.assertEqual('characters/hunters/merc_tech/techpistol_3p.skin', selected.selected_equipment)
             self.assertEqual(2, len(selected.mesh.triangles))
             self.assertFalse(any('rifle' in name for name in selected.included))
 
