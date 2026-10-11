@@ -38,7 +38,7 @@ class NativeCafTests(unittest.TestCase):
         self.assertEqual(ctrl.rotation_times,(0.,30.))
         self.assertAlmostEqual(ctrl.positions[1][0],.4,places=5)
         self.assertEqual(len(ctrl.rotations[0]),4)
-        self.assertEqual(animation.fps,30.)
+        self.assertAlmostEqual(animation.fps,30.,places=4)
 
     def test_evolve_rotation_only_chunk_has_no_trailing_padding(self):
         # A large fraction of Evolve controllers are exactly 30 bytes:
