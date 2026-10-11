@@ -131,7 +131,8 @@ class ExtractedAssetLibraryTests(TestCase):
         self.assertEqual(
             lib.reference_status(
                 "characters/hunters/shared/textures/eyeball_3p_diff.dds.0",
-                self.library), ("characters_hunters_shared_ts.pak",))
+                self.library), ("characters_hunters_shared_ts.pak",
+                                "custom_objects.pak"))
 
     def test_missing_library_file_is_not_counted_as_complete(self):
         self._import()
