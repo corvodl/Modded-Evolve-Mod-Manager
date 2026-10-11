@@ -4,6 +4,10 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.5', (
+        'Added mod profiles for organizing and switching signed PAK changes.',
+        'Added conflict checks and reversible profile staging.',
+    )),
     ('1.1.4', (
         'Info buttons now open help when clicked.',
         "Added a What's New tab with brief version notes.",

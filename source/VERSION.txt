@@ -1,1 +1,1 @@
-1.1.4 - Info Panel Fix and Brief Version Notes
+1.1.5 - Mod Profiles and Saved Mod Sets

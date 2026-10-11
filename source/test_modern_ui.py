@@ -1,4 +1,5 @@
 """Modern dark/red UI regressions: minimal tabs and on-demand instructions."""
+from version_info import app_version
 import json
 from pathlib import Path
 import tempfile
@@ -179,7 +180,7 @@ class ModernThemeTests(unittest.TestCase):
             toolbar_buttons = [x.cget('text') for x in header.winfo_children()
                                if isinstance(x, ttk.Button)]
             self.assertNotIn('Set Up Manager', toolbar_buttons)
-            self.assertEqual(manager.version_label.cget('text'), 'v1.1.4')
+            self.assertEqual(manager.version_label.cget('text'), app_version())
             self.assertTrue(manager.header_icon)
             self.assertGreater(manager.header_icon.width(), 0)
             self.assertLessEqual(manager.header_icon.width(), 36)

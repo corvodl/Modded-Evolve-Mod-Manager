@@ -85,6 +85,7 @@ class QtMigrationTests(unittest.TestCase):
             'Go to Modding  →','Refresh','External PAK…',
             'Unpack PAK','Unpack Selected PAKs','Edit Files','Review Changes',
             'Build Mod','Add Mod','Import Modified PAK','Undo Staged Mod',
+            'Mod Profiles',
             'Play With Mods','Restore Game Files',
             'Status Details','Set Up Launcher','Refresh Original PAKs',
             'Check Setup','Open Projects','Save Settings','Check for Updates',
