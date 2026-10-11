@@ -89,6 +89,9 @@ def cmd_extract(args):
     source_hash_at_start = sha_file(src)
     info,_,_,signed_name=extract_plain_cdr(src,pub)
     if not info['entries']:raise ValueError('Empty PAK')
+    from operation_progress import progress_line
+    total_entries = len(info['entries'])
+    print(progress_line(src.name, 0, total_entries), flush=True)
     records=[]; selected=0; other=0
     # Export may fail on a single malformed/unsupported CryXMLB entry.
     # Never clean up the partial workspace automatically: it may contain
@@ -102,6 +105,8 @@ def cmd_extract(args):
     try:
         seen=set()
         for idx,(name,meta) in enumerate(info['entries'].items(),1):
+            if idx == 1 or idx % 25 == 0 or idx == total_entries:
+                print(progress_line(src.name, idx, total_entries), flush=True)
             rel=normalized_name(name)
             if rel.casefold() in seen:raise ValueError(f'Case-insensitive duplicate archive path: {rel}')
             seen.add(rel.casefold())
