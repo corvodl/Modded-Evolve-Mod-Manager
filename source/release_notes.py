@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.13', (
+        'Fix Windows converter working-directory type error during DBA playback.',
+        'Preview supported layered aim/additive CAFs over an explicit base clip, with a weight slider.',
+        'Use recognizable character names in the explorer while preserving original game paths.',
+    )),
     ('1.1.18-beta.12', (
         'Bundle Cryengine-Converter and source for DBA previews without selecting an external EXE.',
         'Add collapsible animation controls and DBA fallback for missing CAF references.',
