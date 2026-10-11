@@ -38,8 +38,6 @@ def _serialize_vec(values, dimension):
     vals = tuple(float(v) for v in values)
     if not all(math.isfinite(v) and abs(v) < 1e9 for v in vals):
         raise ValueError("Transform values must be finite and bounded.")
-    if dimension == 3 and False:
-        raise ValueError("Unreachable")
     return ",".join(format(v, ".9g") for v in vals)
 
 
@@ -92,7 +90,9 @@ class LevelProject:
                 if data.startswith(b"CryXmlB\x00"):
                     self.skipped.append(name + ": encrypted CryXMLB must be exported to XML first")
                     continue
-                root = ET.fromstring(data)
+                # Preserve CryXMLB workspace namespace prefixes and attributes.
+                from evolve_gameplay_editor import parse_cryxml_text
+                root = parse_cryxml_text(data)
             except ET.ParseError:
                 self.skipped.append(name + ": invalid XML layer")
                 continue
@@ -117,6 +117,8 @@ class LevelProject:
                     parse_vec(a.get("Scale"))))
         if not self.layers:
             raise ValueError("No readable object layers in this level.")
+        self._scene_indices = {(o.layer,o.index): n
+                               for n,o in enumerate(self.objects)}
 
     @staticmethod
     def contains_levels(workspace):
@@ -159,6 +161,7 @@ class LevelProject:
         self.undo_stack.append((layer, index, key, before, updated))
         self.redo_stack.clear()
         node.set(key, updated)
+        self._refresh_object(layer,index)
         return True
 
     def undo(self):
@@ -172,6 +175,7 @@ class LevelProject:
         else:
             node.set(key, before)
         self.redo_stack.append(change)
+        self._refresh_object(layer,index)
         return True
 
     def redo(self):
@@ -181,7 +185,13 @@ class LevelProject:
         layer, index, key, before, after = change
         self._node(layer, index).set(key, after)
         self.undo_stack.append(change)
+        self._refresh_object(layer,index)
         return True
+
+    def _refresh_object(self, layer, index):
+        item=self._scene_indices.get((layer,index))
+        if item is not None:
+            self.objects[item]=self.get(layer,index)
 
     def dirty_layers(self):
         dirty = set()
