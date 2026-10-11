@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import threading
 
-from PySide6.QtCore import QObject,Signal,QRunnable,QThreadPool,Qt
+from PySide6.QtCore import QObject,Signal,QRunnable,QThreadPool,Qt,QTimer
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QLabel,
  QLineEdit,QComboBox,QPushButton,QPlainTextEdit,QFileDialog,QMessageBox,
  QTabWidget,QSpinBox,QSlider)
@@ -61,6 +61,11 @@ class DeveloperLabPanel(QWidget):
         self.last_log=()
         self._service=None
         self.snapshots={}
+        self.entity_watches=[]
+        self.entity_history=[]
+        self.entity_timer=QTimer(self)
+        self.entity_timer.setInterval(1000)
+        self.entity_timer.timeout.connect(self._record_entities)
         self._generation=0
         self._closed=False
         self.pool=QThreadPool(self)
@@ -74,6 +79,7 @@ class DeveloperLabPanel(QWidget):
         root.addWidget(self.tabs,1)
         self._memory_ui()
         self._network_ui()
+        self._entity_ui()
         self._trace_ui()
 
     def _memory_ui(self):
@@ -165,6 +171,120 @@ class DeveloperLabPanel(QWidget):
         self.network_output.setReadOnly(True)
         layout.addWidget(self.network_output,1)
         self.tabs.addTab(page,'Relay / Protocol')
+
+    def _entity_ui(self):
+        page=QWidget()
+        layout=QVBoxLayout(page)
+        layout.addWidget(QLabel(
+            'Watch known typed entity addresses in an offline session. '
+            'No character/entity offsets are assumed or discovered automatically.'))
+        controls=QHBoxLayout()
+        self.entity_label=QLineEdit()
+        self.entity_label.setPlaceholderText('Name, e.g. Goliath Health')
+        controls.addWidget(self.entity_label,1)
+        self.entity_address=QLineEdit()
+        self.entity_address.setPlaceholderText('0x…')
+        controls.addWidget(self.entity_address,1)
+        self.entity_type=QComboBox()
+        self.entity_type.addItems(('Float','4 Bytes (signed)','4 Bytes (unsigned)',
+                                   '8 Bytes (signed)','Double'))
+        controls.addWidget(self.entity_type,1)
+        controls.addWidget(button('Add Watch',self.add_entity_watch))
+        layout.addLayout(controls)
+        actions=QHBoxLayout()
+        actions.addWidget(button('Sample Once',self._record_entities))
+        actions.addWidget(button('Start Recorder',self.start_entity_recorder))
+        actions.addWidget(button('Stop',self.entity_timer.stop))
+        actions.addWidget(button('Compare with XML…',self.compare_xml_values))
+        actions.addWidget(button('Export Events…',self.export_entity_events))
+        layout.addLayout(actions)
+        self.entity_output=QPlainTextEdit()
+        self.entity_output.setReadOnly(True)
+        layout.addWidget(self.entity_output,1)
+        self.tabs.addTab(page,'Entity Watches / Events')
+
+    def add_entity_watch(self):
+        try:
+            from developer_memory_inspector import encode_value
+            name=self.entity_label.text().strip()
+            if not name or len(name)>80 or len(self.entity_watches)>=32:
+                raise ValueError('Enter a label (80 characters max, 32 watches max).')
+            address=parse_address(self.entity_address.text())
+            kind=self.entity_type.currentText()
+            encode_value('0',kind)
+            if any(w[0]==name for w in self.entity_watches):
+                raise ValueError('Watch names must be unique.')
+            self.entity_watches.append((name,address,kind))
+            self.entity_output.setPlainText(
+                '%d typed watches configured.'%len(self.entity_watches))
+        except (OSError,ValueError) as exc:
+            self.entity_output.setPlainText(str(exc))
+
+    def start_entity_recorder(self):
+        try:
+            self._pid()
+            if not self.entity_watches:
+                raise ValueError('Add a typed watch first.')
+            self.entity_timer.start()
+            self._record_entities()
+        except (OSError,ValueError) as exc:
+            self.entity_output.setPlainText(str(exc))
+
+    def _record_entities(self):
+        if self._closed:
+            self.entity_timer.stop()
+            return
+        try:
+            import time
+            pid=self._pid()
+            values=sample_watchlist(pid,self.entity_watches)
+            event={'time':round(time.time(),3),'pid':pid,
+                   'values':{label:value for label,addr,kind,value in values}}
+            self.entity_history.append(event)
+            self.entity_history=self.entity_history[-5000:]
+            self.entity_output.setPlainText(
+                json.dumps(event,indent=2)+'\n\n%d samples recorded.'%
+                len(self.entity_history))
+        except (OSError,ValueError) as exc:
+            self.entity_timer.stop()
+            self.entity_output.setPlainText('Recorder stopped: '+str(exc))
+
+    def compare_xml_values(self):
+        path,_=QFileDialog.getOpenFileName(
+            self,'Compare XML values to runtime watches','','XML (*.xml)')
+        if not path:return
+        try:
+            from studio_tools import numeric_fields
+            file=Path(path)
+            if file.stat().st_size>1024*1024:
+                raise ValueError('XML comparison limited to 1 MiB')
+            xml=file.read_text('utf-8-sig')
+            expected={field.attribute:field.value for field in numeric_fields(xml)}
+            if not self.entity_history:
+                raise ValueError('Sample the entity watchlist first.')
+            observations=self.entity_history[-1]['values']
+            report=runtime_xml_check(expected,observations)
+            report=[row for row in report if row[2] is not None]
+            self.entity_output.setPlainText(
+                json.dumps(report[:100],indent=2) or
+                'Name a watch after an XML attribute to compare its runtime value.')
+        except (OSError,ValueError) as exc:
+            self.entity_output.setPlainText(str(exc))
+
+    def export_entity_events(self):
+        if not self.entity_history:
+            self.entity_output.setPlainText('Record at least one sample first.')
+            return
+        path,_=QFileDialog.getSaveFileName(self,
+            'Export runtime event observations','Evolve-Events.json',
+            'JSON (*.json)')
+        if not path:return
+        try:
+            with Path(path).open('x',encoding='utf-8') as file:
+                json.dump({'format':'evolve-local-runtime-watch-v1',
+                           'events':self.entity_history},file,indent=2)
+        except (OSError,ValueError) as exc:
+            self.entity_output.setPlainText(str(exc))
 
     def _trace_ui(self):
         page=QWidget()
@@ -418,6 +538,7 @@ class DeveloperLabPanel(QWidget):
             self.trace_output.setPlainText(str(exc))
 
     def stop(self):
+        self.entity_timer.stop()
         self.stop_local_service()
         self._closed=True
         self._generation+=1
