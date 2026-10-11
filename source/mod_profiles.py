@@ -253,9 +253,10 @@ class ModProfiles:
             if not isinstance(sha,str) or len(sha)!=64 or any(
                     c not in '0123456789abcdef' for c in sha.lower()):
                 raise ValueError('Invalid shared SHA256.')
-            candidate=(root/filename).resolve()
-            if (not candidate.is_relative_to(root) or not candidate.is_file()
-                    or candidate.is_symlink() or digest(candidate).lower()!=sha.lower()):
+            local=root/filename
+            candidate=local.resolve()
+            if (local.is_symlink() or not candidate.is_relative_to(root) or
+                    not candidate.is_file() or digest(candidate).lower()!=sha.lower()):
                 raise ValueError('Missing or hash-mismatched signed PAK: '+filename)
             if candidate==(stage/'paks'/Path(*real.split('/'))).resolve():
                 raise ValueError('Cannot import a staged PAK as a mod.')
