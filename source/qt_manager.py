@@ -61,6 +61,8 @@ from ui_copy import load_text
 from qt_font_health import ensure_readable_ui_font, ui_family, glyphs_readable
 from portable_bundle import MARKER, bind_home
 from developer_access import verify_code
+from developer_memory import list_evolve_processes, read_memory, write_memory, parse_address, parse_hex
+from online_guard import set_offline, target_executable
 from release_notes import RELEASE_NOTES
 
 ROOT = Path(__file__).resolve().parent
@@ -294,6 +296,7 @@ class QtManager(QMainWindow):
         self.reduce_motion = bool(self.settings.get('reduce_motion', False))
         self.keep_original_snapshots = bool(self.settings.get('keep_original_snapshots', True))
         self.show_activity_on_tasks = bool(self.settings.get('show_activity_on_tasks', True))
+        self._developer_allow_online = False
         self.external_pak = ''
         self.game_root = None
         self.archive_entries = []
@@ -879,7 +882,7 @@ class QtManager(QMainWindow):
         self.pages['whats_new'] = scroll
 
     def _developer_page(self):
-        """Create protected widgets only after the entry code is verified."""
+        """Build the protected page on each successful authentication."""
         old = self.pages['developer']
         self.stack.removeWidget(old)
         old.deleteLater()
@@ -887,13 +890,124 @@ class QtManager(QMainWindow):
         heading = _label('Developer')
         heading.setObjectName('sectionTitle')
         lay.addWidget(heading)
-        card, panel = _card('Developer tools', 'No developer tools have been added yet.')
-        panel.addWidget(_button('Lock and leave',
-                                lambda: self.open_page(self._last_public_page)))
+        card, panel = _card('Session network policy',
+                            'Modded launches block outbound Evolve.exe connections by default.')
+        self.dev_online = QCheckBox('Allow online connections during modded play')
+        self.dev_online.setChecked(self._developer_allow_online)
+        self.dev_online.toggled.connect(self._developer_network)
+        panel.addWidget(self.dev_online)
+        panel.addWidget(_label('Requires administrator permission for a reversible '
+                               'game-specific Windows Firewall rule. No DLL bytes are '
+                               'changed. The override is never saved.', muted=True))
         lay.addWidget(card)
+        card, panel = _card('Live Evolve memory',
+                            'Read and edit the running game process at a known address.')
+        row = _row()
+        self.dev_process = QComboBox()
+        row.addWidget(self.dev_process, 1)
+        row.addWidget(_button('Refresh Processes', self._developer_processes))
+        panel.addLayout(row)
+        fields = QFormLayout()
+        self.dev_address = QLineEdit()
+        self.dev_address.setPlaceholderText('0x7FF600001000')
+        fields.addRow('Address', self.dev_address)
+        self.dev_read_length = QLineEdit('16')
+        fields.addRow('Read bytes', self.dev_read_length)
+        self.dev_write_bytes = QLineEdit()
+        self.dev_write_bytes.setPlaceholderText('00 00 80 3F')
+        fields.addRow('Write hex', self.dev_write_bytes)
+        panel.addLayout(fields)
+        panel.addLayout(_row(_button('Read Memory', self._developer_read),
+                             _button('Write Memory', self._developer_write)))
+        self.dev_result = QPlainTextEdit()
+        self.dev_result.setReadOnly(True)
+        self.dev_result.setMaximumHeight(130)
+        panel.addWidget(self.dev_result)
+        lay.addWidget(card)
+        lay.addWidget(_button('Lock and leave',
+                              lambda: self.open_page(self._last_public_page)))
         lay.addStretch()
         self.stack.insertWidget(self._developer_index, scroll)
         self.pages['developer'] = scroll
+
+    def _developer_game(self):
+        state = state_status(Path(self.swap_path))
+        game = Path(state.game) if state.game and Path(state.game).is_dir() else self._find_game_root()
+        if game is None:
+            raise RuntimeError('Complete setup to locate Evolve.exe.')
+        target_executable(game)
+        return game
+
+    def _developer_network(self, allow):
+        previous = self._developer_allow_online
+        if allow and not self.confirm(
+                'Allow online access?', 'Remove the game network block? '
+                'Modified gameplay may affect other players.'):
+            self.dev_online.blockSignals(True)
+            self.dev_online.setChecked(False)
+            self.dev_online.blockSignals(False)
+            return
+        try:
+            phase = state_status(Path(self.swap_path)).phase
+            if allow or phase in ('swapped', 'swapping', 'interrupted'):
+                set_offline(self._developer_game(), not allow)
+            self._developer_allow_online = bool(allow)
+        except Exception as exc:
+            self._developer_allow_online = previous
+            self.dev_online.blockSignals(True)
+            self.dev_online.setChecked(previous)
+            self.dev_online.blockSignals(False)
+            self.failure(exc)
+
+    def _developer_processes(self):
+        try:
+            self.dev_process.clear()
+            for pid in list_evolve_processes():
+                self.dev_process.addItem('Evolve.exe - PID ' + str(pid), pid)
+            if not self.dev_process.count():
+                self.dev_result.setPlainText('No running Evolve.exe found.')
+        except Exception as exc:
+            self.failure(exc)
+
+    def _developer_pid(self):
+        pid = self.dev_process.currentData()
+        if not isinstance(pid, int) or pid <= 0:
+            raise ValueError('Refresh Processes and select Evolve.exe.')
+        return pid
+
+    def _developer_read(self):
+        try:
+            address = parse_address(self.dev_address.text())
+            data = read_memory(self._developer_pid(), address,
+                               int(self.dev_read_length.text(), 10))
+            self.dev_result.setPlainText('0x%016X: %s' % (address, data.hex(' ').upper()))
+        except Exception as exc:
+            self.failure(exc)
+
+    def _developer_write(self):
+        try:
+            pid = self._developer_pid()
+            address = parse_address(self.dev_address.text())
+            data = parse_hex(self.dev_write_bytes.text())
+            if not self.confirm('Write live game memory?',
+                   'Overwrite %d bytes at 0x%016X in PID %d? This may crash '
+                   'the game.' % (len(data), address, pid)):
+                return
+            count = write_memory(pid, address, data)
+            self.dev_result.setPlainText('Wrote %d bytes at 0x%016X.' % (count, address))
+        except Exception as exc:
+            self.failure(exc)
+
+    def _restore_network_after_game(self):
+        state = self.refresh_swap_status()
+        if state.phase in ('missing', 'prepared', 'restored'):
+            try:
+                set_offline(self._developer_game(), False)
+            except Exception as exc:
+                self._log('Firewall cleanup needed: ' + str(exc))
+                self.info('Network restriction remains',
+                          'Original game files were restored, but Windows denied '
+                          'removing the network restriction. Run as administrator.')
 
     def show_help(self, section=None):
         """Keep complete original help, including offline safety and recovery."""
@@ -1615,6 +1729,7 @@ class QtManager(QMainWindow):
             commands = launcher_commands(Path(self.swap_path),Path(self.stage_path),st.phase)
             if self.confirm('Play with Mods?',
                              'Mods are intended for private/offline testing.\nClose game/launcher first, then wait for the launcher-ready message before pressing Play.'):
+                set_offline(self._developer_game(), not self._developer_allow_online)
                 self.run_steps(commands,'Play with Mods',self.refresh_swap_status,
                                cwd=Path(self.swap_path))
         except Exception as exc:
@@ -1642,7 +1757,7 @@ class QtManager(QMainWindow):
                            '--game',str(game),'--manifest-dir',
                            str(DATA_HOME/'RecoveryLogs'),'--apply']
                 self.run_steps([('Restoring orphaned originals',command)],
-                               'Restore originals',self.refresh_swap_status)
+                               'Restore originals',self._restore_network_after_game)
                 return
             if not pending and st.phase in ('missing','prepared','restored'):
                 self.info('Nothing to restore', 'No original backups remain in the selected game.')
@@ -1652,7 +1767,7 @@ class QtManager(QMainWindow):
             if self.confirm('Restore original game files?', 'Close Evolve and client before returning modded PAKs to originals.'):
                 self.run_steps([('Restoring original game files',
                                restore_command(Path(self.swap_path)))],
-                               'Restore originals',self.refresh_swap_status,
+                               'Restore originals',self._restore_network_after_game,
                                cwd=Path(self.swap_path))
         except Exception as exc:
             self.failure(exc)
