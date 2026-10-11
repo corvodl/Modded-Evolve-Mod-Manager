@@ -15,7 +15,7 @@ from PySide6.QtGui import QSurfaceFormat, QIcon, QPixmap, QPainter, QPen, QColor
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
-    QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup)
+    QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup, QLineEdit)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
 
@@ -992,12 +992,48 @@ class QtGPUModelPanel(QWidget):
         self.play_button.clicked.connect(self.toggle_play)
         line.addWidget(self.play_button)
         layout.addLayout(line)
+        native_header = QHBoxLayout()
+        native_header.addWidget(QLabel('Game animations'))
+        self.native_search = QLineEdit()
+        self.native_search.setObjectName('nativeAnimationSearch')
+        self.native_search.setPlaceholderText('Find an animation by name or file path…')
+        self.native_search.setClearButtonEnabled(True)
+        self.native_search.textChanged.connect(self._filter_native_catalog)
+        native_header.addWidget(self.native_search, 1)
+        self.native_refresh_button = QPushButton('Refresh Library')
+        self.native_refresh_button.setObjectName('refreshNativeLibrary')
+        self.native_refresh_button.setToolTip(
+            'Re-read the current Asset Library and update this model\'s animation references.')
+        self.native_refresh_button.clicked.connect(self.refresh_native_catalog)
+        native_header.addWidget(self.native_refresh_button)
+        layout.addLayout(native_header)
+
+        native_filters = QHBoxLayout()
+        self.native_state_filter = QComboBox()
+        self.native_state_filter.setObjectName('nativeAnimationStateFilter')
+        self.native_state_filter.addItems((
+            'All availability', 'Ready in library', 'In PAK (extract on play)',
+            'Not found', 'Layered / additive', 'Graph / DBA'))
+        self.native_state_filter.currentIndexChanged.connect(self._filter_native_catalog)
+        native_filters.addWidget(self.native_state_filter)
+        self.native_motion_filter = QComboBox()
+        self.native_motion_filter.setObjectName('nativeAnimationMotionFilter')
+        self.native_motion_filter.addItems((
+            'All motions', 'Idle / Stand', 'Move / Run', 'Combat / Aim',
+            'Actions / Other'))
+        self.native_motion_filter.currentIndexChanged.connect(self._filter_native_catalog)
+        native_filters.addWidget(self.native_motion_filter)
+        self.native_result_count = QLabel('No animation references loaded')
+        native_filters.addWidget(self.native_result_count, 1)
+        layout.addLayout(native_filters)
+
         native_row = QHBoxLayout()
-        native_row.addWidget(QLabel('Game clips'))
         self.native_clip_select = QComboBox()
         self.native_clip_select.setObjectName('referencedNativeAnimations')
+        self.native_clip_select.setMaxVisibleItems(16)
         self.native_clip_select.setToolTip(
-            'CryEngine references are indexed here. Only converted GLB clips can be played.')
+            'Search or filter the animation index above. Only a manageable '
+            'subset is listed; no unrelated CAF is substituted.')
         self.native_clip_select.currentIndexChanged.connect(self._native_selection)
         native_row.addWidget(self.native_clip_select, 1)
         self.play_native_button = QPushButton('Play Game Clip')
@@ -1086,61 +1122,113 @@ class QtGPUModelPanel(QWidget):
         self._native_signals = _NativeResult(self)
         self._native_signals.completed.connect(self._native_ready)
 
-    def set_native_catalog(self, references, idle=None, description='', loader=None):
-        """Show missing/layered versus independently previewable CAFs explicitly."""
+    def set_native_catalog(self, references, idle=None, description='',
+                           loader=None, refresh_library=None):
+        """Filter a potentially huge native animation catalog on the GUI thread."""
         from character_animation_catalog import native_clip_playability
         self._native_generation += 1
         self._native_loader = loader
         self._native_references = tuple(references)
-        self.native_clip_select.blockSignals(True)
-        self.native_clip_select.clear()
-        self.native_clip_select.addItem('Select referenced animation', -1)
-        for i, ref in enumerate(references):
-            state, detail = native_clip_playability(ref)
-            suffix = {'missing': ' (search PAK on play)',
-                      'extractable': ' (extract on play)',
-                      'metadata': ' (graph/database)',
-                      'layered': ' (layered / requires base pose)',
-                      'candidate': ''}[state]
-            self.native_clip_select.addItem(ref.name + suffix, i)
-            self.native_clip_select.setItemData(i + 1, detail, Qt.ToolTipRole)
-        available = [
-            (i, ref) for i, ref in enumerate(references)
-            if native_clip_playability(ref)[0] == 'candidate'
-        ]
-        auto = -1
-        if idle is not None and native_clip_playability(idle)[0] == 'candidate':
-            auto = next((i for i, ref in available
-                         if ref.name == idle.name and ref.virtual_path == idle.virtual_path), -1)
+        self._native_refresh = refresh_library
+        self.native_refresh_button.setEnabled(refresh_library is not None)
+        available = [(i, ref) for i, ref in enumerate(references)
+                     if native_clip_playability(ref)[0] == 'candidate']
+        auto = next((i for i, ref in available
+                     if idle is not None and ref.virtual_path == idle.virtual_path
+                     and ref.name == idle.name), -1)
         if auto < 0 and available:
-            # When a CAF set contains only context-specific poses, offer a
-            # reasonable standalone candidate without auto-playing it.
             auto = min(available, key=lambda pair: (
                 not any(x in pair[1].name.casefold()
-                        for x in ('stand', 'idle', 'run', 'walk')),
+                        for x in ('idle', 'stand', 'walk', 'run')),
                 pair[1].name.casefold()))[0]
-        if auto >= 0:
-            self.native_clip_select.setCurrentIndex(auto + 1)
-        self.native_clip_select.blockSignals(False)
-        layered = sum(native_clip_playability(ref)[0] == 'layered'
-                      for ref in references)
-        extractable = sum(native_clip_playability(ref)[0] == 'extractable'
-                          for ref in references)
-        missing = sum(native_clip_playability(ref)[0] == 'missing'
-                      for ref in references)
-        summary = (f'{len(available)} extracted CAFs, {extractable} in signed PAKs, '
-                   f'{missing} unlocated, {layered} layered • {len(references)} mappings')
-        if idle:
-            summary += ' • Idle: ' + idle.name
+        self._native_suggested = auto
+        counts = {k: 0 for k in
+                  ('candidate', 'extractable', 'missing', 'layered', 'metadata')}
+        for ref in references:
+            state, _ = native_clip_playability(ref)
+            counts[state] += 1
+        self._native_catalog_summary = (
+            '%d in library • %d packed • %d not found • %d layered • %d graph • '
+            '%d total mappings' %
+            (counts['candidate'], counts['extractable'], counts['missing'],
+             counts['layered'], counts['metadata'], len(references)))
         if description:
-            summary += ' • Source: ' + description[:80]
-        self._native_catalog_summary = summary
-        self._native_selection(self.native_clip_select.currentIndex())
+            self._native_catalog_summary += ' • Map: ' + description[:75]
+        self._filter_native_catalog()
         if auto >= 0 and loader and idle is not None:
             generation = self._native_generation
             QTimer.singleShot(
                 80, lambda: self.load_native()
                 if generation == self._native_generation else None)
+
+    @staticmethod
+    def _animation_motion(name):
+        label = name.casefold()
+        if any(word in label for word in ('idle', 'stand', 'relax')):
+            return 1
+        if any(word in label for word in
+               ('walk', 'run', 'sprint', 'jump', 'swim', 'move')):
+            return 2
+        if any(word in label for word in
+               ('fire', 'shoot', 'aim', 'reload', 'combat', 'hit', 'attack')):
+            return 3
+        return 4
+
+    def _filter_native_catalog(self, *_args):
+        from character_animation_catalog import native_clip_playability
+        selected = self.native_clip_select.currentData()
+        if not isinstance(selected, int) or selected < 0:
+            selected = getattr(self, '_native_suggested', -1)
+        search = self.native_search.text().strip().casefold()
+        filt = self.native_state_filter.currentIndex()
+        motion = self.native_motion_filter.currentIndex()
+        kinds = {1: 'candidate', 2: 'extractable', 3: 'missing',
+                 4: 'layered', 5: 'metadata'}
+        matching = []
+        for i, ref in enumerate(self._native_references):
+            state, _ = native_clip_playability(ref)
+            if search and search not in (ref.name + ' ' + ref.virtual_path).casefold():
+                continue
+            if filt and state != kinds[filt]:
+                continue
+            if motion and self._animation_motion(ref.name) != motion:
+                continue
+            matching.append((i, ref, state))
+        max_rows = 90
+        shown = matching[:max_rows]
+        # Keep the selected clip reachable even when it falls after row 90.
+        if any(i == selected for i, _, _ in matching) and not any(
+                i == selected for i, _, _ in shown):
+            chosen = next(item for item in matching if item[0] == selected)
+            shown = [chosen] + shown[:max_rows-1]
+        self.native_clip_select.blockSignals(True)
+        self.native_clip_select.clear()
+        self.native_clip_select.addItem('Select an animation…', -1)
+        suffixes = {
+            'candidate': ' [Library]', 'extractable': ' [Packed]',
+            'missing': ' [Not found]', 'layered': ' [Layered]',
+            'metadata': ' [Graph]'}
+        preferred = 0
+        for position, (i, ref, state) in enumerate(shown, 1):
+            self.native_clip_select.addItem(ref.name + suffixes[state], i)
+            self.native_clip_select.setItemData(
+                position, native_clip_playability(ref)[1] + '\n' + ref.virtual_path,
+                Qt.ToolTipRole)
+            if i == selected:
+                preferred = position
+        self.native_clip_select.setCurrentIndex(preferred)
+        self.native_clip_select.blockSignals(False)
+        self.native_result_count.setText(
+            'Showing %d of %d matching / %d total' %
+            (len(shown), len(matching), len(self._native_references)))
+        self._native_selection(self.native_clip_select.currentIndex())
+
+    def refresh_native_catalog(self):
+        self.native_info.setText(
+            'Refreshing the current Asset Library and model dependencies…')
+        callback = getattr(self, '_native_refresh', None)
+        if callback is not None:
+            callback()
 
     def _native_selection(self, index):
         from character_animation_catalog import native_clip_playability
@@ -1221,9 +1309,7 @@ class QtGPUModelPanel(QWidget):
                 updated = list(self._native_references)
                 updated[i] = resolved
                 self._native_references = tuple(updated)
-                self.native_clip_select.setItemText(i + 1, resolved.name)
-                self.native_clip_select.setItemData(
-                    i + 1, native_clip_playability(resolved)[1], Qt.ToolTipRole)
+                self._filter_native_catalog()
                 self.play_native_button.setText('Play Game Clip')
         origin = details.get('_animation_asset_origin', '')
         fetched = 'Extracted on demand from ' + origin + ' • ' if details.get('_extracted_on_play') else ''
