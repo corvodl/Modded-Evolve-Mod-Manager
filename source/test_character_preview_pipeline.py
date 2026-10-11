@@ -71,7 +71,7 @@ class CharacterPipelineTests(unittest.TestCase):
                 'path="characters/hunters/merc_tech/animations/3p"/>'
                 '<Animation name="stand_idle" path="tech_idle_forward.caf"/>'
                 '</AnimationList></Params>')
-            header = b'CrChF\\x07\\x00\\x00' + struct.pack('<II', 1, 16) + b'\\0' * 16
+            header = b'CrChF\x07\x00\x00' + struct.pack('<II', 1, 16) + b'\0' * 16
             a, b = root/'animations1.caf', root/'animations2.caf'
             a.write_bytes(header)
             b.write_bytes(header)
