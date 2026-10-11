@@ -39,7 +39,8 @@ class UnrealStyleLevelEditorSmoke(unittest.TestCase):
         e=self.editor
         self.assertEqual(len(e.project.objects),3)
         self.assertEqual(e.outliner.topLevelItemCount(),2)
-        self.assertEqual(e.content.topLevelItemCount(),2)
+        self.assertEqual(e.content.topLevelItemCount(),1)
+        self.assertEqual(e.content.topLevelItem(0).text(0),"levels")
         self.assertEqual(len(e.boxes["Rotate"]),4)
         self.assertEqual(e.viewport.mode,"select")
         self.assertIn("Level Editor",e.windowTitle())
