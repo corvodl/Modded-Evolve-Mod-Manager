@@ -253,3 +253,91 @@ def skin_companion_path(source):
     if path.suffix.casefold() == '.chrm':
         return path.with_suffix('.chr')
     return None
+
+
+def skin_glb_composite(glb, rig_parts, skeleton_raw):
+    """Attach one verified skeleton to multiple CDF skin meshes in one GLB.
+
+    rig_parts are (native render bytes, native skin bytes, vertex_count).
+    Each part has a local bone palette; indices are mapped by bone name to
+    the master CDF skeleton, never assumed to share integer bone indices.
+    """
+    from model_textured_export import _unpack_glb, _pack_glb
+    doc, binary = _unpack_glb(glb)
+    if doc.get('skins') or len(doc.get('meshes', [])) != 1:
+        raise ValueError('Expected one unskinned composite GLB')
+    names, parents, world, inverse = parse_compiled_bones(skeleton_raw)
+    name_to_id = {n.casefold():i for i,n in enumerate(names)}
+    arrays, weights = [], []
+    for render_raw, skin_raw, count in rig_parts:
+        part_names, _parents, part_world, _inverse = parse_compiled_bones(skin_raw)
+        mapped_names = []
+        for i, name in enumerate(part_names):
+            master = name_to_id.get(name.casefold())
+            if master is None or np.max(np.abs(world[master] - part_world[i])) > .005:
+                raise ValueError('CDF skin bone is absent or has incompatible rest pose: '+name)
+            mapped_names.append(master)
+        ids, influence, _subsets = remap_skin_weights(render_raw, count, len(part_names))
+        ids = np.take(np.asarray(mapped_names, dtype='<u2'), ids)
+        arrays.append(ids.astype('<u2'))
+        weights.append(influence.astype('u1'))
+    if not arrays:
+        raise ValueError('No compatible skinned render parts')
+    bone_ids = np.concatenate(arrays)
+    packed_weights = np.concatenate(weights)
+    primitives = doc['meshes'][0].get('primitives', [])
+    positions = {p.get('attributes',{}).get('POSITION') for p in primitives}
+    if len(positions) != 1 or None in positions:
+        raise ValueError('Composite primitives must share one vertex accessor')
+    count = doc['accessors'][positions.pop()]['count']
+    if len(bone_ids) != count or len(packed_weights) != count:
+        raise ValueError('Composite mesh vertex count differs from combined weights')
+    first = len(doc['nodes'])
+    nodes = [{'name':name,'children':[]} for name in names]
+    for i,parent in enumerate(parents):
+        local = world[i] if parent == -1 else np.linalg.inv(world[parent]) @ world[i]
+        local = BASIS @ local @ INVERSE_BASIS
+        nodes[i]['matrix'] = [float(x) for x in local.reshape(-1,order='F')]
+        if parent != -1:
+            nodes[parent]['children'].append(first+i)
+    for node in nodes:
+        if not node['children']:
+            del node['children']
+    doc['nodes'].extend(nodes)
+    root = parents.index(-1)
+    doc['scenes'][doc.get('scene',0)]['nodes'].append(first+root)
+    def add_view(payload, target=None):
+        binary.extend(b'\0'*(-len(binary)%4))
+        pos = len(binary)
+        binary.extend(payload)
+        obj = {'buffer':0,'byteOffset':pos,'byteLength':len(payload)}
+        if target is not None: obj['target']=target
+        doc['bufferViews'].append(obj)
+        return len(doc['bufferViews'])-1
+    joint_view = add_view(bone_ids.tobytes(),34962)
+    weight_view = add_view(packed_weights.tobytes(),34962)
+    inv = np.asarray([(BASIS@m@INVERSE_BASIS).reshape(-1,order='F')
+                      for m in inverse],dtype='<f4')
+    inv_view = add_view(inv.tobytes())
+    def accessor(view, kind, n, component):
+        i=len(doc['accessors'])
+        doc['accessors'].append({'bufferView':view,'componentType':component,
+                                'count':n,'type':kind})
+        return i
+    ji=accessor(joint_view,'VEC4',count,5123)
+    wi=accessor(weight_view,'VEC4',count,5121)
+    doc['accessors'][wi]['normalized']=True
+    mi=accessor(inv_view,'MAT4',len(names),5126)
+    for primitive in primitives:
+        primitive['attributes']['JOINTS_0'] = ji
+        primitive['attributes']['WEIGHTS_0'] = wi
+    doc['skins']=[{'name':'CryEngine CDF '+names[root],
+                   'joints':[first+i for i in range(len(names))],
+                   'inverseBindMatrices':mi,'skeleton':first+root}]
+    instances=[node for node in doc['nodes'] if node.get('mesh')==0]
+    if len(instances)!=1:
+        raise ValueError('Composite GLB needs exactly one mesh instance')
+    instances[0]['skin']=0
+    return _pack_glb(doc,binary), {
+        'bone_count':len(names), 'vertex_count':count,
+        'part_count':len(rig_parts)}
