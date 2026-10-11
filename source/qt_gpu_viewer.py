@@ -57,6 +57,10 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.shading = 'faceted'
         self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
         self.materials = materials
+        # Character assembled parts can use CryEngine alpha semantics that
+        # are not reproduced by the preview. Solid diagnostic rendering keeps
+        # all decoded geometry visible while missing materials are resolved.
+        self.force_opaque_preview = mesh.source_name.startswith('Character assembly:')
         self.textures = []
         self.normal_textures = []
         self.specular_textures = []
@@ -88,6 +92,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.geometry = geometry
         self._batch_sort_cache = None
         self.materials = materials
+        self.force_opaque_preview = mesh.source_name.startswith('Character assembly:')
         if self.isValid():
             self.makeCurrent()
             try:
@@ -340,6 +345,8 @@ class QtGLModelCanvas(QOpenGLWidget):
             # Render translucent material groups after opaque ones. Geometry
             # in a material group still uses source ordering (no invented triangles).
             def is_translucent(slot):
+                if self.force_opaque_preview:
+                    return False
                 values=getattr(self.materials,'opacity',()) if self.materials else ()
                 return slot in self.translucent_slots or (slot<len(values) and values[slot]<.999)
             from renderer_3 import ordered_transparency_batches
@@ -357,6 +364,8 @@ class QtGLModelCanvas(QOpenGLWidget):
                     continue
                 alpha = (self.materials.opacity[slot] if self.materials and
                          slot<len(getattr(self.materials,'opacity',())) else 1.0)
+                if self.force_opaque_preview:
+                    alpha = 1.0
                 transparent = is_translucent(slot)
                 if transparent:
                     glEnable(GL_BLEND)
@@ -376,7 +385,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 illumination=strength,diffuse=bool(tex),
                                 normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
                                 specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
-                                alpha_texture=slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot]))
+                                alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])))
                 if tex:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D,tex)
@@ -462,7 +471,9 @@ class QtGPUModelPanel(QWidget):
         self.setMinimumSize(300, 230)
         layout=QVBoxLayout(self)
         self._info=QLabel(mesh.source_name+'  •  '+mesh.description)
-        self._info.setWordWrap(True)
+        self._info.setWordWrap(False)
+        self._info.setToolTip(mesh.source_name + '  •  ' + mesh.description)
+        self._info.setMaximumHeight(28)
         layout.addWidget(self._info)
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
@@ -593,6 +604,11 @@ class QtGPUModelPanel(QWidget):
         self.gloss_slider.valueChanged.connect(self.canvas.set_specular)
         inspector.addWidget(self.gloss_slider)
         self._overlay_sections['Materials'][1].addLayout(inspector)
+        self.solid_geometry = QCheckBox('Show all character geometry (ignore alpha)')
+        self.solid_geometry.setToolTip('Diagnostic view: shows every decoded part even if a CryEngine material uses unsupported transparency. Does not create absent mesh parts.')
+        self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
+        self.solid_geometry.toggled.connect(lambda checked: (setattr(self.canvas, 'force_opaque_preview', checked), self.canvas.update()))
+        self._overlay_sections['Materials'][1].addWidget(self.solid_geometry)
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = QLabel('Native game animations: not scanned')
@@ -624,8 +640,10 @@ class QtGPUModelPanel(QWidget):
     def _position_overlay(self):
         if not hasattr(self, '_overlay') or self._overlay is None:
             return
-        width = max(200, min(690, self.canvas.width() - 20))
-        height = max(120, min(530, self.canvas.height() - 20))
+        width = max(200, min(610, self.canvas.width() - 20))
+        page = self._overlay_sections.get(self._active_overlay)
+        wanted = (page[0].sizeHint().height() + 35) if page else 200
+        height = max(100, min(wanted, 540, self.canvas.height() - 20))
         self._overlay.setGeometry(10, 10, width, height)
 
     def eventFilter(self, obj, event):
@@ -703,6 +721,9 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.clear()
         self.native_info.setText('Native game animations: not scanned')
         self.canvas.set_mesh(mesh, materials, prepared_geometry=prepared_geometry)
+        self.solid_geometry.blockSignals(True)
+        self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
+        self.solid_geometry.blockSignals(False)
         self._populate_material_slots(mesh,materials)
         self._info.setText(mesh.source_name + '  •  ' + mesh.description)
 
