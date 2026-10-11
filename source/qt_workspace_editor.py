@@ -1193,15 +1193,29 @@ class QtWorkspaceEditor(QMainWindow):
             source_textures = self.texture_folder
             source_projects = self.manager.projects_path
             source_stage = self.manager.stage_path
+            source_game = self.manager.game_root or self.manager._find_game_root()
+            source_loose = self.loose_animation_index
 
             def build_native_clip(ref):
+                # QThreadPool worker: verify/index archive metadata and decode
+                # ONLY this CAF when it is first requested by the user.
+                from animation_on_demand import resolve_caf_for_play
+                selected, extracted, origin = resolve_caf_for_play(
+                    ref, stage_root=source_stage, game_root=source_game,
+                    asset_index=source_index,
+                    preferred_workspace=source_workspace,
+                    loose_index=source_loose)
                 blob, details = create_character_glb(
                     source_workspace, source_relative, source_index,
                     character=source_character, texture_folder=source_textures,
-                    projects_root=source_projects, stage_root=source_stage, clip=ref)
+                    projects_root=source_projects, stage_root=source_stage,
+                    clip=selected)
                 from model_animation import AnimatedGLB
                 from gpu_model_preview import prepare_geometry
                 imported = AnimatedGLB(blob,'Original Evolve animation')
+                details['_resolved_caf_reference'] = selected
+                details['_extracted_on_play'] = extracted
+                details['_animation_asset_origin'] = origin
                 return (imported, prepare_geometry(imported.preview_mesh)), details
 
             self.model_panel.set_native_catalog(refs, idle, config,
