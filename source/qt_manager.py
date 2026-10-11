@@ -3316,6 +3316,12 @@ class QtManager(QMainWindow):
         if not self.flush_editors():
             event.ignore()
             return
+        if any(viewer.isVisible() and viewer._pool.activeThreadCount()
+               for viewer in self.library_previews):
+            self.info('Asset Library preview busy',
+                      'Wait until an active library preview or export completes before closing.')
+            event.ignore()
+            return
         try:
             self.persist()
         except OSError:
