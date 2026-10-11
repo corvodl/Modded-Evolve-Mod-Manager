@@ -1144,15 +1144,16 @@ class QtGPUModelPanel(QWidget):
                 pair[1].name.casefold()))[0]
         self._native_suggested = auto
         counts = {k: 0 for k in
-                  ('candidate', 'extractable', 'missing', 'layered', 'metadata')}
+                  ('candidate', 'extractable', 'missing', 'layered', 'metadata', 'converter')}
         for ref in references:
             state, _ = native_clip_playability(ref)
             counts[state] += 1
         self._native_catalog_summary = (
             '%d loose CAF candidates • %d packed CAF paths • %d no standalone CAF '
-            '(some may be DBA tracks) • %d layered • %d graph • %d total mappings' %
+            '• %d layered • %d graph • %d DBA databases • %d total mappings' %
             (counts['candidate'], counts['extractable'], counts['missing'],
-             counts['layered'], counts['metadata'], len(references)))
+             counts['layered'], counts['metadata'], counts['converter'],
+             len(references)))
         if description:
             self._native_catalog_summary += ' • Map: ' + description[:75]
         self._filter_native_catalog()
@@ -1208,7 +1209,8 @@ class QtGPUModelPanel(QWidget):
         suffixes = {
             'candidate': ' [Library]', 'extractable': ' [Packed]',
             'missing': ' [No loose CAF]', 'layered': ' [Layered]',
-            'metadata': ' [Graph]'}
+            'metadata': ' [Graph / DBA unavailable]',
+            'converter': ' [DBA converter]'}
         preferred = 0
         for position, (i, ref, state) in enumerate(shown, 1):
             self.native_clip_select.addItem(ref.name + suffixes[state], i)
@@ -1245,9 +1247,11 @@ class QtGPUModelPanel(QWidget):
         ref = self._native_references[ref_index]
         state, detail = native_clip_playability(ref)
         self.play_native_button.setEnabled(
-            bool(self._native_loader and state in ('candidate', 'extractable', 'missing')))
+            (state == 'converter') or bool(
+                self._native_loader and state in ('candidate', 'extractable', 'missing')))
         self.play_native_button.setText(
-            'Extract & Play' if state == 'extractable'
+            'Convert DBA & Play' if state == 'converter'
+            else 'Extract & Play' if state == 'extractable'
             else 'Search PAK & Play' if state == 'missing'
             else 'Play Game Clip')
         if state == 'layered':
@@ -1264,11 +1268,16 @@ class QtGPUModelPanel(QWidget):
     def load_native(self):
         from character_animation_catalog import native_clip_playability
         i = self.native_clip_select.currentData()
-        if (self._native_loader is None or not isinstance(i, int)
+        if (not isinstance(i, int)
                 or i < 0 or i >= len(self._native_references)):
             return
         ref = self._native_references[i]
         state, reason = native_clip_playability(ref)
+        if state == 'converter':
+            self.import_original()
+            return
+        if self._native_loader is None:
+            return
         if state not in ('candidate', 'extractable', 'missing'):
             self.native_info.setText(reason + '\n' + ref.virtual_path)
             self.play_native_button.setEnabled(False)
@@ -1603,6 +1612,7 @@ class QtGPUModelPanel(QWidget):
                 'CryEngine models and animations (*.chr *.skin *.caf *.dba)')
         if not source:
             return
+        is_dba = Path(source).suffix.casefold() == '.dba'
         converter, _ = QFileDialog.getOpenFileName(
             self, 'Select installed Cryengine-Converter executable (not bundled)',
             '', 'Converter executable (*.exe)')
@@ -1630,6 +1640,7 @@ class QtGPUModelPanel(QWidget):
             self.converter_process.setProgram(program)
             self.converter_process.setArguments(args)
             self.converter_process.setWorkingDirectory(output)
+            self._dba_conversion = is_dba
             self.converter_process.finished.connect(
                 lambda code, status: self._conversion_finished(code, status, output))
             self.converter_process.errorOccurred.connect(
@@ -1646,7 +1657,16 @@ class QtGPUModelPanel(QWidget):
                 'External conversion failed (exit %d). Verify that CAF/DBA '
                 'tracks and matching skeleton are unpacked.' % code)
             return
-        self.anim_status.setText('Conversion finished. Select its animated GLB.')
+        # A DBA can contain many motions. Play directly when exactly one
+        # glTF was generated; otherwise allow an explicit choice instead of
+        # silently playing an unrelated clip.
+        paths = [path for path in Path(folder).rglob('*.glb')
+                 if path.is_file() and not path.is_symlink()]
+        if len(paths) == 1:
+            self._load_animation_file(str(paths[0]))
+            return
+        self.anim_status.setText(
+            'Converted %d animated GLBs. Select the corresponding motion.' % len(paths))
         file, _ = QFileDialog.getOpenFileName(
             self, 'Select converted animation GLB', folder, 'Animated GLB (*.glb)')
         if file:
