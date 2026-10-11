@@ -143,6 +143,9 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.character_skin_choice = None
         self.gpu_windows = []
+        self._export_native_pool = None
+        self._export_native_signals = None
+        self._export_native_target = None
         self.materials = None
         self.texture_message = 'No model selected'
         # A main window has the standard Win32 maximize/restore non-dialog frame.
@@ -259,6 +262,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Open File Folder', self.explore)
         action('File', 'Export Native Model…', self.export_model)
         action('File', 'Export for Blender (.glb)…', self.export_blender_model)
+        action('File', 'Export Animated Character (.glb)…', self.export_animated_character)
         action('File', 'Export Model Folder…', self.export_blender_folder)
         action('Edit', 'Save Text', self.save)
         action('Edit', 'Find Text', self.find_text)
@@ -893,6 +897,93 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText('Imported compatible DDS, backups retained: '+rel)
         except Exception as exc:
             QMessageBox.critical(self,'DDS import rejected',str(exc))
+
+    def export_animated_character(self):
+        """Export native CAF clips with a verified character rig, read-only."""
+        if self.mode != 'models' or not self.mesh or not self.current:
+            QMessageBox.information(self, 'Animated Blender export',
+                                    'Open a supported character model first.')
+            return
+        from character_animation_catalog import discover_animations
+        from native_character_glb import create_character_glb
+        from qt_gpu_viewer import _NativeConversion, _NativeResult
+        from PySide6.QtCore import QThreadPool
+        skeleton = (self.character_preview.skeleton if self.character_preview
+                    else self.current)
+        refs, _, source = discover_animations(
+            skeleton, self.preview_index, preferred_workspace=self.workspace,
+            loose_index=self.loose_animation_index)
+        clips = tuple(r for r in refs if r.available and r.kind == 'caf'
+                      and 'additive' not in r.name.casefold()
+                      and 'aimpose' not in r.name.casefold())
+        if not clips:
+            QMessageBox.information(self, 'Animated Blender export',
+                                    'No compatible extracted CAF clips found for this skeleton.')
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self, 'Export complete character with native animations',
+            str(Path(self.manager.projects_path)/
+                (Path(self.current).stem + '-animated.glb')),
+            'Blender animated glTF 2.0 (*.glb)')
+        if not target:
+            return
+        target = Path(target).resolve().with_suffix('.glb')
+        protected = (self.workspace/'files').resolve()
+        if target.is_relative_to(protected):
+            QMessageBox.warning(self,'Animated Blender export',
+                                'Choose an export location outside extracted game assets.')
+            return
+        if len(clips) > 256:
+            QMessageBox.warning(self,'Animated Blender export',
+                                'More than 256 matching animations; refine the selection.')
+            return
+        if self._export_native_pool is None:
+            self._export_native_pool = QThreadPool(self)
+            self._export_native_pool.setMaxThreadCount(1)
+            self._export_native_signals = _NativeResult(self)
+            self._export_native_signals.completed.connect(self._export_animated_ready)
+        workspace, relative = self.workspace, self.current
+        index, character = self.preview_index, self.character_preview
+        tex = self.texture_folder
+        projects, stage = self.manager.projects_path, self.manager.stage_path
+        self._export_native_target = target
+        self._export_native_token = getattr(self,'_export_native_token',0)+1
+        token = self._export_native_token
+
+        def produce(_reference):
+            payload, report = create_character_glb(
+                workspace, relative, index, character=character,
+                texture_folder=tex, projects_root=projects,
+                stage_root=stage, clips=clips)
+            import os
+            import tempfile
+            # Atomic export: never leave a half-written GLB on failure.
+            fd, temporary = tempfile.mkstemp(
+                prefix='.evolve-animation-',suffix='.glb',dir=target.parent)
+            try:
+                with os.fdopen(fd,'wb') as output:
+                    output.write(payload)
+                os.replace(temporary,target)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            return b'', report
+
+        self.status.setText('Exporting %d original CryEngine animations…' % len(clips))
+        self._export_native_pool.start(
+            _NativeConversion(produce,None,token,self._export_native_signals))
+
+    def _export_animated_ready(self, token, result, error):
+        if token != getattr(self,'_export_native_token',None):
+            return
+        if error:
+            self.status.setText('Animated Blender export failed: ' + error[:260])
+            QMessageBox.warning(self,'Animated Blender export',error)
+            return
+        _, report = result
+        self.status.setText(
+            'Exported %d animated clips into %s' %
+            (report.get('animations',0),self._export_native_target))
 
     def export_blender_model(self):
         """Export current mesh and diffuse textures from compatible unpacked PAKs."""
