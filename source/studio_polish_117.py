@@ -71,6 +71,17 @@ def _result_size(result):
     return total
 
 
+def _detached(result):
+    """Animation playback writes to vertices/normals; never mutate cache arrays."""
+    out=dict(result)
+    geometry=out.get('geometry')
+    if geometry is not None:
+        from dataclasses import replace
+        out['geometry']=replace(geometry,vertices=geometry.vertices.copy(),
+                                normals=geometry.normals.copy())
+    return out
+
+
 def prepare_model_cached(workspace,relative,*,force=False,**kwargs):
     """Return a detached result mapping, cache hit and wall-clock duration."""
     global _cache_bytes
@@ -84,7 +95,7 @@ def prepare_model_cached(workspace,relative,*,force=False,**kwargs):
             hit=_cache.get(key)
             if hit is not None and time.monotonic()-hit[0] < MODEL_CACHE_TTL:
                 _cache.move_to_end(key)
-                return dict(hit[1]),True,(time.perf_counter()-start)*1000
+                return _detached(hit[1]),True,(time.perf_counter()-start)*1000
     result=resolve_model(workspace,relative,**kwargs)
     size=_result_size(result)
     if eligible and size<=MAX_CACHE_BYTES//2:
@@ -92,7 +103,7 @@ def prepare_model_cached(workspace,relative,*,force=False,**kwargs):
             old=_cache.pop(key,None)
             if old is not None:
                 _cache_bytes-=old[2]
-            _cache[key]=(time.monotonic(),dict(result),size)
+            _cache[key]=(time.monotonic(),_detached(result),size)
             _cache_bytes+=size
             while len(_cache)>MODEL_CACHE_LIMIT or _cache_bytes>MAX_CACHE_BYTES:
                 _,entry=_cache.popitem(last=False)
