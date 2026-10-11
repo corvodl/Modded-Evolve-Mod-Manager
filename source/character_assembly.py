@@ -57,8 +57,6 @@ def _character_definition(selected, index, workspace):
     virtual = normalized_name(selected)
     parent = Path(virtual).parent
     stem = Path(virtual).stem
-    if stem.endswith('.skin'):
-        stem = stem[:-5]
     root_name = re.sub(r'_skeleton$', '', re.sub(r'_lod\d+$', '', stem, flags=re.I), flags=re.I)
     expected = (parent / (root_name + '.cdf')).as_posix().casefold()
     # A skeleton or main body skin can resolve directly. Equipment skins need
@@ -110,7 +108,8 @@ def combine_meshes(items):
         subsets.extend((base_index + first, count, base_material + slot)
                        for first, count, slot in source_subsets)
         textures.extend(materials.textures if materials else ())
-        names.extend((name + ': ' + label) for label in materials.names if materials)
+        if materials:
+            names.extend(name + ': ' + label for label in materials.names)
         for i in range(slots - (len(materials.textures) if materials else 0)):
             textures.append(None)
             names.append(name + ': unresolved slot ' + str(i))
