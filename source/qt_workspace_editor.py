@@ -1161,11 +1161,18 @@ class QtWorkspaceEditor(QMainWindow):
             'Assets: %d/%d used textures · %d/%d standalone CAFs' %
             (mapped, slots, count, total))
         issues=(self.materials.issues if self.materials is not None else ())
+        missing_slots = (
+            [self.materials.names[slot] if slot < len(self.materials.names)
+             else 'Slot ' + str(slot)
+             for slot in slots_used if self.materials.textures[slot] is None]
+            if self.materials else [])
         self.dependency_button.setToolTip(
             'Named CAF mappings: %d • indexed loose CAF candidates: %d\n'
+            'Missing used model slots: %s\n'
             'Texture diagnostic issues:\n%s\n'
             'Open Assets for full texture/animation diagnostics.' %
-            (total, count, '\n'.join(issues[:8]) or
+            (total, count, ', '.join(missing_slots[:12]) or 'None',
+             '\n'.join(issues[:8]) or
              'No unresolved DDS references reported.'))
         self._update_equipment_menu()
         self._paint_model(view, self.mesh)
