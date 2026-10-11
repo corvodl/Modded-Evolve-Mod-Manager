@@ -157,37 +157,48 @@ class AnimatedGLB:
             raise ValueError('Skin inverse-bind count mismatch.')
         meshes=doc['meshes'][instance['mesh']]
         pos_list=[];uv_list=[];face_list=[];joint_list=[];weight_list=[];groups=[]
-        for primitive in meshes.get('primitives',[]):
-            if primitive.get('mode',4)!=4:
+        # glb_bytes() deliberately shares one set of vertex attributes across
+        # material primitives. Count that vertex array once; otherwise every
+        # material repeats the WHOLE mesh and large CDF characters hit the
+        # render limit even when the actual mesh is small enough.
+        vertex_sources = {}
+        for primitive in meshes.get('primitives', []):
+            if primitive.get('mode', 4) != 4:
                 continue
-            attributes=primitive['attributes']
+            attributes = primitive['attributes']
             if 'JOINTS_0' not in attributes or 'WEIGHTS_0' not in attributes:
                 raise ValueError('Skinned glTF primitive lacks joint or weight data.')
-            coords=_accessor(doc,self.binary,attributes['POSITION']).astype(np.float64)
-            joint=_accessor(doc,self.binary,attributes['JOINTS_0']).astype(np.int32)
-            weights=_accessor(doc,self.binary,attributes['WEIGHTS_0']).astype(np.float64)
-            if joint.shape != (len(coords),4) or weights.shape!=(len(coords),4):
-                raise ValueError('Malformed joint or weight attribute.')
-            if joint.min()<0 or joint.max()>=len(self.joints):
-                raise ValueError('GLB skin joint index out of range.')
-            sums=weights.sum(axis=1)
-            if np.any(sums<.95) or np.any(sums>1.05):
-                raise ValueError('GLB skin weights are not normalized.')
-            weights=weights/sums[:,None]
-            idx=_accessor(doc,self.binary,primitive['indices']).reshape(-1).astype(np.int64)
-            if len(idx)%3 or len(idx)>1_500_000 or idx.min()<0 or idx.max()>=len(coords):
+            keys = ('POSITION', 'JOINTS_0', 'WEIGHTS_0', 'TEXCOORD_0')
+            signature = tuple(attributes.get(key) for key in keys)
+            if signature not in vertex_sources:
+                coords = _accessor(doc, self.binary, attributes['POSITION']).astype(np.float64)
+                joint = _accessor(doc, self.binary, attributes['JOINTS_0']).astype(np.int32)
+                weights = _accessor(doc, self.binary, attributes['WEIGHTS_0']).astype(np.float64)
+                if joint.shape != (len(coords), 4) or weights.shape != (len(coords), 4):
+                    raise ValueError('Malformed joint or weight attribute.')
+                if joint.min() < 0 or joint.max() >= len(self.joints):
+                    raise ValueError('GLB skin joint index out of range.')
+                sums = weights.sum(axis=1)
+                if np.any(sums < .95) or np.any(sums > 1.05):
+                    raise ValueError('GLB skin weights are not normalized.')
+                weights = weights / sums[:, None]
+                first_vertex = sum(len(x) for x in pos_list)
+                pos_list.append(coords)
+                joint_list.append(joint)
+                weight_list.append(weights)
+                if 'TEXCOORD_0' in attributes:
+                    uv_list.append(_accessor(doc, self.binary, attributes['TEXCOORD_0']))
+                else:
+                    uv_list.append(np.zeros((len(coords), 2)))
+                vertex_sources[signature] = (first_vertex, len(coords))
+            first_vertex, vertex_count = vertex_sources[signature]
+            idx = _accessor(doc, self.binary, primitive['indices']).reshape(-1).astype(np.int64)
+            if (not len(idx) or len(idx) % 3 or len(idx) > 1_500_000 or
+                    idx.min() < 0 or idx.max() >= vertex_count):
                 raise ValueError('Invalid animated mesh triangle indices.')
-            previous=sum(len(x) for x in pos_list)
-            previous_indices=sum(len(x)*3 for x in face_list)
-            face_list.append(idx.reshape(-1,3)+previous)
-            groups.append((previous_indices,len(idx),min(254,primitive.get('material',0))))
-            pos_list.append(coords)
-            joint_list.append(joint)
-            weight_list.append(weights)
-            if 'TEXCOORD_0' in attributes:
-                uv_list.append(_accessor(doc,self.binary,attributes['TEXCOORD_0']))
-            else:
-                uv_list.append(np.zeros((len(coords),2)))
+            previous_indices = sum(len(x) * 3 for x in face_list)
+            face_list.append(idx.reshape(-1, 3) + first_vertex)
+            groups.append((previous_indices, len(idx), min(254, primitive.get('material', 0))))
         if not pos_list:
             raise ValueError('Animated GLB has no supported triangle primitives.')
         self.positions=np.vstack(pos_list)
