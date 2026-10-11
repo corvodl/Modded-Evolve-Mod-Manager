@@ -29,6 +29,7 @@ uniform int has_diffuse;
 uniform int has_normal;
 uniform int has_specular;
 uniform float opacity;
+uniform int use_alpha_texture;
 uniform float specular_intensity;
 uniform float illumination;
 varying vec3 eye_normal;
@@ -37,7 +38,8 @@ varying vec2 texcoord;
 void main() {
     vec4 surface = has_diffuse == 1 ? texture2D(diffuse_map, texcoord)
                                    : vec4(0.82, 0.80, 0.83, 1.0);
-    float alpha = surface.a * opacity;
+    // Alpha may contain non-opacity data in standard CryEngine diffuse DDS.
+    float alpha = (use_alpha_texture == 1 ? surface.a : 1.0) * opacity;
     if (alpha < 0.02) discard;
     vec3 n = normalize(eye_normal);
     if (has_normal == 1) {
@@ -80,16 +82,17 @@ class Renderer3:
         glUseProgram(self.program)
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
             'diffuse_map','normal_map','specular_map','has_diffuse','has_normal',
-            'has_specular','opacity','specular_intensity','illumination')}
+            'has_specular','opacity','use_alpha_texture','specular_intensity','illumination')}
         for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
-    def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular):
+    def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
+             alpha_texture=False):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f
         glUseProgram(self.program)
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
-                           ('has_specular',specular)):
+                           ('has_specular',specular), ('use_alpha_texture',alpha_texture)):
             glUniform1i(self.uniforms[name],int(bool(value)))
         for name,value in (('opacity',opacity),('specular_intensity',gloss),
                            ('illumination',illumination)):
