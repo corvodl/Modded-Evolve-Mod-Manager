@@ -1070,6 +1070,29 @@ class QtGPUModelPanel(QWidget):
         self.play_native_button.clicked.connect(self.load_native)
         native_row.addWidget(self.play_native_button)
         catalog_layout.addLayout(native_row)
+        self.layer_row_widget = QWidget(self)
+        layer_row = QHBoxLayout(self.layer_row_widget)
+        layer_row.setContentsMargins(0, 1, 0, 1)
+        layer_row.addWidget(QLabel('Base clip'))
+        self.layer_base_select = QComboBox()
+        self.layer_base_select.setObjectName('layeredBaseAnimation')
+        self.layer_base_select.setToolTip(
+            'Choose a real neutral/movement CAF from the same skeleton. '
+            'The overlay affects only its animated joints.')
+        layer_row.addWidget(self.layer_base_select, 1)
+        layer_row.addWidget(QLabel('Layer'))
+        self.layer_weight = QSlider(Qt.Horizontal)
+        self.layer_weight.setObjectName('layeredAnimationWeight')
+        self.layer_weight.setRange(0, 100)
+        self.layer_weight.setValue(65)
+        self.layer_weight.setFixedWidth(95)
+        self.layer_weight.valueChanged.connect(self._layer_weight_changed)
+        layer_row.addWidget(self.layer_weight)
+        self.layer_weight_label = QLabel('65%')
+        layer_row.addWidget(self.layer_weight_label)
+        catalog_layout.addWidget(self.layer_row_widget)
+        self.layer_row_widget.hide()
+        self._layered_pair = None
         # Scrubber lives in the always-visible narrow playback strip.
         self.seek = QSlider(Qt.Horizontal)
         self.seek.setRange(0, 1000)
@@ -1159,6 +1182,22 @@ class QtGPUModelPanel(QWidget):
         self._native_generation += 1
         self._native_loader = loader
         self._native_references = tuple(references)
+        previous_base = self.layer_base_select.currentData()
+        self.layer_base_select.clear()
+        for idx, ref in enumerate(references):
+            state, _ = native_clip_playability(ref)
+            if state not in ('candidate', 'extractable') or ref.kind != 'caf':
+                continue
+            if not (ref.available or ref.in_archive):
+                continue
+            self.layer_base_select.addItem(ref.name, idx)
+        if previous_base is not None:
+            for idx in range(self.layer_base_select.count()):
+                if self.layer_base_select.itemData(idx) == previous_base:
+                    self.layer_base_select.setCurrentIndex(idx)
+                    break
+        if self.layer_base_select.count() and self.layer_base_select.currentIndex() < 0:
+            self.layer_base_select.setCurrentIndex(0)
         self._native_refresh = refresh_library
         self.native_refresh_button.setEnabled(refresh_library is not None)
         available = [(i, ref) for i, ref in enumerate(references)
@@ -1281,19 +1320,30 @@ class QtGPUModelPanel(QWidget):
             return
         ref = self._native_references[ref_index]
         state, detail = native_clip_playability(ref)
+        self.layer_row_widget.setVisible(state == 'layered')
+        layered_ready = (
+            state == 'layered' and self._native_loader is not None
+            and self.layer_base_select.currentData() is not None
+            and bool(ref.available or ref.in_archive))
         self.play_native_button.setEnabled(
-            (state == 'converter') or bool(
+            bool(layered_ready or state == 'converter') or bool(
                 self._native_loader and state in ('candidate', 'extractable', 'missing')))
         self.play_native_button.setText(
             ('Find in DBA & Play' if ref.kind == 'caf' else 'Convert DBA & Play')
             if state == 'converter'
+            else 'Play Layered Pose' if state == 'layered'
             else 'Extract & Play' if state == 'extractable'
             else 'Search PAK & Play' if state == 'missing'
             else 'Play Game Clip')
         if state == 'layered':
+            available_note = (
+                'Select a compatible base and adjust the layer weight, then play.'
+                if layered_ready else
+                'Layer source is not extracted or no compatible base CAF is indexed. '
+                'Import its PAK or convert its DBA first.')
             self.native_info.setText(
-                'Layered pose: ' + ref.name + '\n' + detail +
-                '\nChoose a standalone stand, idle or movement CAF from the list.')
+                'Layered pose: ' + ref.name + '\n' + available_note +
+                '\nThis is an approximate skeletal blend, not native CryEngine aim IK.')
         elif state == 'candidate':
             self.native_info.setText(
                 'Ready to test: ' + ref.virtual_path +
@@ -1316,6 +1366,27 @@ class QtGPUModelPanel(QWidget):
             self.import_original()
             return
         if self._native_loader is None:
+            return
+        if state == 'layered':
+            base_index = self.layer_base_select.currentData()
+            if (not isinstance(base_index, int) or
+                    not 0 <= base_index < len(self._native_references)):
+                self.native_info.setText('Choose a compatible base CAF.')
+                return
+            if not (ref.available or ref.in_archive):
+                self.native_info.setText(
+                    'This layered CAF has no verified extractable standalone track. '
+                    'A DBA conversion may be needed.')
+                return
+            base = self._native_references[base_index]
+            self._native_generation += 1
+            token = self._native_generation
+            self.play_native_button.setEnabled(False)
+            self.native_info.setText(
+                'Decoding base + additive/aimpose CAF on one verified skeleton…')
+            self._native_pool.start(_NativeConversion(
+                lambda unused: self._native_loader(ref, base_ref=base),
+                ref, token, self._native_signals))
             return
         if state not in ('candidate', 'extractable', 'missing'):
             self.native_info.setText(reason + '\n' + ref.virtual_path)
@@ -1345,8 +1416,18 @@ class QtGPUModelPanel(QWidget):
                 from model_animation import AnimatedGLB
                 imported = AnimatedGLB(payload, 'Native Evolve animation')
                 geometry = None
-            self._show_animated(imported, auto_play=True,
+            pair = details.get('_layered_pair')
+            self._show_animated(imported, auto_play=not bool(pair),
                                 prepared_geometry=geometry)
+            self._layered_pair = pair
+            if pair:
+                base_name, overlay_name = pair
+                if base_name not in imported.clips or overlay_name not in imported.clips:
+                    raise ValueError('Converted layered animation lost its base or overlay track.')
+                self.clip_select.setCurrentText(base_name)
+                self._display_animation_frame()
+                if not self.anim_playing:
+                    self.toggle_play()
         except (ValueError, OSError) as exc:
             self.native_info.setText('CAF playback rejected: ' + str(exc)[:230])
             return
@@ -1388,6 +1469,7 @@ class QtGPUModelPanel(QWidget):
         self.anim_timer.stop()
         self.anim_playing = False
         self.play_button.setText('Play')
+        self._layered_pair = None
         self.animated = imported
         self.canvas.set_mesh(imported.preview_mesh, imported.materials,
                              prepared_geometry=prepared_geometry)
@@ -1568,6 +1650,11 @@ class QtGPUModelPanel(QWidget):
             self.anim_position=data[1]
             self._display_animation_frame()
 
+    def _layer_weight_changed(self, weight):
+        self.layer_weight_label.setText('%d%%' % weight)
+        if self._layered_pair and self.animated is not None:
+            self._display_animation_frame()
+
     def select_clip(self, _name):
         self.anim_position = 0.
         self._display_animation_frame()
@@ -1578,7 +1665,13 @@ class QtGPUModelPanel(QWidget):
         name = self.clip_select.currentText()
         duration = self.animated.clips[name][0]
         try:
-            frame = self.animated.sample(name, self.anim_position)
+            pair = self._layered_pair
+            if pair and name == pair[0]:
+                frame = self.animated.sample_layered(
+                    pair[0], pair[1], self.anim_position,
+                    self.layer_weight.value() / 100.)
+            else:
+                frame = self.animated.sample(name, self.anim_position)
             self.canvas.set_animated_vertices(frame)
             self.anim_time.setText('%.2f / %.2f s' % (self.anim_position, duration))
             self.seek.blockSignals(True)
