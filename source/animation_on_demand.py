@@ -48,9 +48,9 @@ def _exact_loose(index, virtual, preferred_workspace=None):
     return None
 
 
-def _scoped_archives(stage, virtual):
-    """Include only exact animation PAKs and the same-character PAK family."""
-    from shared_pak_cache import ANIMATION_ARCHIVE_NAMES, REFERENCE_ARCHIVES
+def _scoped_archives(stage, virtual, game=None):
+    """Only animation, shared, and the selected character's PAK family."""
+    from shared_pak_cache import REFERENCE_ARCHIVES
     names = set(REFERENCE_ARCHIVES)
     parts = virtual.casefold().split("/")
     if len(parts) >= 5 and parts[0] == "characters":
@@ -61,6 +61,17 @@ def _scoped_archives(stage, virtual):
                 names.add(Path(rel).name.casefold())
         except (OSError, ValueError, RuntimeError):
             pass
+        # Original game PAKs can exist without a matching custom-signed stage.
+        # Include just the exact character family, not every game archive.
+        if game:
+            root = Path(game).resolve() / "Game"
+            if root.is_dir():
+                prefix = ("characters_" + parts[1] + "_" + character)
+                for path in root.glob("*.pak"):
+                    stem = path.stem.casefold()
+                    if (not path.is_symlink() and
+                            (stem == prefix or stem.startswith(prefix + "_"))):
+                        names.add(path.name.casefold())
     return frozenset(names)
 
 
@@ -155,7 +166,7 @@ def resolve_caf_for_play(reference, *, stage_root, game_root=None,
     candidate = _exact_loose(candidates, virtual, preferred_workspace)
     if candidate is not None and caf_header(candidate):
         return replace(reference, available=True, file=candidate), False, "preview cache"
-    names = _scoped_archives(stage_root, virtual)
+    names = _scoped_archives(stage_root, virtual, game_root)
     errors = []
     for original in (False, True):
         try:
