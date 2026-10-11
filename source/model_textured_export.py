@@ -228,7 +228,8 @@ def export_extracted_model(source, destination, *, projects_root=None,
 
 
 def export_extracted_folder(folder, destination, *, projects_root=None,
-                            stage_root=None, texture_folder=None):
+                            stage_root=None, texture_folder=None,
+                            progress=None, cancelled=None):
     from model_blender_export import MAX_FOLDER_FILES
     folder, destination = Path(folder).resolve(), Path(destination).resolve()
     if not folder.is_dir() or not destination.is_dir():
@@ -241,9 +242,15 @@ def export_extracted_folder(folder, destination, *, projects_root=None,
     if len(candidates) > MAX_FOLDER_FILES:
         raise ValueError('Model count exceeds exporter limit.')
     done, errors = [], []
-    for p in candidates:
+    if progress:
+        progress('Exporting Blender models', 0, len(candidates))
+    for i, p in enumerate(candidates, 1):
+        if cancelled and cancelled():
+            raise InterruptedError('Blender folder export cancelled.')
         rel = p.relative_to(folder)
         if p.suffix.casefold() == '.chrm' and p.with_suffix('.skinm').exists():
+            if progress:
+                progress('Exporting Blender models', i, len(candidates))
             continue
         target = destination / rel.with_suffix('.glb')
         try:
@@ -254,4 +261,6 @@ def export_extracted_folder(folder, destination, *, projects_root=None,
             done.append((str(rel), str(target.relative_to(destination)), counts, details))
         except (ValueError, OSError) as exc:
             errors.append((str(rel), str(exc)))
+        if progress:
+            progress('Exporting Blender models', i, len(candidates))
     return done, errors
