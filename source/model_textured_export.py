@@ -145,7 +145,8 @@ def textured_model_from_workspace(mesh, workspace, relative,
     from material_preview import load_preview_materials
     payload = glb_bytes(mesh, name=Path(relative).stem)
     report = {'texture_count': 0, 'texture_status': 'No material resources found',
-              'rig_status': 'No validated armature decoder; geometry export only'}
+              'rig_status': 'Unrigged: no compatible skin source found',
+              'bone_count': 0}
     try:
         mats = load_preview_materials(
             workspace, relative, texture_folder,
@@ -156,6 +157,31 @@ def textured_model_from_workspace(mesh, workspace, relative,
         payload, count = embed_diffuse_textures(payload, mats)
         report.update(texture_count=count,
                       texture_status='%d diffuse textures embedded from unpacked PAKs' % count)
+    # Resolve the original .skin/.chr companion in a safe, read-only way.
+    # CompiledBones stores inverse-bind and rest-pose matrices; each mesh
+    # subset has its own local-to-global bone palette.
+    from model_rigging import skin_glb, skin_companion_path
+    from multi_pak_assets import locate_related_asset
+    companion = skin_companion_path(relative)
+    if companion is not None:
+        files_root = (Path(workspace).resolve() / 'files').resolve()
+        model_file = (files_root / relative).resolve()
+        bone_file = (files_root / companion).resolve()
+        if not bone_file.is_file() or not bone_file.is_relative_to(files_root):
+            bone_file = locate_related_asset(
+                workspace, companion, projects_root, stage_root)
+        if (model_file.is_file() and model_file.is_relative_to(files_root)
+                and bone_file is not None and Path(bone_file).is_file()):
+            try:
+                payload, rig = skin_glb(
+                    payload, model_file.read_bytes(), Path(bone_file).read_bytes())
+            except (ValueError, OSError) as error:
+                report['rig_status'] = 'Unrigged: ' + str(error)
+            else:
+                report['bone_count'] = rig['bone_count']
+                report['rig_status'] = (
+                    'Rigged: %d bones, %d active (original bind poses and weights)' %
+                    (rig['bone_count'], rig['active_bones']))
     return payload, report
 
 
@@ -165,10 +191,29 @@ def export_extracted_model(source, destination, *, projects_root=None,
     from model_blender_export import convert_model
     workspace, rel = _workspace_for_file(source, projects_root)
     if workspace is None:
-        # Loose file: preserve existing untextured exporter behavior.
-        count = convert_model(source, destination)
-        return count, {'texture_count': 0, 'texture_status':
-                       'Not a managed unpacked PAK workspace; use Edit Files or unpack both PAKs'}
+        # A loose extracted folder may still contain a matching .skin/.chr.
+        # Keep its unverified external texture resources separate; no guessing.
+        from model_rigging import skin_glb, skin_companion_path
+        mesh = read_preview_mesh(source.read_bytes(), source.name)
+        blob = glb_bytes(mesh, name=source.stem)
+        companion = skin_companion_path(source)
+        report = {'texture_count': 0,
+                  'texture_status': 'Texture lookup requires a compatible unpacked project.',
+                  'rig_status': 'Unrigged: native skin companion not found', 'bone_count': 0}
+        if companion is not None and companion.is_file() and not companion.is_symlink():
+            try:
+                blob, rig = skin_glb(
+                    blob, source.read_bytes(), companion.read_bytes())
+            except (ValueError, OSError) as error:
+                report['rig_status'] = 'Unrigged: ' + str(error)
+            else:
+                report['bone_count'] = rig['bone_count']
+                report['rig_status'] = 'Rigged: %d bones, %d active' % (
+                    rig['bone_count'], rig['active_bones'])
+        if destination.suffix.casefold() != '.glb' or not destination.parent.is_dir():
+            raise ValueError('Choose an existing export folder and .glb filename.')
+        destination.write_bytes(blob)
+        return (len(mesh.vertices), len(mesh.triangles)), report
     mesh = read_preview_mesh(source.read_bytes(), source.name)
     glb, report = textured_model_from_workspace(
         mesh, workspace, rel, texture_folder=texture_folder,

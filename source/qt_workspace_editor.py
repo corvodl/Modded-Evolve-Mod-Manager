@@ -689,11 +689,9 @@ class QtWorkspaceEditor(QDialog):
                 projects_root=self.manager.projects_path,
                 stage_root=self.manager.stage_path)
             target.write_bytes(payload)
-            message = ('Exported %d vertices, %d triangles, %d diffuse textures. '
-                       'No Blender armature generated: original skeleton transforms '
-                       'still require a validated decoder.' %
+            message = ('Exported %d vertices, %d triangles, %d diffuse textures. %s.' %
                        (len(self.mesh.vertices), len(self.mesh.triangles),
-                        report['texture_count']))
+                        report['texture_count'], report['rig_status']))
             self.status.setText(message)
             if report['texture_count'] == 0:
                 self.status.setText(message + ' Missing: ' + report['texture_status'][:180])
@@ -716,9 +714,10 @@ class QtWorkspaceEditor(QDialog):
                 source, destination, projects_root=self.manager.projects_path,
                 stage_root=self.manager.stage_path, texture_folder=self.texture_folder)
             textured = sum(bool(details['texture_count']) for _, _, _, details in results)
-            note = ('%d GLB exports (%d with diffuse textures); %d skipped. '
-                    'Armature and animation tracks are not yet exported.' %
-                    (len(results), textured, len(skipped)))
+            rigged = sum(bool(details.get('bone_count')) for _, _, _, details in results)
+            note = ('%d GLB exports (%d textured, %d rigged); %d skipped. '
+                    'CAF/DBA animation tracks are not exported.' %
+                    (len(results), textured, rigged, len(skipped)))
             if skipped:
                 (Path(destination) / 'Blender_export_report.txt').write_text(
                     '\n'.join(name + ': ' + reason for name, reason in skipped),
@@ -838,11 +837,13 @@ class QtWorkspaceEditor(QDialog):
             'Models: GPU rendering opens by default on supported Windows systems; '
             'software preview is the fallback. Export for Blender writes geometry, '
             'UVs and diffuse textures from matching unpacked PAK workspaces. '
+            'When compatible .skin/.chr companions exist, original bone hierarchy '
+            'and skin weights are exported as a poseable GLB armature. '
             'Model/skeleton data comes from the character Data PAK; texture '
             'fragments typically come from the companion TS PAK. '
             'Animation definitions can accompany models, while actual CAF/DBA '
-            'tracks must be present separately. Rig export is still pending '
-            'verified decoding of the native skeleton hierarchy and transforms.\n\n'
+            'tracks must be present separately. Unsupported rig formats are '
+            'reported as unrigged rather than silently inventing bones.\n\n'
             'Native export and same-layout native import remain available. '
             'Open GPU Viewer offers additional lighting and texture controls.')
 
