@@ -1042,7 +1042,8 @@ class QtGPUModelPanel(QWidget):
         self._native_signals.completed.connect(self._native_ready)
 
     def set_native_catalog(self, references, idle=None, description='', loader=None):
-        """Only submitted matching native clips are decoded, off the GUI thread."""
+        """Show missing/layered versus independently previewable CAFs explicitly."""
+        from character_animation_catalog import native_clip_playability
         self._native_generation += 1
         self._native_loader = loader
         self._native_references = tuple(references)
@@ -1050,45 +1051,87 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.clear()
         self.native_clip_select.addItem('Select referenced animation', -1)
         for i, ref in enumerate(references):
-            label = ref.name + ('' if ref.available else ' (not extracted)')
-            self.native_clip_select.addItem(label, i)
+            state, detail = native_clip_playability(ref)
+            suffix = {'missing': ' (not extracted)',
+                      'metadata': ' (graph/database)',
+                      'layered': ' (layered / requires base pose)',
+                      'candidate': ''}[state]
+            self.native_clip_select.addItem(ref.name + suffix, i)
+            self.native_clip_select.setItemData(i + 1, detail, Qt.ToolTipRole)
+        available = [
+            (i, ref) for i, ref in enumerate(references)
+            if native_clip_playability(ref)[0] == 'candidate'
+        ]
         auto = -1
-        if idle is not None:
-            auto = next((i for i, ref in enumerate(references)
+        if idle is not None and native_clip_playability(idle)[0] == 'candidate':
+            auto = next((i for i, ref in available
                          if ref.name == idle.name and ref.virtual_path == idle.virtual_path), -1)
-            if auto >= 0:
-                self.native_clip_select.setCurrentIndex(auto+1)
+        if auto < 0 and available:
+            # When a CAF set contains only context-specific poses, offer a
+            # reasonable standalone candidate without auto-playing it.
+            auto = min(available, key=lambda pair: (
+                not any(x in pair[1].name.casefold()
+                        for x in ('stand', 'idle', 'run', 'walk')),
+                pair[1].name.casefold()))[0]
+        if auto >= 0:
+            self.native_clip_select.setCurrentIndex(auto + 1)
         self.native_clip_select.blockSignals(False)
-        count = sum(ref.kind == 'caf' and ref.available for ref in references)
-        self.native_info.setText(
-            '%d available CAFs of %d mappings%s' %
-            (count, len(references), ' • Idle: ' + idle.name if idle else ''))
-        self.play_native_button.setEnabled(bool(loader and count))
-        if auto >= 0 and loader:
-            token = self._native_generation
-            QTimer.singleShot(80, lambda: self.load_native()
-                              if token == self._native_generation else None)
+        layered = sum(native_clip_playability(ref)[0] == 'layered'
+                      for ref in references)
+        missing = sum(native_clip_playability(ref)[0] == 'missing'
+                      for ref in references)
+        summary = (f'{len(available)} standalone candidates, {layered} layered poses, '
+                   f'{missing} missing files • {len(references)} mapped animations')
+        if idle:
+            summary += ' • Idle: ' + idle.name
+        if description:
+            summary += ' • Source: ' + description[:80]
+        self._native_catalog_summary = summary
+        self._native_selection(self.native_clip_select.currentIndex())
+        if auto >= 0 and loader and idle is not None:
+            generation = self._native_generation
+            QTimer.singleShot(
+                80, lambda: self.load_native()
+                if generation == self._native_generation else None)
 
     def _native_selection(self, index):
-        i = self.native_clip_select.itemData(index)
-        if not isinstance(i, int) or i < 0 or i >= len(self._native_references):
+        from character_animation_catalog import native_clip_playability
+        ref_index = self.native_clip_select.itemData(index)
+        if not isinstance(ref_index, int) or ref_index < 0 or ref_index >= len(self._native_references):
+            self.play_native_button.setEnabled(False)
+            self.native_info.setText(getattr(self, '_native_catalog_summary',
+                                             'Choose a native animation.'))
             return
-        ref = self._native_references[i]
-        self.native_info.setText(
-            ('Available: ' if ref.available else 'Missing: ') + ref.virtual_path)
+        ref = self._native_references[ref_index]
+        state, detail = native_clip_playability(ref)
+        self.play_native_button.setEnabled(
+            bool(self._native_loader and state == 'candidate'))
+        if state == 'layered':
+            self.native_info.setText(
+                'Layered pose: ' + ref.name + '\n' + detail +
+                '\nChoose a standalone stand, idle or movement CAF from the list.')
+        elif state == 'candidate':
+            self.native_info.setText(
+                'Ready to test: ' + ref.virtual_path +
+                '\nNative decoder checks skeleton compatibility before playback.')
+        else:
+            self.native_info.setText(detail + '\n' + ref.virtual_path)
 
     def load_native(self):
+        from character_animation_catalog import native_clip_playability
         i = self.native_clip_select.currentData()
-        if (self._native_loader is None or not isinstance(i,int)
+        if (self._native_loader is None or not isinstance(i, int)
                 or i < 0 or i >= len(self._native_references)):
             return
         ref = self._native_references[i]
-        if ref.kind != 'caf' or not ref.available:
-            self.native_info.setText('This native clip has not been extracted.')
+        state, reason = native_clip_playability(ref)
+        if state != 'candidate':
+            self.native_info.setText(reason + '\n' + ref.virtual_path)
+            self.play_native_button.setEnabled(False)
             return
         self._native_generation += 1
         token = self._native_generation
-        self.native_info.setText('Decoding native CAF and rigged model in background…')
+        self.native_info.setText('Decoding standalone CAF and rigged model in background…')
         self.play_native_button.setEnabled(False)
         job = _NativeConversion(self._native_loader, ref, token, self._native_signals)
         self._native_pool.start(job)
