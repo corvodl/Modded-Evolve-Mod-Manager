@@ -368,28 +368,17 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
             if candidate.is_relative_to((workspace/'files').resolve()) and candidate.is_file():
                 index[rel.casefold()].append({'archive': '(current PAK)', 'workspace': workspace,
                                              'relative': rel, 'file': candidate})
-    stem=Path(model_relative).with_suffix('').as_posix()
-    if stem.endswith('m') and Path(model_relative).suffix.lower() in ('.skinm','.chrm','.cgfm','.cgam'):
-        pass  # suffix removal already handled by Path.with_suffix
-    bases = [stem]
-    # LOD model files often use the base model's material.
-    clean = re.sub(r'_lod\d+$', '', stem, flags=re.IGNORECASE)
-    if clean not in bases:
-        bases.append(clean)
-    possible=[]
-    for base in bases:
-        possible.append(base+'.mtl')
-    material=None; state='missing'
-    for path in possible:
-        hits,state=_resolve(index,path, preferred_workspace=workspace)
-        if state == 'found':
-            material=hits[0]
-            break
-        if state=='ambiguous':
-            return {'material':path,'status':'ambiguous','textures':[], 'collection':has_links,
-                    'candidates':[{'archive':h['archive'], 'workspace':str(h['workspace'])} for h in hits]}
+    from model_material_resolve import (
+        find_model_material, nearby_model_materials)
+    material, basis, checked = find_model_material(
+        index, model_relative, preferred_workspace=workspace)
     if material is None:
-        return {'material':', '.join(possible), 'status':'missing', 'textures':[], 'collection':has_links}
+        return {
+            'material': ', '.join(checked[:6]),
+            'status': 'missing', 'textures': [], 'collection': has_links,
+            'basis': basis,
+            'nearby_materials': nearby_model_materials(index, model_relative),
+        }
     raw=material['file'].read_bytes()
     if len(raw)>MAX_MATERIAL_BYTES or b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
         return {'material':material['relative'],'status':'invalid-material','textures':[], 'collection':has_links}
@@ -422,8 +411,8 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
         textures.append({'map':kind, 'reference':ref, 'status':resolution,
                          'archives':[m['archive'] for m in matches],
                          'paths':[m['relative'] for m in matches]})
-    return {'material':material['relative'],'material_archive':material['archive'],
-            'status':'found','textures':textures,'collection':has_links}
+    return {'material':material['relative'],'material_archive':material.get('archive', 'Asset Library'),
+            'status':'found','basis':basis,'textures':textures,'collection':has_links}
 
 
 def main():
