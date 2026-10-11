@@ -666,10 +666,14 @@ class QtWorkspaceEditor(QMainWindow):
             source_stage = self.manager.stage_path
 
             def build_native_clip(ref):
-                return create_character_glb(
+                blob, details = create_character_glb(
                     source_workspace, source_relative, source_index,
                     character=source_character, texture_folder=source_textures,
                     projects_root=source_projects, stage_root=source_stage, clip=ref)
+                from model_animation import AnimatedGLB
+                from gpu_model_preview import prepare_geometry
+                imported = AnimatedGLB(blob,'Original Evolve animation')
+                return (imported, prepare_geometry(imported.preview_mesh)), details
 
             self.model_panel.set_native_catalog(refs, idle, config,
                                                 loader=build_native_clip)
@@ -1231,10 +1235,14 @@ class QtWorkspaceEditor(QMainWindow):
                 source_projects = self.manager.projects_path
                 source_stage = self.manager.stage_path
                 def popout_loader(ref):
-                    return create_character_glb(
+                    blob, details = create_character_glb(
                         source_workspace, source_relative, source_index,
                         character=source_character, texture_folder=source_textures,
                         projects_root=source_projects, stage_root=source_stage, clip=ref)
+                    from model_animation import AnimatedGLB
+                    from gpu_model_preview import prepare_geometry
+                    imported = AnimatedGLB(blob,'Original Evolve animation')
+                    return (imported, prepare_geometry(imported.preview_mesh)), details
                 dialog.panel.set_native_catalog(refs, idle, loader=popout_loader)
             dialog.setAttribute(Qt.WA_DeleteOnClose, False)
             self.gpu_windows.append(dialog)
