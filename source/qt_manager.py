@@ -1698,6 +1698,67 @@ class QtManager(QMainWindow):
             self.game_root or self._find_game_root())
         dialog.exec()
 
+    def create_mod_project_from_asset_library(self, library_id):
+        """Create an editable workspace from the custom-signed matching PAK.
+
+        Reference assets remain untouched; the existing Build Mod action
+        handles modified payload repacking, signing and verification.
+        """
+        try:
+            if self.busy or self.asset_library_controller.busy:
+                raise RuntimeError('Wait for the current task to finish.')
+            from asset_library_bulk import project_command
+            if not self.flush_editors():
+                return
+            folder = self._new_folder('AssetLibrary_Mod')
+            game = self.game_root or self._find_game_root()
+            relative, command = project_command(
+                library_id, self.stage_path, folder, game)
+            # Build Mod must use the SAME staged PAK as the new workspace;
+            # select its exact signed relative path in the PAK browser.
+            self.search.clear()
+            self.file_filter.setCurrentIndex(0)
+            self.external_pak = ''
+            self.refresh_table()
+            selected = False
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item and item.data(Qt.UserRole) == relative:
+                    self.table.selectRow(row)
+                    selected = True
+                    break
+            if not selected:
+                raise ValueError(
+                    'Matching staged PAK is not present in the Modding browser: ' +
+                    relative)
+            self.archive_label = relative
+            self.run_steps(
+                [('Creating editable project from verified staged PAK', command)],
+                'Create editable mod project',
+                lambda: self._after_asset_library_project(folder, relative))
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def _after_asset_library_project(self, folder, relative):
+        from evolve_pak_workspace import load_workspace
+        from project_selection import workspace_matches
+        info = load_workspace(Path(folder))
+        target = Path(self.stage_path) / 'paks' / Path(*relative.split('/'))
+        if Path(info['source_pak']).resolve() != target.resolve():
+            self.failure('Mod project source does not match the staged archive.')
+            return
+        self.current_workspace = str(folder)
+        self.archive_label = relative
+        self.workspace_input.setText(str(folder))
+        self.output_pak = ''
+        self.output_input.setText('')
+        self.persist()
+        self._log(
+            'Editable project ready: ' + str(folder) +
+            '\\nThe Asset Library is unchanged. Edit project copies and use Build Mod '
+            'to sign modified entries using the existing custom key.')
+        self.open_editor()
+
     def _warm_asset_library(self):
         from asset_library import installed_defaults, imported_archives
         game = self.game_root or self._find_game_root()
