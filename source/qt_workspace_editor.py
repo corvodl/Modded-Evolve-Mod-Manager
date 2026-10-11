@@ -139,6 +139,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.texture_folder = None
         self.gpu_windows = []
         self.materials = None
+        self.texture_message = 'No model selected'
         # A main window has the standard Win32 maximize/restore non-dialog frame.
         self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         self.setWindowTitle('Edit Files — Evolve PAK Workspace')
@@ -148,6 +149,7 @@ class QtWorkspaceEditor(QMainWindow):
         center = QWidget(self)
         self.setCentralWidget(center)
         main = QVBoxLayout(center)
+        self._build_editor_menus()
         tools = QHBoxLayout()
         self.search = QLineEdit()
         self.search.setPlaceholderText('Search extracted files…')
@@ -174,34 +176,23 @@ class QtWorkspaceEditor(QMainWindow):
         for section, label in zip(self.TABS, ('Files / Text', 'Images / Textures', 'Models')):
             tab = QWidget()
             box = QVBoxLayout(tab)
-            toolbar = QHBoxLayout()
-            more_toolbar = QHBoxLayout() if section == 'models' else None
             widgets = {}
-            if section == 'files':
-                for text, fn in (('Save', self.save), ('Find Text', self.find_text),
-                                 ('Import / Replace File', self.import_raw), ('Restore Original', self.restore_original)):
+            # Model functions live in the Blender-style menu bar, not a grid
+            # of large buttons above the canvas.
+            if section in ('files', 'images'):
+                toolbar = QHBoxLayout()
+                actions = (
+                    (('Save', self.save), ('Find Text', self.find_text),
+                     ('Import / Replace File', self.import_raw), ('Restore Original', self.restore_original))
+                    if section == 'files' else
+                    (('Export PNG', self.export_png), ('Import DDS', self.import_dds),
+                     ('Import PNG', self.import_png))
+                )
+                for text, fn in actions:
                     widgets[text] = self._button(text, fn)
                     toolbar.addWidget(widgets[text])
-            elif section == 'images':
-                for text, fn in (('Export PNG', self.export_png), ('Import DDS', self.import_dds),
-                                 ('Import PNG', self.import_png)):
-                    widgets[text] = self._button(text, fn)
-                    toolbar.addWidget(widgets[text])
-            else:
-                for text, fn in (('Open GPU Viewer', self.open_gpu_viewer),
-                                 ('Export for Blender (.glb)', self.export_blender_model),
-                                 ('Export Model Folder', self.export_blender_folder),
-                                 ('Export Native Model', self.export_model),
-                                 ('Import Same-Layout Model', self.import_model),
-                                 ('Find Model Textures', self.find_model_textures),
-                                 ('Choose Texture Folder', self.choose_texture_folder)):
-                    widgets[text] = self._button(text, fn)
-                    (toolbar if len(widgets) <= 4 else more_toolbar).addWidget(widgets[text])
-            toolbar.addStretch()
-            box.addLayout(toolbar)
-            if more_toolbar is not None:
-                more_toolbar.addStretch()
-                box.addLayout(more_toolbar)
+                toolbar.addStretch()
+                box.addLayout(toolbar)
             split = QSplitter(Qt.Horizontal)
             tree = QTreeWidget()
             tree.setHeaderHidden(True)
@@ -244,6 +235,118 @@ class QtWorkspaceEditor(QMainWindow):
         self.find_shortcut = QShortcut(QKeySequence.Find, self)
         self.find_shortcut.activated.connect(self.find_text)
         self.populate()
+
+    def _build_editor_menus(self):
+        """Blender-style discoverable menu bar; no oversized model-action rows."""
+        bar = self.menuBar()
+        bar.setObjectName('editorMenuBar')
+        menus = {name: bar.addMenu(name) for name in
+                 ('File', 'Edit', 'View', 'Model', 'Textures', 'Animation', 'Help')}
+        self.editor_menus = menus
+
+        def action(menu, name, callback, shortcut=None):
+            act = menus[menu].addAction(name)
+            act.triggered.connect(lambda checked=False, fn=callback: fn())
+            if shortcut:
+                act.setShortcut(shortcut)
+            return act
+
+        action('File', 'Open File Folder', self.explore)
+        action('File', 'Export Native Model…', self.export_model)
+        action('File', 'Export for Blender (.glb)…', self.export_blender_model)
+        action('File', 'Export Model Folder…', self.export_blender_folder)
+        action('Edit', 'Save Text', self.save)
+        action('Edit', 'Find Text', self.find_text)
+        action('Edit', 'Import / Replace File…', self.import_raw)
+        action('Edit', 'Restore Original', self.restore_original)
+        action('Model', 'Import Same-Layout Model…', self.import_model)
+        action('Model', 'Open GPU Viewer in New Window', self.open_gpu_viewer)
+        action('Model', 'Reset Camera', lambda: self._with_model_panel(
+            lambda p: p.reset_view()))
+        action('Textures', 'Diagnose Texture Links…', self.find_model_textures)
+        action('Textures', 'Texture Preview Status…', self.texture_diagnostics)
+        action('Textures', 'Choose Extracted Texture Folder…', self.choose_texture_folder)
+        action('Textures', 'Use Automatic Cross-PAK Lookup', self.use_auto_textures)
+        action('Textures', 'Reload Model Textures', self.refresh_model_textures)
+        action('Animation', 'Load Animated GLB…', lambda: self._with_model_panel(
+            lambda p: p.load_animation()))
+        action('Animation', 'Import Original CAF/DBA…', lambda: self._with_model_panel(
+            lambda p: p.import_original()))
+        action('Animation', 'Play / Pause', lambda: self._with_model_panel(
+            lambda p: p.toggle_play()))
+        action('Help', 'Editor Help', self.help)
+        self._view_actions = {}
+        for name, choice in (
+            ('Show Textures', 'texture'), ('Wireframe', 'wireframe'),
+            ('Faceted Shading', 'faceted'), ('Smooth Shading', 'smooth'),
+            ('High Quality', 'high')):
+            a = action('View', name,
+                       lambda c=choice: self._change_model_view(c))
+            a.setCheckable(True)
+            self._view_actions[choice] = a
+        self._view_actions['texture'].setChecked(True)
+        self._view_actions['faceted'].setChecked(True)
+        menus['View'].aboutToShow.connect(self._sync_view_menu)
+
+    def _with_model_panel(self, callback):
+        if self.model_panel is None or self.mode != 'models':
+            QMessageBox.information(
+                self, 'Model viewer', 'Select a supported model in the Models tab first.')
+            return
+        callback(self.model_panel)
+
+    def _change_model_view(self, choice):
+        def apply(panel):
+            if choice == 'texture':
+                panel.texture_checkbox.setChecked(
+                    not panel.texture_checkbox.isChecked())
+            elif choice == 'wireframe':
+                panel.wire_checkbox.setChecked(
+                    not panel.wire_checkbox.isChecked())
+            elif choice in ('faceted', 'smooth'):
+                panel.shading_combo.setCurrentIndex(0 if choice == 'faceted' else 1)
+            elif choice == 'high':
+                panel.quality_combo.setCurrentIndex(
+                    0 if panel.quality_combo.currentIndex() else 1)
+            self._sync_view_menu()
+        self._with_model_panel(apply)
+
+    def _sync_view_menu(self):
+        p = self.model_panel
+        values = {
+            'texture': p.texture_checkbox.isChecked() if p else True,
+            'wireframe': p.wire_checkbox.isChecked() if p else False,
+            'faceted': p.shading_combo.currentIndex() == 0 if p else True,
+            'smooth': p.shading_combo.currentIndex() == 1 if p else False,
+            'high': p.quality_combo.currentIndex() == 1 if p else False,
+        }
+        for key, value in values.items():
+            self._view_actions[key].setChecked(value)
+
+    def texture_diagnostics(self):
+        if self.mode != 'models' or self.mesh is None:
+            QMessageBox.information(self, 'Texture preview', 'Select a model first.')
+            return
+        folder = str(self.texture_folder) if self.texture_folder else 'Automatic cross-PAK lookup'
+        loaded = (self.materials.count if self.materials is not None else 0)
+        slots = len(self.materials.textures) if self.materials is not None else 0
+        problems = '\n'.join(self.materials.issues[:12]) if self.materials else ''
+        QMessageBox.information(
+            self, 'Texture preview diagnostics',
+            'Model: ' + str(self.mesh.source_name or self.current) +
+            '\nLookup: ' + folder +
+            '\nResolved: %d / %d submaterial diffuse textures' % (loaded, slots) +
+            '\nStatus: ' + self.texture_message +
+            ('\nProblems:\n' + problems if problems else '') +
+            '\n\nFor precise source paths, choose Textures > Diagnose Texture Links.'
+        )
+
+    def refresh_model_textures(self):
+        if self.mode != 'models' or self.mesh is None:
+            QMessageBox.information(self, 'Texture preview', 'Select a model first.')
+            return
+        self._paint_model(self.views['models'], self.mesh)
+        self.status.setText(self.texture_message)
 
     @staticmethod
     def _button(name, callback):
@@ -342,6 +445,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.stream = None
         self.mesh = None
         self.materials = None
+        self.texture_message = 'No texture lookup has run'
         self.mode = self._category(rel)
         path = checked_path(self.workspace, rel)
         self.raw = path.read_bytes()
@@ -394,9 +498,8 @@ class QtWorkspaceEditor(QMainWindow):
                     stage_root=self.manager.stage_path)
                 self.mesh = mesh
                 self._paint_model(view, mesh)
-                self.status.setText(rel + ' | ' + report +
-                                    ' | GPU panel: drag to rotate; middle/right drag to pan; '
-                                    'scroll to zoom. Shading and animation controls below.')
+                self.status.setText(
+                    rel + ' | ' + report + ' | ' + self.texture_message)
             except (ValueError, OSError) as exc:
                 self.model_fallback.setPixmap(QPixmap())
                 self.model_fallback.setText(rel + '\n\n' + report +
@@ -418,10 +521,19 @@ class QtWorkspaceEditor(QMainWindow):
                     self.workspace, mesh.source_name or self.current,
                     self.texture_folder, projects_root=self.manager.projects_path,
                     stage_root=self.manager.stage_path)
-            except (ValueError, OSError):
-                pass
+                active = sorted({slot for _, _, slot in mesh.subsets
+                                 if slot < len(materials.textures)})
+                mapped = sum(materials.textures[slot] is not None
+                             for slot in active) if active else 0
+                self.texture_message = (
+                    f'Textures: {mapped}/{len(active)} used material slots, '
+                    f'{materials.count} decoded DDS from {materials.source}'
+                    + (' | ' + materials.issues[0][:100] if materials.issues else ''))
+            except (ValueError, OSError) as error:
+                self.texture_message = 'Untextured: ' + str(error)
+            self.materials = materials
             if self.model_panel is None:
-                self.model_panel = QtGPUModelPanel(view, mesh, materials)
+                self.model_panel = QtGPUModelPanel(view, mesh, materials, compact=True)
                 self.model_panel.setObjectName('primaryGpuModelViewer')
                 view.addWidget(self.model_panel)
                 self.model_gpu = self.model_panel.canvas
@@ -429,6 +541,9 @@ class QtWorkspaceEditor(QMainWindow):
             else:
                 self.model_panel.set_static_mesh(mesh, materials)
             view.setCurrentWidget(self.model_panel)
+            self.model_panel._info.setText(
+                mesh.source_name + '  •  ' + mesh.description +
+                '\n' + self.texture_message[:260])
             self.model_gpu.update()
             QTimer.singleShot(450, self._check_gpu_preview)
         except Exception as exc:
@@ -789,14 +904,44 @@ class QtWorkspaceEditor(QMainWindow):
             QMessageBox.critical(self,'Model import rejected',str(exc))
 
     def choose_texture_folder(self):
-        folder = QFileDialog.getExistingDirectory(self,'Choose an extracted texture folder')
-        if folder:
-            self.texture_folder = Path(folder)
-            self.materials = None
-            self.status.setText('GPU preview texture folder selected: '+folder)
-            if self.mesh is not None and self.current:
-                self._paint_model(self.views['models'], self.mesh)
-            # Optional separate GPU windows retain their current material source.
+        folder = QFileDialog.getExistingDirectory(
+            self, 'Choose unpacked TS texture folder (recursive lookup)')
+        if not folder:
+            return
+        selected = Path(folder).resolve()
+        # A common error is selecting the empty data-PAK textures directory
+        # while the matching TS archive was extracted in the same batch.
+        current_archive = next((name for name, ws in self.archive_map.items()
+                                if Path(ws).resolve() == self.workspace), '')
+        if current_archive.casefold().endswith('_data.pak'):
+            companion_name = current_archive[:-9] + '_ts.pak'
+            other = next((Path(ws).resolve() for name, ws in self.archive_map.items()
+                          if name.casefold() == companion_name.casefold()), None)
+            files_root = (self.workspace / 'files').resolve()
+            if other is not None and selected.is_relative_to(files_root):
+                relative = selected.relative_to(files_root)
+                candidate = other / 'files' / relative
+                if not candidate.is_dir():
+                    candidate = other / 'files'
+                if candidate.is_dir() and selected != candidate:
+                    answer = QMessageBox.question(
+                        self, 'Use companion texture archive?',
+                        'This folder is inside the character DATA PAK. '
+                        'The companion TS PAK is also unpacked.\n\n'
+                        'Use the matching TS archive folder instead?\n' + str(candidate),
+                        QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                    if answer == QMessageBox.Yes:
+                        selected = candidate
+        self.texture_folder = selected
+        self.materials = None
+        if self.mesh is not None and self.current:
+            self.refresh_model_textures()
+        else:
+            self.status.setText('Texture folder: ' + str(selected))
+
+    def use_auto_textures(self):
+        self.texture_folder = None
+        self.refresh_model_textures()
 
     def open_gpu_viewer(self):
         if self.mode != 'models' or not self.current or self.mesh is None:
@@ -809,7 +954,8 @@ class QtWorkspaceEditor(QMainWindow):
             material_note = ''
             try:
                 materials = load_preview_materials(
-                    self.workspace, self.current, self.texture_folder,
+                    self.workspace, self.mesh.source_name or self.current,
+                    self.texture_folder,
                     projects_root=self.manager.projects_path,
                     stage_root=self.manager.stage_path)
                 material_note = (f' | GPU diffuse textures: {materials.count}'
@@ -831,15 +977,15 @@ class QtWorkspaceEditor(QMainWindow):
                 'On Windows, verify that an OpenGL-capable graphics driver is installed.')
 
     def find_model_textures(self):
-        if self.mode != 'models':
+        if self.mode != 'models' or self.mesh is None:
             return
         try:
             result = model_material_links(
-                self.workspace, self.current,
+                self.workspace, self.mesh.source_name or self.current,
                 projects_root=self.manager.projects_path,
                 stage_root=self.manager.stage_path)
             lines = [
-                'Model: '+self.current,
+                'Model: '+str(self.mesh.source_name or self.current),
                 'Material: '+str(result.get('material')),
                 'Status: '+str(result.get('status')),
                 'Cross-PAK links: '+str(result.get('collection')),

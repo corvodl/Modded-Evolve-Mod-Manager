@@ -83,6 +83,56 @@ class MaterialRenderingTests(unittest.TestCase):
                 finally:editor.window.destroy()
         finally:root.destroy()
 
+    def test_nested_extracted_ts_textures_and_bad_diffuse_are_reported(self):
+        from material_preview import _external_lookup
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            ws = root / 'data'
+            model = ws / 'files' / 'characters' / 'hunters' / 'merc_tech'
+            model.mkdir(parents=True)
+            ts_root = root / 'ts' / 'files'
+            textures = ts_root / 'characters' / 'hunters' / 'merc_tech' / 'textures'
+            textures.mkdir(parents=True)
+            mtl = ('<Material><SubMaterials>'
+                   '<Material Name="Body" Shader="Illum"><Textures>'
+                   '<Texture Map="Diffuse" File="characters/hunters/merc_tech/textures/tech_diff.tif" />'
+                   '</Textures></Material>'
+                   '<Material Name="Bad" Shader="Illum"><Textures>'
+                   '<Texture Map="Diffuse" File="characters/hunters/merc_tech/textures/bad_diff.tif" />'
+                   '</Textures></Material>'
+                   '</SubMaterials></Material>')
+            (model/'tech_3p.mtl').write_text(mtl, encoding='utf-8')
+            Image.new('RGB',(8,8),(20,40,60)).save(textures/'tech_diff.dds', format='DDS')
+            (textures/'bad_diff.dds').write_bytes(b'invalid DDS')
+            (ws/'.evolve-pak-workspace.json').write_text(json.dumps({
+                'version':1,'entries':[{
+                    'path':'characters/hunters/merc_tech/tech_3p.mtl','format':'raw'}]}))
+            item = _external_lookup(ts_root,
+                'characters/hunters/merc_tech/textures/tech_diff.tif')
+            self.assertEqual(item['file'], textures/'tech_diff.dds')
+            result = load_preview_materials(
+                ws, 'characters/hunters/merc_tech/tech_3p.skinm', ts_root)
+            self.assertEqual(result.count, 1)
+            self.assertEqual(len(result.issues), 1)
+            self.assertIn('Bad:', result.issues[0])
+            # Ambiguous basename-only fallbacks are rejected.
+            second = ts_root/'another'
+            second.mkdir()
+            Image.new('RGB',(8,8),(0,0,0)).save(second/'tech_diff.dds',format='DDS')
+            self.assertEqual(_external_lookup(ts_root,
+                'characters/hunters/merc_tech/textures/tech_diff.tif')['file'],
+                textures/'tech_diff.dds')
+
+    def test_duplicate_basename_without_full_path_is_ambiguous(self):
+        from material_preview import _external_lookup
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            (root/'one').mkdir(); (root/'two').mkdir()
+            (root/'one'/'diff.dds').write_bytes(b'a')
+            (root/'two'/'diff.dds').write_bytes(b'b')
+            with self.assertRaisesRegex(ValueError,'Multiple DDS matches'):
+                _external_lookup(root, 'other/character/diff.tif')
+
     def test_material_resolution_selected_loose_folder(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);workspace=root/'workspace';texture_folder=root/'textures'

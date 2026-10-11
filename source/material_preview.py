@@ -29,6 +29,7 @@ class PreviewMaterials:
     textures: tuple  # one optional PIL RGB image per CryEngine submaterial
     names: tuple
     source: str
+    issues: tuple = ()
 
     @property
     def count(self):
@@ -70,23 +71,42 @@ def _find_unique(index, virtual, *, preferred_workspace=None):
 
 
 def _external_lookup(folder, ref):
-    """Match a flat, explicitly selected directory, never recursively guess."""
+    """Locate one DDS within an explicitly selected extracted texture tree.
+
+    Exact virtual paths win. A basename-only match is safe only when unique.
+    No writes or symlink traversal; bounded to avoid freezing the editor.
+    """
     if not folder:
         return None
     folder = Path(folder).resolve()
     if not folder.is_dir():
         raise ValueError('Selected texture folder does not exist.')
-    path = Path(ref.replace('\\', '/'))
-    stem = path.name
-    if stem.casefold().endswith('.tif'):
-        choices = (stem[:-4] + '.dds.0', stem[:-4] + '.dds')
-    else:
-        choices = (stem + '.0', stem)
-    hits = [item for item in folder.iterdir() if item.is_file() and not item.is_symlink()
-            and item.name.casefold() in {n.casefold() for n in choices}]
+    from multi_pak_assets import _candidates
+    choices = [c.casefold() for c in _candidates(ref) if c.casefold().endswith(('.dds', '.dds.0'))]
+    if not choices:
+        return None
+    base_names = {Path(c).name for c in choices}
+    exact, by_name = [], []
+    visited = 0
+    for item in folder.rglob('*'):
+        visited += 1
+        if visited > 15000:
+            raise ValueError('Selected texture folder contains too many paths. '
+                             'Select a narrower extracted texture folder.')
+        if not item.is_file() or item.is_symlink():
+            continue
+        relative = item.relative_to(folder).as_posix().casefold()
+        if relative in choices:
+            exact.append(item)
+        elif item.name.casefold() in base_names:
+            by_name.append(item)
+    hits = exact if exact else by_name
     if len(hits) > 1:
-        raise ValueError('Multiple candidates for ' + ref + ' in selected texture folder.')
-    return {'file': hits[0], 'workspace': None, 'relative': hits[0].name} if hits else None
+        raise ValueError('Multiple DDS matches for ' + ref +
+                         ' in the selected texture folder. Choose a narrower folder.')
+    if hits:
+        return {'file': hits[0], 'workspace': None, 'relative': hits[0].name}
+    return None
 
 
 def _decode_texture(item):
@@ -161,7 +181,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
     subs = list(root.findall('./SubMaterials/Material'))
     if not subs:
         subs = [root]
-    result=[]; names=[]
+    result=[]; names=[]; issues=[]
     for item in subs:
         name = item.get('Name') or 'unnamed'
         names.append(name)
@@ -170,16 +190,23 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         if not diffuse or item.get('Shader','').casefold()=='nodraw':
             result.append(None)
             continue
-        found = _find_unique(index, diffuse, preferred_workspace=material['workspace'])
-        if found is None:
-            found = _external_lookup(texture_folder, diffuse)
-        if found is None:
+        try:
+            found = _find_unique(index, diffuse, preferred_workspace=material['workspace'])
+            if found is None:
+                found = _external_lookup(texture_folder, diffuse)
+            if found is None:
+                issues.append(name + ': DDS missing for ' + diffuse)
+                result.append(None)
+                continue
+            result.append(_decode_texture(found))
+        except (ValueError, OSError) as error:
+            issues.append(name + ': ' + str(error))
             result.append(None)
-            continue
-        result.append(_decode_texture(found))
     if not any(x is not None for x in result):
-        raise ValueError('No diffuse DDS textures found. Unpack the texture PAKs, or choose a folder containing the extracted DDS fragments.')
-    return PreviewMaterials(tuple(result),tuple(names),material['relative'])
+        detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
+        raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
+                         ' (see Textures > Diagnose Texture Links).')
+    return PreviewMaterials(tuple(result),tuple(names),material['relative'],tuple(issues))
 
 
 def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevation=.24, zoom=1., *, pan=(0.,0.), cancel=None):

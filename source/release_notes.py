@@ -4,6 +4,10 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.11', (
+        'Organized model actions into a compact File, View and Animation menu bar.',
+        'Improved cross-PAK diffuse texture lookup and added texture diagnostics.',
+    )),
     ('1.1.10', (
         'The full GPU model viewer now opens directly inside Edit Files.',
         'File editor windows now support normal maximize and restore controls.',

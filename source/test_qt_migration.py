@@ -383,14 +383,25 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIsInstance(editor.model_cpu, QtCPUModelCanvas)
         self.assertIsNotNone(editor.model_fallback)
         button_labels = [b.text() for b in editor.findChildren(QPushButton)]
-        for expected in (
-            'Save','Find Text','Import / Replace File','Restore Original',
-            'Export PNG','Import DDS','Import PNG','Export Native Model',
-            'Import Same-Layout Model','Find Model Textures',
-            'Choose Texture Folder','Open GPU Viewer',
-            'Export for Blender (.glb)','Export Model Folder',
-        ):
-            self.assertIn(expected,button_labels)
+        for expected in ('Save', 'Find Text', 'Import / Replace File',
+                         'Restore Original', 'Export PNG', 'Import DDS', 'Import PNG'):
+            self.assertIn(expected, button_labels)
+        # The model tab no longer stacks rows of oversized action buttons.
+        self.assertNotIn('Open GPU Viewer', button_labels)
+        self.assertNotIn('Export Native Model', button_labels)
+        menus = editor.editor_menus
+        self.assertEqual(list(menus), ['File', 'Edit', 'View', 'Model',
+                                       'Textures', 'Animation', 'Help'])
+        menu_texts = {name: [action.text() for action in menu.actions()]
+                      for name, menu in menus.items()}
+        for label in ('Export for Blender (.glb)…', 'Export Model Folder…',
+                      'Export Native Model…'):
+            self.assertIn(label, menu_texts['File'])
+        self.assertIn('Diagnose Texture Links…', menu_texts['Textures'])
+        self.assertIn('Texture Preview Status…', menu_texts['Textures'])
+        self.assertIn('Load Animated GLB…', menu_texts['Animation'])
+        self.assertIn('Faceted Shading', menu_texts['View'])
+        self.assertIn('Wireframe', menu_texts['View'])
         editor.load('Game/settings.txt')
         self.assertFalse(editor.views['files'].isReadOnly())
         editor.views['files'].setPlainText('hello Qt\n')
@@ -418,7 +429,7 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIn("self._prepare_animation_controls(layout)", code)
         editor = Path(__file__).with_name('qt_workspace_editor.py').read_text(encoding='utf-8')
         self.assertIn('class QtWorkspaceEditor(QMainWindow)', editor)
-        self.assertIn('QtGPUModelPanel(view, mesh, materials)', editor)
+        self.assertIn('QtGPUModelPanel(view, mesh, materials, compact=True)', editor)
         self.assertIn("view.setCurrentWidget(self.model_panel)", editor)
         self.assertIn("self.model_panel.set_static_mesh(mesh, materials)", editor)
         self.assertIn("glDrawElements", code)
