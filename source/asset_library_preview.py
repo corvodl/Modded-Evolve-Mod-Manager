@@ -33,7 +33,10 @@ def archive_entries(identifier, root=None):
     """Safe manifest-listed files only, preserving original case and paths."""
     folder = archive_folder(identifier, root)
     manifest = _load_manifest(folder)
-    files = (folder / 'files').resolve()
+    files_link = folder / 'files'
+    files = files_link.resolve()
+    if (files_link.is_symlink() or not files.is_relative_to(folder.resolve())):
+        raise ValueError('Imported PAK file root is unsafe.')
     records = {}
     for row in manifest['entries']:
         relative = normalized_name(row['path'])
