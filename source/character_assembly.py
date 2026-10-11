@@ -98,6 +98,7 @@ def combine_meshes(items):
         raise ValueError('No compatible character parts to combine.')
     vertices, triangles, uvs, subsets = [], [], [], []
     textures, names, issues = [], [], []
+    normals, speculars, opacities, alpha_modes = [], [], [], []
     included = []
     for name, mesh, materials in items:
         if len(vertices) + len(mesh.vertices) > MAX_VERTICES or len(triangles) + len(mesh.triangles) > MAX_TRIANGLES:
@@ -118,6 +119,17 @@ def combine_meshes(items):
             label = (materials.names[slot] if materials and
                      slot < len(materials.names) else 'unresolved slot ' + str(slot))
             textures.append(tex)
+            # Preserve per-part material settings when combining CDF skins.
+            # Dropping alpha/material mode made opaque character body geometry
+            # appear transparent when its diffuse DDS carried auxiliary alpha.
+            normals.append(materials.normal_maps[slot] if materials and
+                           slot < len(materials.normal_maps) else None)
+            speculars.append(materials.specular_maps[slot] if materials and
+                             slot < len(materials.specular_maps) else None)
+            opacities.append(materials.opacity[slot] if materials and
+                             slot < len(materials.opacity) else 1.0)
+            alpha_modes.append(materials.alpha_modes[slot] if materials and
+                               slot < len(materials.alpha_modes) else False)
             names.append(name + ': ' + label)
         vertices.extend(mesh.vertices)
         triangles.extend(tuple(v + base_vertex for v in tri) for tri in mesh.triangles)
@@ -136,7 +148,9 @@ def combine_meshes(items):
                        'Character assembly: ' + ', '.join(included),
                        tuple(uvs), tuple(subsets))
     material = PreviewMaterials(tuple(textures), tuple(names),
-                                'CDF character assembly', tuple(issues))
+                                'CDF character assembly', tuple(issues),
+                                tuple(normals), tuple(speculars),
+                                tuple(opacities), tuple(alpha_modes))
     return mesh, material
 
 
