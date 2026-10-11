@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 
 from PIL import Image
 from PySide6.QtCore import Qt, QUrl, QTimer
@@ -593,10 +594,13 @@ class QtWorkspaceEditor(QMainWindow):
         if not isinstance(data.get('entries'), list):
             raise ValueError('Invalid workspace inventory.')
         entries = {}
+        seen = set()
         for entry in data['entries']:
             rel = normalized_name(entry['path'])
-            if rel != entry['path'] or rel.casefold() in (p.casefold() for p in entries):
+            folded = rel.casefold()
+            if rel != entry['path'] or folded in seen:
                 raise ValueError('Unsafe or duplicated extracted path: '+rel)
+            seen.add(folded)
             entries[rel] = entry
         return entries
 
@@ -608,6 +612,7 @@ class QtWorkspaceEditor(QMainWindow):
         return 'files'
 
     def populate(self):
+        started = time.perf_counter()
         needle = self.search.text().casefold()
         for section, tree in self.trees.items():
             tree.blockSignals(True)
@@ -658,6 +663,7 @@ class QtWorkspaceEditor(QMainWindow):
                 else:
                     tree.addTopLevelItem(item)
             tree.blockSignals(False)
+        self.last_populate_ms = round((time.perf_counter() - started)*1000,3)
 
     def selected(self):
         section = self.TABS[self.tabs.currentIndex()]
