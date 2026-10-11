@@ -80,7 +80,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.gl_error = None
         self.gpu_upload_ms = None
         self.light_strength = 1.0
-        self.background_mode = 'Dark'
+        self.background_mode = 'Studio Grey'
         self.visible_material_slot = None
         self.projection_mode = 'Orthographic'
         self.specular_intensity = 0.35
@@ -541,6 +541,21 @@ class QtGPUModelPanel(QWidget):
         self._grid_toggle.setChecked(True)
         self._grid_toggle.toggled.connect(lambda state: (setattr(self.canvas,'grid_visible', state),self.canvas.update()))
         toolbar.addWidget(self._grid_toggle)
+        self._shading_group = QButtonGroup(self)
+        self._shading_group.setExclusive(True)
+        self._solid_shading = QToolButton(self)
+        self._solid_shading.setText('Solid')
+        self._solid_shading.setToolTip('Preview without texture colors')
+        self._solid_shading.setCheckable(True)
+        self._shading_group.addButton(self._solid_shading)
+        toolbar.addWidget(self._solid_shading)
+        self._material_shading = QToolButton(self)
+        self._material_shading.setText('Material')
+        self._material_shading.setToolTip('Preview with textures and CryEngine material approximation')
+        self._material_shading.setCheckable(True)
+        self._material_shading.setChecked(True)
+        self._shading_group.addButton(self._material_shading)
+        toolbar.addWidget(self._material_shading)
         self._wire_toggle = QToolButton(self)
         self._wire_toggle.setText('Wire')
         self._wire_toggle.setCheckable(True)
@@ -597,6 +612,9 @@ class QtGPUModelPanel(QWidget):
         self.texture_checkbox = textured
         textured.setChecked(True)
         textured.toggled.connect(lambda value:(setattr(self.canvas,'textured',value),self.canvas.update()))
+        textured.toggled.connect(lambda value: self._material_shading.setChecked(value) if value else self._solid_shading.setChecked(True))
+        self._solid_shading.clicked.connect(lambda: textured.setChecked(False))
+        self._material_shading.clicked.connect(lambda: textured.setChecked(True))
         line.addWidget(textured)
         line.addWidget(QLabel('Shading'))
         shading = QComboBox()
@@ -638,6 +656,7 @@ class QtGPUModelPanel(QWidget):
         studio.addWidget(self.lighting_slider)
         self.background_combo = QComboBox()
         self.background_combo.addItems(('Dark','Studio Grey'))
+        self.background_combo.setCurrentText('Studio Grey')
         self.background_combo.currentTextChanged.connect(self.canvas.set_background)
         studio.addWidget(self.background_combo)
         save_view = QPushButton('Save View…')
