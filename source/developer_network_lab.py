@@ -134,3 +134,16 @@ def compare_session_events(host,client):
                                     None),
             'host_errors':sum(flag for _,flag in left),
             'client_errors':sum(flag for _,flag in right)}
+
+
+TRACE_ENV=re.compile(r'^(?:STAGE2TRACE|EVOLVE|MODDED_EVOLVE)_[A-Z][A-Z0-9_]{1,62}$')
+
+def validate_trace_environment(name,value):
+    """Restrict launcher-side debug flags to non-sensitive project prefixes."""
+    name=str(name).strip().upper()
+    if not TRACE_ENV.fullmatch(name):
+        raise ValueError('Trace variable must use STAGE2TRACE_, EVOLVE_, or MODDED_EVOLVE_ prefix.')
+    value=str(value).strip()
+    if value not in ('0','1'):
+        raise ValueError('Trace options support only boolean 0 or 1.')
+    return name,value
