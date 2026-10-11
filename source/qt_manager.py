@@ -311,6 +311,8 @@ class QtManager(QMainWindow):
         self.archive_entries = []
         self.batch_workspaces = {}
         self.busy = False
+        self.task_queue = []
+        self._queued_task_running = None
         self.process = None
         self.editors = []
         self.available_update = None
@@ -571,6 +573,8 @@ class QtManager(QMainWindow):
         actions.addWidget(_button('Mod Profiles', self.open_mod_profiles, primary=True))
         actions.addWidget(_button('Export Model Folder', self.export_model_folder))
         actions.addWidget(_button('PAK Diff…', self.open_pak_diff))
+        actions.addWidget(_button('Projects', self.open_project_dashboard))
+        actions.addWidget(_button('Tasks', self.open_task_manager))
         root.addLayout(actions)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(('Folder', 'Description', 'File', 'Type / Project', 'Size'))
@@ -1108,6 +1112,8 @@ class QtManager(QMainWindow):
             self.status.setText(f'FAILED: {name} (exit {code}). Review Activity.')
             self._log('FAILED — backups and journals have not been deleted.')
             self.refresh_swap_status()
+            self._queued_task_running = None
+            self.task_queue.clear()  # Failure pauses/clears future mutations.
             return
         self.status.setText('Completed: ' + name)
         self._log('SUCCESS: ' + name)
@@ -1118,6 +1124,9 @@ class QtManager(QMainWindow):
             except Exception as exc:
                 self.failure(exc)
         self.refresh_swap_status()
+        self._queued_task_running = None
+        if self.task_queue and not self.busy:
+            QTimer.singleShot(10,self._drain_tasks)
 
     def persist(self):
         self.settings.update({
@@ -2001,6 +2010,54 @@ class QtManager(QMainWindow):
         self.info('Setup check', ('Setup looks ready.' if not notes else
                   'Things requiring attention:\n' + '\n'.join('• '+x for x in notes)) +
                   '\n\n' + st.message)
+
+    def open_project_dashboard(self):
+        try:
+            from qt_workflow_lab import ProjectDashboard
+            ProjectDashboard(self).exec()
+        except (ValueError,OSError) as exc:
+            self.failure(exc)
+
+    def open_task_manager(self):
+        from qt_task_queue import TaskQueueDialog
+        TaskQueueDialog(self).exec()
+
+    def enqueue_task_action(self,name):
+        allowed={'Review Changes':self.diff, 'Unpack PAK':self.extract,
+                 'Build Mod':self.build}
+        if name not in allowed:
+            raise ValueError('Unsupported task category.')
+        archive=self._selected_rel()
+        if not archive or archive not in self.archive_entries:
+            raise ValueError('Select a signed PAK before queuing work.')
+        if len(self.task_queue)>=24:
+            raise ValueError('Task queue is full.')
+        self.task_queue.append({'name':name,'archive':archive,
+                                'workspace':str(self.current_workspace)})
+        if not self.busy:
+            QTimer.singleShot(10,self._drain_tasks)
+
+    def _drain_tasks(self):
+        if self.busy or not self.task_queue:
+            return
+        task=self.task_queue[0]
+        if (self._selected_rel()!=task['archive'] or
+                str(self.current_workspace)!=task['workspace']):
+            self.status.setText('Queue paused: select %s and its original '
+                                'workspace, then reopen Tasks.'%task['archive'])
+            return
+        from project_selection import workspace_for_archive
+        if task['name']!='Unpack PAK' and workspace_for_archive(
+                self.stage_path,task['archive'],task['workspace'],
+                self.batch_workspaces) is None:
+            self.status.setText('Queue paused: PAK has no matching extracted project.')
+            return
+        self.task_queue.pop(0)
+        self._queued_task_running = task
+        {'Review Changes':self.diff,'Unpack PAK':self.extract,
+         'Build Mod':self.build}[task['name']]()
+        if not self.busy:
+            self._queued_task_running = None
 
     def open_project_cleanup(self):
         if self.busy:
