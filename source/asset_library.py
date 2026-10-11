@@ -204,13 +204,31 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
     from evolve_pak_workspace import normalized_name
     from evolve_gameplay_editor import decrypt_entry, decode_cryxml
     root = _home(root)
-    source = Path(source).resolve(strict=True)
-    if not source.is_file() or source.is_symlink() or source.suffix.casefold() != ".pak":
+    supplied = Path(source).expanduser()
+    if supplied.is_symlink():
+        raise ValueError("Linked PAK sources are not accepted.")
+    source = supplied.resolve(strict=True)
+    if not source.is_file() or source.suffix.casefold() != ".pak":
         raise ValueError("Select an actual, non-linked .pak file.")
     if source.is_relative_to(root):
         raise ValueError("Import source must be outside the Asset Library.")
     if cancelled and cancelled():
         raise ImportCanceled("Import canceled.")
+    # Fast, persistent idempotence check on launch. Do not rehash/decrypt large
+    # unchanged PAKs after a successful first import.
+    stat = source.stat()
+    for prior in _manifest_dirs(root):
+        try:
+            prior_manifest = _load_manifest(prior)
+            if (prior_manifest.get("source") == str(source) and
+                    prior_manifest.get("source_size") == stat.st_size and
+                    prior_manifest.get("source_mtime_ns") == stat.st_mtime_ns):
+                if all((prior / "files" / entry["path"]).is_file()
+                       for entry in prior_manifest["entries"]):
+                    return {"status": "already-imported", "id": prior.name,
+                            "name": source.name, "entries": len(prior_manifest["entries"])}
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
     sha = _sha_file(source)
     slug = hashlib.sha256((source.name.casefold() + "|" + sha).encode()).hexdigest()[:20]
     target = root / slug
@@ -282,7 +300,9 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
         manifest = {
             "version": VERSION, "name": source.name,
             "signed_name": signed_name, "source": str(source),
-            "source_sha256": sha, "public_key_sha256": _sha_file(key),
+            "source_sha256": sha, "source_size": stat.st_size,
+            "source_mtime_ns": stat.st_mtime_ns,
+            "public_key_sha256": _sha_file(key),
             "imported_at": int(time.time()), "extracted_bytes": written,
             "warnings": skipped, "entries": records,
         }
