@@ -31,7 +31,7 @@ class DuplicatePAKCleanupDialog(QDialog):
         desc = QLabel(
             "Read-only inventory first. Active .pak files, .customkey-original, "
             "prepared/incomplete copies and unknown backup suffixes are protected. "
-            "Only SHA-256-identical legacy copies may be selected for Recycle Bin "
+            "Only SHA-256-identical extra copies may be selected for Recycle Bin "
             "after confirming there is no active swap or known recovery reference.")
         desc.setWordWrap(True)
         lay.addWidget(desc)
@@ -103,7 +103,7 @@ class DuplicatePAKCleanupDialog(QDialog):
         reply, ok = QInputDialog.getText(
             self, "Confirm duplicate PAK cleanup",
             "Selected: %d SHA-256-identical redundant copy/copies (%.1f MiB).\n"
-            "Only copies matching the installed .pak are eligible.\n"
+            "One exact copy of every distinct historical version is retained.\n"
             "These may have been created for old recovery workflows; manifests "
             "outside known manager folders cannot be detected.\n"
             "Your live PAKs and .customkey-original backups will NEVER be moved.\n"
