@@ -456,11 +456,6 @@ class QtGPUModelPanel(QWidget):
         textured.toggled.connect(lambda value:(setattr(self.canvas,'textured',value),self.canvas.update()))
         line.addWidget(textured)
         line.addWidget(QLabel('Shading'))
-        enhanced.setToolTip('Normal/specular maps and opacity with a GLSL shader; legacy fallback if unavailable.')
-        enhanced.setChecked(True)
-        enhanced.toggled.connect(self.canvas.set_enhanced_materials)
-        self.enhanced_checkbox=enhanced
-
         shading = QComboBox()
         self.shading_combo = shading
         shading.addItems(('Faceted (hard edges)', 'Smooth'))
