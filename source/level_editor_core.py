@@ -61,10 +61,22 @@ class LevelProject:
         self.workspace = Path(workspace).resolve(strict=True)
         self.root = (self.workspace / "files").resolve(strict=True)
         manifest = load_workspace(self.workspace)
-        names = [normalized_name(entry["path"]) for entry in manifest["entries"]
-                 if entry["path"].casefold().endswith(".lyr")]
+        available = [normalized_name(entry["path"]) for entry in manifest["entries"]]
+        names = [name for name in available if name.casefold().endswith(".lyr")]
+        self.layer_source = "CryEngine .lyr object layers"
         if not names:
-            raise ValueError("No editable .lyr level layers found in this project.")
+            # Actual Evolve Stage 2 runtime level.pak archives frequently
+            # contain NO .lyr files. Their placed objects live in Mission XML,
+            # accompanied by leveldata.xml and levelinfo.xml.
+            names = [name for name in available
+                     if re.fullmatch(r"(?:.*/)?mission_[^/]+\.xml", name, re.I)]
+            if names and not any(
+                    Path(item).name.casefold() in ("leveldata.xml", "levelinfo.xml")
+                    for item in available):
+                names = []  # Avoid opening an unrelated mission XML as a map.
+            self.layer_source = "CryEngine mission_*.xml object placements"
+        if not names:
+            raise ValueError("No supported .lyr or mission_*.xml level placement data found.")
         if len(names) > MAX_LAYERS:
             raise ValueError("Too many level layers.")
         self.layers = {}
@@ -78,6 +90,17 @@ class LevelProject:
             self.level_name = names[0].split("/")[1]
         else:
             self.level_name = self.workspace.name
+            info_name = next((p for p in available if
+                              Path(p).name.casefold() == "levelinfo.xml"), None)
+            if info_name:
+                info_path = self.root.joinpath(*info_name.split("/"))
+                if info_path.is_file() and info_path.stat().st_size < 2_000_000:
+                    try:
+                        from evolve_gameplay_editor import parse_cryxml_text
+                        info_root = parse_cryxml_text(info_path.read_bytes())
+                        self.level_name = (info_root.get("Name") or self.level_name).split("/")[-1]
+                    except (OSError, ValueError, ET.ParseError):
+                        pass
         for name in sorted(names, key=str.casefold):
             path = self.root.joinpath(*name.split("/"))
             if (path.is_symlink() or not path.is_file() or
@@ -96,9 +119,18 @@ class LevelProject:
             except ET.ParseError:
                 self.skipped.append(name + ": invalid XML layer")
                 continue
-            nodes = [node for node in root.iter()
-                     if node.tag.split("}")[-1].casefold() == "object"
-                     and ("Pos" in node.attrib or "Name" in node.attrib)]
+            if name.casefold().endswith(".lyr"):
+                nodes = [node for node in root.iter()
+                         if node.tag.split("}")[-1].casefold() == "object"
+                         and ("Pos" in node.attrib or "Name" in node.attrib)]
+            else:
+                containers = [el for el in root
+                              if el.tag.split("}")[-1].casefold() == "objects"]
+                nodes = [node for container in containers for node in container
+                         if node.tag.split("}")[-1].casefold()
+                         in ("entity", "object", "brush", "prefab")
+                         and parse_vec(node.get("Pos")) is not None
+                         and (node.get("Name") or node.get("EntityId") or node.get("Id"))]
             if len(self.objects) + len(nodes) > MAX_OBJECTS:
                 raise ValueError("Too many placed level objects.")
             self.layers[name] = (path, root, nodes)
@@ -110,8 +142,8 @@ class LevelProject:
                     continue
                 a = node.attrib
                 self.objects.append(PlacedObject(
-                    name, i, a.get("Name", a.get("Id", "Unnamed")),
-                    a.get("Type", "Object"),
+                    name, i, a.get("Name", a.get("EntityId", a.get("Id", "Unnamed"))),
+                    a.get("Type", node.tag.split("}")[-1]),
                     a.get("Geometry", a.get("EntityClass", a.get("Material", ""))),
                     parse_vec(a["Pos"]), parse_vec(a.get("Rotate"), 4),
                     parse_vec(a.get("Scale"))))
@@ -124,8 +156,14 @@ class LevelProject:
     def contains_levels(workspace):
         from evolve_pak_workspace import load_workspace
         try:
-            return any(str(x["path"]).casefold().endswith(".lyr")
-                       for x in load_workspace(Path(workspace))["entries"])
+            entries = [str(x["path"]).casefold()
+                       for x in load_workspace(Path(workspace))["entries"]]
+            if any(p.endswith(".lyr") for p in entries):
+                return True
+            return (any(re.fullmatch(r"(?:.*/)?mission_[^/]+\.xml", p)
+                        for p in entries)
+                    and any(Path(p).name in ("leveldata.xml", "levelinfo.xml")
+                            for p in entries))
         except (ValueError, OSError, KeyError):
             return False
 
@@ -141,8 +179,8 @@ class LevelProject:
         node = self._node(layer, index)
         a = node.attrib
         return PlacedObject(
-            layer, index, a.get("Name", a.get("Id", "Unnamed")),
-            a.get("Type", "Object"),
+            layer, index, a.get("Name", a.get("EntityId", a.get("Id", "Unnamed"))),
+            a.get("Type", node.tag.split("}")[-1]),
             a.get("Geometry", a.get("EntityClass", a.get("Material", ""))),
             parse_vec(a.get("Pos")) or (0, 0, 0),
             parse_vec(a.get("Rotate"), 4), parse_vec(a.get("Scale")))
@@ -202,7 +240,7 @@ class LevelProject:
         return dirty
 
     def save(self):
-        """Atomic replacement of changed .lyr files. Never touches live PAKs."""
+        """Atomic replacement of modified layer/mission files; no live PAK writes."""
         changed = self.dirty_layers()
         if not changed:
             return ()
