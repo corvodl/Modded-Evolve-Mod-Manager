@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 import traceback
 
@@ -1679,12 +1680,22 @@ class QtManager(QMainWindow):
             filter_text = self.filter_input.text().strip()
             if filter_text:
                 cmd += ['--filter', filter_text]
+            self._extraction_timer = (time.perf_counter(), pak.stat().st_size, pak.name)
             self.run_steps([('Unpacking archive',cmd)], 'Unpack archive',
                            lambda: self._after_extract(folder))
         except Exception as exc:
             self.failure(exc)
 
     def _after_extract(self, folder):
+        started, size, archive = getattr(self, '_extraction_timer',
+                                         (time.perf_counter(), 0, 'unknown'))
+        elapsed = max(.001, time.perf_counter() - started)
+        self.settings['last_extraction_benchmark'] = {
+            'archive': archive, 'duration_seconds': round(elapsed,3),
+            'input_mib': round(size/1048576,3),
+            'input_mib_per_second': round(size/1048576/elapsed,3),
+            'note': 'Real signed PAK extraction wall-clock time; input archive bytes per second.'}
+        self._extraction_timer = None
         self.current_workspace = str(folder)
         self.workspace_input.setText(str(folder))
         self.output_pak = ''
