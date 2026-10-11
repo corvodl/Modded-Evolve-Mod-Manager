@@ -131,3 +131,84 @@ def runtime_xml_check(xml_values,sampled_values):
         observed=sampled_values.get(key)
         result.append((key,expected,observed,observed is not None and str(expected)==str(observed)))
     return tuple(result)
+
+
+def reverse_pointer_scan(pid,target,*,max_megabytes=32,limit=200):
+    """Find first-level pointers within +/- 4 KiB of a known address.
+
+    Bounded and read-only; use the results as candidates, not verified pointer
+    chains. A follow-up launch comparison is needed to establish stability.
+    """
+    import struct
+    target=parse_address(target)
+    scanned=0
+    matches=[]
+    for region in list_regions(pid):
+        if not region['readable'] or not region['writable']:
+            continue
+        for offset in range(0,region['size'],4096):
+            size=min(4096,region['size']-offset)
+            if scanned+size>max_megabytes*1048576:
+                return tuple(matches)
+            scanned+=size
+            try:
+                data=read_memory(pid,region['base']+offset,size)
+            except OSError:
+                continue
+            for at in range(0,len(data)-7,8):
+                address=struct.unpack_from('<Q',data,at)[0]
+                if address<=target<address+4096:
+                    matches.append({'pointer':region['base']+offset+at,
+                                    'offset':target-address})
+                    if len(matches)>=limit:
+                        return tuple(matches)
+    return tuple(matches)
+
+
+def module_patch_preset(pid,address,original,replacement):
+    """ASLR-aware offline patch descriptor, with SHA guard, no game bytes."""
+    import hashlib
+    address=parse_address(address)
+    if not isinstance(original,bytes) or not isinstance(replacement,bytes):
+        raise ValueError('Expected raw bytes')
+    if not 1<=len(original)<=256 or len(original)!=len(replacement):
+        raise ValueError('Patch byte length must be 1–256.')
+    module=next((m for m in list_modules(pid)
+                 if m['base']<=address<m['base']+m['size']
+                 and address+len(original)<=m['base']+m['size']),None)
+    if module is None:
+        raise ValueError('Patch address is not inside a loaded module.')
+    return {'format':'evolve-offline-module-patch-v1',
+            'module':module['name'].casefold(),
+            'rva':address-module['base'],
+            'expected':original.hex(),
+            'replacement':replacement.hex(),
+            'module_path_sha256':hashlib.sha256(
+                module['path'].casefold().encode()).hexdigest()}
+
+
+def resolve_patch_preset(pid,preset):
+    """Find module by name and verify its same-size current original bytes."""
+    import hashlib
+    if not isinstance(preset,dict) or preset.get('format')!='evolve-offline-module-patch-v1':
+        raise ValueError('Unsupported patch descriptor.')
+    original=bytes.fromhex(preset['expected'])
+    replacement=bytes.fromhex(preset['replacement'])
+    if not 1<=len(original)<=256 or len(original)!=len(replacement):
+        raise ValueError('Unsafe patch size.')
+    rva=preset['rva']
+    if not isinstance(rva,int) or rva<0:
+        raise ValueError('Invalid relative address.')
+    matches=[m for m in list_modules(pid)
+             if m['name'].casefold()==preset['module']
+             and hashlib.sha256(m['path'].casefold().encode()).hexdigest()
+                 ==preset['module_path_sha256']]
+    if len(matches)!=1:
+        raise ValueError('Patch target module differs from preset.')
+    module=matches[0]
+    if rva+len(original)>module['size']:
+        raise ValueError('Patch exceeds module bounds.')
+    address=module['base']+rva
+    if read_memory(pid,address,len(original))!=original:
+        raise ValueError('Patch original-byte guard failed; patch was not applied.')
+    return address,original,replacement
