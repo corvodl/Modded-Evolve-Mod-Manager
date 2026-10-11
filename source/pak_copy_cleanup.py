@@ -27,6 +27,7 @@ class PakCopy:
     status: str
     detail: str
     sha256: str = ""
+    retained_reference: Path | None = None
 
     @property
     def reclaimable(self):
@@ -139,24 +140,53 @@ def scan_duplicate_paks(game, *, journal_roots=()):
             rows.append(PakCopy(file, original, size, kind, status, why))
             if len(rows) > MAX_CANDIDATES:
                 raise ValueError("More than 1,800 backup-like files. Narrow scan.")
-    eligible = []
+    # Group historic files by canonical live PAK and EXACT SHA-256. The live
+    # file is the preferred keeper. If a historic version differs from live,
+    # retain one intact backup of that exact version and offer ONLY further
+    # identical backups for recycling. Never discard the last copy of a version.
+    from collections import defaultdict
+    groups = defaultdict(list)
+    live_digests = {}
     for i, record in enumerate(rows):
         if record.status != "review":
             continue
         _safe_file(root, record.path)
-        try:
-            same, digest = _matches_live(record.path, record.original)
-        except OSError:
-            same, digest = False, ""
-        if same:
+        digest = _snapshot_sha(record.path)
+        groups[(str(record.original).casefold(), record.bytes, digest)].append(i)
+    eligible = []
+    for (original_name, size, digest), candidates in groups.items():
+        first = rows[candidates[0]]
+        original = first.original
+        if not original.is_file() or original.is_symlink():
+            for i in candidates:
+                record = rows[i]
+                rows[i] = PakCopy(record.path, record.original, record.bytes,
+                    record.kind, "protected", "Active PAK missing. Preserve backups.")
+            continue
+        _safe_file(root, original)
+        token = (str(original).casefold(), size)
+        if token not in live_digests:
+            live_digests[token] = (
+                _snapshot_sha(original) if original.stat().st_size == size else "")
+        live_matches = bool(live_digests[token] == digest)
+        # For alternate historic versions choose the oldest stable copy as the
+        # keeper. Its exact bytes must be retained even after other copies go.
+        stable = sorted(candidates, key=lambda i: (
+            rows[i].path.stat().st_mtime_ns, str(rows[i].path).casefold()))
+        keeper = original if live_matches else rows[stable[0]].path
+        for i in candidates:
+            record = rows[i]
+            if not live_matches and i == stable[0]:
+                rows[i] = PakCopy(record.path, record.original, record.bytes,
+                    record.kind, "protected",
+                    "Retained copy of a distinct historical PAK version.", digest)
+                continue
             rows[i] = PakCopy(record.path, record.original, record.bytes,
-                              record.kind, "identical-copy",
-                              "Identical to active PAK. User confirmation required.", digest)
+                record.kind, "identical-copy",
+                "Identical to retained " +
+                ("active PAK." if live_matches else "historical version.") +
+                " Explicit confirmation required.", digest, keeper)
             eligible.append(record.path)
-        else:
-            rows[i] = PakCopy(record.path, record.original, record.bytes,
-                              record.kind, "protected",
-                              "Different from active PAK or active PAK missing. Preserve.")
     if eligible:
         referenced = _journal_references(eligible, journal_roots)
         for i, record in enumerate(rows):
@@ -192,12 +222,18 @@ def validate_recycle(game, swap, rows, *, journal_roots=()):
         if not isinstance(row, PakCopy) or not row.reclaimable or not row.sha256:
             raise ValueError("Only verified, user-selected duplicate copies may be recycled.")
         _safe_file(root, row.path)
+        if row.retained_reference is None:
+            raise ValueError("No retained identical copy was verified.")
         _safe_file(root, row.original)
-        if row.path == row.original or row.path.stat().st_size != row.bytes:
+        _safe_file(root, row.retained_reference)
+        if (row.path in (row.original, row.retained_reference)
+                or row.path.stat().st_size != row.bytes
+                or row.retained_reference.stat().st_size != row.bytes):
             raise ValueError("Backup changed since scan. Rescan.")
-        same, digest = _matches_live(row.path, row.original)
-        if not same or digest != row.sha256:
-            raise ValueError("Backup is no longer identical to active PAK. Rescan.")
+        # Both candidate and retained version must still have the same bytes.
+        if (_snapshot_sha(row.path) != row.sha256
+                or _snapshot_sha(row.retained_reference) != row.sha256):
+            raise ValueError("Backup is no longer identical to retained version. Rescan.")
         selected.append(row.path)
     if len({str(p).casefold() for p in selected}) != len(selected):
         raise ValueError("Duplicate selection")
