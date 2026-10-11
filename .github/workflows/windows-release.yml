@@ -46,11 +46,18 @@ jobs:
           if (!(Test-Path "dist/EvolveModManager-compiled-screenshot.png")) {
             throw "Real manager screenshot was not created."
           }
+          & ".build/app-dist/EvolveModManager/EvolveModManager.exe" `
+            --capture-modding-screenshot "dist/EvolveModManager-Modding-screenshot.png"
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path "dist/EvolveModManager-Modding-screenshot.png")) {
+            throw "Real Modding page screenshot was not created."
+          }
       - name: Publish real compiled UI screenshot artifact
         uses: actions/upload-artifact@v4
         with:
           name: EvolveModManager-Actual-Windows-Screenshot
-          path: dist/EvolveModManager-compiled-screenshot.png
+          path: |
+            dist/EvolveModManager-compiled-screenshot.png
+            dist/EvolveModManager-Modding-screenshot.png
           if-no-files-found: error
       - name: Verify release ZIP
         shell: pwsh
@@ -110,6 +117,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "ZIP release upload failed." }
           gh release upload Main "dist/EvolveModManager-compiled-screenshot.png" --clobber
           if ($LASTEXITCODE -ne 0) { throw "Compiled Windows screenshot upload failed." }
+          gh release upload Main "dist/EvolveModManager-Modding-screenshot.png" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Modding page screenshot upload failed." }
           # Upload manifest LAST: old manifests never authorize new, mismatched bytes.
           gh release upload Main "dist/update-manifest.json" --clobber
           if ($LASTEXITCODE -ne 0) { throw "Update manifest upload failed." }
