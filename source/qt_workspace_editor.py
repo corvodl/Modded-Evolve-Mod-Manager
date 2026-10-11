@@ -1389,6 +1389,14 @@ class QtWorkspaceEditor(QMainWindow):
             self.model_panel.set_native_catalog(
                 refs, idle, config, loader=build_native_clip,
                 refresh_library=self.refresh_model_asset_references)
+            if self.read_only_library:
+                # Same native animation timeline; don't offer loaders that
+                # import external clips in the reference-only browser.
+                for button in self.model_panel.findChildren(QPushButton):
+                    if button.text() in (
+                            'Import Original CAF/DBA…', 'Load Animation GLB…'):
+                        button.hide()
+                        button.setEnabled(False)
             prefs=self.manager.settings.get('animation_playback_preferences',{})
             key=project_session_key(self.workspace)+'|'+self.current.casefold()
             if isinstance(prefs,dict) and isinstance(prefs.get(key),dict):
@@ -1669,6 +1677,8 @@ class QtWorkspaceEditor(QMainWindow):
                 QMessageBox.critical(self,'Could not export PNG',str(exc))
 
     def import_dds(self):
+        if self.read_only_library:
+            raise PermissionError('Texture imports are disabled in the Asset Library.')
         if self.mode != 'images':
             return
         selected, _ = QFileDialog.getOpenFileName(self,'Choose replacement DDS','','DDS (*.dds)')
@@ -1676,6 +1686,8 @@ class QtWorkspaceEditor(QMainWindow):
             self._replace_texture(selected)
 
     def import_png(self):
+        if self.read_only_library:
+            raise PermissionError('Texture imports are disabled in the Asset Library.')
         if self.mode != 'images':
             return
         selected, _ = QFileDialog.getOpenFileName(self,'Choose replacement PNG','','PNG (*.png)')
@@ -1737,6 +1749,13 @@ class QtWorkspaceEditor(QMainWindow):
         if not target:
             return
         target = Path(target).resolve().with_suffix('.glb')
+        if self.read_only_library:
+            from asset_library_preview import _outside_library
+            try:
+                _outside_library(target)
+            except ValueError as exc:
+                QMessageBox.warning(self, 'Animated Blender export', str(exc))
+                return
         protected = (self.workspace/'files').resolve()
         if target.is_relative_to(protected):
             QMessageBox.warning(self,'Animated Blender export',
