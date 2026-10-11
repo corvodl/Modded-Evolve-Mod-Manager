@@ -86,7 +86,7 @@ class AnimationEngineTests(unittest.TestCase):
             self.assertIn(str(assets),args)
             with self.assertRaisesRegex(ValueError,'separate'):
                 validate_conversion(converter,source,assets,assets)
-            with self.assertRaisesRegex(ValueError,'inside'):
+            with self.assertRaisesRegex(ValueError,'valid original'):
                 validate_conversion(converter,converter,assets,exported)
             with self.assertRaisesRegex(ValueError,'inside'):
                 other=path/'outside.chr';other.write_bytes(b'dummy')
