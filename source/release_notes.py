@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.11', (
+        'DBA databases can be selected for converter-backed animation playback with a compatible installed converter.',
+        'Show real progress when extracting and importing PAKs or exporting individual and batch files.',
+        'Improve safe batch export progress, cancellation and cleanup while keeping originals unchanged.',
+    )),
     ('1.1.18-beta.10', (
         'Fix Asset Library GPU model previews expecting a Modding workspace JSON.',
         'Resolve equipment materials through verified CDF and compiled mesh links, not only same-name MTL files.',
