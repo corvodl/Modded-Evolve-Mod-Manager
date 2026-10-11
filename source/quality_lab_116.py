@@ -82,6 +82,15 @@ def benchmark_workspace(workspace, *, sample_count=32):
                 samples.append((row['path'], target))
         except (KeyError, OSError, ValueError):
             skipped += 1
+    from model_asset import MODEL_EXTENSIONS
+    model_candidates = [row for row in rows if Path(row.get('path','')).suffix.casefold() in MODEL_EXTENSIONS]
+    if model_candidates and all(Path(name).suffix.casefold() not in MODEL_EXTENSIONS for name,_ in samples):
+        try:
+            candidate = checked_path(root,model_candidates[0]['path'])
+            if candidate.is_file() and not candidate.is_symlink() and candidate.stat().st_size <= MAX_BENCHMARK_BYTES:
+                samples.append((model_candidates[0]['path'],candidate))
+        except (OSError,ValueError):
+            pass
     start = time.perf_counter()
     byte_count = 0
     digests = []
@@ -106,6 +115,21 @@ def benchmark_workspace(workspace, *, sample_count=32):
     # claiming that it measured an OpenGL upload or GPU frame render.
     model_ms = None
     model_name = None
+    texture_memory = 0
+    dds_count = 0
+    from dds_texture import parse_dds
+    for rel,target in samples:
+        if rel.lower().endswith('.dds') or rel.lower().endswith('.dds.0'):
+            try:
+                with target.open('rb') as stream:
+                    header=stream.read(256)
+                info=parse_dds(header)
+                if 0 < info.width <= 16384 and 0 < info.height <= 16384:
+                    texture_memory+=sum(max(1,info.width>>m)*max(1,info.height>>m)*4
+                                        for m in range(min(16,info.mipmaps)))
+                    dds_count+=1
+            except (OSError,ValueError):
+                continue
     for rel, target in samples:
         if rel.lower().endswith(('.cgf', '.chr', '.skin', '.cga')):
             try:
@@ -123,10 +147,12 @@ def benchmark_workspace(workspace, *, sample_count=32):
             'files_skipped': skipped, 'slowest_file': slowest,
             'slowest_file_ms': round(max(slowest_time,0),3),
             'model_parse_ms': model_ms, 'model_file': model_name,
+            'texture_memory_estimated_mib': round(texture_memory / 1048576, 3),
+            'texture_files_estimated': dds_count,
             'extraction_proxy_zlib_ms': round(decompress_ms, 3),
             'extraction_proxy_bytes': len(proxy),
             'checksum': hashlib.sha256(''.join(digests).encode()).hexdigest(),
-            'disclaimer': 'Read-only sampled benchmark. zlib is a synthetic extraction proxy, '
+            'disclaimer': 'Read-only sampled benchmark. Texture memory estimates assume RGBA8 GPU upload. zlib is a synthetic extraction proxy, '
                           'not signed-PAK unpacking time. OpenGL rendering/FPS is not measured.'}
 
 
