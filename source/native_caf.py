@@ -226,7 +226,7 @@ def _matrix_quaternion(m):
     return (q/np.linalg.norm(q)).astype(np.float32)
 
 
-def append_caf_animations(glb, clips):
+def append_caf_animations(glb, clips, *, allow_layered=False):
     """Add native CAF tracks to a *rigged* manager GLB.
 
     clips: iterable of (display_name, CAF bytes). Matches bone names by CRC,
@@ -249,7 +249,11 @@ def append_caf_animations(glb, clips):
     animations = []
     for name, raw in clips:
         motion = decode_caf(raw)
-        if motion.additive or 'aimpose' in name.casefold() or 'additive' in name.casefold():
+        layered = (motion.additive or 'aimpose' in name.casefold()
+                   or 'additive' in name.casefold())
+        if layered and not allow_layered:
+            # A layer alone is not a complete motion. Callers must supply
+            # an explicit verified base clip and opt into layered export.
             continue
         matched = [t for t in motion.tracks if t.controller_id in crc_nodes]
         if len(matched) < min(3, max(1, len(motion.tracks)//4)):
@@ -310,7 +314,11 @@ def append_caf_animations(glb, clips):
                                  'target':{'node':node,'path':path}})
         if not channels:
             raise ValueError('CAF has no compatible transform tracks')
-        animations.append({'name':name,'samplers':samplers,'channels':channels})
+        animations.append({
+            'name': name, 'samplers': samplers, 'channels': channels,
+            'extras': {'evolveLayered': bool(layered),
+                       'evolveAdditive': bool(motion.additive)},
+        })
     if not animations:
         raise ValueError('No standalone compatible CAF animations found')
     document.setdefault('animations',[]).extend(animations)
