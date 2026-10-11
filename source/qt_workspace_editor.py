@@ -168,10 +168,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.texture_folder = None
         self.animation_folder = None
         self.loose_animation_index = None
-        self.preview_index = (
-            __import__('asset_library_preview', fromlist=['library_model_index'])
-            .library_model_index(library_archive['id'])
-            if self.read_only_library else None)
+        self.preview_index = None
         self.character_preview = None
         self.character_skin_choice = None
         self._prepared_animation = None
@@ -1170,10 +1167,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.status.setText(rel + ' | Preparing GPU model…')
         source_workspace = self.workspace
         index = self.preview_index
-        if self.read_only_library:
-            from asset_library_preview import library_model_index
-            index = library_model_index(self.library_archive['id'])
-            self.preview_index = index
+        library_id = self.library_archive['id'] if self.read_only_library else None
         projects = self.manager.projects_path
         stage = self.manager.stage_path
         # Character-specific animation CAFs may live in their own signed PAK,
@@ -1189,10 +1183,16 @@ class QtWorkspaceEditor(QMainWindow):
         token = self._model_generation
 
         def resolve(_unused):
+            # Full-game imported libraries can index hundreds of thousands
+            # of paths; keep that scan off the Qt event/UI thread.
+            active_index = index
+            if library_id is not None:
+                from asset_library_preview import library_model_index
+                active_index = library_model_index(library_id)
             data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
                 projects_root=projects, stage_root=stage,
                 texture_folder=tex, animation_index=ani,
-                equipment=equipment, index=index)
+                equipment=equipment, index=active_index)
             return (data, cache_hit, load_ms), None
 
         # Tests and headless software previews retain deterministic synchronous
