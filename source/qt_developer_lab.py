@@ -55,9 +55,10 @@ def row(*items):
 
 
 class DeveloperLabPanel(QWidget):
-    def __init__(self,game_root_provider,parent=None):
+    def __init__(self,game_root_provider,parent=None,trace_env_callback=None):
         super().__init__(parent)
         self.game_root_provider=game_root_provider
+        self.trace_env_callback=trace_env_callback
         self.last_log=()
         self._service=None
         self.snapshots={}
@@ -291,6 +292,20 @@ class DeveloperLabPanel(QWidget):
         layout=QVBoxLayout(page)
         layout.addWidget(QLabel('Stage2Trace log flag discovery and support '
                                'captures. No undocumented runtime flags are guessed.'))
+        flags=QHBoxLayout()
+        self.trace_key=QLineEdit()
+        self.trace_key.setPlaceholderText('STAGE2TRACE_EXAMPLE_FLAG')
+        self.trace_value=QComboBox()
+        self.trace_value.addItem('Enabled','1')
+        self.trace_value.addItem('Disabled','0')
+        flags.addWidget(self.trace_key,2)
+        flags.addWidget(self.trace_value,1)
+        flags.addWidget(button('Set Offline Launch Flag',self.set_trace_flag))
+        layout.addLayout(flags)
+        layout.addWidget(QLabel(
+            'Only actual flags recognized by your installed DLL have an effect. '
+            'These settings apply to this manager session only, and only to '
+            'an offline modded launcher process.'))
         layout.addWidget(button('Read Stage2Trace Status',self.trace))
         layout.addWidget(button('Export Redacted Support ZIP…',self.support))
         self.trace_output=QPlainTextEdit()
@@ -509,6 +524,21 @@ class DeveloperLabPanel(QWidget):
         report=simulate_network_conditions(self.last_log,latency_ms=self.latency.value(),
                                           loss_percent=self.loss.value())
         self.network_output.setPlainText(json.dumps(report[:80],indent=2))
+
+    def set_trace_flag(self):
+        try:
+            from developer_network_lab import validate_trace_environment
+            if self.trace_env_callback is None:
+                raise RuntimeError('Launcher environment control is unavailable.')
+            name,value=validate_trace_environment(
+                self.trace_key.text(),self.trace_value.currentData())
+            self.trace_env_callback(name,value)
+            self.trace_output.setPlainText(
+                '%s=%s set for this manager session. Start an isolated '
+                'offline modded launch to apply it. Restart the game if already running.'
+                %(name,value))
+        except (ValueError,RuntimeError) as exc:
+            self.trace_output.setPlainText(str(exc))
 
     def trace(self):
         try:
