@@ -34,7 +34,15 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Name: "startmenuicon"; Description: "Add to Start Menu / Windows search"; GroupDescription: "Shortcuts:"
 
 [Files]
-Source: "..\.build\app-dist\EvolveModManager\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "Data\*,*.pak,private_key.pem,*.customkey-*"
+; Explicit allowlist: build-time screenshots may generate Data next to the EXE.
+; Never traverse or install Data, signing keys, PAKs or project workspaces.
+Source: "..\.build\app-dist\EvolveModManager\EvolveModManager.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\.build\app-dist\EvolveModManager\EvolveModWorker.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\.build\app-dist\EvolveModManager\BUILD_COMMIT.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\.build\app-dist\EvolveModManager\BUILD_CHANNEL.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\.build\app-dist\EvolveModManager\START-HERE.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\.build\app-dist\EvolveModManager\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pak,private_key.pem,*.customkey-*"
+Source: "..\.build\app-dist\EvolveModManager\Docs\*"; DestDir: "{app}\Docs"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pak,private_key.pem,*.customkey-*"
 
 [Icons]
 Name: "{autodesktop}\Evolve Mod Manager"; Filename: "{app}\EvolveModManager.exe"; WorkingDir: "{app}"; Tasks: desktopicon
