@@ -162,10 +162,19 @@ def batch_export(workspaces, selections, destination, *, kind='original', max_as
     if len(selections) > max_assets or max_assets > MAX_BATCH:
         raise ValueError('Reduce the number of assets before exporting.')
     dest = Path(destination).resolve()
+    extracted_roots=[(Path(ws).resolve()/'files').resolve()
+                     for ws in workspaces.values()]
+    if any(dest.is_relative_to(root) or root.is_relative_to(dest)
+           for root in extracted_roots):
+        raise ValueError('Export outside extracted workspace folders to avoid'
+                         ' copying over project or installed assets.')
     if not dest.is_dir():
         raise FileNotFoundError('Create or select an export destination directory.')
     report = []
     for label, workspace, rel in selections:
+        if (not isinstance(label,str) or len(label)>120 or
+                label in ('.','..') or '/' in label or '\\' in label or ':' in label):
+            raise ValueError('Unsafe archive label for batch export.')
         root = Path(workspace).resolve()
         if str(root) not in {str(Path(x).resolve()) for x in workspaces.values()}:
             raise ValueError('Batch contains an unrecognized workspace.')
