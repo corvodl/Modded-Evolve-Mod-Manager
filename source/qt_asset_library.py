@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 
 from asset_library import (LIBRARY_HOME, import_pak, installed_defaults,
                            imported_archives, verify_library, remove_archive,
-                           extracted_index)
+                           extracted_index, required_archive_status)
 
 
 class AssetLibraryController(QObject):
@@ -180,9 +180,15 @@ class AssetLibraryDialog(QDialog):
                 cell.setToolTip(data["source"])
                 self.table.setItem(row, col, cell)
         size = sum(item["bytes"] for item in archives)
+        required = required_archive_status()
+        missing = (' • Missing: ' + ', '.join(required['missing'])
+                   if required['missing'] else ' • Required set complete')
+        warnings = (' • %d skipped entries' % required['warnings']
+                    if required['warnings'] else '')
         self.status.setText(
-            "%d extracted PAKs • %.1f MiB in Asset Library • %s" %
-            (len(archives), size / 1048576, self.controller.status))
+            'Shared %d/6 • Animations %d/3 • %d total PAKs • %.1f MiB%s%s\n%s' %
+            (required['shared'], required['animations'], len(archives),
+             size / 1048576, missing, warnings, self.controller.status))
         self._sync()
 
     def _sync(self):
