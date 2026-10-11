@@ -86,6 +86,9 @@ class DeveloperLabPanel(QWidget):
         self._network_ui()
         self._entity_ui()
         self._trace_ui()
+        from qt_game_events import GameEventsPanel
+        self.events_panel = GameEventsPanel(self)
+        self.tabs.addTab(self.events_panel, 'Game Events')
 
     def _memory_ui(self):
         page=QWidget()
