@@ -506,7 +506,7 @@ class UnrealStyleLevelEditor(QMainWindow):
     def _selected_outliner(self):
         for item in self.outliner.selectedItems():
             data=item.data(0,Qt.UserRole)
-            if isinstance(data,tuple) and len(data)==2:
+            if isinstance(data,(tuple,list)) and len(data)==2:
                 self.select_object(*data)
                 break
 
