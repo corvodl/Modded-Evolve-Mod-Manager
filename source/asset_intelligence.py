@@ -6,6 +6,7 @@ import difflib
 import hashlib
 from pathlib import Path
 from xml.etree import ElementTree as ET
+from xml.parsers import expat
 
 from evolve_pak_workspace import load_workspace, get_changes, normalized_name
 from workspace_file_actions import checked_path, sha_file, replace_raw_file
@@ -172,6 +173,6 @@ def validate_project(workspace, *, max_changed=500):
                 parse_dds(path.read_bytes())
             elif is_model(rel):
                 inspect_model(path.read_bytes())
-        except (OSError,ValueError,ET.ParseError) as exc:
+        except (OSError,ValueError,ET.ParseError,expat.ExpatError) as exc:
             problems.append(rel+': '+str(exc)[:150])
     return tuple(modified),tuple(problems)
