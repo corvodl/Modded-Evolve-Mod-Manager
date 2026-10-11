@@ -17,7 +17,7 @@ hidden = [
     'evolve_pak_workspace', 'evolve_pak_rekey', 'evolve_gameplay_editor',
     'evolve_video_pak_tool_fixed', 'dds_texture', 'dds_png_import',
     'dds_streaming', 'model_asset', 'model_preview', 'gpu_model_preview',
-    'material_preview', 'multi_pak_assets', 'decode_cryxml',
+    'material_preview', 'model_material_resolve', 'multi_pak_assets', 'decode_cryxml',
     'universal_stage', 'refresh_originals', 'workspace_editor',
     'workspace_file_actions', 'pak_browser', 'portable_bundle',
     'first_run_setup', 'old_prepared', 'loose_game_files',
