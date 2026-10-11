@@ -31,6 +31,7 @@ _ALLOWED = re.compile(
     r"bspace|comb|anim|dds(?:\.\d+)?)$", re.I)
 _lock = threading.RLock()
 _current = None
+_installed = None
 _worker = None
 _error = ""
 _status = "Not started"
