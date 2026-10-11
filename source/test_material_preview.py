@@ -4,6 +4,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 from PIL import Image
 
 from model_preview import read_preview_mesh
