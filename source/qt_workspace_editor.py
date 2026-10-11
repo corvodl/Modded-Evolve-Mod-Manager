@@ -17,18 +17,19 @@ import subprocess
 import tempfile
 
 from PIL import Image
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtGui import QPixmap, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
-    QTabWidget, QSplitter, QFileDialog, QMessageBox, QMenu, QScrollArea,
+    QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
 from dds_png_import import encode_png_as_dds, compression_for_dds
 from model_asset import is_model, inspect_model, export_model, replace_model
 from model_preview import find_preview_mesh, render_mesh
+from model_blender_export import glb_bytes, convert_folder
 from multi_pak_assets import model_material_links
 from workspace_file_actions import (
     checked_path, sha_file, replace_raw_file, extracted_original_backup,
@@ -124,6 +125,8 @@ class QtWorkspaceEditor(QDialog):
         self.loaded_text = ''
         self.mode = None
         self.mesh = None
+        self.model_gpu = None
+        self.model_fallback = None
         self.texture_folder = None
         self.gpu_windows = []
         self.materials = None
@@ -172,6 +175,8 @@ class QtWorkspaceEditor(QDialog):
                     toolbar.addWidget(widgets[text])
             else:
                 for text, fn in (('Open GPU Viewer', self.open_gpu_viewer),
+                                 ('Export for Blender (.glb)', self.export_blender_model),
+                                 ('Export Model Folder', self.export_blender_folder),
                                  ('Export Native Model', self.export_model),
                                  ('Import Same-Layout Model', self.import_model),
                                  ('Find Model Textures', self.find_model_textures),
@@ -192,10 +197,16 @@ class QtWorkspaceEditor(QDialog):
                 view = QPlainTextEdit()
                 view.setReadOnly(True)
                 view.setTabStopDistance(35)
-            else:
-                view = QLabel('Select a '+('DDS texture' if section == 'images' else 'CryEngine model')+'.')
+            elif section == 'images':
+                view = QLabel('Select a DDS texture.')
                 view.setAlignment(Qt.AlignCenter)
                 view.setWordWrap(True)
+            else:
+                view = QStackedWidget()
+                self.model_fallback = QLabel('Select a CryEngine model. GPU preview is the default on Windows.')
+                self.model_fallback.setAlignment(Qt.AlignCenter)
+                self.model_fallback.setWordWrap(True)
+                view.addWidget(self.model_fallback)
             split.addWidget(view)
             split.setStretchFactor(0, 1)
             split.setStretchFactor(1, 4)
@@ -364,17 +375,52 @@ class QtWorkspaceEditor(QDialog):
                 self.mesh = mesh
                 self._paint_model(view, mesh)
                 self.status.setText(rel + ' | ' + report +
-                                    ' | Open GPU Viewer for smooth hardware-accelerated 3D')
+                                    ' | GPU preview: drag to rotate, scroll to zoom; '
+                                    'Open GPU Viewer for extended materials controls.')
             except (ValueError, OSError) as exc:
-                view.setPixmap(QPixmap())
-                view.setText(rel + '\n\n' + report +
-                             '\n\n3D preview unavailable: ' + str(exc))
+                self.model_fallback.setPixmap(QPixmap())
+                self.model_fallback.setText(rel + '\n\n' + report +
+                                            '\n\n3D preview unavailable: ' + str(exc))
+                view.setCurrentWidget(self.model_fallback)
                 self.status.setText(rel + ' | Native model inspection')
 
     def _paint_model(self, view, mesh):
+        """Prefer embedded hardware OpenGL, falling back to software when required."""
+        # CI/offscreen platforms cannot allocate a real WGL/Qt GL surface.
+        if os.environ.get('QT_QPA_PLATFORM', '').lower() in ('offscreen', 'minimal'):
+            self._software_model_preview(mesh)
+            return
+        try:
+            from qt_gpu_viewer import QtGLModelCanvas
+            if self.model_gpu is None:
+                self.model_gpu = QtGLModelCanvas(mesh, parent=view)
+                self.model_gpu.setObjectName('defaultGpuModelPreview')
+                view.addWidget(self.model_gpu)
+            else:
+                self.model_gpu.set_mesh(mesh)
+            view.setCurrentWidget(self.model_gpu)
+            self.model_gpu.update()
+            QTimer.singleShot(450, self._check_gpu_preview)
+        except Exception as exc:
+            self._software_model_preview(mesh, reason=str(exc))
+
+    def _check_gpu_preview(self):
+        if self.model_gpu is None or not self.model_gpu.isVisible():
+            return
+        if not self.model_gpu.isValid() and self.mesh is not None:
+            self._software_model_preview(self.mesh, reason='OpenGL context unavailable')
+
+    def _software_model_preview(self, mesh, reason=''):
+        view = self.views['models']
+        if self.model_gpu is not None:
+            view.setCurrentWidget(self.model_fallback)
+            self.model_gpu.deleteLater()
+            self.model_gpu = None
         result = render_mesh(mesh, width=720, height=490)
-        view.setPixmap(_image_pixmap(result))
-        view.setAlignment(Qt.AlignCenter)
+        self.model_fallback.setPixmap(_image_pixmap(result))
+        view.setCurrentWidget(self.model_fallback)
+        if reason:
+            self.status.setText('Software preview (GPU unavailable: ' + reason[:140] + ')')
 
     def switch_archive(self, name):
         if name not in self.archive_map or self.archive_map[name] == self.workspace:
@@ -615,6 +661,59 @@ class QtWorkspaceEditor(QDialog):
         except Exception as exc:
             QMessageBox.critical(self,'DDS import rejected',str(exc))
 
+    def export_blender_model(self):
+        """Export the verified preview mesh as Blender-compatible geometry."""
+        if self.mode != 'models' or not self.current or self.mesh is None:
+            QMessageBox.information(self, 'Export for Blender',
+                'Select a supported model (or its render-mesh companion) first.')
+            return
+        name = Path(self.mesh.source_name or self.current).stem + '.glb'
+        destination, _ = QFileDialog.getSaveFileName(
+            self, 'Export Blender glTF model', str(Path(self.manager.projects_path)/name),
+            'Blender glTF 2.0 (*.glb)')
+        if not destination:
+            return
+        try:
+            target = Path(destination)
+            if target.suffix.lower() != '.glb':
+                target = target.with_suffix('.glb')
+            if not target.parent.is_dir():
+                raise FileNotFoundError('Choose an existing export folder.')
+            payload = glb_bytes(self.mesh, name=Path(self.current).stem)
+            target.write_bytes(payload)
+            self.status.setText(
+                'Exported %s: %d vertices / %d triangles (geometry + UV only)' %
+                (target.name, len(self.mesh.vertices), len(self.mesh.triangles)))
+        except Exception as exc:
+            QMessageBox.critical(self, 'Blender export failed', str(exc))
+
+    def export_blender_folder(self):
+        """Convert .skinm and other supported render meshes in a chosen folder."""
+        source = QFileDialog.getExistingDirectory(
+            self, 'Choose model folder (can be outside the workspace)',
+            str(self.workspace / 'files'))
+        if not source:
+            return
+        destination = QFileDialog.getExistingDirectory(
+            self, 'Choose a separate Blender export folder',
+            str(Path(self.manager.projects_path)))
+        if not destination:
+            return
+        try:
+            results, skipped = convert_folder(Path(source), Path(destination))
+            note = '%d Blender .glb meshes exported. %d unsupported/skipped.' % (
+                len(results), len(skipped))
+            if skipped:
+                notes = Path(destination) / 'Blender_export_report.txt'
+                notes.write_text(
+                    'Skipped CryEngine models:\n' +
+                    '\n'.join(name + ': ' + reason for name, reason in skipped),
+                    encoding='utf-8')
+            self.status.setText(note + ' Output: ' + destination)
+            QMessageBox.information(self, 'Export for Blender', note)
+        except Exception as exc:
+            QMessageBox.critical(self, 'Folder export failed', str(exc))
+
     def export_model(self):
         if self.mode != 'models' or not self.current:
             return
@@ -722,10 +821,12 @@ class QtWorkspaceEditor(QDialog):
             'and use the right-click import/restore actions.\n\n'
             'Images / Textures: preview DDS, export PNG and import compatible DDS/PNG. '
             'Streaming .dds.0/.1 files are reassembled and replaced together.\n\n'
-            'Models: inspect CryEngine structure, export native files, import only '
-            'same-layout replacements, find linked textures and preview supported meshes.\n\n'
-            'Open GPU Viewer uses a native Qt OpenGL window with rotate, zoom, '
-            'wireframe, lighting and approximate diffuse UV textures.')
+            'Models: GPU rendering opens by default on supported Windows systems; '
+            'software preview is the fallback. Export for Blender writes editable '
+            'geometry and UVs as .glb, or export entire model folders. '
+            'CryEngine bones, animations and original textures are not recreated.\n\n'
+            'Native export and same-layout native import remain available. '
+            'Open GPU Viewer offers additional lighting and texture controls.')
 
     def closeEvent(self, event):
         if not self._confirm_buffer():
