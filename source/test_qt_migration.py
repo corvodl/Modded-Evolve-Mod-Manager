@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox, QToolButton
+from PySide6.QtWidgets import QApplication, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox, QToolButton, QLineEdit
 
 from launch_integration import SwapStatus
 from qt_manager import QtManager, SECTIONS, qt_style
@@ -60,8 +60,9 @@ class QtMigrationTests(unittest.TestCase):
 
     def test_all_pages_and_instruction_information_survive(self):
         self.assertEqual(SECTIONS, (
-            'Instructions','Modding','Play & Restore','Settings','Credits'))
-        self.assertEqual(self.win.stack.count(), 5)
+            'Instructions','Modding','Play & Restore','Settings','Credits',
+            "What's New",'Developer'))
+        self.assertEqual(self.win.stack.count(), 7)
         self.assertEqual(self.win.stack.currentIndex(), 0)
         self.assertTrue(self.win.menu_button.text().startswith('☰'))
         self.assertIn('modded-evolve.com',
@@ -129,7 +130,7 @@ class QtMigrationTests(unittest.TestCase):
         build = next(b for b in self.win.pages['modding'].findChildren(QPushButton)
                      if b.text() == 'Build Mod')
         self.assertIn('sign', build.toolTip().lower())
-        self.assertEqual(len(self.win.nav_buttons), 5)
+        self.assertEqual(len(self.win.nav_buttons), 7)
 
     def test_qpropertyanimation_is_an_overlay_and_does_not_resize(self):
         width = self.win.stack.width()
@@ -149,12 +150,87 @@ class QtMigrationTests(unittest.TestCase):
         self.assertFalse(self.win._drawer_open)
         self.assertEqual(self.win.stack.width(),width)
 
-    def test_settings_sections_are_internal_and_original_menu_is_unchanged(self):
+    def test_info_click_opens_help_without_triggering_adjacent_action(self):
+        icon = self.win.pages['modding'].findChildren(QToolButton, 'infoIcon')[0]
+        with patch('qt_manager.QMessageBox.information') as info, \
+             patch.object(self.win, 'run_steps') as run:
+            icon.click()
+            info.assert_called_once_with(self.win, 'Information', icon.toolTip())
+            run.assert_not_called()
+
+    def test_whats_new_is_available_offline_and_matches_public_notes(self):
+        from release_notes import RELEASE_NOTES
+        self.win.nav_buttons[SECTIONS.index("What's New")].click()
+        self.assertIs(self.win.stack.currentWidget(), self.win.pages['whats_new'])
+        text = ' '.join(x.text() for x in self.win.pages['whats_new'].findChildren(QLabel))
+        for version, notes in RELEASE_NOTES:
+            self.assertIn('v' + version, text)
+            for note in notes:
+                self.assertIn(note, text)
+
+    def test_developer_cancel_and_invalid_code_keep_previous_page(self):
+        self.win.open_page(1)
+        button = self.win.nav_buttons[SECTIONS.index('Developer')]
+        self.assertEqual(self.win.pages['developer'].findChildren(QLabel), [])
+        with patch('qt_manager.QInputDialog.getText', return_value=('', False)), \
+             patch('qt_manager.verify_code') as verify:
+            button.click()
+            verify.assert_not_called()
+        self.assertEqual(self.win.stack.currentIndex(), 1)
+        with patch('qt_manager.QInputDialog.getText', return_value=('incorrect', True)) as prompt, \
+             patch('qt_manager.QMessageBox.warning') as warning:
+            button.click()
+            self.assertEqual(prompt.call_args.args[-1], QLineEdit.Password)
+            warning.assert_called_once()
+        self.assertEqual(self.win.stack.currentIndex(), 1)
+        self.assertEqual(self.win.nav_buttons[1].objectName(), 'navActive')
+        self.assertEqual(self.win.pages['developer'].findChildren(QLabel), [])
+
+    def test_developer_unlocks_only_after_verification_and_relocks_on_leave(self):
+        self.win.open_page(1)
+        index = SECTIONS.index('Developer')
+        with patch('qt_manager.QInputDialog.getText', return_value=('test-input', True)) as prompt, \
+             patch('qt_manager.verify_code', return_value=True) as verify:
+            self.win.nav_buttons[index].click()
+            prompt.assert_called_once()
+            verify.assert_called_once_with('test-input')
+        protected = self.win.pages['developer']
+        self.assertIs(self.win.stack.currentWidget(), protected)
+        self.assertTrue(protected.findChildren(QLabel))
+        lock = next(b for b in protected.findChildren(QPushButton) if b.text() == 'Lock and leave')
+        lock.click()
+        self.assertEqual(self.win.stack.currentIndex(), 1)
+        self.assertIsNot(self.win.pages['developer'], protected)
+        self.assertEqual(self.win.pages['developer'].findChildren(QLabel), [])
+        with patch('qt_manager.QInputDialog.getText', return_value=('', False)) as prompt:
+            self.win.nav_buttons[index].click()
+            prompt.assert_called_once()
+        self.assertEqual(self.win.stack.currentIndex(), 1)
+        self.assertEqual(self.win.stack.count(), len(SECTIONS))
+
+    def test_developer_reclick_requires_code_and_wrong_attempt_locks_content(self):
+        index = SECTIONS.index('Developer')
+        with patch('qt_manager.QInputDialog.getText', return_value=('test-input', True)), \
+             patch('qt_manager.verify_code', return_value=True):
+            self.win.open_page(index)
+        with patch('qt_manager.QInputDialog.getText', return_value=('incorrect', True)), \
+             patch('qt_manager.QMessageBox.warning'):
+            self.win.open_page(index)
+        self.assertEqual(self.win.stack.currentIndex(), 0)
+        self.assertEqual(self.win.pages['developer'].findChildren(QLabel), [])
+        with patch('qt_manager.QInputDialog.getText', return_value=('test-input', True)), \
+             patch('qt_manager.verify_code', return_value=True):
+            self.win.open_page(index)
+        self.win.nav_buttons[3].click()
+        self.assertEqual(self.win.stack.currentIndex(), 3)
+        self.assertEqual(self.win.pages['developer'].findChildren(QLabel), [])
+
+    def test_settings_sections_stay_inside_settings_page(self):
         self.assertEqual(self.win.settings_sections, (
             'GENERAL', 'GAME & FILES', 'BACKUPS & RECOVERY',
             'LAUNCH PREFERENCES', 'UPDATES & ADVANCED'))
-        self.assertEqual(len(self.win.nav_buttons), 5)
-        self.assertEqual(self.win.stack.count(), 5)
+        self.assertEqual(len(self.win.nav_buttons), 7)
+        self.assertEqual(self.win.stack.count(), 7)
         self.assertEqual([btn.text().replace('&&', '&') for btn in self.win.nav_buttons], list(SECTIONS))
         dividers = self.win.pages['settings'].findChildren(QFrame, 'settingsDivider')
         self.assertEqual(len(dividers), 5)

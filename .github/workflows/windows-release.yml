@@ -116,7 +116,9 @@ jobs:
           # Main remains the stable updater channel; keep its displayed release
           # title in sync with the verified version manifest.
           $version = ((Get-Content -LiteralPath 'source/VERSION.txt' -Raw).Trim() -split ' - ', 2)[0]
-          gh release edit Main --title "Evolve Mod Manager v$version"
+          & ".build/venv/Scripts/python.exe" source/release_notes.py --latest | Set-Content -Encoding utf8 "dist/release-notes.md"
+          if ($LASTEXITCODE -ne 0) { throw "Could not prepare public release notes." }
+          gh release edit Main --title "Evolve Mod Manager v$version" --notes-file "dist/release-notes.md"
           if ($LASTEXITCODE -ne 0) { throw "Failed to update the displayed release version." }
       - name: Remove obsolete source-only release ZIP
         shell: pwsh

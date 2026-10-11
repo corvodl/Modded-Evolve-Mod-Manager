@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QSplitter, QPlainTextEdit, QMessageBox,
     QFileDialog, QDialog, QDialogButtonBox, QFormLayout, QProgressDialog,
     QCheckBox, QMenu, QAbstractItemView, QSizePolicy, QProgressBar, QTabWidget,
-    QToolButton, QStyle,
+    QToolButton, QStyle, QInputDialog,
 )
 
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
@@ -60,11 +60,14 @@ from desktop_shortcut import create_desktop_shortcut
 from ui_copy import load_text
 from qt_font_health import ensure_readable_ui_font, ui_family, glyphs_readable
 from portable_bundle import MARKER, bind_home
+from developer_access import verify_code
+from release_notes import RELEASE_NOTES
 
 ROOT = Path(__file__).resolve().parent
 COLORS = {'bg':'#0b0b0d','surface':'#17171d','panel':'#202027',
           'text':'#f5f3f6','muted':'#a6a3ae','accent':'#cf394b','outline':'#353139'}
-SECTIONS = ('Instructions','Modding','Play & Restore','Settings','Credits')
+SECTIONS = ('Instructions','Modding','Play & Restore','Settings','Credits',
+            "What's New",'Developer')
 
 
 def _widget(cls, *args, name=None, **kwargs):
@@ -92,15 +95,17 @@ def _button(text, callback, primary=False):
 
 
 def _info_icon(message):
-    """Small hover / keyboard-focus help, with no effect on the action itself."""
+    """Hover help plus a clickable, keyboard-accessible information panel."""
     info = QToolButton()
     info.setObjectName('infoIcon')
     info.setText('i')  # ASCII glyph avoids missing circled-i fonts on Windows.
     info.setFixedSize(21, 21)
     info.setToolTip(message)
     info.setAccessibleName('Information: ' + message)
-    info.setCursor(Qt.WhatsThisCursor)
+    info.setCursor(Qt.PointingHandCursor)
     info.setFocusPolicy(Qt.StrongFocus)
+    info.clicked.connect(lambda _checked=False: QMessageBox.information(
+        info.window(), 'Information', message))
     return info
 
 
@@ -371,6 +376,11 @@ class QtManager(QMainWindow):
         self._play_page()
         self._settings_page()
         self._credits_page()
+        self._whats_new_page()
+        self._last_public_page = 0
+        self._developer_index = SECTIONS.index('Developer')
+        self.pages['developer'] = QWidget()
+        self.stack.addWidget(self.pages['developer'])
         self.stack.setCurrentIndex(0)
         self._log_dialog = None
         self.log_lines = ['Manager started. No installed game files were changed.']
@@ -443,12 +453,43 @@ class QtManager(QMainWindow):
             self.drawer.hide()
 
     def open_page(self, index):
+        if not 0 <= index < self.stack.count():
+            return
+        # Destroy protected content before prompting again or leaving the page.
+        # No remembered session or settings flag can skip this prompt.
+        if self.stack.currentIndex() == self._developer_index:
+            self.stack.setCurrentIndex(self._last_public_page)
+            old = self.pages['developer']
+            self.stack.removeWidget(old)
+            old.hide()
+            old.setParent(None)
+            old.deleteLater()
+            self.pages['developer'] = QWidget()
+            self.stack.insertWidget(self._developer_index, self.pages['developer'])
+            self._highlight_page(self._last_public_page)
+        if index == self._developer_index:
+            self.toggle_menu(False)
+            code, accepted = QInputDialog.getText(
+                self, 'Developer', 'Enter access code:', QLineEdit.Password)
+            if not accepted:
+                return
+            valid = verify_code(code)
+            del code
+            if not valid:
+                QMessageBox.warning(self, 'Access denied', 'Incorrect access code.')
+                return
+            self._developer_page()
+        else:
+            self._last_public_page = index
         self.stack.setCurrentIndex(index)
+        self._highlight_page(index)
+        self.toggle_menu(False)
+
+    def _highlight_page(self, index):
         for i, button in enumerate(self.nav_buttons):
             button.setObjectName('navActive' if i == index else 'nav')
             button.style().unpolish(button)
             button.style().polish(button)
-        self.toggle_menu(False)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape and self._drawer_open:
@@ -822,6 +863,37 @@ class QtManager(QMainWindow):
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['credits'] = scroll
+
+    def _whats_new_page(self):
+        scroll, lay = _scroll_page()
+        heading = _label("What's New")
+        heading.setObjectName('sectionTitle')
+        lay.addWidget(heading)
+        for version, notes in RELEASE_NOTES:
+            card, panel = _card('v' + version)
+            for note in notes:
+                panel.addWidget(_label('• ' + note))
+            lay.addWidget(card)
+        lay.addStretch()
+        self.stack.addWidget(scroll)
+        self.pages['whats_new'] = scroll
+
+    def _developer_page(self):
+        """Create protected widgets only after the entry code is verified."""
+        old = self.pages['developer']
+        self.stack.removeWidget(old)
+        old.deleteLater()
+        scroll, lay = _scroll_page()
+        heading = _label('Developer')
+        heading.setObjectName('sectionTitle')
+        lay.addWidget(heading)
+        card, panel = _card('Developer tools', 'No developer tools have been added yet.')
+        panel.addWidget(_button('Lock and leave',
+                                lambda: self.open_page(self._last_public_page)))
+        lay.addWidget(card)
+        lay.addStretch()
+        self.stack.insertWidget(self._developer_index, scroll)
+        self.pages['developer'] = scroll
 
     def show_help(self, section=None):
         """Keep complete original help, including offline safety and recovery."""

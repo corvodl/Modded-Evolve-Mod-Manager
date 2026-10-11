@@ -1,83 +1,62 @@
-# Evolve Stage 2 Mod Manager — v1.1.3
+# Evolve Stage 2 Mod Manager — v1.1.4
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.3 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.4 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.4
+
+- Info buttons now open help when clicked.
+- Added a What's New tab with brief version notes.
 
 ## What's new in v1.1.3
 
-- Hoverable and keyboard-focusable red `i` icons explain key Modding, Play & Restore and Settings actions without cluttering the layout.
-- Replaced the full-size Refresh Status button with an inline refresh icon beside the launch-status text.
-- Corrected the navigation label to render **Play & Restore**, escaping Qt's `&` accelerator syntax.
+- Added contextual help and an inline launch-status refresh button.
+- Fixed the Play & Restore menu label.
 
 ## What's new in v1.1.2
 
-- **Contextual help on hover:** Small red-bordered `i` information controls beside major Modding, Play & Restore, and Settings actions explain exactly what the buttons do, including offline safety and storage implications.
-- **Less clutter in Play & Restore:** A compact native refresh icon sits directly beside the launch-status message, replacing the standalone Refresh Status action. The Menu shows **Play & Restore** correctly, with the ampersand escaped for Qt's mnemonic handling.
-- **Settings grouped inside its own page:** General, Game & Files, Backups & Recovery, Launch Preferences and Updates & Advanced appear as separated sections of the existing scrollable Settings page. The Menu still has only the original five main pages.
-- **Functional customization:** Switch between Comfortable and Compact UI density, reduce the sliding menu animation, and choose whether Activity opens automatically during operations. All settings persist in Data/Settings.
-- **Clearly labeled snapshot preference:** Keep or omit optional *permanent* original-file snapshots on new setups and refreshes. The manager still protects installed originals using lightweight same-volume `.customkey-original` renames during modded launches; those recovery files cannot be disabled by the Settings option.
-- **Prepare mod files ahead of Play:** A one-click action in Settings performs only the existing verified preparation step. It never starts Evolve or swaps the installed originals and is blocked when an active/interrupted session requires restoration.
-- **Less redundant first-prep disk work:** After verifying a copied `.partial` file against the source hash, the swap preparer reuses that verified digest instead of reading the newly prepared PAK once more. Existing cached files are still fully checked. Normal Restore already recycles verified mod files for subsequent launches.
-- **Client repair guidance:** Settings explains how to use client verification as a manual fallback without misrepresenting it as proof of restored originals.
+- Organized Settings and added display, activity and snapshot preferences.
+- Added advance mod preparation and reduced redundant file checks.
 
 ## What's new in v1.1.1
 
-- Fixed unreadable square placeholder letters in the compiled Qt screenshot by explicitly registering installed Windows TrueType fonts and verifying distinct rendered letters.
-- Windows Qt screenshot CI now uses the native platform instead of offscreen; it fails rather than publishing a screenshot if text glyphs are unavailable.
-- No proprietary font files are bundled: the manager uses the fonts already installed by Windows.
+- Fixed unreadable Windows fonts and strengthened screenshot checks.
 
 ## What's new in v1.1.0
 
-- **Native Qt interface:** All five manager pages, PAK browser and controls use PySide6. The left Menu is a true smooth Qt animation over the content.
-- **Native Qt editors:** Extracted text/CryXML, DDS and streaming DDS, loose game-file copies and native CryEngine model inspection/import use Qt dialogs.
-- **OpenGL GPU viewer:** Rotate/zoom supported models, view wireframe and approximate diffuse textures in a Qt OpenGL window. The legacy Tk UI is not used by the main executable.
-- **Existing safety preserved:** Original game files, Data, signing keys, PAK backup journals, and restoration workflows are handled by the same guarded backend.
-- **Update channels:** Automatic checks remain stable-only; manual Check for Updates may offer optional experimental Qt builds with a separate download link.
+- Moved the manager and editors to Qt with a smooth overlay menu.
+- Added a native OpenGL model viewer.
 
 ## What's new in v1.0.7
 
-- **Manual experimental previews:** Settings > Check for Updates now checks the latest verified stable Main release **and** the newest successful, unexpired Qt preview Actions artifact, then asks whether to open its GitHub download page. Experimental previews are downloaded separately, never installed over your existing manager.
-- **Stable-only startup updater:** Startup checks remain exclusively on the Main release channel. No experimental build is checked, recommended or applied automatically.
+- Manual update checks can offer experimental builds; automatic checks stay stable-only.
 
 ## What's new in v1.0.6
 
-- **Smooth overlay:** Menu opens as a ~200 ms cubic-eased slide over the active page, rather than resizing the file browser. Opening, closing, switching sections and pressing Escape are animated. Rapid toggles cancel stale animation frames.
-- **Create Desktop Shortcut:** In **Settings**, select **Create Desktop Shortcut** to make an optional `Evolve Mod Manager.lnk` on your Windows Desktop. It points to the actual portable `EvolveModManager.exe` and uses the same red-and-black `hunt.ico`. Windows determines the correct Desktop location, including OneDrive redirects.
-- **Portable folders:** If you move the extracted manager, recreate the desktop shortcut to update its target path.
+- Added a sliding menu and optional desktop shortcut.
 
 ## What's new in v1.0.5
 
-- **Red navigation button:** The compact header **☰ Menu** is now the primary red accent button, including when it changes to **✕ Close** while the drawer is open.
-- **Help text simplified:** Both the header and editor help controls say **Help** (instead of **Help ?**), keeping tool labels compact and consistent.
-- **No workflow changes:** The menu still opens a temporary left drawer and collapses automatically after selecting a section.
+- Refined the Menu button and simplified Help labels.
 
 ## What's new in v1.0.4
 
-- **On-demand section menu:** The oversized top tabs are hidden entirely. A compact **☰ Menu** button beside the header icon opens a lightweight **left-side navigation drawer** containing Instructions, Modding, Play & Restore, Settings and Credits.
-- **Full-width workspace by default:** The drawer starts collapsed, closes immediately after you choose a section, can be toggled with the same menu button, and closes with Escape. Current sections and all backend operations remain intact.
-- **Compact readable labels:** Navigation uses normal-sized Segoe UI text and a muted red active-section highlight rather than pill tabs across the top.
+- Moved navigation into a collapsible sidebar for more workspace.
 
 ## What's new in v1.0.3
 
-- **Corrected Windows control sizing:** The real compiled screenshot revealed oversized button/tab background images. Their intrinsic size, padding and border-slice metrics are reduced, bringing tab and button heights back to compact desktop dimensions.
-- **Fixed rounded card rendering:** Replaced notched/uneven Canvas polygons with a reliable rounded image surface, eliminating the blank bands and sharp right-side gaps seen in the actual Windows capture.
-- **Gameplay tools unchanged:** PAK editor, offline launch, verified updates and original-backup recovery still use the same code. A Windows screenshot capture is included with each verified release to catch future layout regressions.
+- Fixed Windows control sizing and card backgrounds.
 
 ## What's new in v1.0.2
 
-- **Corrected icon everywhere:** The app now uses the supplied original black claw/sword mark on its solid red background. The tracked `hunt.png` drives the header, and the Windows build regenerates a matching multi-size `hunt.ico` for the taskbar, window and frozen executable; the blue artwork is no longer used.
-- **iOS-inspired styling, still black/red:** Antialiased rounded capsule tabs and buttons, more refined typography, subtle charcoal surfaces and genuine rounded Instructions, Play & Restore and Credits panels. This remains a native Windows Tkinter app, not an iOS app.
-- **No workflow changes:** Existing first-run Instructions, PAK browsing/editing, offline launch, safe original restoration and verified updater behavior are preserved.
+- Updated app icons, colors and control styling.
 
 ## What's new in v1.0.1
 
-- **Instructions-first onboarding:** New installations, including previously exported unconfigured bundles, open on the **Instructions** tab and do not open game-folder selection automatically. Choose **Set Up Manager** only after reading the installation requirements. The Instructions button correctly handles both fresh setups and bundled-setup connections.
-- **Cleaner toolbar:** Removed the duplicate top-right Set Up Manager button. Setup remains available in **Instructions** and **Settings**.
-- **Single update action:** Removed the redundant **Install Update** button. **Check for Updates** checks for a verified release and offers installation immediately when one is available. Eligible initialized Main-channel installs still receive automatic update checks.
-- **Refined interface:** Updated black/red tab navigation, Segoe typography, more spacious controls and archive rows, and a scrollable card-style Instructions page that fits smaller Windows displays.
+- Added instructions-first setup and simplified update controls.
 
 ## Download and install
 
