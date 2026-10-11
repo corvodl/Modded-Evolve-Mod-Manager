@@ -1,10 +1,15 @@
-# Evolve Stage 2 Mod Manager — v1.1.8
+# Evolve Stage 2 Mod Manager — v1.1.9
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.8 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.9 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.9
+
+- Editors can maximize; model cameras now support panning and sharper shading.
+- Added skeletal GLB animation playback and optional CryEngine clip conversion.
 
 ## What's new in v1.1.8
 
@@ -113,6 +118,16 @@ The **Data** archive generally contains meshes, skeleton files and animation con
 GLB export now also includes the original **bone hierarchy, inverse-bind matrices, and per-vertex skin weights** when a compatible character **.skin** or **.chr** file accompanies the matching render-mesh **.skinm** or **.chrm**. The converter resolves per-subset local bone palettes, verifies joint transforms and refuses inconsistent skinning data. In **Edit Files → Models**, the export result explicitly says whether the model was rigged and gives a reason when not.
 
 **Animation clips are not yet imported:** character animation configuration files are not the underlying CAF/DBA keyframe tracks. Rigged GLBs can be posed and edited in Blender, but reproducing the original Evolve animations requires a separate CAF/DBA decoder. Edited Blender meshes still cannot be repackaged automatically into native Evolve model files.
+
+### Model camera, shading and animations (v1.1.9)
+
+The **Edit Files** window and separate **GPU Viewer** can now be resized and maximized. For either CPU fallback or GPU viewing, use **left drag to orbit**, **right/middle drag or Shift + left drag to pan**, and **mouse wheel to zoom**. The GPU viewer defaults to **Faceted (hard edges)** shading to avoid rounding over armor and hard surfaces; select **Smooth** for organic meshes. The embedded GPU pane attempts to use resolved diffuse textures by default. Normal maps and full CryEngine shader parity are not yet reconstructed, so preview appearance can still differ from the game.
+
+In **Edit Files → Models → Open GPU Viewer**, the new animation controls include **Load Animation GLB**, **Play/Pause**, **clip selection**, and **timeline scrubbing**. The file must contain a supported skinned glTF 2.0 mesh and animation curves. Playback deforms the rendered mesh without changing any source game files.
+
+**Original CryEngine CAF/DBA import is experimental.** Click **Import Original CAF/DBA** to select a native character/clip source, an **independently installed Cryengine Converter** executable, the unpacked game asset root (including the actual CAF/DBA controller files and skeleton), and a separate output folder. The manager runs the chosen local converter after confirmation and can then load its animated GLB output. The external converter is **not bundled** and its compatibility with Evolve Stage 2 controller compression has not been verified using actual Evolve CAF/DBA samples. A `.bspace`, `.comb`, or `.chrparams` reference alone is not a playable clip.
+
+For the optional converter, see [Cryengine-Converter](https://github.com/Markemp/Cryengine-Converter) and its license, installation, and documentation. Do not distribute the executable as part of a manager ZIP without complying with its separate licensing requirements.
 
 ### Mod Profiles & Library
 

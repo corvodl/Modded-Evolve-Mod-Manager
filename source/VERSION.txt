@@ -1,1 +1,1 @@
-1.1.8 - Rigged Blender Model Export
+1.1.9 - Animation Viewer and Model Editor Controls

@@ -59,6 +59,8 @@ class QtLooseFileEditor(QDialog):
         self.relative = relative
         self.projects = Path(projects).resolve()
         self.copy = copy_to_project(game_root, relative, self.projects)
+        self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+        self.setSizeGripEnabled(True)
         self.setWindowTitle('Game File Copy — ' + self.copy.name)
         self.resize(850, 590)
         self.text = QPlainTextEdit()
