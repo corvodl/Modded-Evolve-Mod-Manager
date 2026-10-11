@@ -65,14 +65,21 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.gl_error = None
 
     def set_mesh(self, mesh, materials=None, prepared_geometry=None):
-        self.makeCurrent()
-        try:
-            self._release_textures()
-        finally:
-            self.doneCurrent()
+        geometry = (prepared_geometry if prepared_geometry is not None
+                    else prepare_geometry(mesh, shading=self.shading))
+        # Replacing an existing model must also upload the NEW diffuse maps.
+        # Previously the old textures were deleted but the new ones were not
+        # uploaded until an unrelated OpenGL context reinitialization.
         self.mesh = mesh
-        self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
+        self.geometry = geometry
         self.materials = materials
+        if self.isValid():
+            self.makeCurrent()
+            try:
+                self._release_textures()
+                self._upload_textures()
+            finally:
+                self.doneCurrent()
         self.update()
 
     def set_shading(self, name):
