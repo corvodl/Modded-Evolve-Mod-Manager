@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import threading
 
-from PySide6.QtCore import QObject,Signal,QRunnable,QThreadPool
+from PySide6.QtCore import QObject,Signal,QRunnable,QThreadPool,Qt
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QLabel,
  QLineEdit,QComboBox,QPushButton,QPlainTextEdit,QFileDialog,QMessageBox,
  QTabWidget,QSpinBox,QSlider)
@@ -59,6 +59,7 @@ class DeveloperLabPanel(QWidget):
         super().__init__(parent)
         self.game_root_provider=game_root_provider
         self.last_log=()
+        self._service=None
         self.snapshots={}
         self._generation=0
         self._closed=False
@@ -138,15 +139,20 @@ class DeveloperLabPanel(QWidget):
         protocol.addWidget(button('Simulate Network Conditions',self.simulate))
         layout.addLayout(protocol)
         self.latency=QSlider()
-        self.latency.setOrientation(1)
+        self.latency.setOrientation(Qt.Horizontal)
         self.latency.setRange(0,1000)
         self.loss=QSlider()
-        self.loss.setOrientation(1)
+        self.loss.setOrientation(Qt.Horizontal)
         self.loss.setRange(0,100)
         layout.addWidget(QLabel('Simulated fixture latency (0–1000 ms)'))
         layout.addWidget(self.latency)
         layout.addWidget(QLabel('Simulated fixture packet loss (0–100%)'))
         layout.addWidget(self.loss)
+        service=QHBoxLayout()
+        service.addWidget(QLabel('Private mock service'))
+        service.addWidget(button('Start Loopback Fixture',self.start_local_service))
+        service.addWidget(button('Stop Fixture',self.stop_local_service))
+        layout.addLayout(service)
         self.network_output=QPlainTextEdit()
         self.network_output.setReadOnly(True)
         layout.addWidget(self.network_output,1)
@@ -262,6 +268,31 @@ class DeveloperLabPanel(QWidget):
             except (OSError,ValueError) as exc:
                 self.network_output.setPlainText(str(exc))
 
+    def start_local_service(self):
+        try:
+            if self._service is not None:
+                raise ValueError('Local fixture is already running')
+            from developer_private_services import LocalFixtureService
+            self._service=LocalFixtureService({
+                '/health':{'status':'ok','test_mode':True},
+                '/session':{'status':'fixture','session':'offline-test-only'},
+                '/relay':{'status':'fixture','relay':'localhost'},
+            })
+            endpoint=self._service.start()
+            self.network_output.setPlainText(
+                'Local mock started at '+endpoint+
+                '\nGET /health, /session, /relay are synthetic JSON fixtures. '
+                'Point only an explicitly configured private test client at '
+                'this endpoint. No live game endpoint was changed.')
+        except (OSError,ValueError) as exc:
+            self.network_output.setPlainText(str(exc))
+
+    def stop_local_service(self):
+        if self._service is not None:
+            self._service.stop()
+            self._service=None
+            self.network_output.setPlainText('Local fixture server stopped.')
+
     def local_probe(self):
         try:
             port=int(self.port.text())
@@ -315,5 +346,6 @@ class DeveloperLabPanel(QWidget):
             self.trace_output.setPlainText(str(exc))
 
     def stop(self):
+        self.stop_local_service()
         self._closed=True
         self._generation+=1
