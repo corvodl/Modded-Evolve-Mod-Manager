@@ -4,6 +4,12 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.5', (
+        'Show newly imported CAF animations from the persistent Asset Library.',
+        'Add searchable Game Animations with availability and motion filters.',
+        'Refresh library references without reopening the model editor.',
+        'Avoid re-extracting PAK companions already complete in the Asset Library.',
+    )),
     ('1.1.18-beta.4', (
         'Import all installed game PAKs into the persistent, reusable Asset Library.',
         'Create editable mod projects from verified signed PAKs and use Build Mod to pack and sign.',

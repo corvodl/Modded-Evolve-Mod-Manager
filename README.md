@@ -1,10 +1,16 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.4
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.5
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.4 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.5 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.18-beta.5
+
+- Refresh CAF references from the current Asset Library, including during a full-game import; resolve duplicate identical CAFs safely.
+- Search and filter Game Animations by name/path, library availability, and motion category. A capped list prevents enormous pop-ups.
+- Re-extract only missing PAK companions; reuse complete library imports for dependency references, retaining separate editable projects for explicitly selected archives.
 
 ## What's new in v1.1.18-beta.4
 
