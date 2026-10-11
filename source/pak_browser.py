@@ -38,7 +38,9 @@ def archive_description(relative: str) -> str:
             if parts[1].casefold() == 'hunters' and subject.casefold().startswith('merc_'):
                 subject = subject[5:]
             if subject:
-                kind = 'Models' if parts[-1].casefold() == 'data' else 'Textures'
+                kind = ('Models / Skeletons / Animation References'
+                        if parts[-1].casefold() == 'data'
+                        else 'Textures / Animation Assets (if present)')
                 return _title_words(subject) + ' ' + kind
         if len(parts) >= 3:
             return _title_words('_'.join(parts[2:])) + ' Characters'
@@ -51,7 +53,7 @@ def archive_description(relative: str) -> str:
     if lower.startswith('levels_'):
         return _title_words(stem[len('levels_'):]) + ' Level'
     if lower.startswith('animations'):
-        return _title_words(stem) + ' Assets'
+        return _title_words(stem) + ' (clip data or blending definitions)'
     specials = {
         'libs': 'Game Libraries', 'scripts': 'Game Scripts',
         'textures': 'Game Textures', 'music': 'Game Music',

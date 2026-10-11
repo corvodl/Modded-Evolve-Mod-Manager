@@ -1193,9 +1193,13 @@ class QtManager(QMainWindow):
         if not output_folder:
             return
         try:
-            from model_blender_export import convert_folder
-            exported, skipped = convert_folder(Path(input_folder), Path(output_folder))
-            summary = f'{len(exported)} models exported to .glb. {len(skipped)} unsupported/skipped.'
+            from model_textured_export import export_extracted_folder
+            exported, skipped = export_extracted_folder(
+                Path(input_folder), Path(output_folder),
+                projects_root=self.projects_path, stage_root=self.stage_path)
+            with_textures = sum(bool(info['texture_count']) for _, _, _, info in exported)
+            summary = (f'{len(exported)} models exported to .glb '
+                       f'({with_textures} textured); {len(skipped)} unsupported/skipped.')
             if skipped:
                 (Path(output_folder) / 'Blender_export_report.txt').write_text(
                     '\n'.join(f'{name}: {reason}' for name, reason in skipped),
@@ -1203,7 +1207,8 @@ class QtManager(QMainWindow):
             self.info('Blender export finished',
                       summary + '\n\nOutput folder: ' + output_folder +
                       '\nImport .glb in Blender using File > Import > glTF 2.0. '
-                      'Geometry and UVs only; no rig/animation reconstruction.')
+                      'Geometry and available diffuse textures are exported; '
+                      'rig/animation export requires verified skeletal decoding.')
         except Exception as exc:
             self.failure(exc)
 

@@ -88,9 +88,18 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
         for index in range(num):
             first, count, _vfirst, _vcount, material = struct.unpack_from('<5I', data, offset + 16 + index * 36)
             rows.append((first, count, material))
-        if (rows[0][0] == 0 and sum(row[1] for row in rows) == index_count
-            and all(x[0] % 3 == 0 and x[1] % 3 == 0 and x[0]+x[1] <= index_count for x in rows)
+        covered = sum(row[1] for row in rows)
+        if (rows[0][0] == 0 and 0 < covered <= index_count
+            and all(x[0] % 3 == 0 and x[1] > 0 and x[1] % 3 == 0
+                    and x[0]+x[1] <= index_count and 0 <= x[2] < 128
+                    for x in rows)
             and all(a[0] + a[1] == b[0] for a,b in zip(rows, rows[1:]))):
+            # Some Stage 2 meshes have an incomplete but internally
+            # consistent material table. Preserve known slots and all
+            # remaining triangles instead of discarding every assignment.
+            # 255 is an untextured fallback, not an inferred CryEngine slot.
+            if covered < index_count:
+                rows.append((covered, index_count-covered, 255))
             subsets = tuple(rows)
         break
     indices = struct.unpack_from('<' + str(index_count) + 'H', data, index_at)
