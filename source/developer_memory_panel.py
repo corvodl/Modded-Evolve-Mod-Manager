@@ -65,6 +65,7 @@ class DeveloperMemoryPanel(QWidget):
         self._closed = False
         self._job_serial = 0
         self._jobs = set()
+        self._active_scan_token = None
         self._scan_cancel = threading.Event()
         self._pid = None
         self._regions = []
@@ -120,7 +121,7 @@ class DeveloperMemoryPanel(QWidget):
         entry.addWidget(self.scan_value, 2)
         entry.addWidget(QLabel('Type'))
         self.scan_type = QComboBox()
-        self.scan_type.addItems(TYPES)
+        self.scan_type.addItems(list(TYPES))
         entry.addWidget(self.scan_type, 2)
         scan_layout.addLayout(entry)
         operations = QHBoxLayout()
@@ -224,6 +225,7 @@ class DeveloperMemoryPanel(QWidget):
                 error = str(exc)
             self.signals.completed.emit(token, kind, pid, payload, error)
         threading.Thread(target=background, daemon=True).start()
+        return token
 
     def refresh_processes(self):
         if self._closed:
@@ -258,6 +260,8 @@ class DeveloperMemoryPanel(QWidget):
         if pid == self._pid:
             return
         self._scan_cancel.set()
+        self._active_scan_token = None
+        self._jobs.discard('scan')
         self._pid = pid
         self._matches = []
         self._regions = []
@@ -285,6 +289,8 @@ class DeveloperMemoryPanel(QWidget):
 
     def _completed(self, token, kind, pid, payload, error):
         if self._closed or pid != self._pid:
+            return
+        if kind == 'scan' and token != self._active_scan_token:
             return
         self._jobs.discard(kind)
         if kind == 'map':
@@ -325,7 +331,8 @@ class DeveloperMemoryPanel(QWidget):
             self.connection.setText('Memory operation failed: ' + error)
 
     def _progress(self, token, scanned):
-        if self._closed or 'scan' not in self._jobs:
+        if (self._closed or 'scan' not in self._jobs or
+                token != self._active_scan_token):
             return
         self.scan_label.setText('Scanning… %.1f MiB read (Cancel to stop)' %
                                 (scanned / 1048576.0))
@@ -360,14 +367,15 @@ class DeveloperMemoryPanel(QWidget):
             pattern = encode_value(self.scan_value.text(), kind)
             self._scan_kind = kind
             self._scan_cancel = threading.Event()
+            cancel = self._scan_cancel
             self._matches = []
             _fill(self.results, [])
             self.scan_label.setText('Scanning process memory…')
             self.scan_progress.setRange(0, 0)
             only_writable = self.writable.isChecked()
-            self._run('scan', pid, lambda token: scan_process(
+            self._active_scan_token = self._run('scan', pid, lambda token: scan_process(
                 pid, pattern, writable_only=only_writable,
-                cancel=self._scan_cancel,
+                cancel=cancel,
                 progress=lambda count: self.signals.progressed.emit(token, count)))
         except Exception as exc:
             self.scan_label.setText(str(exc))
@@ -388,10 +396,11 @@ class DeveloperMemoryPanel(QWidget):
                 raise ValueError('The new exact value must have the same byte width.')
             snapshot = list(self._matches)
             self._scan_cancel = threading.Event()
+            cancel = self._scan_cancel
             self.scan_progress.setRange(0, 0)
             self.scan_label.setText('Refining %d addresses…' % len(snapshot))
-            self._run('scan', pid, lambda _token: refine_process(
-                pid, snapshot, kind, mode, expected=expected, cancel=self._scan_cancel))
+            self._active_scan_token = self._run('scan', pid, lambda _token: refine_process(
+                pid, snapshot, kind, mode, expected=expected, cancel=cancel))
         except Exception as exc:
             self.scan_label.setText(str(exc))
 
