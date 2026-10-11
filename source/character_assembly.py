@@ -94,25 +94,27 @@ def combine_meshes(items):
             raise ValueError('Combined character exceeds preview vertex/triangle limits.')
         base_vertex = len(vertices)
         base_index = len(triangles) * 3
-        base_material = len(textures)
         source_subsets = mesh.subsets or ((0, len(mesh.triangles) * 3, 0),)
-        largest = max(slot for _, _, slot in source_subsets)
-        # GPU preview uses one-byte bounded material slots (0..255).
-        slots = max(largest + 1, len(materials.textures) if materials else 0)
-        if len(textures) + slots > 256:
+        # Source skin subset IDs can include the sentinel 255 for missing
+        # material assignment; remap ONLY referenced slots to dense composite IDs.
+        slots = sorted({slot for _, _, slot in source_subsets})
+        if len(textures) + len(slots) > 256:
             raise ValueError('Combined character exceeds 256 GPU material slots.')
+        remap = {}
+        for slot in slots:
+            remap[slot] = len(textures)
+            tex = (materials.textures[slot] if materials and
+                   slot < len(materials.textures) else None)
+            label = (materials.names[slot] if materials and
+                     slot < len(materials.names) else 'unresolved slot ' + str(slot))
+            textures.append(tex)
+            names.append(name + ': ' + label)
         vertices.extend(mesh.vertices)
         triangles.extend(tuple(v + base_vertex for v in tri) for tri in mesh.triangles)
         uvs.extend(mesh.uvs if len(mesh.uvs) == len(mesh.vertices)
                    else ((0., 0.),) * len(mesh.vertices))
-        subsets.extend((base_index + first, count, base_material + slot)
+        subsets.extend((base_index + first, count, remap[slot])
                        for first, count, slot in source_subsets)
-        textures.extend(materials.textures if materials else ())
-        if materials:
-            names.extend(name + ': ' + label for label in materials.names)
-        for i in range(slots - (len(materials.textures) if materials else 0)):
-            textures.append(None)
-            names.append(name + ': unresolved slot ' + str(i))
         if materials:
             issues.extend(name + ': ' + issue for issue in materials.issues)
         included.append(name)
