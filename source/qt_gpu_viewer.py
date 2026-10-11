@@ -73,6 +73,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.pan = [0., 0.]
         self.navigation_mode = 'orbit'
         self.grid_visible = True
+        self._grid_floor = min((vertex[2] for vertex in mesh.vertices), default=0.0)
         self.wireframe = False
         self.textured = True
         self._last = None
@@ -92,6 +93,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         # uploaded until an unrelated OpenGL context reinitialization.
         self.mesh = mesh
         self.geometry = geometry
+        self._grid_floor = min((vertex[2] for vertex in mesh.vertices), default=0.0)
         self._batch_sort_cache = None
         self.materials = materials
         self.force_opaque_preview = mesh.source_name.startswith('Character assembly:')
@@ -286,6 +288,39 @@ class QtGLModelCanvas(QOpenGLWidget):
         from OpenGL.GL import glViewport
         glViewport(0,0,max(1,width),max(1,height))
 
+    def _draw_reference_grid(self):
+        """Blender-like ground reference, drawn below the mesh in model space."""
+        if not self.grid_visible:
+            return
+        from OpenGL.GL import (
+            glBegin, glEnd, glVertex3f, glColor3f, glDisable, glEnable,
+            GL_LINES, GL_LIGHTING, GL_TEXTURE_2D,
+        )
+        radius = max(0.001,float(self.mesh.radius))
+        step = radius / 8.0
+        cx,cy,_ = self.mesh.center
+        floor = self._grid_floor - step * .05
+        glDisable(GL_LIGHTING)
+        glDisable(GL_TEXTURE_2D)
+        glBegin(GL_LINES)
+        for i in range(-12, 13):
+            p = i * step
+            if i == 0:
+                glColor3f(.58,.28,.31)
+            else:
+                glColor3f(.28,.28,.31)
+            glVertex3f(cx + p,cy - 12*step,floor)
+            glVertex3f(cx + p,cy + 12*step,floor)
+            if i == 0:
+                glColor3f(.32,.53,.34)
+            else:
+                glColor3f(.28,.28,.31)
+            glVertex3f(cx - 12*step,cy + p,floor)
+            glVertex3f(cx + 12*step,cy + p,floor)
+        glEnd()
+        glColor3f(1.0,1.0,1.0)
+        glEnable(GL_LIGHTING)
+
     def paintGL(self):
         from OpenGL.GL import (
             glClear, glMatrixMode, glLoadIdentity, glOrtho,
@@ -329,6 +364,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         from OpenGL.GL import glScalef
         glScalef(scale,scale,scale)
         glTranslatef(-center[0],-center[1],-center[2])
+        glPolygonMode(GL_FRONT_AND_BACK,GL_FILL)
+        self._draw_reference_grid()
         glPolygonMode(GL_FRONT_AND_BACK,GL_LINE if self.wireframe else GL_FILL)
         arrays = self.geometry
         glEnableClientState(GL_VERTEX_ARRAY)
@@ -427,13 +464,16 @@ class QtGLModelCanvas(QOpenGLWidget):
             dx, dy = pos.x()-self._last.x(), pos.y()-self._last.y()
             if (event.buttons() & (Qt.MiddleButton | Qt.RightButton) or
                     (event.buttons() & Qt.LeftButton and
-                     event.modifiers() & Qt.ShiftModifier)):
+                     (event.modifiers() & Qt.ShiftModifier or self.navigation_mode == 'pan'))):
                 unit = 2.44 / max(1, self.height())
                 self.pan[0] += dx * unit
                 self.pan[1] -= dy * unit
             elif event.buttons() & Qt.LeftButton:
-                self.rotation[0] += dx*.55
-                self.rotation[1] = max(-89,min(89,self.rotation[1]+dy*.45))
+                if self.navigation_mode == 'zoom':
+                    self.zoom = max(.18,min(5.0,self.zoom * (1.0 - dy*.008)))
+                else:
+                    self.rotation[0] += dx*.55
+                    self.rotation[1] = max(-89,min(89,self.rotation[1]+dy*.45))
             self._last = pos
             self.update()
             event.accept()
