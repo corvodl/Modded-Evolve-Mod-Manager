@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
+    QDockWidget, QTreeWidgetItemIterator,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
@@ -44,6 +45,9 @@ from loose_file_editor import save_loose_text
 from loose_game_files import TEXT_EXTENSIONS, copy_to_project
 from evolve_pak_workspace import normalized_name
 from version_info import app_version
+from studio_polish_117 import (prepare_model_cached, clear_model_cache,
+    model_cache_stats, export_preflight, project_session_key,
+    sanitized_project_session)
 
 
 def _image_pixmap(image):
@@ -163,6 +167,14 @@ class QtWorkspaceEditor(QMainWindow):
         self._materials_error = ''
         self.materials = None
         self.texture_message = 'No model selected'
+        self.model_load_ms = None
+        self.model_cache_hit = False
+        self._model_started_at = None
+        self._preflight_token = 0
+        self._preflight_pool = None
+        self._preflight_signals = None
+        self._diagnostics_dock = None
+        self._diagnostics_timer = None
         # A main window has the standard Win32 maximize/restore non-dialog frame.
         self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         self.setWindowTitle('Edit Files — Evolve PAK Workspace')
@@ -264,12 +276,21 @@ class QtWorkspaceEditor(QMainWindow):
         self.status.setWordWrap(True)
         bottom = QHBoxLayout()
         bottom.addWidget(self.status, 1)
+        self.dependency_button=QPushButton('Dependencies…')
+        self.dependency_button.setEnabled(False)
+        menu=QMenu(self.dependency_button)
+        menu.addAction('Asset Dependency Graph',self.open_dependency_graph)
+        menu.addAction('Find Missing Textures',self.open_texture_resolver)
+        menu.addAction('Validate Blender Export',self.inspect_blender_export)
+        self.dependency_button.setMenu(menu)
+        bottom.addWidget(self.dependency_button)
         self.version_label = QLabel(app_version())
         self.version_label.setObjectName('version')
         self.version_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         bottom.addWidget(self.version_label)
         main.addLayout(bottom)
         QTimer.singleShot(0, self._restore_workspace_layout)
+        QTimer.singleShot(60, self._restore_project_session)
         self.save_shortcut = QShortcut(QKeySequence.Save, self)
         self.save_shortcut.activated.connect(self.save)
         self.find_shortcut = QShortcut(QKeySequence.Find, self)
@@ -315,6 +336,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('Model', 'Import Same-Layout Model…', self.import_model)
         action('Model', 'Open GPU Viewer in New Window', self.open_gpu_viewer)
         action('Model', 'Compare Models Side by Side…', self.open_model_compare)
+        action('Model', 'Validate Blender Export…', self.inspect_blender_export)
         action('Model', 'Asset Dependency Graph…', self.open_dependency_graph)
         action('Model', 'Reset Camera', lambda: self._with_model_panel(
             lambda p: p.reset_view()))
@@ -326,6 +348,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('Textures', 'Use Automatic Cross-PAK Lookup', self.use_auto_textures)
         action('Textures', 'Reload Model Textures', self.refresh_model_textures)
         action('Tools', 'Validate Project Mod…', self.open_mod_validator)
+        action('Tools', 'Performance Monitor', self.toggle_diagnostics)
         action('Tools', 'Global Search & Replace…', self.open_global_search)
         action('Tools', 'Recovery Snapshot Now', self._autosave_recovery)
         action('Tools', 'Review Project History…', self.open_project_history)
@@ -397,6 +420,162 @@ class QtWorkspaceEditor(QMainWindow):
                 if (isinstance(pair, list) and len(pair) == 2 and
                         all(isinstance(n, int) and n > 0 for n in pair)):
                     split.setSizes(pair)
+
+    def _capture_playback_preferences(self):
+        if self.current and self.mode=='models' and self.model_panel is not None:
+            prefs=self.manager.settings.get('animation_playback_preferences',{})
+            if not isinstance(prefs,dict):
+                prefs={}
+            key=project_session_key(self.workspace)+'|'+self.current.casefold()
+            prefs[key]=self.model_panel.playback_preferences()
+            while len(prefs)>200:
+                prefs.pop(next(iter(prefs)))
+            self.manager.settings['animation_playback_preferences']=prefs
+
+    def _save_project_session(self):
+        self._capture_playback_preferences()
+        if self._dirty():
+            return
+        selected={}
+        for section,tree in self.trees.items():
+            items=tree.selectedItems()
+            if items:
+                relative=items[0].data(0,Qt.UserRole)
+                if relative in self.records:
+                    selected[section]=relative
+        camera={}
+        if self.model_gpu is not None:
+            camera={'rotation':list(self.model_gpu.rotation),
+                    'pan':list(self.model_gpu.pan),'zoom':self.model_gpu.zoom}
+        data={'tab':self.tabs.currentIndex(),'selected':selected,
+              'sizes':{key:split.sizes() for key,split in self.splitters.items()},
+              'camera':camera}
+        sessions=self.manager.settings.get('editor_project_sessions',{})
+        if not isinstance(sessions,dict):
+            sessions={}
+        sessions[project_session_key(self.workspace)]=sanitized_project_session(data,self.records)
+        while len(sessions)>80:
+            sessions.pop(next(iter(sessions)))
+        self.manager.settings['editor_project_sessions']=sessions
+        try:
+            self.manager.persist()
+        except OSError:
+            pass
+
+    def _restore_project_session(self):
+        sessions=self.manager.settings.get('editor_project_sessions',{})
+        if not isinstance(sessions,dict):
+            return
+        session=sanitized_project_session(
+            sessions.get(project_session_key(self.workspace)),self.records)
+        if not session:
+            return
+        for name,pair in session.get('sizes',{}).items():
+            if name in self.splitters:
+                self.splitters[name].setSizes(pair)
+        self._restored_camera=session.get('camera',{})
+        for name,relative in session.get('selected',{}).items():
+            tree=self.trees[name]
+            it=QTreeWidgetItemIterator(tree)
+            while it.value():
+                item=it.value()
+                if item.data(0,Qt.UserRole)==relative:
+                    tree.blockSignals(True)
+                    tree.setCurrentItem(item)
+                    tree.blockSignals(False)
+                    break
+                it+=1
+        tab=session.get('tab',0)
+        self.tabs.setCurrentIndex(tab)
+        relative=session.get('selected',{}).get(self.TABS[tab])
+        if relative in self.records:
+            try:
+                self.load(relative)
+            except (ValueError,OSError) as error:
+                self.status.setText('Could not restore last file: '+str(error)[:160])
+
+    def inspect_blender_export(self):
+        if self.mode!='models' or self.mesh is None or not self.current:
+            QMessageBox.information(self,'Blender Export Validator',
+                                    'Select a supported model in the Models tab.')
+            return
+        from qt_gpu_viewer import _NativeConversion,_NativeResult
+        from PySide6.QtCore import QThreadPool
+        if self._preflight_pool is None:
+            self._preflight_pool=QThreadPool(self)
+            self._preflight_pool.setMaxThreadCount(1)
+            self._preflight_signals=_NativeResult(self)
+            self._preflight_signals.completed.connect(self._preflight_ready)
+        self._preflight_token+=1
+        token=(self._preflight_token,str(self.workspace),self.current)
+        workspace,relative=self.workspace,self.current
+        mesh=self.mesh
+        raw=self.raw
+        character=self.character_preview
+        references=(self._prepared_animation[0] if self._prepared_animation else ())
+        projects,stage=self.manager.projects_path,self.manager.stage_path
+        textures=self.texture_folder
+        def work(_ignored):
+            source_mesh=(find_preview_mesh(workspace,relative,raw,
+                projects_root=projects,stage_root=stage) if character else mesh)
+            return (export_preflight(source_mesh,workspace,relative,
+                texture_folder=textures,projects_root=projects,
+                stage_root=stage,animation_refs=references),None)
+        self.status.setText('Validating Blender export in background…')
+        self._preflight_pool.start(
+            _NativeConversion(work,None,token,self._preflight_signals))
+
+    def _preflight_ready(self,token,result,error):
+        if token!=(self._preflight_token,str(self.workspace),self.current):
+            return
+        if error:
+            self.status.setText('Export validation failed: '+str(error)[:180])
+            QMessageBox.warning(self,'Blender Export Validator',str(error))
+            return
+        report,_unused=result
+        self.status.setText('Blender export checked: %s, %d diffuse textures, %d animation candidates.'%
+                            (report['rig'],report['textures'],report['animation_candidates']))
+        QMessageBox.information(self,'Blender Export Validator',json.dumps(report,indent=2))
+
+    def toggle_diagnostics(self):
+        if self._diagnostics_dock is None:
+            dock=QDockWidget('Performance Monitor',self)
+            dock.setObjectName('studioPerformanceMonitor')
+            dock.setAllowedAreas(Qt.LeftDockWidgetArea|Qt.RightDockWidgetArea)
+            info=QLabel()
+            info.setWordWrap(True)
+            info.setMargin(12)
+            dock.setWidget(info)
+            self.addDockWidget(Qt.RightDockWidgetArea,dock)
+            dock.hide()
+            self._diagnostics_dock=dock
+            self._diagnostics_label=info
+            self._diagnostics_timer=QTimer(self)
+            self._diagnostics_timer.setInterval(1000)
+            self._diagnostics_timer.timeout.connect(self._update_diagnostics)
+            self._diagnostics_timer.start()
+        self._diagnostics_dock.setVisible(not self._diagnostics_dock.isVisible())
+        self._update_diagnostics()
+
+    def _update_diagnostics(self):
+        if self._diagnostics_dock is None or not self._diagnostics_dock.isVisible():
+            return
+        materials=self.materials
+        gpu_bytes=0
+        if materials is not None:
+            for group in ('textures','normal_maps','specular_maps'):
+                for image in getattr(materials,group,()):
+                    if image is not None:
+                        gpu_bytes+=image.width*image.height*len(image.getbands())
+        from studio_polish_117 import model_cache_stats
+        self._diagnostics_label.setText(
+            'Last model preparation: %s ms\nCache hit: %s\nDecoded texture allocation estimate: %.2f MiB\n'
+            'Editor file-tree refresh: %.1f ms\nCache: %s\n'
+            'GPU texture upload (last event): %s ms\nFPS: not measured.' %
+            ('%.1f'%self.model_load_ms if self.model_load_ms is not None else 'Not sampled',
+             'yes' if self.model_cache_hit else 'no',gpu_bytes/1048576,
+             getattr(self,'last_populate_ms',0),model_cache_stats(),
+             getattr(self.model_gpu,'gpu_upload_ms',None) if self.model_gpu else 'Not sampled'))
 
     def _with_model_panel(self, callback):
         if self.model_panel is None or self.mode != 'models':
@@ -578,8 +757,10 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode != 'models' or self.mesh is None:
             QMessageBox.information(self, 'Texture preview', 'Select a model first.')
             return
+        clear_model_cache(self.workspace)
+        self.preview_index = None
         self.load(self.current)
-        self.status.setText(self.texture_message)
+        self.status.setText('Reloading materials and textures…')
 
     @staticmethod
     def _button(name, callback):
@@ -694,6 +875,8 @@ class QtWorkspaceEditor(QMainWindow):
 
     def load(self, rel):
         if rel != self.current:
+            self._capture_playback_preferences()
+        if rel != self.current:
             self.character_skin_choice = None
         self.current = rel
         self.stream = None
@@ -702,6 +885,9 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.texture_message = 'No texture lookup has run'
         self.mode = self._category(rel)
+        self.dependency_button.setEnabled(self.mode=='models')
+        if self.mode != 'models':
+            self.dependency_button.setText('Dependencies…')
         self._model_generation += 1
         path = checked_path(self.workspace, rel)
         if self.mode == 'models':
@@ -747,8 +933,8 @@ class QtWorkspaceEditor(QMainWindow):
 
     def _load_model_background(self, rel):
         """Load heavy CryEngine files and textures away from the GUI thread."""
-        from async_model_resolve import resolve_model
         self._model_prepared = False
+        self._model_started_at = time.perf_counter()
         view = self.views['models']
         self.model_fallback.setPixmap(QPixmap())
         self.model_fallback.setText('Loading character and textures…')
@@ -764,11 +950,11 @@ class QtWorkspaceEditor(QMainWindow):
         token = self._model_generation
 
         def resolve(_unused):
-            result = resolve_model(source_workspace, rel,
+            data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
                 projects_root=projects, stage_root=stage,
                 texture_folder=tex, animation_index=ani,
                 equipment=equipment, index=index)
-            return result, None
+            return (data, cache_hit, load_ms), None
 
         # Tests and headless software previews retain deterministic synchronous
         # behavior. Real GPU viewing runs all expensive preparation in a worker.
@@ -799,7 +985,9 @@ class QtWorkspaceEditor(QMainWindow):
             view.setCurrentWidget(self.model_fallback)
             self.status.setText('3D preview unavailable: ' + error[:260])
             return
-        data, _unused = result
+        data, cache_hit, load_ms = result[0]
+        self.model_cache_hit = cache_hit
+        self.model_load_ms = round(load_ms, 2)
         self.raw = data['raw']
         self.mesh = data['mesh']
         self.materials = data['materials']
@@ -809,6 +997,12 @@ class QtWorkspaceEditor(QMainWindow):
         self._prepared_animation = data['animation']
         self._materials_error = data['materials_error']
         self._model_prepared = True
+        refs=data['animation'][0]
+        mapped=(self.materials.count if self.materials is not None else 0)
+        slots=(len(self.materials.textures) if self.materials is not None else 0)
+        count=sum(getattr(ref,'available',False) for ref in refs)
+        self.dependency_button.setText('Assets: %d/%d textures · %d animations'%
+                                       (mapped,slots,count))
         self._update_equipment_menu()
         self._paint_model(view, self.mesh)
         self.status.setText(
@@ -877,6 +1071,15 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_panel.set_static_mesh(mesh, materials,
                                                  prepared_geometry=self._prepared_geometry)
             view.setCurrentWidget(self.model_panel)
+            camera=getattr(self,'_restored_camera',None)
+            if isinstance(camera,dict):
+                for name in ('rotation','pan'):
+                    if name in camera:
+                        setattr(self.model_gpu,name,list(camera[name]))
+                if 'zoom' in camera:
+                    self.model_gpu.zoom=camera['zoom']
+                self.model_gpu.update()
+                self._restored_camera=None
             from character_animation_catalog import discover_animations
             anim_model = (self.character_preview.skeleton if self.character_preview
                           else self.current)
@@ -909,6 +1112,10 @@ class QtWorkspaceEditor(QMainWindow):
 
             self.model_panel.set_native_catalog(refs, idle, config,
                                                 loader=build_native_clip)
+            prefs=self.manager.settings.get('animation_playback_preferences',{})
+            key=project_session_key(self.workspace)+'|'+self.current.casefold()
+            if isinstance(prefs,dict) and isinstance(prefs.get(key),dict):
+                self.model_panel.restore_playback_preferences(prefs[key])
             self.model_panel._info.setText(
                 mesh.source_name + '  •  ' + mesh.description +
                 '\n' + self.texture_message[:260])
@@ -949,8 +1156,10 @@ class QtWorkspaceEditor(QMainWindow):
             self.archive_select.setCurrentText(old)
             self.archive_select.blockSignals(False)
             return
+        self._save_project_session()
         target = self.archive_map[name]
         new_records = self._read_records(target)
+        self.dependency_button.setEnabled(False)
         self.workspace, self.records = target, new_records
         self.favorites_only.setChecked(False)
         self.preview_index = None
@@ -962,6 +1171,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.manager.output_pak = ''
         self.manager.persist()
         self.populate()
+        QTimer.singleShot(0,self._restore_project_session)
         self.status.setText('Browsing ' + name + ' | Build Mod applies only to this PAK.')
 
     def change_tab(self, index):
@@ -972,6 +1182,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.tabs.setCurrentIndex(0)
                 self.tabs.blockSignals(False)
                 return
+        self._capture_playback_preferences()
         self._model_generation += 1
         self.current, self.mode = None, None
 
@@ -1011,6 +1222,7 @@ class QtWorkspaceEditor(QMainWindow):
 
     def reload(self):
         if self.current and self._confirm_buffer():
+            clear_model_cache(self.workspace)
             self.preview_index = None
             self.load(self.current)
 
@@ -1557,6 +1769,7 @@ class QtWorkspaceEditor(QMainWindow):
         if not self._confirm_buffer():
             event.ignore()
             return
+        self._save_project_session()
         self._model_generation += 1
         if self.model_panel is not None and not self.model_panel.close():
             event.ignore()

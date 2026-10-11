@@ -61,6 +61,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.normal_textures = []
         self.specular_textures = []
         self.translucent_slots = set()
+        self._batch_sort_cache = None
         self.enhanced_materials = True
         self._renderer3 = None
         self.rotation = [-30.0, 14.0]
@@ -70,6 +71,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.textured = True
         self._last = None
         self.gl_error = None
+        self.gpu_upload_ms = None
         self.light_strength = 1.0
         self.background_mode = 'Dark'
         self.visible_material_slot = None
@@ -84,6 +86,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         # uploaded until an unrelated OpenGL context reinitialization.
         self.mesh = mesh
         self.geometry = geometry
+        self._batch_sort_cache = None
         self.materials = materials
         if self.isValid():
             self.makeCurrent()
@@ -140,6 +143,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         if self.shading != value:
             self.shading = value
             self.geometry = prepare_geometry(self.mesh, shading=value)
+            self._batch_sort_cache = None
             self.update()
 
     def set_animated_vertices(self, frame):
@@ -196,8 +200,11 @@ class QtGLModelCanvas(QOpenGLWidget):
                     pass
             setattr(self,name,[])
         self.translucent_slots = set()
+        self._batch_sort_cache = None
 
     def _upload_textures(self):
+        import time
+        started=time.perf_counter()
         from OpenGL.GL import (
             glGenTextures, glBindTexture, glTexImage2D, glTexParameteri,
             glPixelStorei, GL_TEXTURE_2D, GL_RGB, GL_UNSIGNED_BYTE,
@@ -236,6 +243,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                 uploads.append(texid)
             setattr(self,target,uploads)
         glBindTexture(GL_TEXTURE_2D,0)
+        self.gpu_upload_ms=round((time.perf_counter()-started)*1000,2)
 
     def initializeGL(self):
         from OpenGL.GL import (
@@ -329,7 +337,16 @@ class QtGLModelCanvas(QOpenGLWidget):
             def is_translucent(slot):
                 values=getattr(self.materials,'opacity',()) if self.materials else ()
                 return slot in self.translucent_slots or (slot<len(values) and values[slot]<.999)
-            batches = sorted(arrays.draws,key=lambda d:is_translucent(d[2]))
+            from renderer_3 import ordered_transparency_batches
+            transparent_slots={slot for _,_,slot in arrays.draws if is_translucent(slot)}
+            order_key=(id(arrays),tuple(self.rotation),tuple(sorted(transparent_slots)))
+            if self._batch_sort_cache is None or self._batch_sort_cache[0]!=order_key:
+                batches=ordered_transparency_batches(
+                    arrays.draws,arrays.indices,arrays.vertices,
+                    transparent_slots,self.rotation)
+                self._batch_sort_cache=(order_key,batches)
+            else:
+                batches=self._batch_sort_cache[1]
             for first,count,slot in batches:
                 if self.visible_material_slot is not None and slot != self.visible_material_slot:
                     continue
@@ -417,14 +434,15 @@ class QtGLModelCanvas(QOpenGLWidget):
         event.accept()
 
     def closeEvent(self,event):
-        self.makeCurrent()
-        try:
-            self._release_textures()
-            if self._renderer3 is not None:
-                self._renderer3.close()
-                self._renderer3 = None
-        finally:
-            self.doneCurrent()
+        if self.isValid():
+            self.makeCurrent()
+            try:
+                self._release_textures()
+                if self._renderer3 is not None:
+                    self._renderer3.close()
+                    self._renderer3 = None
+            finally:
+                self.doneCurrent()
         super().closeEvent(event)
 
 
@@ -592,6 +610,9 @@ class QtGPUModelPanel(QWidget):
         self.anim_playing = False
         self.play_button.setText('Play')
         self.animated = None
+        self.timeline_markers.clear()
+        self.timeline_markers.addItem('Markers',None)
+        self.playlist_items.clear()
         self.clip_select.blockSignals(True)
         self.clip_select.clear()
         self.clip_select.blockSignals(False)
@@ -732,6 +753,7 @@ class QtGPUModelPanel(QWidget):
         self._native_generation = 0
         self._native_references = ()
         self._native_loader = None
+        self._pending_playback_preferences = None
         self._native_pool = QThreadPool(self)
         self._native_pool.setMaxThreadCount(2)
         self._native_signals = _NativeResult(self)
@@ -849,9 +871,52 @@ class QtGPUModelPanel(QWidget):
             self.clip_select.setCurrentText(idle)
         self.clip_select.blockSignals(False)
         self.anim_position = 0.
+        if self._pending_playback_preferences:
+            self.restore_playback_preferences(self._pending_playback_preferences)
         self._display_animation_frame()
         if auto_play and (idle or len(imported.clips)==1):
             self.toggle_play()
+
+    def playback_preferences(self):
+        return {'speed':self.playback_speed.currentData(),
+                'loop':self.loop_enabled.isChecked(),
+                'clip':self.clip_select.currentText(),
+                'playlist':[self.playlist_items.itemText(i)
+                            for i in range(self.playlist_items.count())][:100],
+                'markers':[self.timeline_markers.itemData(i)
+                           for i in range(1,self.timeline_markers.count())
+                           if self.timeline_markers.itemData(i)][:500]}
+
+    def restore_playback_preferences(self, config):
+        if not isinstance(config,dict):
+            return
+        self._pending_playback_preferences = config
+        speed=config.get('speed',1.)
+        if type(speed) in (int,float) and 0.1<=speed<=4:
+            idx=min(range(self.playback_speed.count()),
+                    key=lambda i:abs(self.playback_speed.itemData(i)-speed))
+            self.playback_speed.setCurrentIndex(idx)
+        if type(config.get('loop')) is bool:
+            self.loop_enabled.setChecked(config['loop'])
+        if self.animated is None:
+            return
+        names=[x for x in config.get('playlist',[]) if isinstance(x,str)
+               and x in self.animated.clips][:100]
+        if names:
+            self.playlist_items.clear()
+            self.playlist_items.addItems(names)
+        self.timeline_markers.clear()
+        self.timeline_markers.addItem('Markers',None)
+        for row in config.get('markers',[])[:500]:
+            if (isinstance(row,(tuple,list)) and len(row)==2 and
+                isinstance(row[0],str) and row[0] in self.animated.clips and
+                type(row[1]) in (float,int) and 0<=row[1]<=self.animated.clips[row[0]][0]):
+                self.timeline_markers.addItem('%s at %.2fs'%(row[0],row[1]),
+                                              (row[0],float(row[1])))
+        clip=config.get('clip')
+        if clip in self.animated.clips:
+            self.clip_select.setCurrentText(clip)
+        self._pending_playback_preferences=None
 
     def nudge_timeline(self, seconds):
         if self.animated is None or not self.clip_select.currentText():

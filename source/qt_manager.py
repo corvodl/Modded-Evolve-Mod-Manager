@@ -52,6 +52,7 @@ from app_updater import (discover, discover_experimental, download_and_prepare,
                          launch_apply, installed_commit, report_startup_ready)
 from version_info import app_version
 from qt_theme_116 import PALETTES, ROLES, palette, qt_palette_style
+from studio_polish_117 import theme_preset, validate_theme_preset, read_theme_file
 from pak_browser import archive_description, describe_archive, matching_archives, format_size, import_target
 from universal_stage import allowed_paks
 from launch_integration import state_status, launcher_commands, restore_command, package_status, add_missing_scripts
@@ -311,6 +312,15 @@ class QtManager(QMainWindow):
         if self.appearance_mode not in PALETTES:
             self.appearance_mode = 'Dark'
         self.appearance_overrides = self.settings.get('appearance_colors', {})
+        candidates=self.settings.get('theme_presets',{})
+        self.saved_theme_presets={}
+        if isinstance(candidates,dict):
+            for name,value in list(candidates.items())[:20]:
+                try:
+                    preset=validate_theme_preset(value)
+                    self.saved_theme_presets[preset['name']]=preset
+                except (ValueError,TypeError):
+                    pass
         try:
             palette(self.appearance_mode, self.appearance_overrides)
         except (ValueError, AttributeError):
@@ -730,6 +740,20 @@ class QtManager(QMainWindow):
             line.addStretch()
             general_row.addLayout(line)
         general_row.addWidget(_button('Reset Theme Colors', self._reset_appearance_colors))
+        presets=QHBoxLayout()
+        presets.addWidget(_label('Saved themes'))
+        self.theme_preset_combo=QComboBox()
+        self.theme_preset_combo.addItems(sorted(self.saved_theme_presets))
+        presets.addWidget(self.theme_preset_combo,1)
+        presets.addWidget(_button('Preview / Apply',self._apply_saved_theme))
+        presets.addWidget(_button('Save Current',self._save_theme_preset))
+        presets.addWidget(_button('Remove',self._remove_theme_preset))
+        general_row.addLayout(presets)
+        preset_files=QHBoxLayout()
+        preset_files.addWidget(_button('Import Theme…',self._import_theme_preset))
+        preset_files.addWidget(_button('Export Theme…',self._export_theme_preset))
+        preset_files.addStretch()
+        general_row.addLayout(preset_files)
         self._update_appearance_labels()
         self.motion_checkbox = QCheckBox('Reduce menu animation')
         self.motion_checkbox.setChecked(self.reduce_motion)
@@ -863,6 +887,106 @@ class QtManager(QMainWindow):
         self.appearance_overrides = {}
         self._update_appearance_labels()
         self._save_ui_preferences()
+
+    def _theme_preview(self, preset):
+        dialog=QDialog(self)
+        dialog.setWindowTitle('Preview Theme — '+preset['name'])
+        dialog.resize(510,250)
+        dialog.setStyleSheet(qt_palette_style(qt_style(),preset['mode'],preset['colors']))
+        panel=QVBoxLayout(dialog)
+        heading=QLabel('EVOLVE MOD MANAGER — Theme Preview')
+        heading.setObjectName('sectionTitle')
+        panel.addWidget(heading)
+        panel.addWidget(QLabel('Preview only. The manager appearance will not change until you select Apply.'))
+        example=QHBoxLayout()
+        sample=QPushButton('Primary Action')
+        sample.setObjectName('primary')
+        example.addWidget(sample)
+        example.addWidget(QPushButton('Secondary Action'))
+        panel.addLayout(example)
+        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText('Apply Theme')
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        panel.addWidget(buttons)
+        return dialog.exec()==QDialog.Accepted
+
+    def _refresh_theme_list(self,selected=None):
+        self.theme_preset_combo.clear()
+        self.theme_preset_combo.addItems(sorted(self.saved_theme_presets))
+        if selected in self.saved_theme_presets:
+            self.theme_preset_combo.setCurrentText(selected)
+
+    def _save_theme_preset(self):
+        name,ok=QInputDialog.getText(self,'Save Theme Preset','Theme name:')
+        if not ok:
+            return
+        try:
+            preset=theme_preset(name,self.appearance_mode,
+                                palette(self.appearance_mode,self.appearance_overrides))
+            if len(self.saved_theme_presets)>=20 and preset['name'] not in self.saved_theme_presets:
+                raise ValueError('Save at most 20 theme presets.')
+            self.saved_theme_presets[preset['name']]=preset
+            self._refresh_theme_list(preset['name'])
+            self.persist()
+        except (OSError,ValueError) as exc:
+            self.failure(exc)
+
+    def _apply_saved_theme(self):
+        name=self.theme_preset_combo.currentText()
+        if name not in self.saved_theme_presets:
+            return
+        preset=self.saved_theme_presets[name]
+        if self._theme_preview(preset):
+            self.appearance_mode=preset['mode']
+            self.appearance_overrides=dict(preset['colors'])
+            self.appearance_combo.blockSignals(True)
+            self.appearance_combo.setCurrentText(self.appearance_mode)
+            self.appearance_combo.blockSignals(False)
+            self._update_appearance_labels()
+            self._save_ui_preferences()
+
+    def _remove_theme_preset(self):
+        name=self.theme_preset_combo.currentText()
+        if name in self.saved_theme_presets and self.confirm('Remove Theme',
+                'Remove saved theme '+name+'? Current appearance will not change.'):
+            del self.saved_theme_presets[name]
+            self._refresh_theme_list()
+            self.persist()
+
+    def _import_theme_preset(self):
+        path,_=QFileDialog.getOpenFileName(self,'Import Color Theme','','JSON (*.json)')
+        if not path:
+            return
+        try:
+            preset=read_theme_file(path)
+            if self._theme_preview(preset):
+                if len(self.saved_theme_presets)>=20 and preset['name'] not in self.saved_theme_presets:
+                    raise ValueError('Save at most 20 themes.')
+                self.saved_theme_presets[preset['name']]=preset
+                self._refresh_theme_list(preset['name'])
+                self.appearance_mode=preset['mode']
+                self.appearance_overrides=dict(preset['colors'])
+                self.appearance_combo.blockSignals(True)
+                self.appearance_combo.setCurrentText(self.appearance_mode)
+                self.appearance_combo.blockSignals(False)
+                self._update_appearance_labels()
+                self._save_ui_preferences()
+        except (OSError,ValueError,TypeError) as exc:
+            self.failure(exc)
+
+    def _export_theme_preset(self):
+        name=self.theme_preset_combo.currentText()
+        try:
+            preset=(self.saved_theme_presets[name] if name in self.saved_theme_presets else
+                    theme_preset('My Theme',self.appearance_mode,
+                                 palette(self.appearance_mode,self.appearance_overrides)))
+            destination,_=QFileDialog.getSaveFileName(
+                self,'Export Color Theme',preset['name']+'.json','JSON (*.json)')
+            if destination:
+                Path(destination).write_text(json.dumps(preset,indent=2),encoding='utf-8')
+        except (OSError,ValueError) as exc:
+            self.failure(exc)
 
     def _apply_appearance(self):
         style = qt_palette_style(qt_style(), self.appearance_mode, self.appearance_overrides)
@@ -1324,6 +1448,7 @@ class QtManager(QMainWindow):
             'show_activity_on_tasks': self.show_activity_on_tasks,
             'appearance_mode': self.appearance_mode,
             'appearance_colors': self.appearance_overrides,
+            'theme_presets': self.saved_theme_presets,
         })
         save_settings(self.settings)
 
