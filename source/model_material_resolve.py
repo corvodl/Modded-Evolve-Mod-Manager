@@ -117,7 +117,8 @@ def find_model_material(index, model_relative, *, preferred_workspace=None):
         if virtual is None:
             return None
         choices = [virtual]
-        if '/' not in virtual and parent != '.':
+        if parent != '.' and not virtual.casefold().startswith(
+                ('characters/', 'objects/', 'materials/', 'textures/', 'levels/')):
             choices.insert(0, parent + '/' + virtual)
         for path in choices:
             folded = path.casefold()
