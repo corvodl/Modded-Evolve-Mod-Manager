@@ -1,0 +1,61 @@
+"""Read-only model preparation suitable for a Qt background worker.
+
+No QWidget, QOpenGLContext or other GUI state is accessed here. Results carry
+geometry, materials, and native animation references to the GUI thread.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from model_asset import inspect_model
+from model_preview import find_preview_mesh
+from material_preview import _workspace_index, load_preview_materials
+from character_assembly import assemble_character
+from character_animation_catalog import discover_animations
+from gpu_model_preview import prepare_geometry
+from workspace_file_actions import checked_path
+
+
+def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
+                  texture_folder=None, animation_index=None, equipment=None,
+                  index=None):
+    path = checked_path(workspace, relative)
+    raw = path.read_bytes()
+    try:
+        report = inspect_model(raw).description
+    except ValueError as exc:
+        report = str(exc)
+    if index is None:
+        index = _workspace_index(workspace, projects_root, stage_root)
+    character = None
+    assembly_error = ''
+    try:
+        character = assemble_character(
+            workspace, relative, index, texture_folder=texture_folder,
+            projects_root=projects_root, stage_root=stage_root,
+            equipment=equipment)
+    except (ValueError, OSError) as exc:
+        assembly_error = str(exc)
+    mesh = (character.mesh if character else
+            find_preview_mesh(workspace, relative, raw,
+                              projects_root=projects_root, stage_root=stage_root))
+    materials = character.materials if character else None
+    issue = ''
+    if materials is None:
+        try:
+            materials = load_preview_materials(
+                workspace, mesh.source_name or relative, texture_folder,
+                projects_root=projects_root, stage_root=stage_root,index=index)
+        except (ValueError, OSError) as exc:
+            issue = str(exc)
+    skeleton = character.skeleton if character else relative
+    references, idle, config = discover_animations(
+        skeleton, index, preferred_workspace=workspace,
+        loose_index=animation_index)
+    geometry = prepare_geometry(mesh, shading='faceted')
+    return {
+        'raw':raw, 'report':report, 'mesh':mesh, 'materials':materials,
+        'character':character, 'index':index,'geometry':geometry,
+        'animation':(references,idle,config),
+        'materials_error':issue, 'assembly_error':assembly_error,
+    }
