@@ -506,13 +506,9 @@ class QtWorkspaceEditor(QMainWindow):
         self._capture_playback_preferences()
         if self._dirty():
             return
-        selected={}
-        for section,tree in self.trees.items():
-            items=tree.selectedItems()
-            if items:
-                relative=items[0].data(0,Qt.UserRole)
-                if relative in self.records:
-                    selected[section]=relative
+        selected = ({self.mode: self.current}
+                    if self.current in self.records and self.mode in self.TABS
+                    else {})
         camera={}
         if self.model_gpu is not None:
             camera={'rotation':list(self.model_gpu.rotation),
@@ -544,25 +540,26 @@ class QtWorkspaceEditor(QMainWindow):
             if name in self.splitters:
                 self.splitters[name].setSizes(pair)
         self._restored_camera=session.get('camera',{})
-        for name,relative in session.get('selected',{}).items():
-            tree=self.trees[name]
-            it=QTreeWidgetItemIterator(tree)
+        selected = session.get('selected', {})
+        tab = session.get('tab', 0)
+        choice = selected.get(self.TABS[tab]) if 0 <= tab < len(self.TABS) else None
+        if choice not in self.records:
+            choice = next((r for r in selected.values() if r in self.records), None)
+        self._restored_camera = session.get('camera', {})
+        if choice is not None:
+            it = QTreeWidgetItemIterator(self.file_tree)
             while it.value():
-                item=it.value()
-                if item.data(0,Qt.UserRole)==relative:
-                    tree.blockSignals(True)
-                    tree.setCurrentItem(item)
-                    tree.blockSignals(False)
+                item = it.value()
+                if item.data(0, Qt.UserRole) == choice:
+                    self.file_tree.blockSignals(True)
+                    self.file_tree.setCurrentItem(item)
+                    self.file_tree.blockSignals(False)
                     break
-                it+=1
-        tab=session.get('tab',0)
-        self.tabs.setCurrentIndex(tab)
-        relative=session.get('selected',{}).get(self.TABS[tab])
-        if relative in self.records:
+                it += 1
             try:
-                self.load(relative)
-            except (ValueError,OSError) as error:
-                self.status.setText('Could not restore last file: '+str(error)[:160])
+                self.load(choice)
+            except (ValueError, OSError) as error:
+                self.status.setText('Could not restore last file: ' + str(error)[:160])
 
     def inspect_blender_export(self):
         if self.mode!='models' or self.mesh is None or not self.current:
@@ -863,62 +860,75 @@ class QtWorkspaceEditor(QMainWindow):
         return 'files'
 
     def populate(self):
+        """One searchable PAK tree; entries open the matching viewer on click."""
         started = time.perf_counter()
         needle = self.search.text().casefold()
-        for section, tree in self.trees.items():
-            tree.blockSignals(True)
+        tree = self.file_tree
+        prior = tree.currentItem()
+        previous = prior.data(0, Qt.UserRole) if prior is not None else None
+        tree.blockSignals(True)
+        try:
             tree.clear()
             folders = {}
             entries = [rel for rel in sorted(self.records, key=str.casefold)
-                       if self._category(rel) == section and needle in rel.casefold()
-                       and (not self.favorites_only.isChecked()
-                            or str(self.workspace)+'|'+rel in self.favorites)]
-            if section == 'images':
-                first = {}
-                for rel in entries:
-                    if is_split_dds(rel):
-                        base, suffix = rel.rsplit('.', 1)
-                        first[base.casefold()] = min(first.get(base.casefold(), 99),
-                                                     int(suffix))
-                entries = [rel for rel in entries if not is_split_dds(rel)
-                           or int(rel.rsplit('.', 1)[1]) == first[rel.rsplit('.', 1)[0].casefold()]]
+                       if needle in rel.casefold() and
+                       (not self.favorites_only.isChecked()
+                        or str(self.workspace) + '|' + rel in self.favorites)]
+            first = {}
+            for rel in entries:
+                if is_split_dds(rel):
+                    base, suffix = rel.rsplit('.', 1)
+                    first[base.casefold()] = min(first.get(base.casefold(), 99),
+                                                 int(suffix))
+            entries = [rel for rel in entries if not is_split_dds(rel) or
+                       int(rel.rsplit('.', 1)[1]) ==
+                       first[rel.rsplit('.', 1)[0].casefold()]]
+            restored = None
             for rel in entries:
                 parent = None
                 parts = rel.split('/')
                 for i, part in enumerate(parts[:-1]):
-                    key = '/'.join(parts[:i+1])
+                    key = '/'.join(parts[:i + 1])
                     if key not in folders:
-                        folder = QTreeWidgetItem([part,'',''])
-                        if parent:
+                        folder = QTreeWidgetItem([part, ''])
+                        folder.setToolTip(0, key)
+                        if parent is not None:
                             parent.addChild(folder)
                         else:
                             tree.addTopLevelItem(folder)
                         folders[key] = folder
                     parent = folders[key]
-                key = str(self.workspace)+'|'+rel
+                key = str(self.workspace) + '|' + rel
                 symbol = '★ ' if key in self.favorites else ''
-                path = self.workspace/'files'/rel
+                path = self.workspace / 'files' / rel
                 try:
-                    from datetime import datetime
                     stat = path.stat()
-                    size = ('%.1f MiB'%(stat.st_size/1048576)
-                            if stat.st_size>1048576 else
-                            '%.0f KiB'%(stat.st_size/1024))
-                    modified = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d')
+                    size = ('%.1f MiB' % (stat.st_size / 1048576)
+                            if stat.st_size > 1048576 else
+                            '%.0f KiB' % (stat.st_size / 1024))
                 except OSError:
-                    size,modified = 'Missing',''
-                item = QTreeWidgetItem([symbol+parts[-1],size,modified])
+                    size = 'Missing'
+                category = self._category(rel)
+                item = QTreeWidgetItem([symbol + parts[-1], size])
                 item.setData(0, Qt.UserRole, rel)
-                if parent:
+                item.setToolTip(0, category.title() + ' • ' + rel)
+                if parent is not None:
                     parent.addChild(item)
                 else:
                     tree.addTopLevelItem(item)
+                if rel == previous:
+                    restored = item
+            if restored is not None:
+                tree.setCurrentItem(restored)
+            if needle:
+                tree.expandAll()
+            self.explorer_count.setText(str(len(entries)) + ' files')
+        finally:
             tree.blockSignals(False)
-        self.last_populate_ms = round((time.perf_counter() - started)*1000,3)
+        self.last_populate_ms = round((time.perf_counter() - started) * 1000, 3)
 
     def selected(self):
-        section = self.TABS[self.tabs.currentIndex()]
-        items = self.trees[section].selectedItems()
+        items = self.file_tree.selectedItems()
         if not items:
             raise ValueError('Choose an extracted file first.')
         rel = items[0].data(0, Qt.UserRole)
@@ -944,6 +954,13 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(str(exc))
 
     def load(self, rel):
+        if rel not in self.records:
+            raise ValueError('This file is no longer in the extracted PAK.')
+        # The internal pages are selected by file type; their tab bar is hidden.
+        target_mode = self._category(rel)
+        self.tabs.setCurrentIndex(self.TABS.index(target_mode))
+        self.current_file_label.setText(rel)
+        self.current_file_label.setToolTip(rel)
         if rel != self.current:
             self._capture_playback_preferences()
         if rel != self.current:
@@ -1250,6 +1267,9 @@ class QtWorkspaceEditor(QMainWindow):
         self.manager.output_pak = ''
         self.manager.persist()
         self.populate()
+        self.current_file_label.setText('Select a file from ' + name)
+        self.tabs.setCurrentIndex(0)
+        self.views['files'].clear()
         QTimer.singleShot(0,self._restore_project_session)
         self.status.setText('Browsing ' + name + ' | Build Mod applies only to this PAK.')
 
@@ -1409,15 +1429,14 @@ class QtWorkspaceEditor(QMainWindow):
             QMessageBox.critical(self, 'Export failed', str(exc))
 
     def show_context_menu(self, section, position):
-        tree = self.trees[section]
+        tree = self.file_tree
         item = tree.itemAt(position)
-        if item is None:
+        if item is None or not item.data(0, Qt.UserRole):
             return
         tree.setCurrentItem(item)
-        if not item.data(0, Qt.UserRole):
-            return
+        section = self._category(item.data(0, Qt.UserRole))
         menu = QMenu(tree)
-        menu.addAction('Preview / Open', lambda: self.load(self.selected()))
+        menu.addAction('Preview / Open', self.load_selection)
         menu.addAction('Toggle Favorite ★', self.toggle_favorite)
         menu.addAction('Project History & Undo…', self.open_project_history)
         menu.addAction('Import Over / Replace', self.import_raw)
