@@ -2130,6 +2130,16 @@ class QtWorkspaceEditor(QMainWindow):
                     if record.get('archives'):
                         lines.append('     PAKs: ' +
                                      ', '.join(record['archives'][:4]))
+                    for physical in record.get('physical_paths', ())[:4]:
+                        lines.append('     On disk: ' + physical)
+                    fragments = record.get('stream_parts') or ()
+                    if fragments:
+                        lines.append('     DDS fragments: %d indexed part(s)' %
+                                     len(fragments))
+                        for frag in fragments[:16]:
+                            lines.append(
+                                '       .%d  %s | %s' %
+                                (frag['part'], frag['archive'], frag['physical']))
             if self.materials and self.materials.issues:
                 lines.append('\nMaterial decode issues:')
                 lines.extend('  ' + issue for issue in self.materials.issues[:16])
