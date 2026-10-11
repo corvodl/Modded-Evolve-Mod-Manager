@@ -40,6 +40,30 @@ class NativeCafTests(unittest.TestCase):
         self.assertEqual(len(ctrl.rotations[0]),4)
         self.assertEqual(animation.fps,30.)
 
+    def test_evolve_rotation_only_chunk_has_no_trailing_padding(self):
+        # A large fraction of Evolve controllers are exactly 30 bytes:
+        # 16 byte header + 12 compressed quat bytes + 2 frame bytes.
+        largest_w = 3 << 46
+        middle = round(.707106781186 * 23170)
+        packed = (largest_w | middle | (middle<<15) | (middle<<30))
+        q = packed.to_bytes(6,'little')
+        header = struct.pack('<IHHBBBBBBH',
+            zlib.crc32(b'root'),2,0,5,2,0,0,0,1,0)
+        source = crchf([(0x0829100d, header+q+q+b'\\x00\\x01')])
+        track = decode_caf(source).tracks[0]
+        self.assertEqual(len(track.rotations),2)
+        self.assertEqual(track.position_times,())
+        self.assertEqual(track.rotation_times,(0.,1.))
+
+    def test_position_only_chunk_and_independent_times(self):
+        header = struct.pack('<IHHBBBBBBH',
+            zlib.crc32(b'root'),0,2,0,0,2,1,2,1,0)
+        source = crchf([(0x0829100d,header +
+            struct.pack('<6f',0,0,0,.1,0,0) + b'\\x00\\x01')])
+        track = decode_caf(source).tracks[0]
+        self.assertEqual(track.rotation_times,())
+        self.assertEqual(track.position_times,(0.,1.))
+
     def test_corrupt_tracks_fail_closed(self):
         raw = synthetic_caf()
         with self.assertRaises(ValueError):
