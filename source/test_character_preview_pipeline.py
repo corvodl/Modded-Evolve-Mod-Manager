@@ -93,10 +93,19 @@ class CharacterPipelineTests(unittest.TestCase):
                     Binding="characters/hunters/merc_tech/techpistol_3p.skin"/>
                 <Attachment Type="CA_SKIN" AName="rifle"
                     Binding="characters/hunters/merc_tech/techbansheegun_3p.skin"/>
-              </AttachmentList></CharacterDefinition>''')
+                <Attachment Type="CA_SKIN" AName="riftdevice"
+                    Binding="characters/hunters/merc_tech/techriftdevice_3p.skin"/>
+                <Attachment Type="CA_SKIN" AName="riftdevicearm"
+                    Binding="characters/hunters/merc_tech/techriftdevicearm_3p.skin"/>
+              </AttachmentList>
+              <SkinSets><SkinSet name="HiddenWhenRiftDeviceSelected">
+                <skin name="pistol"/><skin name="rifle"/>
+              </SkinSet></SkinSets>
+              </CharacterDefinition>''')
             index = {prefix+'tech_3p.cdf':
                 [{'workspace':root,'file':cdf,'relative':prefix+'tech_3p.cdf'}]}
-            for name in ('tech_3p.skinm','techpistol_3p.skinm','techbansheegun_3p.skinm'):
+            for name in ('tech_3p.skinm','techpistol_3p.skinm','techbansheegun_3p.skinm',
+                         'techriftdevice_3p.skinm','techriftdevicearm_3p.skinm'):
                 file = root/name
                 file.write_bytes(b'stub')
                 index[prefix+name] = [{
@@ -110,11 +119,15 @@ class CharacterPipelineTests(unittest.TestCase):
                 body = assemble_character(root, prefix+'tech_3p.skinm', index)
                 selected = assemble_character(
                     root, prefix+'techpistol_3p.skinm', index)
+                device = assemble_character(
+                    root, prefix+'tech_3p.skinm', index,
+                    equipment=prefix+'techriftdevice_3p.skin')
             self.assertEqual(('body','pistol'), body.included)
             self.assertEqual(('body','pistol'), selected.included)
             self.assertEqual('characters/hunters/merc_tech/techpistol_3p.skin', selected.selected_equipment)
             self.assertEqual(2, len(selected.mesh.triangles))
             self.assertFalse(any('rifle' in name for name in selected.included))
+            self.assertEqual(('body','riftdevice','riftdevicearm'), device.included)
 
 
 if __name__ == '__main__':
