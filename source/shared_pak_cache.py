@@ -23,6 +23,10 @@ SHARED_NAMES = frozenset({
     "characters_creatures_shared_data.pak",
     "characters_creatures_shared_ts.pak",
 })
+ANIMATION_ARCHIVE_NAMES = frozenset({"animationscaf.pak", "animationsconfig.pak", "animationsdba.pak"})
+REFERENCE_ARCHIVES = SHARED_NAMES | ANIMATION_ARCHIVE_NAMES
+
+
 MAX_ENTRIES = 150000
 MAX_ASSET_BYTES = 64 * 1024 * 1024
 MAX_CACHE_BYTES = 512 * 1024 * 1024
@@ -57,7 +61,7 @@ class SharedCatalog:
         self.stage = Path(stage).resolve()
         self.cache_root = Path(cache_root).resolve()
         self.key = Path(key).resolve()
-        self.archive_names = SHARED_NAMES if archive_names is None else frozenset(n.casefold() for n in archive_names)
+        self.archive_names = REFERENCE_ARCHIVES if archive_names is None else frozenset(n.casefold() for n in archive_names)
         self.archives = []
         self.index = defaultdict(list)
         self._read_lock = threading.RLock()
