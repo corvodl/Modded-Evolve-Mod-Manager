@@ -4,6 +4,10 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.17.1', (
+        'Add a Windows installer with optional Desktop and Start Menu shortcuts.',
+        'Compare Stable and Beta releases and offer only the newest version.',
+    )),
     ('1.1.17', (
         'Speed up model preparation and improve material rendering reliability.',
         'Validate Blender exports and restore model, animation and editor settings.',
