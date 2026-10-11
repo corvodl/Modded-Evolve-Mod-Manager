@@ -36,10 +36,23 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM='windows'
-          & '.build/app-dist/EvolveModManager/EvolveModManager.exe' --capture-screenshot 'dist/EvolveModManager-compiled-screenshot.png'
-          if ($LASTEXITCODE -ne 0) { throw 'Beta manager screenshot failed.' }
-          & '.build/app-dist/EvolveModManager/EvolveModManager.exe' --capture-modding-screenshot 'dist/EvolveModManager-Modding-screenshot.png'
-          if ($LASTEXITCODE -ne 0) { throw 'Beta modding screenshot failed.' }
+          function Capture-CompiledApp([string]$Mode,[string]$Destination) {
+            $exe=(Resolve-Path '.build/app-dist/EvolveModManager/EvolveModManager.exe').Path
+            $work=Split-Path -Path $exe -Parent
+            $process=Start-Process -FilePath $exe -ArgumentList @($Mode,$Destination) -WorkingDirectory $work -PassThru
+            if (-not $process.WaitForExit(60000)) {
+              $process.Kill()
+              $process.WaitForExit(10000) | Out-Null
+              $log=Join-Path $env:LOCALAPPDATA 'EvolveModManagerQtPreview/startup.log'
+              if (Test-Path $log) { Get-Content $log -Tail 70 }
+              throw "Compiled Beta UI capture timed out: $Mode"
+            }
+            if ($process.ExitCode -ne 0 -or !(Test-Path -LiteralPath $Destination)) {
+              throw "Compiled Beta UI capture failed: $Mode exit $($process.ExitCode)"
+            }
+          }
+          Capture-CompiledApp '--capture-screenshot' 'dist/EvolveModManager-compiled-screenshot.png'
+          Capture-CompiledApp '--capture-modding-screenshot' 'dist/EvolveModManager-Modding-screenshot.png'
           $channel=(Get-Content '.build/app-dist/EvolveModManager/BUILD_CHANNEL.txt' -Raw).Trim()
           if ($channel -ne 'beta') { throw "Unexpected executable channel: $channel" }
           Add-Type -AssemblyName System.IO.Compression
