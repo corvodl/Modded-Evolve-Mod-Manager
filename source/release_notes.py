@@ -4,6 +4,12 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.3', (
+        'Simplify the Modding page with File, Edit, View, Tools and Help menus.',
+        'Group related PAKs and extract recognized companion archives together.',
+        'Open level archives directly in the Level Editor, including Evolve mission XML levels.',
+        'Display map layer names and group placed entities in the World Outliner.',
+    )),
     ('1.1.18-beta.2', (
         'Add a permanent extracted PAK Asset Library with custom archive imports.',
         'Improve animation asset lookup and simplify the model editor explorer.',
