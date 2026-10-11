@@ -37,7 +37,12 @@ def model_cache_key(workspace, relative, *, projects_root=None, stage_root=None,
     if not path.is_relative_to((root/'files').resolve()):
         raise ValueError('Unsafe model path')
     stat = path.stat()
-    manifest = (root/'.evolve-pak-workspace.json').stat()
+    # Editable projects use the signing workspace manifest; imported
+    # read-only Asset Library PAKs use their own distinct manifest.
+    manifest_path = root / '.evolve-pak-workspace.json'
+    if not manifest_path.is_file():
+        manifest_path = root / 'asset-library.json'
+    manifest = manifest_path.stat()
     def folder_marker(folder):
         if not folder:
             return None
