@@ -177,6 +177,7 @@ def resolve_caf_for_play(reference, *, stage_root, game_root=None,
     if candidate is not None and caf_header(candidate):
         return replace(reference, available=True, file=candidate), False, "preview cache"
     names = _scoped_archives(stage_root, virtual, game_root)
+    from cryptography.exceptions import InvalidSignature
     errors = []
     for original in (False, True):
         try:
@@ -187,8 +188,8 @@ def resolve_caf_for_play(reference, *, stage_root, game_root=None,
             if path is not None:
                 return (replace(reference, available=True, file=path), True,
                         "original game PAK" if original else "staged signed PAK")
-        except (OSError, ValueError, RuntimeError) as exc:
-            errors.append(str(exc)[:180])
+        except (OSError, ValueError, RuntimeError, InvalidSignature) as exc:
+            errors.append((str(exc) or 'archive signature mismatch')[:180])
     message = ("The exact CAF was not found in verified animation / character "
                "PAKs. Check the installed EvolveGame and selected animation folder.")
     if errors:
