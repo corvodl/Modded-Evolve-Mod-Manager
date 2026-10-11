@@ -2427,18 +2427,23 @@ class QtManager(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
-    family = ensure_readable_ui_font(app, strict=('--capture-screenshot' in sys.argv))
-    if '--capture-screenshot' in sys.argv:
+    capture_mode = next((flag for flag in
+        ('--capture-modding-screenshot','--capture-screenshot')
+        if flag in sys.argv),None)
+    family = ensure_readable_ui_font(app, strict=bool(capture_mode))
+    if capture_mode:
         if not glyphs_readable(app.font()):
             raise RuntimeError('Qt screenshot would have unreadable font glyphs.')
         print('Real Qt font rasterization verified:', family, flush=True)
     main_window = QtManager()
     main_window.show()
-    if '--capture-screenshot' in sys.argv:
+    if capture_mode:
+        if capture_mode == '--capture-modding-screenshot':
+            main_window.open_page(SECTIONS.index('Modding'))
         try:
-            destination = Path(sys.argv[sys.argv.index('--capture-screenshot') + 1])
+            destination = Path(sys.argv[sys.argv.index(capture_mode) + 1])
         except (IndexError, ValueError):
-            raise SystemExit('--capture-screenshot requires a PNG path')
+            raise SystemExit(capture_mode + ' requires a PNG path')
         def capture():
             destination.parent.mkdir(parents=True, exist_ok=True)
             image = main_window.grab()  # the live Qt Windows-rendered widget
