@@ -38,13 +38,17 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
         assembly_error = str(exc)
     mesh = (character.mesh if character else
             find_preview_mesh(workspace, relative, raw,
-                              projects_root=projects_root, stage_root=stage_root))
+                              projects_root=projects_root, stage_root=stage_root,
+                              index=index))
     materials = character.materials if character else None
     issue = ''
     if materials is None:
         try:
+            source_material_model = (
+                relative if str(mesh.source_name).startswith('Character assembly:')
+                else (mesh.source_name or relative))
             materials = load_preview_materials(
-                workspace, mesh.source_name or relative, texture_folder,
+                workspace, source_material_model, texture_folder,
                 projects_root=projects_root, stage_root=stage_root,index=index)
         except (ValueError, OSError) as exc:
             issue = str(exc)
