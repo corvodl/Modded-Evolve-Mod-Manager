@@ -87,7 +87,7 @@ class DeveloperLabPanel(QWidget):
         self._entity_ui()
         self._trace_ui()
         from qt_game_events import GameEventsPanel
-        self.events_panel = GameEventsPanel(self)
+        self.events_panel = GameEventsPanel(self, game_root_provider=self.game_root_provider)
         self.tabs.addTab(self.events_panel, 'Game Events')
 
     def _memory_ui(self):
@@ -644,6 +644,7 @@ class DeveloperLabPanel(QWidget):
 
     def stop(self):
         self.entity_timer.stop()
+        self.events_panel.stop()
         self.stop_local_service()
         self._closed=True
         self._generation+=1
