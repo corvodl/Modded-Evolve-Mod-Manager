@@ -71,21 +71,26 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIn('Restore original game files',
             ' '.join(widget.text() for widget in
                      self.win.pages['instructions'].findChildren(QLabel)))
-        self.assertEqual(self.win.table.columnCount(),5)
+        self.assertEqual(self.win.table.columnCount(),6)
         self.assertEqual([self.win.table.horizontalHeaderItem(i).text()
-                          for i in range(5)],
-                         ['Folder','Description','File','Type / Project','Size'])
+                          for i in range(6)],
+                         ['Dependency Group','Folder','Description','File',
+                          'Type / Project','Size'])
         self.assertEqual(self.win.file_filter.count(),3)
         self.assertTrue(self.win.version_label.text().startswith('v'))
 
     def test_complete_manager_controls_present_not_hidden_by_redesign(self):
         names = [button.text() for button in self.win.findChildren(QPushButton)]
+        names += [action.text() for group in self.win.modding_menu.actions()
+                  for action in group.menu().actions()
+                  if not action.isSeparator()]
         required = [
             'Help','Activity','Set Up Manager','Get Evolve Stage 2  ↗',
-            'Go to Modding  →','Refresh','External PAK…',
-            'Unpack PAK','Unpack Selected PAKs','Edit Files','Review Changes',
+            'Go to Modding  →','Refresh','Import External PAK…',
+            'Unpack PAK + known dependencies',
+            'Unpack selected PAKs + dependencies','Edit Files','Review Changes',
             'Build Mod','Add Mod','Import Modified PAK','Undo Staged Mod',
-            'Mod Profiles',
+            'Mod Profiles…',
             'Play With Mods','Restore Game Files',
             'Status Details','Set Up Launcher','Refresh Original PAKs',
             'Check Setup','Open Projects','Save Settings','Check for Updates',
@@ -122,7 +127,7 @@ class QtMigrationTests(unittest.TestCase):
     def test_hover_information_icons_explain_actions_without_extra_pages(self):
         for section in ('modding', 'play', 'settings'):
             icons = self.win.pages[section].findChildren(QToolButton, 'infoIcon')
-            self.assertGreaterEqual(len(icons), {'modding':8,'play':5,'settings':2}[section])
+            self.assertGreaterEqual(len(icons), {'modding':0,'play':5,'settings':2}[section])
             for widget in icons:
                 self.assertEqual(widget.text(), 'i')
                 self.assertGreater(len(widget.toolTip()), 35)
@@ -152,11 +157,16 @@ class QtMigrationTests(unittest.TestCase):
         self.assertEqual(self.win.stack.width(),width)
 
     def test_info_click_opens_help_without_triggering_adjacent_action(self):
-        icon = self.win.pages['modding'].findChildren(QToolButton, 'infoIcon')[0]
-        with patch('qt_manager.QMessageBox.information') as info, \
+        # The compact Modding page routes help through a menu, rather than
+        # eight large inline buttons with separate info icon columns.
+        help_menu = next(x.menu() for x in self.win.modding_menu.actions()
+                         if x.text() == 'Help')
+        action = next(x for x in help_menu.actions()
+                      if x.text() == 'Modding Help')
+        with patch.object(self.win, 'show_help') as help_dialog, \
              patch.object(self.win, 'run_steps') as run:
-            icon.click()
-            info.assert_called_once_with(self.win, 'Information', icon.toolTip())
+            action.trigger()
+            help_dialog.assert_called_once_with(0)
             run.assert_not_called()
 
     def test_whats_new_is_available_offline_and_matches_public_notes(self):
