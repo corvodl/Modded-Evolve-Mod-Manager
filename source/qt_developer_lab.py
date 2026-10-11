@@ -21,6 +21,8 @@ from developer_network_lab import (parse_log_file,tcp_connections_for_pid,
  parse_protocol_fixture, simulate_network_conditions,loopback_service_probe,
  compare_session_events)
 from developer_support_lab import create_support_archive,discover_logs
+from developer_diagnostics_116 import (make_watch_profile, resolve_watch_profile,
+    process_build, relay_timeline, run_private_scenario)
 
 
 class _AsyncSignals(QObject):
@@ -146,6 +148,7 @@ class DeveloperLabPanel(QWidget):
         actions.addWidget(button('Inspect Evolve TCP Connections',self.tcp))
         actions.addWidget(button('Open Relay Log…',self.open_log))
         actions.addWidget(button('Compare Two Logs…',self.compare_logs))
+        actions.addWidget(button('Timeline Multiple Logs…',self.timeline_logs))
         layout.addLayout(actions)
         local=QHBoxLayout()
         self.port=QLineEdit('8080')
@@ -156,6 +159,7 @@ class DeveloperLabPanel(QWidget):
         protocol=QHBoxLayout()
         protocol.addWidget(button('Open Protocol Fixture…',self.fixture))
         protocol.addWidget(button('Simulate Network Conditions',self.simulate))
+        protocol.addWidget(button('Run Private Scenario…',self.private_scenario))
         layout.addLayout(protocol)
         self.latency=QSlider()
         self.latency.setOrientation(Qt.Horizontal)
@@ -202,6 +206,8 @@ class DeveloperLabPanel(QWidget):
         actions.addWidget(button('Stop',self.entity_timer.stop))
         actions.addWidget(button('Compare with XML…',self.compare_xml_values))
         actions.addWidget(button('Export Events…',self.export_entity_events))
+        actions.addWidget(button('Save Watch Profile…',self.save_watch_profile))
+        actions.addWidget(button('Load Watch Profile…',self.load_watch_profile))
         layout.addLayout(actions)
         self.entity_output=QPlainTextEdit()
         self.entity_output.setReadOnly(True)
@@ -224,6 +230,42 @@ class DeveloperLabPanel(QWidget):
                 '%d typed watches configured.'%len(self.entity_watches))
         except (OSError,ValueError) as exc:
             self.entity_output.setPlainText(str(exc))
+
+    def save_watch_profile(self):
+        try:
+            if not self.entity_watches:
+                raise ValueError('Add at least one typed module-relative watch first.')
+            from developer_memory_inspector import list_modules
+            pid=self._pid()
+            profile=make_watch_profile(self.entity_watches,process_build(pid),list_modules(pid))
+            path,_=QFileDialog.getSaveFileName(self,'Save build-checked watch profile',
+                  'Evolve-Memory-Watches.json','JSON (*.json)')
+            if path:
+                Path(path).write_text(json.dumps(profile,indent=2),encoding='utf-8')
+                self.entity_output.setPlainText('Profile saved with an Evolve.exe build fingerprint.')
+        except (OSError,ValueError,PermissionError) as exc:
+            self.entity_output.setPlainText('Could not save watch profile: '+str(exc))
+
+    def load_watch_profile(self):
+        path,_=QFileDialog.getOpenFileName(self,'Load build-checked watch profile','',
+                  'JSON (*.json)')
+        if not path:
+            return
+        try:
+            from developer_memory_inspector import list_modules
+            file=Path(path)
+            if file.stat().st_size>256*1024:
+                raise ValueError('Watch profile exceeds 256 KiB.')
+            pid=self._pid()
+            restored=resolve_watch_profile(json.loads(file.read_text('utf-8')),
+                                process_build(pid),list_modules(pid))
+            self.entity_timer.stop()
+            self.entity_watches=list(restored)
+            self.entity_history.clear()
+            self.entity_output.setPlainText('%d module-relative watches loaded and build-checked. '
+                'Recorder remains stopped; start explicitly to sample live values.'%len(restored))
+        except (OSError,ValueError,PermissionError,TypeError) as exc:
+            self.entity_output.setPlainText('Profile rejected: '+str(exc))
 
     def start_entity_recorder(self):
         try:
@@ -479,6 +521,31 @@ class DeveloperLabPanel(QWidget):
                 self.network_output.setPlainText(json.dumps(report,indent=2))
             except (OSError,ValueError) as exc:
                 self.network_output.setPlainText(str(exc))
+
+    def timeline_logs(self):
+        paths,_=QFileDialog.getOpenFileNames(self,'Choose diagnostic logs to correlate','',
+                                             'Logs (*.log *.txt)')
+        if not paths:
+            return
+        try:
+            result=relay_timeline(paths)
+            self.network_output.setPlainText(json.dumps(result,indent=2))
+        except (OSError,ValueError) as exc:
+            self.network_output.setPlainText('Timeline failed: '+str(exc))
+
+    def private_scenario(self):
+        path,_=QFileDialog.getOpenFileName(self,'Choose offline scenario JSON','',
+                                           'JSON (*.json)')
+        if not path:
+            return
+        try:
+            source=Path(path)
+            if source.stat().st_size>1024*1024:
+                raise ValueError('Scenario exceeds 1 MiB.')
+            report=run_private_scenario(json.loads(source.read_text('utf-8')))
+            self.network_output.setPlainText(json.dumps(report,indent=2))
+        except (OSError,ValueError,TypeError) as exc:
+            self.network_output.setPlainText('Offline scenario rejected: '+str(exc))
 
     def start_local_service(self):
         try:
