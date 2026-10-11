@@ -142,6 +142,26 @@ class ExtractedAssetLibraryTests(TestCase):
         with self.assertRaisesRegex(ValueError, "missing or damaged"):
             lib.import_pak(self.source, root=self.library, extra_keys=[self.key])
 
+    def test_skip_only_complete_asset_library_companion_extractions(self):
+        # Filename alone is not enough: source must match the staged PAK's
+        # relative Game path and every imported file must be intact.
+        imported = self.game / "Game" / self.source.name
+        imported.parent.mkdir(parents=True, exist_ok=True)
+        imported.write_bytes(self.source.read_bytes())
+        with patch("evolve_pak_rekey.extract_plain_cdr",
+                   return_value=(self.info, b"", b"", imported.name)), \
+             patch("evolve_gameplay_editor.decrypt_entry",
+                   side_effect=lambda source, info, entry: self.data[entry]):
+            lib.import_pak(imported, root=self.library, extra_keys=[self.key])
+        rel = "Game/" + imported.name
+        self.assertEqual(lib.covered_stage_archives(
+            (rel, "Game/unrelated.pak"), root=self.library), {rel})
+        # An archive from a different directory or changed/incomplete
+        # extraction cannot satisfy a signed stage's companion PAK.
+        rows = lib.extracted_index(self.library)
+        next(iter(rows.values()))[0]["file"].unlink()
+        self.assertEqual(lib.covered_stage_archives((rel,), root=self.library), set())
+
     def test_discovery_only_nine_game_defaults(self):
         (self.game / "bin64_SteamRetail").mkdir()
         (self.game / "bin64_SteamRetail" / "Evolve.exe").write_bytes(b"fixture")
