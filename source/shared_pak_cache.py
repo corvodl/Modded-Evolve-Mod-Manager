@@ -435,7 +435,7 @@ def materialize_shared_record(record):
     if catalog is not None and any(item is archive for item in catalog.archives):
         return catalog.materialize(record)
     with _lock:
-        owners = tuple(_scoped_catalogs.values())
+        owners = tuple(_scoped_catalogs.values()) + ((_installed,) if _installed is not None else ())
     for owner in owners:
         if any(item is archive for item in owner.archives):
             return owner.materialize(record)
