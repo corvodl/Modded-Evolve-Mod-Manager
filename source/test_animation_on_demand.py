@@ -94,6 +94,32 @@ class OnDemandCAFs(unittest.TestCase):
         decrypt.assert_not_called()
         cdr.assert_not_called()
 
+    def test_invalid_staged_signature_falls_back_to_original_public_key(self):
+        from cryptography.exceptions import InvalidSignature
+        staged = self.stage / 'paks' / 'Game' / ANIM_PAK
+        staged.parent.mkdir(parents=True)
+        staged.write_bytes(b'custom archive with mismatched key')
+        custom_key = self.stage / 'mykeys' / 'public_key.bin'
+        custom_key.parent.mkdir(parents=True)
+        custom_key.write_bytes(b'different stage key')
+        reference = AnimationReference('stand_idle', VIRTUAL, 'caf', False)
+
+        def signed_directory(path, public_key):
+            if public_key == custom_key:
+                raise InvalidSignature()
+            return self.info, b'', b'', ANIM_PAK
+
+        with patch('universal_stage.allowed_paks',
+                   return_value={'Game/' + ANIM_PAK: 'Game/' + ANIM_PAK}), \\
+             patch('evolve_pak_rekey.extract_plain_cdr',
+                   side_effect=signed_directory), \\
+             patch('evolve_gameplay_editor.decrypt_entry', return_value=HEADER):
+            resolved, extracted, origin = demand.resolve_caf_for_play(
+                reference, stage_root=self.stage, game_root=self.game)
+        self.assertTrue(extracted)
+        self.assertEqual(origin, 'original game PAK')
+        self.assertTrue(resolved.available)
+
     def test_missing_caf_is_not_silently_substituted(self):
         other = AnimationReference("not_present",
                                    VIRTUAL.replace("stand_idle", "not_real"),
