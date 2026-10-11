@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.7', (
+        'Keep the editor PAK selector in sync with the active project.',
+        'Recover more cross-PAK character textures from the Asset Library.',
+        'Clarify missing standalone CAFs versus potentially DBA-packed animations.',
+    )),
     ('1.1.18-beta.6', (
         'Group character model variants into expandable families without hiding original files.',
         'Improve persistent Asset Library texture and game animation lookup.',
