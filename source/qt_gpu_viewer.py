@@ -61,6 +61,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.normal_textures = []
         self.specular_textures = []
         self.translucent_slots = set()
+        self._batch_sort_cache = None
         self.enhanced_materials = True
         self._renderer3 = None
         self.rotation = [-30.0, 14.0]
@@ -85,6 +86,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         # uploaded until an unrelated OpenGL context reinitialization.
         self.mesh = mesh
         self.geometry = geometry
+        self._batch_sort_cache = None
         self.materials = materials
         if self.isValid():
             self.makeCurrent()
@@ -141,6 +143,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         if self.shading != value:
             self.shading = value
             self.geometry = prepare_geometry(self.mesh, shading=value)
+            self._batch_sort_cache = None
             self.update()
 
     def set_animated_vertices(self, frame):
@@ -197,6 +200,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                     pass
             setattr(self,name,[])
         self.translucent_slots = set()
+        self._batch_sort_cache = None
 
     def _upload_textures(self):
         import time
@@ -335,9 +339,14 @@ class QtGLModelCanvas(QOpenGLWidget):
                 return slot in self.translucent_slots or (slot<len(values) and values[slot]<.999)
             from renderer_3 import ordered_transparency_batches
             transparent_slots={slot for _,_,slot in arrays.draws if is_translucent(slot)}
-            batches = ordered_transparency_batches(
-                arrays.draws,arrays.indices,arrays.vertices,
-                transparent_slots,self.rotation)
+            order_key=(id(arrays),tuple(self.rotation),tuple(sorted(transparent_slots)))
+            if self._batch_sort_cache is None or self._batch_sort_cache[0]!=order_key:
+                batches=ordered_transparency_batches(
+                    arrays.draws,arrays.indices,arrays.vertices,
+                    transparent_slots,self.rotation)
+                self._batch_sort_cache=(order_key,batches)
+            else:
+                batches=self._batch_sort_cache[1]
             for first,count,slot in batches:
                 if self.visible_material_slot is not None and slot != self.visible_material_slot:
                     continue
