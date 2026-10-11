@@ -104,3 +104,33 @@ class Renderer3:
         if self.program:
             glDeleteProgram(self.program)
             self.program = 0
+
+
+def ordered_transparency_batches(draws, indices, vertices, translucent_slots,
+                                 rotation):
+    """Opaque first; translucent subsets approximate back-to-front camera depth.
+
+    Sorting is per submesh, not per triangle. It is deterministic and preserves
+    valid original material slot/index ordering within opaque groups.
+    """
+    import math
+    import numpy as np
+    angle, tilt=(math.radians(float(rotation[0])),
+                 math.radians(float(rotation[1])))
+    axis=np.asarray((-math.sin(angle)*math.sin(tilt),
+                     math.cos(angle)*math.sin(tilt),math.cos(tilt)),dtype=float)
+    opaque, transparent=[],[]
+    for first,count,slot in draws:
+        row=(first,count,slot)
+        if slot not in translucent_slots:
+            opaque.append(row)
+            continue
+        selection=np.asarray(indices[first:first+count],dtype=np.int64)
+        if not len(selection):
+            depth=0.
+        else:
+            center=np.asarray(vertices,dtype=float)[selection].mean(axis=0)
+            depth=float(np.dot(center,axis))
+        transparent.append((depth,row))
+    transparent.sort(key=lambda item:item[0])
+    return opaque+[row for _,row in transparent]
