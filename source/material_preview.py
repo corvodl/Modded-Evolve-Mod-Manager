@@ -204,7 +204,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             result.append(None)
     if not any(x is not None for x in result):
         detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
-        raise ValueError('No usable diffuse DDS textures: ' + detail +
+        raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],tuple(issues))
 
