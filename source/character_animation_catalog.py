@@ -229,6 +229,50 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
                                                 item.kind, False))
         else:
             confirmed.append(item)
+    # CryEngine animation maps often declare blend spaces through glob entries
+    # (for example */bs_*.bspace). Expose exact indexed definitions as graph
+    # metadata without mislabelling them as directly playable CAF clips.
+    from fnmatch import fnmatchcase
+    import re as _re
+    try:
+        config_xml = _xml(Path(config_file).read_bytes())
+        raw_mappings = config_xml.findall('./AnimationList/Animation')
+    except (OSError, ValueError, ET.ParseError):
+        raw_mappings = ()
+    base = ''
+    extra_graph = []
+    known = {ref.virtual_path.casefold() for ref in confirmed}
+    for row in raw_mappings:
+        label = (row.get('name') or '').strip()
+        path = (row.get('path') or '').replace('\\', '/').strip()
+        if label.casefold() == '#filepath':
+            try:
+                base = normalized_name(path).rstrip('/') + '/'
+            except ValueError:
+                base = ''
+            continue
+        if not ('*' in label or '*' in path):
+            continue
+        if not path.casefold().endswith(('.bspace', '.comb')):
+            continue
+        pattern = path if path.startswith(('characters/', 'animations/')) else base + path
+        if not pattern or '..' in pattern.split('/'):
+            continue
+        from animation_on_demand import _exact_loose
+        for key in sorted(index):
+            if len(extra_graph) >= 500:
+                break
+            if key in known or not key.endswith(('.bspace', '.comb')):
+                continue
+            if not fnmatchcase(key, pattern.casefold()):
+                continue
+            concrete = _exact_loose(index, key, preferred_workspace)
+            if concrete is None:
+                continue
+            extra_graph.append(AnimationReference(
+                Path(key).stem, key, Path(key).suffix[1:], True, Path(concrete)))
+            known.add(key)
+    confirmed.extend(extra_graph)
     # Characters commonly have standalone CAF files omitted from their
     # .chrparams (the latter points at packed DBA tracks and blendspaces).
     # Permit such clips ONLY if their embedded controller CRC32 IDs match
