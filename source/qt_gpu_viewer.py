@@ -10,12 +10,12 @@ import json
 from pathlib import Path
 import numpy as np
 
-from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess, QObject, Signal, QRunnable, QThreadPool
+from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess, QObject, Signal, QRunnable, QThreadPool, QEvent
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
-    QComboBox, QFileDialog, QMessageBox, QSlider)
+    QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
 
@@ -464,9 +464,53 @@ class QtGPUModelPanel(QWidget):
         self._info=QLabel(mesh.source_name+'  •  '+mesh.description)
         self._info.setWordWrap(True)
         layout.addWidget(self._info)
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        self._overlay_buttons = {}
+        for section in ('View', 'Materials', 'Animation'):
+            button = QToolButton(self)
+            button.setObjectName('gpuOverlayButton' + section)
+            button.setText(section + ' ▾')
+            button.setCheckable(True)
+            button.clicked.connect(
+                lambda active=False, key=section: self.toggle_overlay(key, active))
+            toolbar.addWidget(button)
+            self._overlay_buttons[section] = button
+        toolbar.addStretch(1)
+        self._play_shortcut = QToolButton(self)
+        self._play_shortcut.setText('▶  Play')
+        self._play_shortcut.setToolTip('Play / pause current animation')
+        self._play_shortcut.clicked.connect(self.toggle_play)
+        toolbar.addWidget(self._play_shortcut)
+        layout.addLayout(toolbar)
         self.canvas=QtGLModelCanvas(mesh,materials,self,prepared_geometry=prepared_geometry)
         self.canvas.setObjectName('embeddedGpuCanvas')
         layout.addWidget(self.canvas,1)
+        self._overlay = QScrollArea(self.canvas)
+        self._overlay.setObjectName('modelOverlayControls')
+        self._overlay.setWidgetResizable(True)
+        self._overlay.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._overlay.setStyleSheet(
+            '#modelOverlayControls { background: #1b1b21; border: 1px solid #45414a; '
+            'border-radius: 9px; }'
+            'QWidget#modelOverlayContent { background: #1b1b21; }')
+        self._overlay_content = QWidget()
+        self._overlay_content.setObjectName('modelOverlayContent')
+        self._overlay_body = QVBoxLayout(self._overlay_content)
+        self._overlay_body.setContentsMargins(12, 10, 12, 10)
+        self._overlay.setWidget(self._overlay_content)
+        self._overlay_sections = {}
+        self._active_overlay = None
+        for section in ('View', 'Materials', 'Animation'):
+            page = QWidget(self._overlay_content)
+            part = QVBoxLayout(page)
+            part.setContentsMargins(0, 0, 0, 0)
+            part.setSpacing(7)
+            self._overlay_body.addWidget(page)
+            self._overlay_sections[section] = (page, part)
+            page.setVisible(False)
+        self._overlay.hide()
+        self.canvas.installEventFilter(self)
         options = QWidget(self)
         line=QHBoxLayout(options)
         line.setContentsMargins(0, 0, 0, 0)
@@ -496,8 +540,7 @@ class QtGPUModelPanel(QWidget):
         reset.clicked.connect(self.reset_view)
         line.addWidget(reset)
         line.addStretch()
-        layout.addWidget(options)
-        options.setVisible(not compact)
+        self._overlay_sections['View'][1].addWidget(options)
         # Short, always-visible controls also work in the embedded viewer.
         studio = QHBoxLayout()
         enhanced=QCheckBox('Renderer 3.0')
@@ -526,7 +569,7 @@ class QtGPUModelPanel(QWidget):
         save_view.clicked.connect(self.save_viewport)
         studio.addWidget(save_view)
         studio.addStretch()
-        layout.addLayout(studio)
+        self._overlay_sections['View'][1].addLayout(studio)
         inspector=QHBoxLayout()
         inspector.addWidget(QLabel('Mesh materials'))
         self.part_select=QComboBox()
@@ -549,18 +592,46 @@ class QtGPUModelPanel(QWidget):
         self.gloss_slider.setMaximumWidth(95)
         self.gloss_slider.valueChanged.connect(self.canvas.set_specular)
         inspector.addWidget(self.gloss_slider)
-        layout.addLayout(inspector)
+        self._overlay_sections['Materials'][1].addLayout(inspector)
         self._populate_material_slots(mesh,materials)
-        self._prepare_animation_controls(layout)
+        self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = QLabel('Native game animations: not scanned')
         self.native_info.setWordWrap(True)
-        layout.addWidget(self.native_info)
+        self._overlay_sections['Animation'][1].addWidget(self.native_info)
         foot=QLabel('Renderer 3.0 approximates CryEngine materials; check optional maps in the texture diagnostics. '
                     'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
-        foot.setVisible(not compact)
-        layout.addWidget(foot)
+        self._overlay_sections['View'][1].addWidget(foot)
+
+    def toggle_overlay(self, section, shown=None):
+        """Display just one model tool group over the viewport."""
+        if section not in self._overlay_sections:
+            return
+        show = (self._active_overlay != section if shown is None else bool(shown))
+        self._active_overlay = section if show else None
+        for key, (page, _) in self._overlay_sections.items():
+            page.setVisible(show and key == section)
+            button = self._overlay_buttons[key]
+            button.blockSignals(True)
+            button.setChecked(show and key == section)
+            button.blockSignals(False)
+        self._overlay.setVisible(show)
+        if show:
+            self._position_overlay()
+            self._overlay.raise_()
+
+    def _position_overlay(self):
+        if not hasattr(self, '_overlay') or self._overlay is None:
+            return
+        width = max(200, min(690, self.canvas.width() - 20))
+        height = max(120, min(530, self.canvas.height() - 20))
+        self._overlay.setGeometry(10, 10, width, height)
+
+    def eventFilter(self, obj, event):
+        if obj is getattr(self, 'canvas', None) and event.type() == QEvent.Resize:
+            self._position_overlay()
+        return super().eventFilter(obj, event)
 
     def _populate_material_slots(self,mesh,materials):
         slots=sorted({part[2] for part in mesh.subsets}) if mesh.subsets else [0]
@@ -615,6 +686,7 @@ class QtGPUModelPanel(QWidget):
         self.anim_timer.stop()
         self.anim_playing = False
         self.play_button.setText('Play')
+        self._play_shortcut.setText('▶  Play')
         self.animated = None
         self.timeline_markers.clear()
         self.timeline_markers.addItem('Markers',None)
