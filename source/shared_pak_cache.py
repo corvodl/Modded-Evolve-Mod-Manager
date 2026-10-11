@@ -309,8 +309,10 @@ def start_shared_catalog(stage, cache_root=None, game_root=None):
     with _lock:
         if _worker and _worker.is_alive():
             return False
-        if (not game_root and _current is not None and
-                _current.stage == path and _current.is_current()):
+        if (_current is not None and _current.stage == path and
+                _current.is_current() and (not game_root or
+                (_installed is not None and _installed.installed_game == Path(game_root).resolve()
+                 and _installed.is_current()))):
             return False
         _status = "Scanning signed shared PAK directories..."
         _worker = threading.Thread(
