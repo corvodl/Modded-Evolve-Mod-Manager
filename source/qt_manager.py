@@ -432,6 +432,8 @@ class QtManager(QMainWindow):
         self._load_batch()
         self.refresh_archives()
         self.refresh_swap_status()
+        # Verify the six Shared asset directories off the GUI thread.
+        QTimer.singleShot(150, self._warm_shared_assets)
         QTimer.singleShot(0, self._position_drawer)
         QTimer.singleShot(400, lambda: report_startup_ready(APP_HOME))
         # Both release channels are verified; beta updates always need approval.
@@ -1564,6 +1566,13 @@ class QtManager(QMainWindow):
         except (ValueError, KeyError, TypeError, OSError):
             pass
 
+    def _warm_shared_assets(self):
+        from shared_pak_cache import start_shared_catalog
+        try:
+            start_shared_catalog(self.stage_path)
+        except (OSError, ValueError) as exc:
+            self._log('Shared asset indexing unavailable: ' + str(exc))
+
     def refresh_archives(self):
         try:
             self.archive_entries = sorted(
@@ -1572,6 +1581,7 @@ class QtManager(QMainWindow):
             self.archive_entries = []
             self._log('Archive scan: ' + str(exc))
         self.refresh_table()
+        self._warm_shared_assets()
 
     def refresh_table(self):
         if not hasattr(self, 'table'):
