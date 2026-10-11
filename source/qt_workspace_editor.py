@@ -22,7 +22,6 @@ from PySide6.QtGui import QPixmap, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
-    QHBoxLayout,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
