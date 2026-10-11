@@ -30,6 +30,9 @@ class PreviewMaterials:
     names: tuple
     source: str
     issues: tuple = ()
+    normal_maps: tuple = ()
+    specular_maps: tuple = ()
+    opacity: tuple = ()
 
     @property
     def count(self):
@@ -159,7 +162,7 @@ def _decode_texture(item):
         if im.format != 'DDS':
             raise ValueError('Unsupported texture encoding for model preview.')
         im.load()
-        tex = im.convert('RGB')
+        tex = im.convert('RGBA') if 'A' in im.getbands() else im.convert('RGB')
     tex.thumbnail((MAX_PREVIEW_TEX_DIM, MAX_PREVIEW_TEX_DIM * 2), Image.Resampling.LANCZOS)
     return tex
 
@@ -209,10 +212,37 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             return None
         return next(iter(hits.values()))
 
-    result=[]; names=[]; issues=[]
+    def optional_map(item, names):
+        ref = next((child.get('File') or child.get('file')
+                    for child in item.findall('./Textures/Texture')
+                    if (child.get('Map') or child.get('map') or '').casefold() in names),None)
+        if not ref:
+            return None
+        hit = _find_unique(index,ref,preferred_workspace=material['workspace'])
+        if hit is None:
+            hit = _external_lookup(texture_folder,ref)
+        if hit is None:
+            hit = recover_unique_dds(ref)
+        if hit is None:
+            return None
+        return _decode_texture(hit)
+
+    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]
     for item in subs:
         name = item.get('Name') or 'unnamed'
         names.append(name)
+        try:
+            opacity = max(0.,min(1.,float(item.get('Opacity','1'))))
+        except ValueError:
+            opacity = 1.
+        opacities.append(opacity)
+        for target,keys in ((normals,('bumpmap','normal','normalmap')),
+                            (speculars,('specular','specularcolor','gloss'))):
+            try:
+                target.append(optional_map(item,keys))
+            except (OSError,ValueError) as error:
+                target.append(None)
+                issues.append(name+': optional material map not loaded: '+str(error))
         diffuse = next((child.get('File') or child.get('file') for child in item.findall('./Textures/Texture')
                         if (child.get('Map') or child.get('map') or '').casefold() == 'diffuse'), None)
         if not diffuse or item.get('Shader','').casefold()=='nodraw':
@@ -239,7 +269,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
-    return PreviewMaterials(tuple(result),tuple(names),material['relative'],tuple(issues))
+    return PreviewMaterials(tuple(result),tuple(names),material['relative'],
+                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities))
 
 
 def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevation=.24, zoom=1., *, pan=(0.,0.), cancel=None):
