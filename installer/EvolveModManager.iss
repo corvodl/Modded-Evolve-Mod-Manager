@@ -15,12 +15,12 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputDir=dist
+OutputDir=..\dist
 OutputBaseFilename=EvolveModManager-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile=source\assets\hunt.ico
+SetupIconFile=..\source\assets\hunt.ico
 UninstallDisplayIcon={app}\EvolveModManager.exe
 CloseApplications=yes
 RestartApplications=no
@@ -34,7 +34,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Name: "startmenuicon"; Description: "Add to Start Menu / Windows search"; GroupDescription: "Shortcuts:"
 
 [Files]
-Source: ".build\app-dist\EvolveModManager\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "Data\*,*.pak,private_key.pem,*.customkey-*"
+Source: "..\.build\app-dist\EvolveModManager\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "Data\*,*.pak,private_key.pem,*.customkey-*"
 
 [Icons]
 Name: "{autodesktop}\Evolve Mod Manager"; Filename: "{app}\EvolveModManager.exe"; WorkingDir: "{app}"; Tasks: desktopicon
