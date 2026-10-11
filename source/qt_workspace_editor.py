@@ -571,10 +571,11 @@ class QtWorkspaceEditor(QMainWindow):
         self._diagnostics_label.setText(
             'Last model preparation: %s ms\nCache hit: %s\nDecoded texture allocation estimate: %.2f MiB\n'
             'Editor file-tree refresh: %.1f ms\nCache: %s\n'
-            'GPU upload/FPS: not measured (requires hardware profiling).' %
+            'GPU texture upload (last event): %s ms\nFPS: not measured.' %
             ('%.1f'%self.model_load_ms if self.model_load_ms is not None else 'Not sampled',
              'yes' if self.model_cache_hit else 'no',gpu_bytes/1048576,
-             getattr(self,'last_populate_ms',0),model_cache_stats()))
+             getattr(self,'last_populate_ms',0),model_cache_stats(),
+             getattr(self.model_gpu,'gpu_upload_ms',None) if self.model_gpu else 'Not sampled'))
 
     def _with_model_panel(self, callback):
         if self.model_panel is None or self.mode != 'models':
@@ -1181,6 +1182,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.tabs.setCurrentIndex(0)
                 self.tabs.blockSignals(False)
                 return
+        self._capture_playback_preferences()
         self._model_generation += 1
         self.current, self.mode = None, None
 
