@@ -4,6 +4,10 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.10', (
+        'The full GPU model viewer now opens directly inside Edit Files.',
+        'File editor windows now support normal maximize and restore controls.',
+    )),
     ('1.1.9', (
         'Editors can maximize; model cameras now support panning and sharper shading.',
         'Added skeletal GLB animation playback and optional CryEngine clip conversion.',
