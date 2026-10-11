@@ -272,8 +272,9 @@ class QtGLModelCanvas(QOpenGLWidget):
 class QtGPUModelPanel(QWidget):
     """Reusable GPU viewer with camera, material and animation controls."""
 
-    def __init__(self,parent,mesh,materials=None):
+    def __init__(self,parent,mesh,materials=None, *, compact=False):
         super().__init__(parent)
+        self.compact = compact
         self.setObjectName('gpuModelControlPanel')
         self.setMinimumSize(300, 230)
         layout=QVBoxLayout(self)
@@ -283,22 +284,28 @@ class QtGPUModelPanel(QWidget):
         self.canvas=QtGLModelCanvas(mesh,materials,self)
         self.canvas.setObjectName('embeddedGpuCanvas')
         layout.addWidget(self.canvas,1)
-        line=QHBoxLayout()
+        options = QWidget(self)
+        line=QHBoxLayout(options)
+        line.setContentsMargins(0, 0, 0, 0)
         wire=QCheckBox('Wireframe')
+        self.wire_checkbox = wire
         wire.toggled.connect(lambda value:(setattr(self.canvas,'wireframe',value),self.canvas.update()))
         line.addWidget(wire)
         textured=QCheckBox('Textures')
+        self.texture_checkbox = textured
         textured.setChecked(True)
         textured.toggled.connect(lambda value:(setattr(self.canvas,'textured',value),self.canvas.update()))
         line.addWidget(textured)
         line.addWidget(QLabel('Shading'))
         shading = QComboBox()
+        self.shading_combo = shading
         shading.addItems(('Faceted (hard edges)', 'Smooth'))
         shading.currentIndexChanged.connect(
             lambda i: self.canvas.set_shading('Smooth' if i else 'Faceted'))
         line.addWidget(shading)
         line.addWidget(QLabel('Quality'))
         quality=QComboBox()
+        self.quality_combo = quality
         quality.addItems(('Performance','High'))
         quality.currentTextChanged.connect(self.canvas.set_quality)
         line.addWidget(quality)
@@ -306,11 +313,13 @@ class QtGPUModelPanel(QWidget):
         reset.clicked.connect(self.reset_view)
         line.addWidget(reset)
         line.addStretch()
-        layout.addLayout(line)
+        layout.addWidget(options)
+        options.setVisible(not compact)
         self._prepare_animation_controls(layout)
         foot=QLabel('Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
+        foot.setVisible(not compact)
         layout.addWidget(foot)
 
     def set_static_mesh(self, mesh, materials=None):
@@ -341,9 +350,11 @@ class QtGPUModelPanel(QWidget):
         line = QHBoxLayout()
         import_button = QPushButton('Load Animation GLB…')
         import_button.clicked.connect(self.load_animation)
+        import_button.setVisible(not self.compact)
         line.addWidget(import_button)
         original = QPushButton('Import Original CAF/DBA…')
         original.clicked.connect(self.import_original)
+        original.setVisible(not self.compact)
         line.addWidget(original)
         self.clip_select = QComboBox()
         self.clip_select.setMinimumWidth(130)
@@ -364,6 +375,7 @@ class QtGPUModelPanel(QWidget):
         self.anim_status = QLabel('Animation playback: load a rigged GLB containing clips, or '
                                   'use an optional CryEngine converter for CAF/DBA files.')
         self.anim_status.setWordWrap(True)
+        self.anim_status.setVisible(not self.compact)
         layout.addWidget(self.anim_status)
         self.animated = None
         self.anim_position = 0.

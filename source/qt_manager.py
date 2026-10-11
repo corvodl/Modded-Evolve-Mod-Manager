@@ -197,6 +197,15 @@ def qt_style():
         font-family:'Segoe UI'; font-size:10pt; }
     QFrame#card { background:#17171d; border:1px solid #353139; border-radius:16px; }
     QFrame#drawer { background:#16151b; border-right:1px solid #45323a; }
+    QMenuBar { background:#16151b; color:#f5f3f6; padding:4px 8px;
+               border-bottom:1px solid #353139; }
+    QMenuBar::item { padding:6px 13px; margin-right:3px; border-radius:6px; }
+    QMenuBar::item:selected { background:#48303a; }
+    QMenu { background:#201d24; color:#f5f3f6; border:1px solid #49404a;
+            padding:6px; }
+    QMenu::item { padding:7px 24px; border-radius:5px; }
+    QMenu::item:selected { background:#74313f; color:white; }
+    QMenu::separator { height:1px; background:#463741; margin:5px 12px; }
     QFrame#settingsDivider { background:#41313a; border:none; min-height:1px; max-height:1px; }
     QLabel#settingsHeading { color:#f7f4f6; font-size:14pt; font-weight:650; background:transparent; }
     QLabel#muted { color:#a6a3ae; background:transparent; }
