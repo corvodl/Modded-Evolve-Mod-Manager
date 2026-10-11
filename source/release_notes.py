@@ -4,6 +4,12 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.4', (
+        'Add clear vector icons to the View, Materials and Animation model tools.',
+        'Show separate six-shared and three-animation Asset Library coverage.',
+        'Refresh stale character texture and animation references after imports.',
+        'Improve GPU material and CAF availability diagnostics.',
+    )),
     ('1.1.18-beta.3', (
         'Simplify the Modding page with File, Edit, View, Tools and Help menus.',
         'Group related PAKs and extract recognized companion archives together.',
