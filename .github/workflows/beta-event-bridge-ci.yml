@@ -23,7 +23,7 @@ jobs:
           python-version: "3.11"
       - name: Syntax-check event bridge and Qt source
         run: |
-          python -m py_compile source/developer_event_catalog.py source/developer_event_live.py source/qt_game_events.py source/qt_live_event_controls.py source/qt_developer_lab.py source/shared_pak_cache.py source/material_preview.py source/character_assembly.py source/qt_gpu_viewer.py source/renderer_3.py source/qt_manager.py source/developer_events_all_v3.py source/pak_copy_cleanup.py source/qt_pak_copy_cleanup.py
+          python -m py_compile source/developer_event_catalog.py source/developer_event_live.py source/qt_game_events.py source/qt_live_event_controls.py source/qt_developer_lab.py source/shared_pak_cache.py source/material_preview.py source/character_assembly.py source/qt_gpu_viewer.py source/renderer_3.py source/qt_workspace_editor.py source/qt_manager.py source/developer_events_all_v3.py source/pak_copy_cleanup.py source/qt_pak_copy_cleanup.py
       - name: Run catalog and authenticated local transport tests
         working-directory: source
         run: python -m unittest -v test_developer_event_catalog test_developer_event_live test_pak_copy_cleanup
