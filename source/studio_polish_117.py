@@ -26,7 +26,7 @@ _cache_lock = threading.RLock()
 
 
 def model_cache_key(workspace, relative, *, projects_root=None, stage_root=None,
-                    texture_folder=None, equipment=None, animation_index=None):
+                    texture_folder=None, equipment=None, animation_index=None, index=None):
     """Cheap signature of the project, source asset and optional loose texture tree.
 
     Related extracted workspaces can be edited independently; TTL bounds
