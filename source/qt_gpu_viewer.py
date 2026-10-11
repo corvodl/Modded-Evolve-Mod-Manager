@@ -41,7 +41,7 @@ class _NativeConversion(QRunnable):
 class QtGLModelCanvas(QOpenGLWidget):
     """OpenGL 2.1 compatibility vertex arrays, depth and approximate materials."""
 
-    def __init__(self, mesh, materials=None, parent=None):
+    def __init__(self, mesh, materials=None, parent=None, prepared_geometry=None):
         super().__init__(parent)
         format = QSurfaceFormat()
         format.setRenderableType(QSurfaceFormat.OpenGL)
@@ -53,7 +53,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.setMinimumSize(260, 180)
         self.mesh = mesh
         self.shading = 'faceted'
-        self.geometry = prepare_geometry(mesh, shading=self.shading)
+        self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
         self.materials = materials
         self.textures = []
         self.rotation = [-30.0, 14.0]
@@ -64,14 +64,14 @@ class QtGLModelCanvas(QOpenGLWidget):
         self._last = None
         self.gl_error = None
 
-    def set_mesh(self, mesh, materials=None):
+    def set_mesh(self, mesh, materials=None, prepared_geometry=None):
         self.makeCurrent()
         try:
             self._release_textures()
         finally:
             self.doneCurrent()
         self.mesh = mesh
-        self.geometry = prepare_geometry(mesh, shading=self.shading)
+        self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
         self.materials = materials
         self.update()
 
@@ -292,7 +292,7 @@ class QtGLModelCanvas(QOpenGLWidget):
 class QtGPUModelPanel(QWidget):
     """Reusable GPU viewer with camera, material and animation controls."""
 
-    def __init__(self,parent,mesh,materials=None, *, compact=False):
+    def __init__(self,parent,mesh,materials=None, *, compact=False, prepared_geometry=None):
         super().__init__(parent)
         self.compact = compact
         self.setObjectName('gpuModelControlPanel')
@@ -301,7 +301,7 @@ class QtGPUModelPanel(QWidget):
         self._info=QLabel(mesh.source_name+'  •  '+mesh.description)
         self._info.setWordWrap(True)
         layout.addWidget(self._info)
-        self.canvas=QtGLModelCanvas(mesh,materials,self)
+        self.canvas=QtGLModelCanvas(mesh,materials,self,prepared_geometry=prepared_geometry)
         self.canvas.setObjectName('embeddedGpuCanvas')
         layout.addWidget(self.canvas,1)
         options = QWidget(self)
@@ -345,7 +345,7 @@ class QtGPUModelPanel(QWidget):
         foot.setVisible(not compact)
         layout.addWidget(foot)
 
-    def set_static_mesh(self, mesh, materials=None):
+    def set_static_mesh(self, mesh, materials=None, prepared_geometry=None):
         """Switch project model while ensuring prior clip playback is stopped."""
         self.anim_timer.stop()
         self.anim_playing = False
@@ -362,7 +362,7 @@ class QtGPUModelPanel(QWidget):
         self._native_generation += 1
         self.native_clip_select.clear()
         self.native_info.setText('Native game animations: not scanned')
-        self.canvas.set_mesh(mesh, materials)
+        self.canvas.set_mesh(mesh, materials, prepared_geometry=prepared_geometry)
         self._info.setText(mesh.source_name + '  •  ' + mesh.description)
 
     def reset_view(self):
