@@ -15,7 +15,8 @@ from developer_event_catalog import load_catalog, filter_catalog, make_fixture, 
 class GameEventsPanel(QWidget):
     """Available only inside the already-locked Developer tab.
 
-    This panel NEVER writes to game memory or sends network/game events.
+    Local fixture inspection is read-only. A separate authenticated companion
+    may handle live offline activation when it explicitly advertises support.
     """
     def __init__(self, parent=None, game_root_provider=None):
         super().__init__(parent)
@@ -131,7 +132,7 @@ class GameEventsPanel(QWidget):
             f"Send sites (RVA): {', '.join(event.send_sites) or 'not found'}\n"
             f"Parent functions (RVA): {', '.join(event.functions) or 'not found'}\n"
             f"Observed host/clients: {event.counts or 'not available'}\n"
-            f"Runtime dispatch: NOT IMPLEMENTED / NOT VERIFIED")
+            f"Runtime dispatch: requires verified in-game companion handler")
         while self.field_form.rowCount():
             self.field_form.removeRow(0)
         self.inputs = {}
