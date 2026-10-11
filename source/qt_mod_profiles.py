@@ -26,12 +26,12 @@ class ModProfilesDialog(QDialog):
         self.on_apply = on_apply
         self.suggested_pak = suggested_pak
         self._filling = False
-        self.setWindowTitle('Mod Profiles & Library')
+        self.setWindowTitle('Mod Profiles 2.0 — Library and Sharing')
         self.resize(910, 625)
         self.setMinimumSize(690, 480)
         root_layout = QVBoxLayout(self)
         root_layout.addWidget(QLabel(
-            'Manage signed PAKs in profiles. Enabling two mods for one PAK is a conflict: '
+            'Manage signed PAKs in profiles. Enabling two mods for one PAK is a conflict even when reordered: '
             'combine their edits in one workspace first.'))
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel('Profile'))
@@ -43,6 +43,14 @@ class ModProfilesDialog(QDialog):
                                 ('Delete', self.delete_profile)):
             toolbar.addWidget(self._button(label, callback))
         root_layout.addLayout(toolbar)
+        tools = QHBoxLayout()
+        for label, callback in (
+                ('Duplicate', self.duplicate_profile),
+                ('Import Shared Profile…', self.import_shared),
+                ('Export Profile…', self.export_shared)):
+            tools.addWidget(self._button(label,callback))
+        tools.addStretch()
+        root_layout.addLayout(tools)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
@@ -62,6 +70,8 @@ class ModProfilesDialog(QDialog):
         actions = QHBoxLayout()
         actions.addWidget(self._button('Add signed PAK…', self.add_mod))
         actions.addWidget(self._button('Remove selected', self.remove_mod))
+        actions.addWidget(self._button('Move Up', lambda: self.move_selected(-1)))
+        actions.addWidget(self._button('Move Down', lambda: self.move_selected(1)))
         actions.addStretch()
         actions.addWidget(self._button('Refresh', self.refresh))
         root_layout.addLayout(actions)
@@ -160,6 +170,69 @@ class ModProfilesDialog(QDialog):
             self.status.setText('Profile status unavailable: ' + str(exc))
         finally:
             self._filling = False
+
+    def duplicate_profile(self):
+        try:
+            original=self._current_profile()
+            if not original:
+                raise ValueError('Choose a profile to duplicate.')
+            name,ok=QInputDialog.getText(
+                self,'Duplicate Profile','New name:',
+                text=original['name']+' (copy)')
+            if ok:
+                pid=self.store.duplicate_profile(original['id'],name)
+                self.reload(select=pid)
+        except (ValueError,OSError) as exc:
+            self._error(exc)
+
+    def move_selected(self, direction):
+        try:
+            pid=self._selected()
+            mid=self._selected_mod_id()
+            self.store.move_mod(pid,mid,direction)
+            self.reload(select=pid)
+            for row in range(self.table.rowCount()):
+                if self.table.item(row,0).data(Qt.UserRole)==mid:
+                    self.table.selectRow(row)
+                    break
+        except (ValueError,OSError) as exc:
+            self._error(exc)
+
+    def export_shared(self):
+        try:
+            pid=self._selected()
+            profile=self._current_profile()
+            destination,_=QFileDialog.getSaveFileName(
+                self,'Export shareable profile',profile['name']+'.json','JSON (*.json)')
+            if not destination:
+                return
+            self.store.export_manifest(pid,destination)
+            QMessageBox.information(
+                self,'Profile exported',
+                'Exported file references and checksums, without game files '
+                'or local computer paths. Share signed mod PAKs separately.')
+        except (ValueError,OSError) as exc:
+            self._error(exc)
+
+    def import_shared(self):
+        source,_=QFileDialog.getOpenFileName(
+            self,'Import shared profile','','JSON (*.json)')
+        if not source:
+            return
+        folder=QFileDialog.getExistingDirectory(
+            self,'Locate the shared signed PAK files (same filenames)')
+        if not folder:
+            return
+        try:
+            profile_id=self.store.import_manifest(
+                source,folder,self.stage_path)
+            self.reload(select=profile_id)
+            QMessageBox.information(
+                self,'Profile imported',
+                'Verified mod files and hashes. Review target conflicts '
+                'before applying; nothing was automatically staged.')
+        except (ValueError,OSError,RuntimeError) as exc:
+            self._error(exc)
 
     def new_profile(self):
         name, ok = QInputDialog.getText(self, 'New Profile', 'Profile name:')
