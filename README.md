@@ -1,10 +1,15 @@
-# Evolve Stage 2 Mod Manager — v1.1.4
+# Evolve Stage 2 Mod Manager — v1.1.5
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.4 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.5 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.5
+
+- Added mod profiles for organizing and switching signed PAK changes.
+- Added conflict checks and reversible profile staging.
 
 ## What's new in v1.1.4
 
@@ -79,6 +84,14 @@ The portable Windows release bundles Python and its required application depende
 | **Play & Restore** | Guided offline launch, swap state, and restoration/recovery of original game files |
 | **Settings** | Projects, stage and launch-helper folders; maintenance and advanced workflows |
 | **Credits** | Project links and attribution |
+
+### Mod Profiles & Library
+
+In **Modding**, click **Mod Profiles** to create named configurations such as Balance, Textures, or Testing. Add existing signed PAKs built by the manager or imported from your projects. Each profile keeps a reference to its original mod file; it does not bundle game assets.
+
+Check the mods you want active, then choose **Apply selected profile**. Two enabled mods cannot target the same PAK; resolve the conflict by combining edits in one workspace before applying. Profiles are staged through the existing signed-archive verification and per-PAK recovery backups. Close the game and client first; profile staging never replaces live installed game files directly.
+
+Use **Restore prior staged state** to undo changes managed by Profiles. This restores the state that was staged before Profiles first changed that archive; it does not forcibly discard other separately installed mods. If a staging operation is interrupted, inspect Activity and resolve the preserved backup journal before another modded launch. Signed PAK files remain on disk if you delete a profile.
 
 ### Readable PAK browser and right-click tools
 
