@@ -192,7 +192,8 @@ def _resolve(index, ref, *, preferred_workspace=None):
         # The project currently being edited is a stronger association than
         # duplicate material paths in older batch projects.
         if preferred is not None:
-            local = [hit for hit in hits if Path(hit['workspace']).resolve() == preferred]
+            local = [hit for hit in hits if hit.get('workspace') is not None
+                     and Path(hit['workspace']).resolve() == preferred]
             if len(local) == 1:
                 return local, 'found'
         # The same workspace may occur twice in the discovery catalog.
