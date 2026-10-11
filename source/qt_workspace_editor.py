@@ -1100,8 +1100,17 @@ class QtWorkspaceEditor(QMainWindow):
         mapped=(self.materials.count if self.materials is not None else 0)
         slots=(len(self.materials.textures) if self.materials is not None else 0)
         count=sum(getattr(ref,'available',False) for ref in refs)
-        self.dependency_button.setText('Assets: %d/%d textures · %d animations'%
-                                       (mapped,slots,count))
+        total=sum(getattr(ref,'kind',None)=='caf' for ref in refs)
+        self.dependency_button.setText(
+            'Assets: %d/%d textures · %d/%d CAF clips' %
+            (mapped, slots, count, total))
+        issues=(self.materials.issues if self.materials is not None else ())
+        self.dependency_button.setToolTip(
+            'CAF mappings: %d • extracted: %d\n'
+            'Texture diagnostic issues:\n%s\n'
+            'Open Assets for full texture/animation diagnostics.' %
+            (total, count, '\n'.join(issues[:8]) or
+             'No unresolved DDS references reported.'))
         self._update_equipment_menu()
         self._paint_model(view, self.mesh)
         self.status.setText(
