@@ -190,6 +190,25 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 yield from leaves(child)
 
     subs = list(leaves(root))
+    # Broken virtual prefixes occur in older character materials. Resolve only
+    # when exactly one verified matching DDS basename exists across all
+    # extracted PAKs. Different files with the same name are never guessed.
+    def recover_unique_dds(ref):
+        from multi_pak_assets import _candidates
+        basenames = {Path(item).name.casefold() for item in _candidates(ref)
+                     if item.casefold().endswith(('.dds','.dds.0'))}
+        hits = {}
+        for path, records in index.items():
+            if Path(path).name.casefold() not in basenames:
+                continue
+            for record in records:
+                hits[str(Path(record['file']).resolve())] = record
+                if len(hits)>8:
+                    return None
+        if len(hits) != 1:
+            return None
+        return next(iter(hits.values()))
+
     result=[]; names=[]; issues=[]
     for item in subs:
         name = item.get('Name') or 'unnamed'
@@ -203,6 +222,11 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             found = _find_unique(index, diffuse, preferred_workspace=material['workspace'])
             if found is None:
                 found = _external_lookup(texture_folder, diffuse)
+            if found is None:
+                found = recover_unique_dds(diffuse)
+                if found is not None:
+                    issues.append(name + ': recovered missing prefix using uniquely named DDS '
+                                  + str(found.get('relative','')))
             if found is None:
                 issues.append(name + ': DDS missing for ' + diffuse)
                 result.append(None)
