@@ -1996,8 +1996,7 @@ class QtManager(QMainWindow):
             elif result:
                 output, count = result
                 self.info('Asset Library export complete',
-                          '%d extracted files copied with their original virtual paths to:
-%s' %
+                          '%d extracted files copied with their original virtual paths to:\n%s' %
                           (count, output))
             return
         from asset_library import imported_archives, required_archive_status
