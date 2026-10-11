@@ -50,19 +50,30 @@ def inspect_project(project_root, candidate, *, active=(), min_age_days=30, now=
         raise ValueError('Cleanup is restricted to direct managed project folders.')
     if (path/'.evolve-pak-workspace.json').is_symlink():
         raise ValueError('Symlinked project manifest is not allowed.')
-    report = load_workspace(path)
+    from multi_pak_assets import BATCH_FILE, load_collection
+    is_batch = (path/BATCH_FILE).is_file()
+    if is_batch:
+        data = load_collection(path)
+        children = [(path/item['workspace']).resolve() for item in data['archives']]
+        reports = [(child,load_workspace(child)) for child in children]
+        archive = '%d-PAK batch' % len(reports)
+    else:
+        report = load_workspace(path)
+        reports = [(path,report)]
+        archive = Path(report.get('source_pak','Unknown archive')).name
     active_paths = {Path(x).resolve() for x in active if x}
     total, recent = _audit_tree(path)
     last = max(recent,(path/'.evolve-pak-workspace.json').stat().st_mtime)
     age = max(0.,((time.time() if now is None else now)-last)/86400.)
-    archive = Path(report.get('source_pak','Unknown archive')).name
     reason = ''
     try:
-        has_changes = bool(get_changes(path,report))
+        has_changes = any(bool(get_changes(child,manifest))
+                          for child,manifest in reports)
     except (ValueError,OSError) as exc:
         has_changes = True
         reason = 'Files missing or verification failed: '+str(exc)[:160]
-    if path in active_paths:
+    if any(current==path or current.is_relative_to(path)
+           for current in active_paths):
         reason = 'Current or open project'
     elif has_changes:
         reason = reason or 'Contains edits or incomplete project files'
@@ -79,7 +90,8 @@ def find_old_projects(project_root, *, active=(), min_age_days=30, now=None):
     found = []
     for child in sorted(root.iterdir(),key=lambda p:p.name.casefold()):
         if (child.is_symlink() or not child.is_dir() or
-                not (child/'.evolve-pak-workspace.json').is_file()):
+                not (child/'.evolve-pak-workspace.json').is_file() and
+                not (child/'.evolve-pak-batch.json').is_file()):
             continue
         try:
             found.append(inspect_project(root,child,active=active,
