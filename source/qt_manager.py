@@ -434,6 +434,11 @@ class QtManager(QMainWindow):
         self.refresh_swap_status()
         # Verify the six Shared asset directories off the GUI thread.
         QTimer.singleShot(150, self._warm_shared_assets)
+        self._shared_catalog_last_status = ''
+        self._shared_catalog_timer = QTimer(self)
+        self._shared_catalog_timer.setInterval(1000)
+        self._shared_catalog_timer.timeout.connect(self._shared_catalog_tick)
+        self._shared_catalog_timer.start()
         QTimer.singleShot(0, self._position_drawer)
         QTimer.singleShot(400, lambda: report_startup_ready(APP_HOME))
         # Both release channels are verified; beta updates always need approval.
@@ -1601,6 +1606,27 @@ class QtManager(QMainWindow):
             start_shared_catalog(self.stage_path)
         except (OSError, ValueError) as exc:
             self._log('Shared asset indexing unavailable: ' + str(exc))
+
+    def _shared_catalog_tick(self):
+        from shared_pak_cache import shared_catalog_status
+        status = shared_catalog_status()
+        if status == self._shared_catalog_last_status:
+            return
+        self._shared_catalog_last_status = status
+        if status.startswith('Ready:'):
+            self._log('Shared references: ' + status)
+            # A model may have opened while indexing was still running.
+            # Refresh its missing materials once without interrupting playback.
+            for editor in tuple(self.editors):
+                try:
+                    if (getattr(editor, 'mode', None) == 'models'
+                            and editor.isVisible()
+                            and getattr(editor, 'mesh', None) is not None
+                            and not (getattr(editor, 'model_panel', None) and
+                                     editor.model_panel.anim_playing)):
+                        editor.refresh_model_textures()
+                except (AttributeError, RuntimeError, OSError, ValueError):
+                    continue
 
     def refresh_archives(self):
         try:
