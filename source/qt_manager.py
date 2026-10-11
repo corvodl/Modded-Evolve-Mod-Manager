@@ -71,7 +71,7 @@ from release_notes import RELEASE_NOTES
 ROOT = Path(__file__).resolve().parent
 COLORS = {'bg':'#0b0b0d','surface':'#17171d','panel':'#202027',
           'text':'#f5f3f6','muted':'#a6a3ae','accent':'#cf394b','outline':'#353139'}
-SECTIONS = ('Instructions','Modding','Play & Restore','Settings','Credits',
+SECTIONS = ('Instructions','Asset Library','Modding','Play & Restore','Settings','Credits',
             "What's New",'Developer')
 
 
@@ -339,6 +339,7 @@ class QtManager(QMainWindow):
         self._queued_task_running = None
         self.process = None
         self.editors = []
+        self.library_previews = []
         self.level_editors = []
         self.available_update = None
         self.update_running = False
@@ -411,11 +412,13 @@ class QtManager(QMainWindow):
 
         self.pages = {}
         self._instructions_page()
+        self._asset_library_page()
         self._modding_page()
         self._play_page()
         from qt_asset_library import AssetLibraryController
         self.asset_library_controller = AssetLibraryController(self)
         self.asset_library_controller.finished.connect(self._asset_library_finished)
+        self.refresh_library_table()
         self._auto_library_scanned_game = None
         self._settings_page()
         self._credits_page()
@@ -545,6 +548,8 @@ class QtManager(QMainWindow):
         else:
             self._last_public_page = index
         self.stack.setCurrentIndex(index)
+        if SECTIONS[index] == 'Asset Library':
+            self.refresh_library_table()
         self._highlight_page(index)
         self.toggle_menu(False)
 
@@ -592,10 +597,216 @@ class QtManager(QMainWindow):
             lay.addWidget(step)
         lay.addWidget(_label(self.t('instructions_safety'),muted=True))
         lay.addWidget(_button(self.t('instructions_modding_button'),
-                              lambda: self.open_page(1)))
+                              lambda: self.open_page(SECTIONS.index('Modding'))))
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['instructions'] = scroll
+
+    def _asset_library_page(self):
+        """Modding-style table for fully extracted, reference-only PAKs."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        heading = _label('Asset Library')
+        heading.setObjectName('sectionTitle')
+        layout.addWidget(heading)
+        layout.addWidget(_label(
+            'Preview and export PAKs you have already extracted. The Asset Library '
+            'is read-only: editing, building and signing are performed in Modding.',
+            muted=True))
+        bar = QMenuBar(page)
+        bar.setNativeMenuBar(False)
+        file_menu = bar.addMenu('File')
+        file_menu.addAction('Import PAKs / Manage Library…', self.open_asset_library)
+        file_menu.addAction('Preview Selected PAK…', self.preview_library_archive)
+        file_menu.addAction('Export Selected PAK Layout…', self.export_selected_library_archive)
+        view_menu = bar.addMenu('View')
+        view_menu.addAction('Refresh Imported PAK List', self.refresh_library_table)
+        tools_menu = bar.addMenu('Tools')
+        tools_menu.addAction('Verify / Remove Imported PAKs…', self.open_asset_library)
+        tools_menu.addAction('Create Editable Mod Project…', self.create_library_project_from_tab)
+        layout.addWidget(bar)
+        controls = QHBoxLayout()
+        self.asset_search = QLineEdit()
+        self.asset_search.setPlaceholderText('Search imported PAKs, names, folders…')
+        self.asset_search.setClearButtonEnabled(True)
+        self.asset_search.textChanged.connect(self.refresh_library_table)
+        controls.addWidget(self.asset_search, 1)
+        self.asset_filter = QComboBox()
+        self.asset_filter.addItems(('All imported PAKs', 'Characters / Shared',
+                                   'Animations', 'Other PAKs'))
+        self.asset_filter.currentIndexChanged.connect(self.refresh_library_table)
+        controls.addWidget(self.asset_filter)
+        controls.addWidget(_button('Refresh', self.refresh_library_table))
+        layout.addLayout(controls)
+        self.asset_table = QTableWidget(0, 6)
+        self.asset_table.setObjectName('importedLibraryPakTable')
+        self.asset_table.setHorizontalHeaderLabels(
+            ('Dependency Group', 'Folder', 'Description', 'File', 'Extracted Files', 'Size'))
+        self.asset_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.asset_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.asset_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.asset_table.setAlternatingRowColors(True)
+        self.asset_table.setSortingEnabled(True)
+        self.asset_table.verticalHeader().hide()
+        for index in (0, 1):
+            self.asset_table.horizontalHeader().setSectionResizeMode(
+                index, QHeaderView.Interactive)
+        self.asset_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.asset_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        for index in (4, 5):
+            self.asset_table.horizontalHeader().setSectionResizeMode(
+                index, QHeaderView.ResizeToContents)
+        self.asset_table.setColumnWidth(0, 215)
+        self.asset_table.setColumnWidth(1, 150)
+        self.asset_table.itemDoubleClicked.connect(
+            lambda _item: self.preview_library_archive())
+        layout.addWidget(self.asset_table, 1)
+        self.asset_count = _label('No imported PAKs', muted=True)
+        layout.addWidget(self.asset_count)
+        actions = QHBoxLayout()
+        for title, callback, primary in (
+            ('Import / Manage PAKs…', self.open_asset_library, False),
+            ('Preview Files', self.preview_library_archive, True),
+            ('Export PAK Layout…', self.export_selected_library_archive, False),
+        ):
+            actions.addWidget(_button(title, callback, primary=primary), 1)
+        layout.addLayout(actions)
+        self.stack.addWidget(page)
+        self.pages['asset_library'] = page
+
+    def refresh_library_table(self, *_unused):
+        if not hasattr(self, 'asset_table'):
+            return
+        from asset_library import imported_archives
+        from pak_dependencies import group_title
+        selected = self._selected_library_id()
+        archives = imported_archives()
+        self._library_rows = {entry['id']: entry for entry in archives}
+        text = self.asset_search.text().strip().casefold()
+        mode = self.asset_filter.currentIndex()
+        visible = []
+        for entry in archives:
+            name = entry['name']
+            lowered = name.casefold()
+            is_character = lowered.startswith('characters_')
+            is_animation = lowered.startswith('animations')
+            category = 1 if is_character else 2 if is_animation else 3
+            if mode and mode != category:
+                continue
+            if text and text not in (name + ' ' + entry['source'] +
+                                    ' ' + group_title(name)).casefold():
+                continue
+            visible.append(entry)
+        table = self.asset_table
+        table.setSortingEnabled(False)
+        table.setRowCount(0)
+        for entry in visible:
+            name = entry['name']
+            group = group_title(name)
+            folder = str(Path(entry['source']).parent)
+            if len(folder) > 75:
+                folder = '…' + folder[-72:]
+            values = (group, folder,
+                      archive_description(name), name,
+                      str(entry['entries']),
+                      format_size(entry['bytes']))
+            row = table.rowCount()
+            table.insertRow(row)
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setToolTip(entry['source'] + '\nImported reference files (read-only)')
+                cell.setFlags(cell.flags() & ~Qt.ItemIsEditable)
+                if col == 0:
+                    cell.setData(Qt.UserRole, entry['id'])
+                table.setItem(row, col, cell)
+        table.setSortingEnabled(True)
+        table.sortItems(0, Qt.AscendingOrder)
+        if selected:
+            for row in range(table.rowCount()):
+                cell = table.item(row, 0)
+                if cell and cell.data(Qt.UserRole) == selected:
+                    table.selectRow(row)
+                    break
+        self.asset_count.setText(
+            '%d of %d imported PAKs • %.1f GiB extracted • read-only previews' %
+            (len(visible), len(archives),
+             sum(a['bytes'] for a in archives) / (1024 ** 3)))
+
+    def _selected_library_id(self):
+        table = getattr(self, 'asset_table', None)
+        if table is None:
+            return None
+        row = table.currentRow()
+        cell = table.item(row, 0) if row >= 0 else None
+        return cell.data(Qt.UserRole) if cell else None
+
+    def _selected_library_record(self):
+        identifier = self._selected_library_id()
+        record = getattr(self, '_library_rows', {}).get(identifier)
+        if record is None:
+            self.info('Asset Library', 'Select an already imported PAK first.')
+        return record
+
+    def preview_library_archive(self):
+        record = self._selected_library_record()
+        if record is None:
+            return
+        try:
+            from qt_asset_preview import QtAssetPreviewWindow
+            for existing in self.library_previews:
+                if existing.isVisible() and existing.identifier == record['id']:
+                    existing.raise_()
+                    existing.activateWindow()
+                    return
+            window = QtAssetPreviewWindow(self, record)
+            window.setAttribute(Qt.WA_DeleteOnClose, False)
+            self.library_previews.append(window)
+            window.show()
+            window.raise_()
+        except (OSError, ValueError) as exc:
+            self.failure(exc)
+
+    def export_selected_library_archive(self):
+        record = self._selected_library_record()
+        if record is not None:
+            self.export_library_archive_by_id(record['id'])
+
+    def export_library_archive_by_id(self, identifier):
+        record = getattr(self, '_library_rows', {}).get(identifier)
+        if record is None:
+            self.refresh_library_table()
+            record = getattr(self, '_library_rows', {}).get(identifier)
+        if record is None:
+            self.failure('The imported archive is no longer available.')
+            return
+        if self.asset_library_controller.busy:
+            self.info('Asset Library', 'Wait until the current library task finishes.')
+            return
+        destination = QFileDialog.getExistingDirectory(
+            self, 'Choose folder for complete CryEngine virtual-path export',
+            str(Path.home()))
+        if not destination:
+            return
+        if not self.confirm(
+                'Export extracted PAK layout?',
+                'Copy %d imported files (%.1f MiB) from %s into a NEW folder '
+                'under:\n%s\n\nOriginal virtual paths are preserved. '
+                'The Asset Library and installed game are not modified.' %
+                (record['entries'], record['bytes'] / 1048576,
+                 record['name'], destination)):
+            return
+        from asset_library_preview import export_archive_layout
+        if not self.asset_library_controller._start(
+                'export-layout',
+                lambda: export_archive_layout(identifier, destination)):
+            self.info('Asset Library', 'Another library task is still running.')
+
+    def create_library_project_from_tab(self):
+        record = self._selected_library_record()
+        if record is not None:
+            self.create_mod_project_from_asset_library(record['id'])
 
     def _modding_page(self):
         page = QWidget()
@@ -1778,6 +1989,17 @@ class QtManager(QMainWindow):
             self.shared_asset_label.setText('Asset Library: importing…')
 
     def _asset_library_finished(self, action, result, error):
+        self.refresh_library_table()
+        if action == 'export-layout':
+            if error:
+                self.failure('Export layout failed: ' + str(error))
+            elif result:
+                output, count = result
+                self.info('Asset Library export complete',
+                          '%d extracted files copied with their original virtual paths to:
+%s' %
+                          (count, output))
+            return
         from asset_library import imported_archives, required_archive_status
         archives = imported_archives()
         coverage = required_archive_status()
@@ -2576,7 +2798,7 @@ class QtManager(QMainWindow):
     def _after_install(self):
         self.refresh_swap_status()
         if self.confirm('PAK added', 'Ready to open Play & Restore?'):
-            self.open_page(2)
+            self.open_page(SECTIONS.index('Play & Restore'))
 
     def import_modified_pak(self):
         try:
@@ -3103,6 +3325,9 @@ class QtManager(QMainWindow):
         for editor in self.editors:
             if hasattr(editor, 'isVisible') and editor.isVisible():
                 editor.close()
+        for viewer in self.library_previews:
+            if viewer.isVisible():
+                viewer.close()
         event.accept()
 
 
