@@ -148,12 +148,20 @@ class ProjectDashboard(QDialog):
         reports=[]
         for title,ws,_ in selected[:10]:
             try:
-                reports.append({'title':title,**benchmark_workspace(ws)})
+                stats={'title':title,**benchmark_workspace(ws)}
+                editor=next((e for e in getattr(self.manager,'editors',[])
+                             if getattr(e,'workspace',None)==ws and hasattr(e,'last_populate_ms')),
+                             None)
+                stats['editor_refresh_ms']=getattr(editor,'last_populate_ms',None)
+                stats['editor_refresh_note']=('Measured last populated editor tree' if editor else
+                                             'Open this project in Edit Files to measure editor refresh')
+                reports.append(stats)
             except (OSError,ValueError) as exc:
                 reports.append({'title':title,'error':str(exc)})
         output=QFileDialog.getSaveFileName(self,'Save benchmark results (optional)',
                                            '', 'JSON (*.json)')[0]
-        text=json.dumps({'version':1,'benchmarks':reports},indent=2)
+        text=json.dumps({'version':1,'benchmarks':reports,
+                         'last_real_signed_pak_extraction':self.manager.settings.get('last_extraction_benchmark')},indent=2)
         if output:
             try:
                 Path(output).write_text(text,encoding='utf-8')
