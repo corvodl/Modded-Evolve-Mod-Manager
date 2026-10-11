@@ -560,6 +560,7 @@ class QtManager(QMainWindow):
         actions.addWidget(_button('Refresh', self.refresh_archives))
         actions.addWidget(_button('External PAK…', self.browse_external_pak))
         actions.addWidget(_button('Mod Profiles', self.open_mod_profiles, primary=True))
+        actions.addWidget(_button('Export Model Folder', self.export_model_folder))
         root.addLayout(actions)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(('Folder', 'Description', 'File', 'Type / Project', 'Size'))
@@ -1180,6 +1181,31 @@ class QtManager(QMainWindow):
                       'No installed game files were changed.')
         self.run_steps([('Applying signed Mod Profile', command)],
                        'Apply Mod Profile', complete)
+
+    def export_model_folder(self):
+        """Export existing CryEngine render-mesh files to Blender without setup."""
+        input_folder = QFileDialog.getExistingDirectory(
+            self, 'Choose folder containing CryEngine models', self.projects_path)
+        if not input_folder:
+            return
+        output_folder = QFileDialog.getExistingDirectory(
+            self, 'Choose a separate Blender export folder', self.projects_path)
+        if not output_folder:
+            return
+        try:
+            from model_blender_export import convert_folder
+            exported, skipped = convert_folder(Path(input_folder), Path(output_folder))
+            summary = f'{len(exported)} models exported to .glb. {len(skipped)} unsupported/skipped.'
+            if skipped:
+                (Path(output_folder) / 'Blender_export_report.txt').write_text(
+                    '\n'.join(f'{name}: {reason}' for name, reason in skipped),
+                    encoding='utf-8')
+            self.info('Blender export finished',
+                      summary + '\n\nOutput folder: ' + output_folder +
+                      '\nImport .glb in Blender using File > Import > glTF 2.0. '
+                      'Geometry and UVs only; no rig/animation reconstruction.')
+        except Exception as exc:
+            self.failure(exc)
 
     def browse_external_pak(self):
         source, _ = QFileDialog.getOpenFileName(self, 'Choose custom-signed PAK',
