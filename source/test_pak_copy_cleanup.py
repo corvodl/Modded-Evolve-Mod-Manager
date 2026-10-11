@@ -76,6 +76,28 @@ class DuplicateCleanupTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "since scan|identical"):
                 validate_recycle(self.game, self.swap, [selected])
 
+    def test_distinct_historic_versions_retain_one_copy(self):
+        old_second = Path(str(self.pak) + ".customkey-recovery-mod-second")
+        old_second.write_bytes(self.other.read_bytes())
+        rows = scan_duplicate_paks(self.game)
+        original_historic = next(row for row in rows if row.path == self.other)
+        other_historic = next(row for row in rows if row.path == old_second)
+        versions = (original_historic, other_historic)
+        # Exactly one original historical version survives. The other is
+        # optionally recyclable, though neither matches the installed PAK.
+        self.assertEqual(sum(row.reclaimable for row in versions), 1)
+        keep = next(row for row in versions if not row.reclaimable)
+        recycle = next(row for row in versions if row.reclaimable)
+        self.assertEqual(recycle.retained_reference, keep.path)
+        self.original.unlink()
+        with patch("orphaned_swap_recovery.ensure_game_closed"), patch(
+                "launch_integration.state_status") as state:
+            state.return_value = type("State", (), {
+                "phase": "restored", "game": str(self.game)})()
+            self.assertEqual(
+                validate_recycle(self.game, self.swap, [recycle]),
+                (recycle.path,))
+
     def test_swapped_journal_refuses_all_recycling(self):
         self.original.unlink()
         selected = next(r for r in scan_duplicate_paks(self.game)
