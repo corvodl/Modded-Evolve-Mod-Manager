@@ -136,7 +136,10 @@ def texture_image(identifier, relative, *, root=None):
     if not (relative.casefold().endswith('.dds')
             or re.search(r'\.dds\.0$', relative, re.I)):
         raise ValueError('Choose a DDS or first .dds.0 streaming fragment.')
-    return _decode_texture({'file': entry, 'workspace': None, 'relative': relative})
+    from asset_library import extracted_index
+    return _decode_texture(
+        {'file': entry, 'workspace': None, 'relative': relative},
+        index=extracted_index(root))
 
 
 def export_png(identifier, relative, destination, *, root=None):
