@@ -1,1 +1,1 @@
-1.1.10 - In-Editor GPU Model Viewer and Window Controls
+1.1.11 - Model Menus and Texture Diagnostics
