@@ -60,9 +60,10 @@ def _fill(table, rows):
 class DeveloperMemoryPanel(QWidget):
     """Attach, scan, inspect, edit, undo and watch one Evolve.exe process."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, offline_game_provider=None):
         super().__init__(parent)
         self._closed = False
+        self._offline_game_provider = offline_game_provider
         self._job_serial = 0
         self._jobs = set()
         self._active_scan_token = None
@@ -433,8 +434,17 @@ class DeveloperMemoryPanel(QWidget):
         except Exception as exc:
             self.hex_status.setText('Read failed: ' + str(exc))
 
+    def _require_offline_write(self):
+        from online_guard import offline_rule_active
+        if (self._offline_game_provider is None or
+                not offline_rule_active(self._offline_game_provider())):
+            raise PermissionError(
+                'Memory writes require Evolve outbound network blocking '
+                'in an isolated offline test session.')
+
     def write_hex(self):
         try:
+            self._require_offline_write()
             pid = self._pid_required()
             address = parse_address(self.address.text())
             if self._snapshot is None or (pid, address) != self._snapshot[:2]:

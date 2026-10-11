@@ -74,7 +74,7 @@ def inspect_project(project_root, candidate, *, active=(), min_age_days=30, now=
             # The manifest does not list new files or backups from editing.
             # Treat either as valuable user work even if all tracked files
             # were later reverted to their original checksums.
-            if (child/'EditorBackups').exists() or (
+            if (child/'EditorBackups').exists() or (child/'EditorRecovery').exists() or (
                     child/'.EXTRACTION-INCOMPLETE.txt').exists():
                 has_changes = True
             expected = {entry['path'].casefold() for entry in manifest['entries']}

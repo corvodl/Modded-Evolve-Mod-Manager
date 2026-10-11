@@ -35,7 +35,7 @@ if os.name == 'nt' and getattr(sys, 'frozen', False):
         sys.stderr = sys.stderr or open(os.devnull, 'w')
 
 
-from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QUrl
+from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl
 from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout,
@@ -306,11 +306,14 @@ class QtManager(QMainWindow):
         self.keep_original_snapshots = bool(self.settings.get('keep_original_snapshots', True))
         self.show_activity_on_tasks = bool(self.settings.get('show_activity_on_tasks', True))
         self._developer_allow_online = False
+        self._dev_trace_env = {}
         self.external_pak = ''
         self.game_root = None
         self.archive_entries = []
         self.batch_workspaces = {}
         self.busy = False
+        self.task_queue = []
+        self._queued_task_running = None
         self.process = None
         self.editors = []
         self.available_update = None
@@ -473,6 +476,8 @@ class QtManager(QMainWindow):
             self.stack.setCurrentIndex(self._last_public_page)
             if hasattr(self, 'dev_memory_panel'):
                 self.dev_memory_panel.stop()
+            if hasattr(self, 'dev_lab_panel'):
+                self.dev_lab_panel.stop()
             old = self.pages['developer']
             self.stack.removeWidget(old)
             old.hide()
@@ -571,6 +576,9 @@ class QtManager(QMainWindow):
         actions.addWidget(_button('Mod Profiles', self.open_mod_profiles, primary=True))
         actions.addWidget(_button('Export Model Folder', self.export_model_folder))
         actions.addWidget(_button('PAK Diff…', self.open_pak_diff))
+        actions.addWidget(_button('Projects', self.open_project_dashboard))
+        actions.addWidget(_button('Tasks', self.open_task_manager))
+        actions.addWidget(_button('Offline Test…', self.build_offline_test))
         root.addLayout(actions)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(('Folder', 'Description', 'File', 'Type / Project', 'Size'))
@@ -918,8 +926,16 @@ class QtManager(QMainWindow):
         card, panel = _card('Live Evolve memory',
                             'Browse loaded modules, committed memory regions, scan '
                             'values and inspect or edit hex bytes in a running game.')
-        self.dev_memory_panel = DeveloperMemoryPanel()
+        self.dev_memory_panel = DeveloperMemoryPanel(offline_game_provider=self._developer_game)
         panel.addWidget(self.dev_memory_panel)
+        lay.addWidget(card)
+        card, panel = _card('Developer diagnostics',
+            'Live pointer/snapshot tools and isolated relay, session and '
+            'trace diagnostics. Local fixture services cannot target public endpoints.')
+        from qt_developer_lab import DeveloperLabPanel
+        self.dev_lab_panel = DeveloperLabPanel(
+            self._developer_game,trace_env_callback=self._set_dev_trace_env)
+        panel.addWidget(self.dev_lab_panel)
         lay.addWidget(card)
         lay.addWidget(_button('Lock and leave',
                               lambda: self.open_page(self._last_public_page)))
@@ -927,6 +943,14 @@ class QtManager(QMainWindow):
         self.stack.insertWidget(self._developer_index, scroll)
         self.pages['developer'] = scroll
         QTimer.singleShot(0, self.dev_memory_panel.start)
+        QTimer.singleShot(0, self.dev_lab_panel.refresh_pids)
+
+    def _set_dev_trace_env(self,name,value):
+        from developer_network_lab import validate_trace_environment
+        name,value=validate_trace_environment(name,value)
+        if len(self._dev_trace_env)>=32 and name not in self._dev_trace_env:
+            raise ValueError('At most 32 developer trace flags per session.')
+        self._dev_trace_env[name]=value
 
     def _developer_game(self):
         state = state_status(Path(self.swap_path))
@@ -1079,6 +1103,12 @@ class QtManager(QMainWindow):
         self.process.setProgram(str(wrapped[0]))
         self.process.setArguments([str(x) for x in wrapped[1:]])
         self.process.setWorkingDirectory(str(self._task_cwd))
+        if (self._task_label=='Play with Mods' and
+                not self._developer_allow_online and self._dev_trace_env):
+            environment=QProcessEnvironment.systemEnvironment()
+            for name,value in self._dev_trace_env.items():
+                environment.insert(name,value)
+            self.process.setProcessEnvironment(environment)
         self.process.setProcessChannelMode(QProcess.MergedChannels)
         self.process.readyReadStandardOutput.connect(self._process_output)
         self.process.finished.connect(self._process_finished)
@@ -1108,6 +1138,8 @@ class QtManager(QMainWindow):
             self.status.setText(f'FAILED: {name} (exit {code}). Review Activity.')
             self._log('FAILED — backups and journals have not been deleted.')
             self.refresh_swap_status()
+            self._queued_task_running = None
+            self.task_queue.clear()  # Failure pauses/clears future mutations.
             return
         self.status.setText('Completed: ' + name)
         self._log('SUCCESS: ' + name)
@@ -1118,6 +1150,9 @@ class QtManager(QMainWindow):
             except Exception as exc:
                 self.failure(exc)
         self.refresh_swap_status()
+        self._queued_task_running = None
+        if self.task_queue and not self.busy:
+            QTimer.singleShot(10,self._drain_tasks)
 
     def persist(self):
         self.settings.update({
@@ -1656,6 +1691,72 @@ class QtManager(QMainWindow):
         except Exception as exc:
             self.failure(exc)
 
+    def build_offline_test(self):
+        """Guided private/offline build, signed stage and isolated game launch.
+
+        Restoration remains explicit until the client confirms game exit;
+        never assume the launcher process lifetime is the game lifetime.
+        """
+        try:
+            if self.busy or not self.flush_editors():
+                return
+            from asset_intelligence import validate_project
+            workspace=self._workspace_for_selected_archive()
+            if workspace is None:
+                raise ValueError('Unpack the selected signed PAK first.')
+            st=self.refresh_swap_status()
+            if st.phase not in ('missing','prepared','restored'):
+                raise RuntimeError('Restore originals before an offline test.')
+            changed,problems=validate_project(workspace)
+            if problems:
+                raise ValueError('Preflight found problems:\n'+'\n'.join(problems[:8]))
+            if not changed:
+                raise ValueError('There are no modified assets to test.')
+            pak,relative=self._selected_stage_pak()
+            pub,priv=self._pub_priv()
+            if not priv.is_file():
+                raise FileNotFoundError('Signing private key not configured.')
+            meta=json.loads((workspace/'.evolve-pak-workspace.json').read_text('utf-8'))
+            if Path(meta['source_pak']).resolve()!=pak.resolve():
+                raise ValueError('Selected PAK does not match this workspace.')
+            if not self.confirm('Offline mod test',
+                'Validate and build %d edited asset(s), sign the selected PAK, '
+                'and stage it before launching in offline mode?\n\n'
+                'Restore Game Files remains required after testing. '
+                'No public multiplayer traffic will be enabled.'%len(changed)):
+                return
+            output=(Path(self.projects_path)/'Built'/
+                relative.replace('/','_')/
+                datetime.now().strftime('%Y%m%d_%H%M%S_%f')/pak.name)
+            output.parent.mkdir(parents=True,exist_ok=False)
+            cmd=[sys.executable,'-u',str(ROOT/'evolve_pak_workspace.py'),
+                 'build','--workspace',str(workspace),
+                 '--public-key',str(pub),'--private-key',str(priv),
+                 '--out',str(output)]
+            self.run_steps([('Validate and sign offline test PAK',cmd)],
+                'Build Offline Test',
+                lambda:self._stage_offline_test(output,relative))
+        except (ValueError,OSError,RuntimeError) as exc:
+            self.failure(exc)
+
+    def _stage_offline_test(self,pak,relative):
+        self.output_pak=str(pak)
+        self.output_input.setText(self.output_pak)
+        self.persist()
+        self._stage_install(pak,relative,'Stage Offline Test',
+                            self._start_offline_test)
+
+    def _start_offline_test(self):
+        self.refresh_archives()
+        self.refresh_swap_status()
+        if self.confirm('Offline test staged',
+            'The signed PAK is staged. Start a private/offline test session now? '
+            'Your game will be network-blocked using the existing firewall '
+            'safeguard. After testing, return to Play & Restore and restore '
+            'your original files.'):
+            self._developer_allow_online=False
+            self.launch()
+
     def _after_build(self, result):
         self.output_pak = str(result)
         self.output_input.setText(str(result))
@@ -2001,6 +2102,54 @@ class QtManager(QMainWindow):
         self.info('Setup check', ('Setup looks ready.' if not notes else
                   'Things requiring attention:\n' + '\n'.join('• '+x for x in notes)) +
                   '\n\n' + st.message)
+
+    def open_project_dashboard(self):
+        try:
+            from qt_workflow_lab import ProjectDashboard
+            ProjectDashboard(self).exec()
+        except (ValueError,OSError) as exc:
+            self.failure(exc)
+
+    def open_task_manager(self):
+        from qt_task_queue import TaskQueueDialog
+        TaskQueueDialog(self).exec()
+
+    def enqueue_task_action(self,name):
+        allowed={'Review Changes':self.diff, 'Unpack PAK':self.extract,
+                 'Build Mod':self.build}
+        if name not in allowed:
+            raise ValueError('Unsupported task category.')
+        archive=self._selected_rel()
+        if not archive or archive not in self.archive_entries:
+            raise ValueError('Select a signed PAK before queuing work.')
+        if len(self.task_queue)>=24:
+            raise ValueError('Task queue is full.')
+        self.task_queue.append({'name':name,'archive':archive,
+                                'workspace':str(self.current_workspace)})
+        if not self.busy:
+            QTimer.singleShot(10,self._drain_tasks)
+
+    def _drain_tasks(self):
+        if self.busy or not self.task_queue:
+            return
+        task=self.task_queue[0]
+        if (self._selected_rel()!=task['archive'] or
+                str(self.current_workspace)!=task['workspace']):
+            self.status.setText('Queue paused: select %s and its original '
+                                'workspace, then reopen Tasks.'%task['archive'])
+            return
+        from project_selection import workspace_for_archive
+        if task['name']!='Unpack PAK' and workspace_for_archive(
+                self.stage_path,task['archive'],task['workspace'],
+                self.batch_workspaces) is None:
+            self.status.setText('Queue paused: PAK has no matching extracted project.')
+            return
+        self.task_queue.pop(0)
+        self._queued_task_running = task
+        {'Review Changes':self.diff,'Unpack PAK':self.extract,
+         'Build Mod':self.build}[task['name']]()
+        if not self.busy:
+            self._queued_task_running = None
 
     def open_project_cleanup(self):
         if self.busy:

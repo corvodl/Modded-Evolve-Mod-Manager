@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.15', (
+        'Add task queues, project dashboards, gameplay presets and conflict inspection.',
+        'Speed up model reopening and improve material preview and editing.',
+        'Add safer bulk text editing, offline test preparation and crash recovery.',
+    )),
     ('1.1.14', (
         'Fix PAK double-click reopening the wrong extracted project.',
         'Add safe old-project cleanup, PAK diffs, asset dependencies and mod validation.',

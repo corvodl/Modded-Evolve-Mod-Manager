@@ -261,6 +261,10 @@ class QtWorkspaceEditor(QMainWindow):
         self.find_shortcut = QShortcut(QKeySequence.Find, self)
         self.find_shortcut.activated.connect(self.find_text)
         self.populate()
+        self.recovery_timer=QTimer(self)
+        self.recovery_timer.setInterval(30000)
+        self.recovery_timer.timeout.connect(self._autosave_recovery)
+        self.recovery_timer.start()
 
     def _build_editor_menus(self):
         """Blender-style discoverable menu bar; no oversized model-action rows."""
@@ -287,6 +291,9 @@ class QtWorkspaceEditor(QMainWindow):
         action('Edit', 'Save Text', self.save)
         action('Edit', 'Find Text', self.find_text)
         action('Edit', 'Visual Gameplay Values…', self.open_gameplay_editor)
+        action('Edit', 'Gameplay Presets…', self.open_gameplay_presets)
+        action('Edit', 'Global Search & Replace…', self.open_global_search)
+        action('Edit', 'Material Properties 2.0…', self.open_material_properties)
         action('Edit', 'Import / Replace File…', self.import_raw)
         action('Edit', 'Restore Original', self.restore_original)
         self.equipment_menu = menus['Model'].addMenu('Equipped Skin')
@@ -305,6 +312,8 @@ class QtWorkspaceEditor(QMainWindow):
         action('Textures', 'Use Automatic Cross-PAK Lookup', self.use_auto_textures)
         action('Textures', 'Reload Model Textures', self.refresh_model_textures)
         action('Tools', 'Validate Project Mod…', self.open_mod_validator)
+        action('Tools', 'Global Search & Replace…', self.open_global_search)
+        action('Tools', 'Recovery Snapshot Now', self._autosave_recovery)
         action('Tools', 'Review Project History…', self.open_project_history)
         action('Tools', 'PAK Difference Inspector…', self.manager.open_pak_diff)
         action('Tools', 'Search All Extracted Assets…', self.open_asset_search)
@@ -408,6 +417,58 @@ class QtWorkspaceEditor(QMainWindow):
             ValidationDialog(self).exec()
         except (ValueError,OSError) as exc:
             QMessageBox.warning(self,'Mod Validation',str(exc))
+
+    def open_gameplay_presets(self):
+        try:
+            from qt_workflow_lab import GameplayPresetDialog
+            GameplayPresetDialog(self).exec()
+        except (OSError,ValueError) as exc:
+            QMessageBox.warning(self,'Gameplay Presets',str(exc))
+
+    def open_global_search(self):
+        try:
+            from qt_workflow_lab import GlobalSearchDialog
+            GlobalSearchDialog(self).exec()
+        except (OSError,ValueError) as exc:
+            QMessageBox.warning(self,'Global Search',str(exc))
+
+    def open_material_properties(self):
+        try:
+            from qt_workflow_lab import MaterialEditorV2
+            MaterialEditorV2(self).exec()
+        except (OSError,ValueError) as exc:
+            QMessageBox.warning(self,'Material Properties',str(exc))
+
+    def _autosave_recovery(self):
+        if not self._dirty() or not self.current:
+            return
+        control=self.views['files']
+        if control.isReadOnly():
+            return
+        try:
+            from workflow_lab import save_recovery
+            save_recovery(self.workspace,self.current,control.toPlainText(),self.raw)
+        except (OSError,ValueError) as exc:
+            self.status.setText('Autosave recovery could not be written: '+str(exc)[:150])
+
+    def _load_recovery(self):
+        if self.mode!='files' or not self.current or self.views['files'].isReadOnly():
+            return
+        from workflow_lab import read_recovery,clear_recovery
+        try:
+            text=read_recovery(self.workspace,self.current,self.raw)
+            if text is None or text==self.loaded_text:
+                return
+            if QMessageBox.question(self,'Recover unsaved changes',
+                'Unsaved text from an earlier edit session is available. '
+                'Restore it into the editor (without modifying the project file yet)?',
+                QMessageBox.Yes|QMessageBox.No,QMessageBox.Yes)==QMessageBox.Yes:
+                self.views['files'].setPlainText(text)
+                self.status.setText('Recovered unsaved edits. Save to commit them.')
+            else:
+                clear_recovery(self.workspace,self.current)
+        except (OSError,ValueError):
+            pass
 
     def open_gameplay_editor(self):
         try:
@@ -603,6 +664,7 @@ class QtWorkspaceEditor(QMainWindow):
                     control.setReadOnly(False)
                     self.loaded_text = plain
             self.status.setText(rel + ' | project copy only')
+            self._load_recovery()
         elif self.mode == 'images':
             if is_split_dds(rel):
                 try:
@@ -865,6 +927,8 @@ class QtWorkspaceEditor(QMainWindow):
                             self.records[self.current].get('format') == 'cryxml')
             self.raw = new
             self.loaded_text = control.toPlainText()
+            from workflow_lab import clear_recovery
+            clear_recovery(self.workspace,self.current)
             self.status.setText('Saved ' + self.current +
                                 ' | previous contents in EditorBackups')
         except (ValueError, OSError) as exc:

@@ -52,10 +52,19 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
     references, idle, config = discover_animations(
         skeleton, index, preferred_workspace=workspace,
         loose_index=animation_index)
-    geometry = prepare_geometry(mesh, shading='faceted')
+    # Derived geometry caches are optional. A broken/unwritable cache must
+    # never prevent the game model from opening.
+    if projects_root is not None:
+        from asset_geometry_cache import cached_geometry
+        geometry, cached = cached_geometry(
+            mesh,Path(projects_root)/'.asset-cache'/'gpu',shading='faceted')
+    else:
+        geometry = prepare_geometry(mesh, shading='faceted')
+        cached = False
     return {
         'raw':raw, 'report':report, 'mesh':mesh, 'materials':materials,
         'character':character, 'index':index,'geometry':geometry,
         'animation':(references,idle,config),
         'materials_error':issue, 'assembly_error':assembly_error,
+        'geometry_cache_hit':cached,
     }
