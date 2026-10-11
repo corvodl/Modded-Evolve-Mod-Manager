@@ -1,10 +1,15 @@
-# Evolve Stage 2 Mod Manager — v1.1.17.1
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.1
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.17.1 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.1 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.18-beta.1
+
+- Add a separate experimental Beta release with a Windows installer.
+- Offer only the newest verified Stable or Beta update in the manager.
 
 ## What's new in v1.1.17.1
 
