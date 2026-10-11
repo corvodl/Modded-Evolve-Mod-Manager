@@ -187,11 +187,14 @@ def _decode_texture(item):
 def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None):
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
-    stem = Path(model_relative).with_suffix('').as_posix()
-    bases = [stem, re.sub(r'_lod\d+$', '', stem, flags=re.IGNORECASE)]
-    material = next((item for b in bases if (item := _find_unique(index, b+'.mtl', preferred_workspace=workspace)) is not None), None)
+    from model_material_resolve import find_model_material
+    material, reason, attempted = find_model_material(
+        index, model_relative, preferred_workspace=workspace)
     if material is None:
-        raise ValueError('Model .mtl not found. Unpack the material PAK alongside this model.')
+        raise ValueError('No verified model .mtl association for ' +
+                         model_relative + '; searched: ' +
+                         ', '.join(attempted[:6]) +
+                         '. Check CDF material overrides or embedded material references.')
     raw = material['file'].read_bytes()
     if len(raw) > MAX_MATERIAL_BYTES or b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
         raise ValueError('Material XML is too large or contains disallowed entities.')
