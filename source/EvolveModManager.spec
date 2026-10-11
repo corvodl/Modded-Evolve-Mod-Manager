@@ -7,6 +7,14 @@ import ast
 root = Path(SPECPATH)
 datas = [(str(p), '.') for p in root.glob('*.py')
          if not p.name.startswith(('test_', 'Test-', 'build_'))]
+# The converter is redistributed as an independent GPLv2 executable,
+# together with complete corresponding upstream source and license.
+third_party = root / 'third_party' / 'Cryengine-Converter'
+for name in ('cgf-converter.exe', 'Cryengine-Converter-source-v2.0.0.zip', 'NOTICE.txt'):
+    asset = third_party / name
+    if not asset.is_file():
+        raise FileNotFoundError('Bundled Cryengine-Converter missing: ' + str(asset))
+    datas.append((str(asset), 'third_party/Cryengine-Converter'))
 datas += [(str(root/'launcher_support'), 'launcher_support'),
           (str(root/'assets'), 'assets'),
           (str(root/'reference'), 'reference'),
