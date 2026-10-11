@@ -183,6 +183,22 @@ def asset_directory_index(folder, *, max_files=60000):
 
 def discover_animations(selected, index, *, preferred_workspace=None, loose_index=None):
     """Resolve a model's named animations from its own skeleton's .chrparams."""
+    # The model viewer may have opened before the background Asset Library
+    # finished importing its CAF PAKs. Merge its CURRENT extracted files, not
+    # the one-time geometry index captured when the model first loaded.
+    from asset_library import extracted_index
+    library = extracted_index()
+    if library:
+        merged = dict(index)
+        for name, records in library.items():
+            if not name.endswith(('.caf', '.chrparams', '.dba', '.bspace', '.comb')):
+                continue
+            present = {str(row.get('file', '')) for row in merged.get(name, ())}
+            extra = [row for row in records
+                     if str(row.get('file', '')) not in present]
+            if extra:
+                merged[name] = list(merged.get(name, ())) + extra
+        index = merged
     config_name, config_file = selected_character_params(
         selected, index, preferred_workspace)
     if config_file is None:
