@@ -350,7 +350,7 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode != 'models' or self.mesh is None:
             QMessageBox.information(self, 'Texture preview', 'Select a model first.')
             return
-        self._paint_model(self.views['models'], self.mesh)
+        self.load(self.current)
         self.status.setText(self.texture_message)
 
     @staticmethod
@@ -854,7 +854,7 @@ class QtWorkspaceEditor(QMainWindow):
             QMessageBox.information(self, 'Export for Blender',
                                     'Select a supported CryEngine model first.')
             return
-        name = Path(self.mesh.source_name or self.current).stem + '.glb'
+        name = Path(self.current).stem + '.glb'
         destination, _ = QFileDialog.getSaveFileName(
             self, 'Export Blender model (geometry and available textures)',
             str(Path(self.manager.projects_path) / name),
@@ -867,15 +867,22 @@ class QtWorkspaceEditor(QMainWindow):
                 target = target.with_suffix('.glb')
             if not target.parent.is_dir():
                 raise FileNotFoundError('Choose an existing export folder.')
-            mesh_source = self.mesh.source_name or self.current
+            # Native GLB skin weights correspond to the individual .skinm,
+            # not the assembled preview vertex order. Preserve rigged export
+            # semantics by exporting the original model, never the composite.
+            mesh_source = self.current
+            export_mesh = (find_preview_mesh(
+                self.workspace, self.current, self.raw,
+                projects_root=self.manager.projects_path,
+                stage_root=self.manager.stage_path) if self.character_preview else self.mesh)
             payload, report = textured_model_from_workspace(
-                self.mesh, self.workspace, mesh_source,
+                export_mesh, self.workspace, mesh_source,
                 texture_folder=self.texture_folder,
                 projects_root=self.manager.projects_path,
                 stage_root=self.manager.stage_path)
             target.write_bytes(payload)
             message = ('Exported %d vertices, %d triangles, %d diffuse textures. %s.' %
-                       (len(self.mesh.vertices), len(self.mesh.triangles),
+                       (len(export_mesh.vertices), len(export_mesh.triangles),
                         report['texture_count'], report['rig_status']))
             self.status.setText(message)
             if report['texture_count'] == 0:
@@ -1007,11 +1014,13 @@ class QtWorkspaceEditor(QMainWindow):
             from qt_gpu_viewer import QtGPUModelDialog
             material_note = ''
             try:
-                materials = load_preview_materials(
-                    self.workspace, self.mesh.source_name or self.current,
-                    self.texture_folder,
-                    projects_root=self.manager.projects_path,
-                    stage_root=self.manager.stage_path)
+                materials = self.materials
+                if materials is None:
+                    materials = load_preview_materials(
+                        self.workspace, self.current,
+                        self.texture_folder,
+                        projects_root=self.manager.projects_path,
+                        stage_root=self.manager.stage_path, index=self.preview_index)
                 material_note = (f' | GPU diffuse textures: {materials.count}'
                                  f' | source: {materials.source}')
             except (ValueError, OSError) as error:
@@ -1019,6 +1028,14 @@ class QtWorkspaceEditor(QMainWindow):
                 materials = None
                 material_note = ' | Untextured: ' + str(error)[:180]
             dialog = QtGPUModelDialog(self, self.mesh, materials)
+            if self.model_panel is not None:
+                from character_animation_catalog import discover_animations
+                anim_model = (self.character_preview.skeleton if self.character_preview
+                              else self.current)
+                refs, idle, _config = discover_animations(
+                    anim_model, self.preview_index, preferred_workspace=self.workspace,
+                    loose_index=self.loose_animation_index)
+                dialog.panel.set_native_catalog(refs, idle)
             dialog.setAttribute(Qt.WA_DeleteOnClose, False)
             self.gpu_windows.append(dialog)
             self.status.setText(self.current + material_note)
