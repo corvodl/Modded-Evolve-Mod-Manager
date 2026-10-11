@@ -48,7 +48,14 @@ def _parse_cdf(raw):
             continue
         if binding.casefold().endswith('.skin'):
             refs.append((row.get('AName', '') or Path(binding).stem, binding))
-    return skeleton, tuple(refs)
+    sets = {}
+    for group in root.findall('./SkinSets/SkinSet'):
+        key = re.sub(r'[^a-z0-9]', '', (group.get('name') or '').casefold())
+        if key:
+            sets[key] = frozenset(
+                re.sub(r'[^a-z0-9]', '', (row.get('name') or '').casefold())
+                for row in group.findall('./skin'))
+    return skeleton, tuple(refs), sets
 
 
 def _resolve_file(index, virtual, workspace):
@@ -75,13 +82,13 @@ def _character_definition(selected, index, workspace):
         if file is None:
             continue
         try:
-            skeleton, skins = _parse_cdf(Path(file).read_bytes())
+            skeleton, skins, skin_sets = _parse_cdf(Path(file).read_bytes())
         except (ValueError, OSError, ET.ParseError):
             continue
         if (candidate == expected or selected_skin == skeleton.casefold()
                 or selected_skin in (skin.casefold() for _, skin in skins)
                 or selected_skin == skeleton.casefold() + 'm'):
-            return candidate, skeleton, skins
+            return candidate, skeleton, skins, skin_sets
     return None
 
 
@@ -143,7 +150,7 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
     definition = _character_definition(selected, index, workspace)
     if definition is None:
         return None
-    cdf, skeleton, skins = definition
+    cdf, skeleton, skins, skin_sets = definition
     selected_skin = normalized_name(selected).casefold()
     if selected_skin.endswith('.skinm'):
         selected_skin = selected_skin[:-1]
@@ -163,6 +170,17 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         # equipped appearance. Draw exactly ONE, never every overlapping gun.
         chosen = selected_matches or options[:1]
     requested = primary + chosen
+    # Respect CDF SkinSets. Kala's Rift Device and its arm are a set,
+    # while other weapon skins should be hidden.
+    if chosen:
+        clean = lambda name: re.sub(r'[^a-z0-9]', '', name.casefold())
+        selected_name = clean(chosen[0][0])
+        excluded = skin_sets.get('hiddenwhen' + selected_name + 'selected')
+        if excluded is not None:
+            requested.extend(
+                (label, rel) for label, rel in options
+                if (label, rel) not in chosen and clean(label) not in excluded)
+    requested = list(dict.fromkeys(requested))
     if not requested:
         return None
     included, omitted, parts, rig_parts = [], [], [], []
