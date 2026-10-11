@@ -61,7 +61,7 @@ from ui_copy import load_text
 from qt_font_health import ensure_readable_ui_font, ui_family, glyphs_readable
 from portable_bundle import MARKER, bind_home
 from developer_access import verify_code
-from developer_memory import list_evolve_processes, read_memory, write_memory, parse_address, parse_hex
+from developer_memory_panel import DeveloperMemoryPanel
 from online_guard import set_offline, target_executable
 from release_notes import RELEASE_NOTES
 
@@ -462,6 +462,8 @@ class QtManager(QMainWindow):
         # No remembered session or settings flag can skip this prompt.
         if self.stack.currentIndex() == self._developer_index:
             self.stack.setCurrentIndex(self._last_public_page)
+            if hasattr(self, 'dev_memory_panel'):
+                self.dev_memory_panel.stop()
             old = self.pages['developer']
             self.stack.removeWidget(old)
             old.hide()
@@ -882,7 +884,7 @@ class QtManager(QMainWindow):
         self.pages['whats_new'] = scroll
 
     def _developer_page(self):
-        """Build the protected page on each successful authentication."""
+        """Create protected pages only after code verification."""
         old = self.pages['developer']
         self.stack.removeWidget(old)
         old.deleteLater()
@@ -901,34 +903,17 @@ class QtManager(QMainWindow):
                                'changed. The override is never saved.', muted=True))
         lay.addWidget(card)
         card, panel = _card('Live Evolve memory',
-                            'Read and edit the running game process at a known address.')
-        row = _row()
-        self.dev_process = QComboBox()
-        row.addWidget(self.dev_process, 1)
-        row.addWidget(_button('Refresh Processes', self._developer_processes))
-        panel.addLayout(row)
-        fields = QFormLayout()
-        self.dev_address = QLineEdit()
-        self.dev_address.setPlaceholderText('0x7FF600001000')
-        fields.addRow('Address', self.dev_address)
-        self.dev_read_length = QLineEdit('16')
-        fields.addRow('Read bytes', self.dev_read_length)
-        self.dev_write_bytes = QLineEdit()
-        self.dev_write_bytes.setPlaceholderText('00 00 80 3F')
-        fields.addRow('Write hex', self.dev_write_bytes)
-        panel.addLayout(fields)
-        panel.addLayout(_row(_button('Read Memory', self._developer_read),
-                             _button('Write Memory', self._developer_write)))
-        self.dev_result = QPlainTextEdit()
-        self.dev_result.setReadOnly(True)
-        self.dev_result.setMaximumHeight(130)
-        panel.addWidget(self.dev_result)
+                            'Browse loaded modules, committed memory regions, scan '
+                            'values and inspect or edit hex bytes in a running game.')
+        self.dev_memory_panel = DeveloperMemoryPanel()
+        panel.addWidget(self.dev_memory_panel)
         lay.addWidget(card)
         lay.addWidget(_button('Lock and leave',
                               lambda: self.open_page(self._last_public_page)))
         lay.addStretch()
         self.stack.insertWidget(self._developer_index, scroll)
         self.pages['developer'] = scroll
+        QTimer.singleShot(0, self.dev_memory_panel.start)
 
     def _developer_game(self):
         state = state_status(Path(self.swap_path))
@@ -957,45 +942,6 @@ class QtManager(QMainWindow):
             self.dev_online.blockSignals(True)
             self.dev_online.setChecked(previous)
             self.dev_online.blockSignals(False)
-            self.failure(exc)
-
-    def _developer_processes(self):
-        try:
-            self.dev_process.clear()
-            for pid in list_evolve_processes():
-                self.dev_process.addItem('Evolve.exe - PID ' + str(pid), pid)
-            if not self.dev_process.count():
-                self.dev_result.setPlainText('No running Evolve.exe found.')
-        except Exception as exc:
-            self.failure(exc)
-
-    def _developer_pid(self):
-        pid = self.dev_process.currentData()
-        if not isinstance(pid, int) or pid <= 0:
-            raise ValueError('Refresh Processes and select Evolve.exe.')
-        return pid
-
-    def _developer_read(self):
-        try:
-            address = parse_address(self.dev_address.text())
-            data = read_memory(self._developer_pid(), address,
-                               int(self.dev_read_length.text(), 10))
-            self.dev_result.setPlainText('0x%016X: %s' % (address, data.hex(' ').upper()))
-        except Exception as exc:
-            self.failure(exc)
-
-    def _developer_write(self):
-        try:
-            pid = self._developer_pid()
-            address = parse_address(self.dev_address.text())
-            data = parse_hex(self.dev_write_bytes.text())
-            if not self.confirm('Write live game memory?',
-                   'Overwrite %d bytes at 0x%016X in PID %d? This may crash '
-                   'the game.' % (len(data), address, pid)):
-                return
-            count = write_memory(pid, address, data)
-            self.dev_result.setPlainText('Wrote %d bytes at 0x%016X.' % (count, address))
-        except Exception as exc:
             self.failure(exc)
 
     def _restore_network_after_game(self):
@@ -1511,6 +1457,8 @@ class QtManager(QMainWindow):
     def flush_editors(self):
         # Active text edits are never silently lost during build, signing,
         # stage installation, bundle export or original-file refresh.
+        if hasattr(self, 'dev_memory_panel'):
+            self.dev_memory_panel.stop()
         for editor in self.editors:
             if hasattr(editor, 'isVisible') and editor.isVisible() and hasattr(editor, '_confirm_buffer'):
                 if not editor._confirm_buffer():

@@ -168,6 +168,28 @@ class QtMigrationTests(unittest.TestCase):
             for note in notes:
                 self.assertIn(note, text)
 
+
+    def test_memory_panel_requires_developer_unlock_and_auto_attaches(self):
+        from developer_memory_panel import DeveloperMemoryPanel
+        self.assertEqual(self.win.findChildren(DeveloperMemoryPanel), [])
+        index = SECTIONS.index('Developer')
+        with patch('qt_manager.QInputDialog.getText', return_value=('test-input', True)), \
+             patch('qt_manager.verify_code', return_value=True), \
+             patch('developer_memory_panel.list_evolve_processes', return_value=[39832]), \
+             patch.object(DeveloperMemoryPanel, '_run'):
+            self.win.open_page(index)
+            self.application.processEvents()
+            panel = self.win.pages['developer'].findChild(DeveloperMemoryPanel)
+            self.assertIsNotNone(panel)
+            panel.refresh_processes()
+            self.assertEqual(panel._pid, 39832)
+            self.assertEqual(panel.processes.currentData(), 39832)
+            self.assertIn('39832', panel.connection.text())
+            self.assertEqual(panel.tabs.count(), 4)
+            self.win.open_page(0)
+            self.assertTrue(panel._closed)
+            self.assertEqual(self.win.pages['developer'].findChildren(DeveloperMemoryPanel), [])
+
     def test_developer_cancel_and_invalid_code_keep_previous_page(self):
         self.win.open_page(1)
         button = self.win.nav_buttons[SECTIONS.index('Developer')]
