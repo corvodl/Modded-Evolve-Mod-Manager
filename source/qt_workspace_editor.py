@@ -134,7 +134,9 @@ class QtWorkspaceEditor(QMainWindow):
         super().__init__(manager)
         self.manager = manager
         self.workspace = Path(workspace).resolve(strict=True)
-        self.archive_map = {name: Path(p).resolve() for name, p in (archive_map or {}).items()}
+        from project_selection import editor_collection_for_workspace
+        self.archive_map = editor_collection_for_workspace(
+            self.workspace, archive_map or {})
         self.records = self._read_records(self.workspace)
         self.favorites = set(manager.settings.get('favorite_assets',[]))
         self.current = None
