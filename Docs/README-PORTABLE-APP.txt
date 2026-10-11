@@ -1,16 +1,20 @@
-EVOLVE MOD MANAGER v1.0.2 - PORTABLE APP
+EVOLVE MOD MANAGER — WINDOWS INSTALLATION
 ==========================================
-Build with Build-Windows-EXE.cmd, then share dist\EvolveModManager-Windows.zip.
-Each recipient extracts the whole folder and opens EvolveModManager.exe.
-Click Set Up Manager, select EvolveGame and the normal Modded Evolve client EXE.
-The manager generates the signing keys, inject-custom.dll and custom-signed PAKs
-locally by reading the original game installation; original game files are not
-changed by setup. Preparation requires significant free disk space (at least
-2x the size of installed PAKs plus roughly 1 GiB for setup alone).
-The release includes required executables/runtime libraries, not game PAKs.
-Existing custom keys and projects must stay in the recipient's Data folder.
-Do not send that Data folder in public releases.
-Private/offline testing; normal online services may reject modified assets.
+Recommended download: EvolveModManager-Setup.exe from the latest GitHub Stable
+or Beta release. Beta builds may be experimental.
+The setup wizard installs to %LOCALAPPDATA%\EvolveModManager without admin rights.
+It asks whether to create a Desktop shortcut and whether to add the app to the
+Start Menu (which makes it findable through Windows search).
+The portable ZIP remains available as an alternate distribution and as the
+verified transport for in-manager updates.
+
+On first launch select Set Up Manager, EvolveGame and the normal Modded Evolve
+client EXE. All signing keys, projects, and stage data are generated locally
+from the installed game. Neither installer nor updater packages any game PAK,
+user keys, or personal projects. Keep your Data folder when reinstalling.
+In-manager updates compare verified Stable and Beta versions and offer only
+a release newer than your currently installed version. The updater verifies
+SHA-256 hashes, preserves Data and can roll back an unsuccessful replacement.
 
 Texture editing (standalone DDS only):
 - Unpack a PAK, open Edit Files, and select a .dds file.

@@ -84,11 +84,31 @@ jobs:
           }
           finally { $zip.Dispose() }
           Write-Host "Windows portable release verified."
+      - name: Locate Inno Setup 6
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (!(Test-Path -LiteralPath $iscc)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install Inno Setup compiler.' }
+          }
+      - name: Build per-user Windows installer
+        shell: pwsh
+        run: |
+          & './installer/Build-Installer.ps1'
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
+          $file = 'dist/EvolveModManager-Setup.exe'
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path $file))
+          if ($bytes.Length -lt 1048576 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) {
+            throw 'Installer is missing or is not a valid Windows EXE.'
+          }
       - name: Save downloadable workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: EvolveModManager-Windows
-          path: dist/EvolveModManager-Windows.zip
+          path: |
+            dist/EvolveModManager-Setup.exe
+            dist/EvolveModManager-Windows.zip
           if-no-files-found: error
       - name: Prepare signed-by-checksum update manifest
         shell: pwsh
@@ -96,11 +116,15 @@ jobs:
           $zip = "dist/EvolveModManager-Windows.zip"
           $data = [ordered]@{
             schema = 1
+            channel = 'main'
             commit = '${{ github.sha }}'
             version = (Get-Content -LiteralPath 'source/VERSION.txt' -Raw).Trim()
             asset = 'EvolveModManager-Windows.zip'
             sha256 = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
             bytes = (Get-Item -LiteralPath $zip).Length
+            installer = 'EvolveModManager-Setup.exe'
+            installer_sha256 = (Get-FileHash -LiteralPath 'dist/EvolveModManager-Setup.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+            installer_bytes = (Get-Item -LiteralPath 'dist/EvolveModManager-Setup.exe').Length
           }
           $json = $data | ConvertTo-Json -Depth 3
           [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'dist/update-manifest.json'), $json, [System.Text.UTF8Encoding]::new($false))
@@ -113,6 +137,8 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $latest -ne '${{ github.sha }}') {
             throw "Main branch moved since this build; refusing to publish stale binaries."
           }
+          gh release upload Main "dist/EvolveModManager-Setup.exe" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Installer release upload failed." }
           gh release upload Main "dist/EvolveModManager-Windows.zip" --clobber
           if ($LASTEXITCODE -ne 0) { throw "ZIP release upload failed." }
           gh release upload Main "dist/EvolveModManager-compiled-screenshot.png" --clobber

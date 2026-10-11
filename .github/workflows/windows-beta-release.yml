@@ -1,0 +1,129 @@
+name: Build Windows Beta installer and publish prerelease
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [beta]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: beta-windows-release
+  cancel-in-progress: true
+
+jobs:
+  build-windows-beta:
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - name: Verify version is a beta prerelease
+        shell: pwsh
+        run: |
+          $version=((Get-Content 'source/VERSION.txt' -Raw).Trim() -split ' - ', 2)[0]
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?-beta\.\d+$') {
+            throw "The beta branch must publish an explicitly beta-numbered version."
+          }
+      - name: Build and test the real Windows executable
+        shell: cmd
+        run: call Build-Windows-EXE.cmd
+      - name: Verify and capture compiled Windows application
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM='windows'
+          & '.build/app-dist/EvolveModManager/EvolveModManager.exe' --capture-screenshot 'dist/EvolveModManager-compiled-screenshot.png'
+          if ($LASTEXITCODE -ne 0) { throw 'Beta manager screenshot failed.' }
+          & '.build/app-dist/EvolveModManager/EvolveModManager.exe' --capture-modding-screenshot 'dist/EvolveModManager-Modding-screenshot.png'
+          if ($LASTEXITCODE -ne 0) { throw 'Beta modding screenshot failed.' }
+          $channel=(Get-Content '.build/app-dist/EvolveModManager/BUILD_CHANNEL.txt' -Raw).Trim()
+          if ($channel -ne 'beta') { throw "Unexpected executable channel: $channel" }
+          Add-Type -AssemblyName System.IO.Compression
+          $zip=[System.IO.Compression.ZipFile]::OpenRead((Resolve-Path 'dist/EvolveModManager-Windows.zip'))
+          try {
+            $items=@($zip.Entries | ForEach-Object { $_.FullName })
+            foreach ($expected in @('EvolveModManager/EvolveModManager.exe',
+                   'EvolveModManager/EvolveModWorker.exe',
+                   'EvolveModManager/BUILD_COMMIT.txt',
+                   'EvolveModManager/BUILD_CHANNEL.txt')) {
+              if ($expected -notin $items) { throw "Incomplete beta package: $expected" }
+            }
+            if ($items | Where-Object { $_ -match '(?i)(^|/)Data/|private_key\.pem$|\.pak$' }) {
+              throw 'Beta package includes private files or game data.'
+            }
+          } finally { $zip.Dispose() }
+      - name: Install or locate Inno Setup
+        shell: pwsh
+        run: |
+          $compiler=Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (!(Test-Path -LiteralPath $compiler)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install Inno Setup 6.' }
+          }
+      - name: Compile beta installer
+        shell: pwsh
+        run: |
+          & './installer/Build-Installer.ps1'
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path 'dist/EvolveModManager-Setup.exe')) {
+            throw 'Beta installer build failed.'
+          }
+      - name: Upload verification artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: EvolveModManager-Beta-Installer
+          path: |
+            dist/EvolveModManager-Setup.exe
+            dist/EvolveModManager-Windows.zip
+            dist/EvolveModManager-compiled-screenshot.png
+            dist/EvolveModManager-Modding-screenshot.png
+          if-no-files-found: error
+      - name: Prepare beta update manifest
+        shell: pwsh
+        run: |
+          $zip='dist/EvolveModManager-Windows.zip'
+          $setup='dist/EvolveModManager-Setup.exe'
+          $manifest=[ordered]@{
+            schema=1
+            channel='beta'
+            commit='${{ github.sha }}'
+            version=(Get-Content -LiteralPath 'source/VERSION.txt' -Raw).Trim()
+            asset='EvolveModManager-Windows.zip'
+            sha256=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+            bytes=(Get-Item -LiteralPath $zip).Length
+            installer='EvolveModManager-Setup.exe'
+            installer_sha256=(Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+            installer_bytes=(Get-Item -LiteralPath $setup).Length
+          }
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'dist/update-manifest.json'),
+            ($manifest | ConvertTo-Json -Depth 3),[Text.UTF8Encoding]::new($false))
+      - name: Publish Beta release (manifest last)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $latest=(gh api 'repos/${{ github.repository }}/branches/beta' --jq '.commit.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $latest -ne '${{ github.sha }}') {
+            throw 'Beta branch moved; refusing to publish an older build.'
+          }
+          $version=((Get-Content 'source/VERSION.txt' -Raw).Trim() -split ' - ',2)[0]
+          gh release view Beta *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create Beta --target '${{ github.sha }}' --title "Evolve Mod Manager v$version (Beta)" --prerelease --notes 'Experimental prerelease. Back up projects before trying new features.'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create Beta prerelease.' }
+          }
+          foreach ($file in @('EvolveModManager-Setup.exe',
+                 'EvolveModManager-Windows.zip','EvolveModManager-compiled-screenshot.png',
+                 'EvolveModManager-Modding-screenshot.png')) {
+            gh release upload Beta "dist/$file" --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Could not publish $file." }
+          }
+          gh release upload Beta 'dist/update-manifest.json' --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish Beta manifest.' }
+          & '.build/venv/Scripts/python.exe' 'source/release_notes.py' --latest |
+            Set-Content -Encoding utf8 'dist/release-notes.md'
+          gh release edit Beta --title "Evolve Mod Manager v$version (Beta)" --prerelease --notes-file 'dist/release-notes.md'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not update Beta release description.' }

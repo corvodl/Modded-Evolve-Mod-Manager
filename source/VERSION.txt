@@ -1,1 +1,1 @@
-1.1.17 - Performance and Studio Polish
+1.1.17.1 - Windows Installer and Release Channels

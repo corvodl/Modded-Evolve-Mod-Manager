@@ -447,7 +447,7 @@ class QtMigrationTests(unittest.TestCase):
         from qt_manager import QtManager
         code = Path(__file__).with_name('qt_manager.py').read_text(encoding='utf-8')
         self.assertIn("if not silent:", code)
-        self.assertIn("preview = discover_experimental()", code)
+        self.assertIn("candidate=discover_latest(", code)
         self.assertIn("QTimer.singleShot(2500, lambda: self.check_updates(silent=True))", code)
         self.assertIn("report_startup_ready(APP_HOME)", code)
         self.assertIn("launch_apply(candidate,staged,APP_HOME,os.getpid())", code)

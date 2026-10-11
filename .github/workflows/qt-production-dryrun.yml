@@ -3,7 +3,7 @@ name: Verify Qt production candidate (no publication)
 on:
   workflow_dispatch:
   push:
-    branches: [qt-migration, fix-qt-font-glyphs, settings-sections-fast-launch, feature/mod-profiles-foundation, feature/blender-model-export-gpu-default, feature/cross-pak-textures-rig-readiness, feature/cryengine-rigged-gltf, feature/animation-playback-model-editor-ux, feature/embedded-full-gpu-viewer-maximize, feature/model-menubar-texture-diagnostics, feature/character-animation-catalog-composite, feature/visual-gameplay-profiles-assets-studio-v1-1-13, feature/v1-1-14-asset-intelligence-project-lifecycle, feature/v1-1-15-workflow-developer-lab, feature/v1-1-15-1-developer-write-optin-ui-captures, feature/v1.1.16-rendering-diagnostics-ui, feature/v1.1.17-performance-studio-polish]
+    branches: [qt-migration, fix-qt-font-glyphs, settings-sections-fast-launch, feature/mod-profiles-foundation, feature/blender-model-export-gpu-default, feature/cross-pak-textures-rig-readiness, feature/cryengine-rigged-gltf, feature/animation-playback-model-editor-ux, feature/embedded-full-gpu-viewer-maximize, feature/model-menubar-texture-diagnostics, feature/character-animation-catalog-composite, feature/visual-gameplay-profiles-assets-studio-v1-1-13, feature/v1-1-14-asset-intelligence-project-lifecycle, feature/v1-1-15-workflow-developer-lab, feature/v1-1-15-1-developer-write-optin-ui-captures, feature/v1.1.16-rendering-diagnostics-ui, feature/v1.1.17-performance-studio-polish, feature/stable-beta-installer-updater]
 
 permissions:
   contents: read
@@ -59,12 +59,28 @@ jobs:
             try { $channel = $reader.ReadToEnd().Trim() } finally { $reader.Dispose() }
             if ($channel -ne 'experimental') { throw "Dryrun must remain non-Main: $channel" }
           } finally { $zip.Dispose() }
+      - name: Install or locate Inno Setup 6
+        shell: pwsh
+        run: |
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (!(Test-Path -LiteralPath $compiler)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compiler install failed.' }
+          }
+      - name: Build candidate Windows installer
+        shell: pwsh
+        run: |
+          & './installer/Build-Installer.ps1'
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path 'dist/EvolveModManager-Setup.exe')) {
+            throw 'Candidate Windows setup build failed.'
+          }
       - name: Upload verified production-candidate package and real screenshot
         uses: actions/upload-artifact@v4
         with:
           name: EvolveModManager-Qt-ProductionCandidate
           path: |
             dist/EvolveModManager-Windows.zip
+            dist/EvolveModManager-Setup.exe
             dist/EvolveModManager-compiled-screenshot.png
             dist/EvolveModManager-Modding-screenshot.png
           if-no-files-found: error
