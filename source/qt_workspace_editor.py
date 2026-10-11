@@ -137,6 +137,10 @@ class QtWorkspaceEditor(QMainWindow):
         self.model_fallback = None
         self.model_cpu = None
         self.texture_folder = None
+        self.animation_folder = None
+        self.loose_animation_index = None
+        self.preview_index = None
+        self.character_preview = None
         self.gpu_windows = []
         self.materials = None
         self.texture_message = 'No model selected'
@@ -268,6 +272,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('Textures', 'Choose Extracted Texture Folder…', self.choose_texture_folder)
         action('Textures', 'Use Automatic Cross-PAK Lookup', self.use_auto_textures)
         action('Textures', 'Reload Model Textures', self.refresh_model_textures)
+        action('Animation', 'Find Extracted Animations…', self.choose_animation_folder)
         action('Animation', 'Load Animated GLB…', lambda: self._with_model_panel(
             lambda p: p.load_animation()))
         action('Animation', 'Import Original CAF/DBA…', lambda: self._with_model_panel(
@@ -445,6 +450,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.stream = None
         self.mesh = None
         self.materials = None
+        self.character_preview = None
         self.texture_message = 'No texture lookup has run'
         self.mode = self._category(rel)
         path = checked_path(self.workspace, rel)
@@ -492,10 +498,26 @@ class QtWorkspaceEditor(QMainWindow):
             except ValueError as exc:
                 report = str(exc) + '\nNative export remains available.'
             try:
-                mesh = find_preview_mesh(
-                    self.workspace, rel, self.raw,
-                    projects_root=self.manager.projects_path,
-                    stage_root=self.manager.stage_path)
+                # A CDF can define a full visible body (and a selected skin).
+                # Prefer that over showing an isolated attachment when resolvable.
+                from material_preview import _workspace_index
+                from character_assembly import assemble_character
+                if self.preview_index is None:
+                    self.preview_index = _workspace_index(
+                        self.workspace, self.manager.projects_path, self.manager.stage_path)
+                try:
+                    self.character_preview = assemble_character(
+                        self.workspace, rel, self.preview_index,
+                        texture_folder=self.texture_folder,
+                        projects_root=self.manager.projects_path,
+                        stage_root=self.manager.stage_path)
+                except (ValueError, OSError) as exc:
+                    self.texture_message = 'Character assembly unavailable: ' + str(exc)
+                mesh = (self.character_preview.mesh if self.character_preview else
+                        find_preview_mesh(
+                            self.workspace, rel, self.raw,
+                            projects_root=self.manager.projects_path,
+                            stage_root=self.manager.stage_path))
                 self.mesh = mesh
                 self._paint_model(view, mesh)
                 self.status.setText(
@@ -514,13 +536,14 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             from qt_gpu_viewer import QtGPUModelPanel
-            materials = None
+            materials = self.character_preview.materials if self.character_preview else None
             try:
-                from material_preview import load_preview_materials
-                materials = load_preview_materials(
-                    self.workspace, mesh.source_name or self.current,
-                    self.texture_folder, projects_root=self.manager.projects_path,
-                    stage_root=self.manager.stage_path)
+                if materials is None:
+                    from material_preview import load_preview_materials
+                    materials = load_preview_materials(
+                        self.workspace, mesh.source_name or self.current,
+                        self.texture_folder, projects_root=self.manager.projects_path,
+                        stage_root=self.manager.stage_path, index=self.preview_index)
                 active = sorted({slot for _, _, slot in mesh.subsets
                                  if slot < len(materials.textures)})
                 mapped = sum(materials.textures[slot] is not None
@@ -529,6 +552,9 @@ class QtWorkspaceEditor(QMainWindow):
                     f'Textures: {mapped}/{len(active)} used material slots, '
                     f'{materials.count} decoded DDS from {materials.source}'
                     + (' | ' + materials.issues[0][:100] if materials.issues else ''))
+                if self.character_preview:
+                    self.texture_message += ' | CDF parts: ' + ', '.join(
+                        self.character_preview.included)
             except (ValueError, OSError) as error:
                 self.texture_message = 'Untextured: ' + str(error)
             self.materials = materials
@@ -541,6 +567,14 @@ class QtWorkspaceEditor(QMainWindow):
             else:
                 self.model_panel.set_static_mesh(mesh, materials)
             view.setCurrentWidget(self.model_panel)
+            from character_animation_catalog import discover_animations
+            anim_model = (self.character_preview.skeleton if self.character_preview
+                          else self.current)
+            refs, idle, config = discover_animations(
+                anim_model, self.preview_index,
+                preferred_workspace=self.workspace,
+                loose_index=self.loose_animation_index)
+            self.model_panel.set_native_catalog(refs, idle, config)
             self.model_panel._info.setText(
                 mesh.source_name + '  •  ' + mesh.description +
                 '\n' + self.texture_message[:260])
@@ -584,6 +618,8 @@ class QtWorkspaceEditor(QMainWindow):
         target = self.archive_map[name]
         new_records = self._read_records(target)
         self.workspace, self.records = target, new_records
+        self.preview_index = None
+        self.character_preview = None
         self.current, self.loaded_text, self.raw = None, '', b''
         self.manager.current_workspace = str(target)
         self.manager.archive_label = name
@@ -636,6 +672,7 @@ class QtWorkspaceEditor(QMainWindow):
 
     def reload(self):
         if self.current and self._confirm_buffer():
+            self.preview_index = None
             self.load(self.current)
 
     def explore(self):
@@ -902,6 +939,23 @@ class QtWorkspaceEditor(QMainWindow):
             self.load(self.current)
         except Exception as exc:
             QMessageBox.critical(self,'Model import rejected',str(exc))
+
+    def choose_animation_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, 'Choose extracted game animation root (containing characters/...)')
+        if not folder:
+            return
+        from character_animation_catalog import asset_directory_index
+        try:
+            self.loose_animation_index = asset_directory_index(folder)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, 'Animation scan', str(exc))
+            return
+        self.animation_folder = Path(folder).resolve()
+        if self.current and self.mode == 'models':
+            self.load(self.current)
+        else:
+            self.status.setText('Extracted animation directory indexed: ' + folder)
 
     def choose_texture_folder(self):
         folder = QFileDialog.getExistingDirectory(
