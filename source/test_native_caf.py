@@ -88,6 +88,37 @@ class NativeCafTests(unittest.TestCase):
         self.assertTrue(np.isfinite(later).all())
         self.assertFalse(np.allclose(first,later))
 
+    def test_export_skips_invalid_caf_without_losing_playable_clips(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from character_animation_catalog import AnimationReference
+        from native_character_glb import create_character_glb
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / 'files'
+            folder.mkdir()
+            (folder / 'synthetic.skinm').write_bytes(tiny_mesh())
+            good = root / 'valid.caf'
+            good.write_bytes(synthetic_caf())
+            bad = root / 'unreadable.caf'
+            bad.write_bytes(b'not a CryEngine animation')
+            mesh_raw = tiny_mesh()
+            mesh = read_preview_mesh(mesh_raw, 'synthetic.skinm')
+            rigged, _ = skin_glb(glb_bytes(mesh), mesh_raw, tiny_skeleton())
+            references = (
+                AnimationReference('root_idle', 'root_idle.caf', 'caf', True, good),
+                AnimationReference('unreadable', 'unreadable.caf', 'caf', True, bad),
+            )
+            with patch('native_character_glb.find_preview_mesh',return_value=mesh), \\
+                 patch('native_character_glb.textured_model_from_workspace',
+                       return_value=(rigged,{'rig_status':'Rigged: synthetic'})):
+                output, report = create_character_glb(
+                    root, 'synthetic.skinm', {}, clips=references)
+            self.assertEqual(report['animations'], 1)
+            self.assertEqual(report['skipped_animations'], 1)
+            self.assertIn('root_idle', AnimatedGLB(output).clips)
+
     def test_combined_glb_uses_one_shared_native_skeleton(self):
         raw = tiny_mesh()
         small = read_preview_mesh(raw,'p.skinm')
