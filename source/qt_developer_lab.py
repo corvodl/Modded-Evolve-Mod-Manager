@@ -106,6 +106,7 @@ class DeveloperLabPanel(QWidget):
         chain.addWidget(QLabel('Pointer chain'))
         chain.addWidget(self.offsets,1)
         chain.addWidget(button('Trace',self.pointer))
+        chain.addWidget(button('Find Pointers',self.pointer_scan))
         layout.addLayout(chain)
         sig=QHBoxLayout()
         self.signature=QLineEdit('48 8B ?? ??')
@@ -113,6 +114,13 @@ class DeveloperLabPanel(QWidget):
         sig.addWidget(self.signature,1)
         sig.addWidget(button('Find',self.signature_search))
         layout.addLayout(sig)
+        patch=QHBoxLayout()
+        self.patch_data=QLineEdit()
+        self.patch_data.setPlaceholderText('Replacement hex bytes for Snapshot A')
+        patch.addWidget(self.patch_data,1)
+        patch.addWidget(button('Export Patch Preset…',self.export_patch))
+        patch.addWidget(button('Apply Offline Preset…',self.apply_patch))
+        layout.addLayout(patch)
         self.memory_output=QPlainTextEdit()
         self.memory_output.setReadOnly(True)
         self.memory_output.setPlaceholderText(
@@ -233,6 +241,70 @@ class DeveloperLabPanel(QWidget):
                                                 in read_pointer_chain(pid,base,offsets)))
         except (ValueError,OSError) as exc:
             self.memory_output.setPlainText(str(exc))
+
+    def pointer_scan(self):
+        try:
+            from developer_runtime_lab import reverse_pointer_scan
+            pid=self._pid()
+            target=parse_address(self.address.text())
+            self._run('memory',lambda:json.dumps(
+                reverse_pointer_scan(pid,target),indent=2))
+        except (OSError,ValueError) as exc:
+            self.memory_output.setPlainText(str(exc))
+
+    def export_patch(self):
+        try:
+            from developer_runtime_lab import module_patch_preset
+            from developer_memory import parse_hex
+            snapshot=self.snapshots.get('A')
+            if snapshot is None:
+                raise ValueError('Take a module memory Snapshot A first.')
+            new=parse_hex(self.patch_data.text())
+            preset=module_patch_preset(snapshot.pid,snapshot.address,
+                                       snapshot.data,new)
+            path,_=QFileDialog.getSaveFileName(self,'Export offline patch preset',
+                                                'Evolve-Patch.json','JSON (*.json)')
+            if not path:return
+            with Path(path).open('x',encoding='utf-8') as out:
+                json.dump(preset,out,indent=2)
+            self.memory_output.setPlainText(
+                'Patch preset exported. Original bytes and module RVA preserved.')
+        except (OSError,ValueError) as exc:
+            self.memory_output.setPlainText('Cannot export patch: '+str(exc))
+
+    def apply_patch(self):
+        try:
+            from online_guard import offline_rule_active
+            from developer_runtime_lab import resolve_patch_preset
+            from developer_memory import write_memory
+            pid=self._pid()
+            if not offline_rule_active(self.game_root_provider()):
+                raise PermissionError(
+                    'Offline patching requires an active Evolve-specific outbound '
+                    'firewall block. Start an isolated offline game session first.')
+            path,_=QFileDialog.getOpenFileName(
+                self,'Import offline memory preset','','JSON (*.json)')
+            if not path:return
+            file=Path(path)
+            if file.stat().st_size>8192:
+                raise ValueError('Patch preset exceeds size limit.')
+            data=json.loads(file.read_text('utf-8'))
+            address,before,after=resolve_patch_preset(pid,data)
+            if QMessageBox.question(self,'Apply isolated memory patch',
+                'Write %d bytes at 0x%X in isolated Evolve PID %d? '
+                'Only apply this to a private offline session.'%
+                (len(after),address,pid),
+                QMessageBox.Yes|QMessageBox.No,QMessageBox.No)!=QMessageBox.Yes:
+                return
+            written=write_memory(pid,address,after)
+            if written!=len(after):
+                raise OSError('Partial memory patch write.')
+            self.memory_output.setPlainText(
+                'Patched %d bytes. Original bytes preserved in the preset; '
+                'restore them through the existing Hex Editor undo/restore workflow.'
+                %written)
+        except (OSError,ValueError,PermissionError) as exc:
+            self.memory_output.setPlainText('Patch refused: '+str(exc))
 
     def signature_search(self):
         try:
