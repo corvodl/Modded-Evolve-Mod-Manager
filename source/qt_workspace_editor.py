@@ -126,6 +126,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.workspace = Path(workspace).resolve(strict=True)
         self.archive_map = {name: Path(p).resolve() for name, p in (archive_map or {}).items()}
         self.records = self._read_records(self.workspace)
+        self.favorites = set(manager.settings.get('favorite_assets',[]))
         self.current = None
         self.raw = b''
         self.stream = None
@@ -171,6 +172,10 @@ class QtWorkspaceEditor(QMainWindow):
         self.search.setPlaceholderText('Search extracted files…')
         self.search.textChanged.connect(self.populate)
         tools.addWidget(self.search, 1)
+        self.favorites_only = QPushButton('★ Favorites')
+        self.favorites_only.setCheckable(True)
+        self.favorites_only.toggled.connect(self.populate)
+        tools.addWidget(self.favorites_only)
         tools.addWidget(self._button('Open File Folder', self.explore))
         tools.addWidget(self._button('Reload', self.reload))
         tools.addWidget(self._button('Help', self.help))
@@ -211,7 +216,12 @@ class QtWorkspaceEditor(QMainWindow):
                 box.addLayout(toolbar)
             split = QSplitter(Qt.Horizontal)
             tree = QTreeWidget()
-            tree.setHeaderHidden(True)
+            tree.setColumnCount(3)
+            tree.setHeaderLabels(('File / Folder','Size','Modified'))
+            tree.setSortingEnabled(True)
+            tree.setColumnWidth(0,235)
+            tree.setColumnWidth(1,75)
+            tree.setColumnWidth(2,112)
             tree.itemSelectionChanged.connect(self.load_selection)
             tree.setContextMenuPolicy(Qt.CustomContextMenu)
             tree.customContextMenuRequested.connect(lambda position, s=section:
@@ -273,6 +283,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Export Animated Character (.glb)…', self.export_animated_character)
         action('File', 'Export Model Folder…', self.export_blender_folder)
         action('File', 'Batch Asset Export…', self.open_asset_search)
+        action('File', 'Project History & Undo…', self.open_project_history)
         action('Edit', 'Save Text', self.save)
         action('Edit', 'Find Text', self.find_text)
         action('Edit', 'Visual Gameplay Values…', self.open_gameplay_editor)
@@ -283,14 +294,19 @@ class QtWorkspaceEditor(QMainWindow):
         action('Model', 'Import Same-Layout Model…', self.import_model)
         action('Model', 'Open GPU Viewer in New Window', self.open_gpu_viewer)
         action('Model', 'Compare Models Side by Side…', self.open_model_compare)
+        action('Model', 'Asset Dependency Graph…', self.open_dependency_graph)
         action('Model', 'Reset Camera', lambda: self._with_model_panel(
             lambda p: p.reset_view()))
         action('Textures', 'Diagnose Texture Links…', self.find_model_textures)
         action('Textures', 'Texture Preview Status…', self.texture_diagnostics)
+        action('Textures', 'Resolve Missing Textures…', self.open_texture_resolver)
         action('Textures', 'Advanced Texture Adjustments…', self.open_texture_editor)
         action('Textures', 'Choose Extracted Texture Folder…', self.choose_texture_folder)
         action('Textures', 'Use Automatic Cross-PAK Lookup', self.use_auto_textures)
         action('Textures', 'Reload Model Textures', self.refresh_model_textures)
+        action('Tools', 'Validate Project Mod…', self.open_mod_validator)
+        action('Tools', 'Review Project History…', self.open_project_history)
+        action('Tools', 'PAK Difference Inspector…', self.manager.open_pak_diff)
         action('Tools', 'Search All Extracted Assets…', self.open_asset_search)
         action('Tools', 'Batch Export Assets…', self.open_asset_search)
         action('Tools', 'Visual Gameplay Editor…', self.open_gameplay_editor)
@@ -349,6 +365,49 @@ class QtWorkspaceEditor(QMainWindow):
         }
         for key, value in values.items():
             self._view_actions[key].setChecked(value)
+
+    def toggle_favorite(self):
+        try:
+            key = str(self.workspace)+'|'+self.selected()
+            if key in self.favorites:
+                self.favorites.remove(key)
+            else:
+                if len(self.favorites)>=1500:
+                    raise ValueError('Favorite bookmark limit reached.')
+                self.favorites.add(key)
+            self.manager.settings['favorite_assets']=sorted(self.favorites)
+            self.manager.persist()
+            self.populate()
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self,'Favorites',str(exc))
+
+    def open_project_history(self):
+        try:
+            from qt_asset_intelligence import ProjectHistoryDialog
+            ProjectHistoryDialog(self).exec()
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self,'Project History',str(exc))
+
+    def open_dependency_graph(self):
+        try:
+            from qt_asset_intelligence import DependencyDialog
+            DependencyDialog(self).exec()
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self,'Asset Dependencies',str(exc))
+
+    def open_texture_resolver(self):
+        try:
+            from qt_asset_intelligence import TextureResolverDialog
+            TextureResolverDialog(self).exec()
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self,'Texture Resolution',str(exc))
+
+    def open_mod_validator(self):
+        try:
+            from qt_asset_intelligence import ValidationDialog
+            ValidationDialog(self).exec()
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self,'Mod Validation',str(exc))
 
     def open_gameplay_editor(self):
         try:
@@ -437,7 +496,9 @@ class QtWorkspaceEditor(QMainWindow):
             tree.clear()
             folders = {}
             entries = [rel for rel in sorted(self.records, key=str.casefold)
-                       if self._category(rel) == section and needle in rel.casefold()]
+                       if self._category(rel) == section and needle in rel.casefold()
+                       and (not self.favorites_only.isChecked()
+                            or str(self.workspace)+'|'+rel in self.favorites)]
             if section == 'images':
                 first = {}
                 for rel in entries:
@@ -453,14 +514,26 @@ class QtWorkspaceEditor(QMainWindow):
                 for i, part in enumerate(parts[:-1]):
                     key = '/'.join(parts[:i+1])
                     if key not in folders:
-                        folder = QTreeWidgetItem([part])
+                        folder = QTreeWidgetItem([part,'',''])
                         if parent:
                             parent.addChild(folder)
                         else:
                             tree.addTopLevelItem(folder)
                         folders[key] = folder
                     parent = folders[key]
-                item = QTreeWidgetItem([parts[-1]])
+                key = str(self.workspace)+'|'+rel
+                symbol = '★ ' if key in self.favorites else ''
+                path = self.workspace/'files'/rel
+                try:
+                    from datetime import datetime
+                    stat = path.stat()
+                    size = ('%.1f MiB'%(stat.st_size/1048576)
+                            if stat.st_size>1048576 else
+                            '%.0f KiB'%(stat.st_size/1024))
+                    modified = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d')
+                except OSError:
+                    size,modified = 'Missing',''
+                item = QTreeWidgetItem([symbol+parts[-1],size,modified])
                 item.setData(0, Qt.UserRole, rel)
                 if parent:
                     parent.addChild(item)
@@ -754,6 +827,7 @@ class QtWorkspaceEditor(QMainWindow):
         target = self.archive_map[name]
         new_records = self._read_records(target)
         self.workspace, self.records = target, new_records
+        self.favorites_only.setChecked(False)
         self.preview_index = None
         self.character_preview = None
         self.character_skin_choice = None
@@ -926,6 +1000,8 @@ class QtWorkspaceEditor(QMainWindow):
             return
         menu = QMenu(tree)
         menu.addAction('Preview / Open', lambda: self.load(self.selected()))
+        menu.addAction('Toggle Favorite ★', self.toggle_favorite)
+        menu.addAction('Project History & Undo…', self.open_project_history)
         menu.addAction('Import Over / Replace', self.import_raw)
         menu.addAction('Restore Original Extraction', self.restore_original)
         menu.addAction('Export Raw File', self.export_raw)
