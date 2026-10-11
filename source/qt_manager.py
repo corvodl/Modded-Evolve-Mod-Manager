@@ -621,6 +621,7 @@ class QtManager(QMainWindow):
         file_menu.addAction('Import PAKs / Manage Library…', self.open_asset_library)
         file_menu.addAction('Preview Selected PAK…', self.preview_library_archive)
         file_menu.addAction('Export Selected PAK Layout…', self.export_selected_library_archive)
+        file_menu.addAction('Open Asset Library Folder', self.open_library_folder)
         view_menu = bar.addMenu('View')
         view_menu.addAction('Refresh Imported PAK List', self.refresh_library_table)
         tools_menu = bar.addMenu('Tools')
@@ -669,11 +670,23 @@ class QtManager(QMainWindow):
             ('Import / Manage PAKs…', self.open_asset_library, False),
             ('Preview Files', self.preview_library_archive, True),
             ('Export PAK Layout…', self.export_selected_library_archive, False),
+            ('Open Asset Library Folder', self.open_library_folder, False),
         ):
             actions.addWidget(_button(title, callback, primary=primary), 1)
         layout.addLayout(actions)
         self.stack.addWidget(page)
         self.pages['asset_library'] = page
+
+    def open_library_folder(self):
+        """Open imported reference files in Windows Explorer, never an editor."""
+        from asset_library import LIBRARY_HOME
+        folder = Path(LIBRARY_HOME).resolve()
+        if not folder.is_dir():
+            self.info('Asset Library',
+                      'The library folder will be created when the first PAK is imported.')
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+            self.failure('Windows Explorer could not open the Asset Library folder.')
 
     def refresh_library_table(self, *_unused):
         if not hasattr(self, 'asset_table'):
@@ -3316,8 +3329,11 @@ class QtManager(QMainWindow):
         if not self.flush_editors():
             event.ignore()
             return
-        if any(viewer.isVisible() and viewer._pool.activeThreadCount()
-               for viewer in self.library_previews):
+        if any(
+                viewer.isVisible()
+                and getattr(viewer, '_model_pool', None) is not None
+                and viewer._model_pool.activeThreadCount()
+                for viewer in self.library_previews):
             self.info('Asset Library preview busy',
                       'Wait until an active library preview or export completes before closing.')
             event.ignore()
