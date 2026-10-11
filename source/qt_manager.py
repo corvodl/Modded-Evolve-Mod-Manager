@@ -1104,6 +1104,35 @@ class QtManager(QMainWindow):
         self.stack.addWidget(scroll)
         self.pages['whats_new'] = scroll
 
+    @staticmethod
+    def _developer_fold_card(title, note='', expanded=False):
+        """Disclosure cards keep advanced developer controls off-screen until needed."""
+        frame = QFrame()
+        frame.setObjectName('developerFoldCard')
+        outer = QVBoxLayout(frame)
+        outer.setContentsMargins(9, 8, 9, 8)
+        toggle = QToolButton(frame)
+        toggle.setObjectName('developerFoldHeader')
+        toggle.setCheckable(True)
+        toggle.setChecked(expanded)
+        toggle.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        toggle.setText(('▾  ' if expanded else '▸  ') + title)
+        outer.addWidget(toggle)
+        if note:
+            hint = _label(note, muted=True)
+            hint.setWordWrap(True)
+            outer.addWidget(hint)
+        details = QWidget(frame)
+        panel = QVBoxLayout(details)
+        panel.setContentsMargins(8, 5, 8, 5)
+        details.setVisible(expanded)
+        outer.addWidget(details)
+        toggle.toggled.connect(
+            lambda checked: (
+                details.setVisible(checked),
+                toggle.setText(('▾  ' if checked else '▸  ') + title)))
+        return frame, panel
+
     def _developer_page(self):
         """Create protected pages only after code verification."""
         old = self.pages['developer']
@@ -1113,8 +1142,8 @@ class QtManager(QMainWindow):
         heading = _label('Developer')
         heading.setObjectName('sectionTitle')
         lay.addWidget(heading)
-        card, panel = _card('Session network policy',
-                            'Modded launches block outbound Evolve.exe connections by default.')
+        card, panel = self._developer_fold_card('Session network policy',
+                            'Modded launches block outbound Evolve.exe connections by default.', expanded=True)
         self.dev_online = QCheckBox('Allow online connections during modded play')
         self.dev_online.setChecked(self._developer_allow_online)
         self.dev_online.toggled.connect(self._developer_network)
@@ -1123,7 +1152,7 @@ class QtManager(QMainWindow):
                                'game-specific Windows Firewall rule. No DLL bytes are '
                                'changed. The override is never saved.', muted=True))
         lay.addWidget(card)
-        card, panel = _card('Memory writing permissions',
+        card, panel = self._developer_fold_card('Memory writing permissions',
             'Read-only inspection is always available after Developer unlock. '
             'All writing capabilities are disabled until you opt in.')
         self.dev_writes = QCheckBox('Enable Memory Writing (session only)')
@@ -1145,7 +1174,7 @@ class QtManager(QMainWindow):
             'for every write. Nothing is saved after leaving Developer.',
             muted=True))
         lay.addWidget(card)
-        card, panel = _card('Live Evolve memory',
+        card, panel = self._developer_fold_card('Live Evolve memory',
                             'Browse loaded modules, committed memory regions, scan '
                             'values and inspect or edit hex bytes in a running game.')
         self.dev_memory_panel = DeveloperMemoryPanel(
@@ -1153,9 +1182,9 @@ class QtManager(QMainWindow):
             write_permission=self._developer_memory_write_permission)
         panel.addWidget(self.dev_memory_panel)
         lay.addWidget(card)
-        card, panel = _card('Developer diagnostics',
+        card, panel = self._developer_fold_card('Developer diagnostics',
             'Live pointer/snapshot tools and isolated relay, session and '
-            'trace diagnostics. Local fixture services cannot target public endpoints.')
+            'trace diagnostics. Local fixture services cannot target public endpoints.', expanded=True)
         from qt_developer_lab import DeveloperLabPanel
         self.dev_lab_panel = DeveloperLabPanel(
             self._developer_game,trace_env_callback=self._set_dev_trace_env,
