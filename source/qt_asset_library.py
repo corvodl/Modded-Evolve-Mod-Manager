@@ -2,6 +2,7 @@
 from __future__ import annotations
 from pathlib import Path
 import threading
+import shutil
 
 from PySide6.QtCore import QObject, Signal, Qt
 from PySide6.QtWidgets import (
@@ -83,6 +84,11 @@ class AssetLibraryController(QObject):
 
         return self._start("automatic-import" if automatic else "import", work)
 
+    def import_all_game(self, scan, stage):
+        # Reuse the same cancellable per-PAK importer. Completed archive
+        # manifests are retained and unchanged ones are skipped on rerun.
+        return self.import_files(scan.files, stage, automatic=False)
+
     def verify(self):
         return self._start(
             "verification",
@@ -142,12 +148,24 @@ class AssetLibraryDialog(QDialog):
             "Import signed Evolve PAKs that use a different public verification key.")
         self.key_button.clicked.connect(self.add_with_key)
         controls.addWidget(self.key_button)
+        self.all_button = QPushButton("Import ALL Game PAKs…")
+        self.all_button.setToolTip(
+            "Optional full EvolveGame import. Storage use can be very large; "
+            "confirmation and cancel are provided. Existing imports are reused.")
+        self.all_button.clicked.connect(self.import_all_game)
+        controls.addWidget(self.all_button)
         self.default_button = QPushButton("Import shared + animation PAKs")
         self.default_button.clicked.connect(self.import_defaults)
         controls.addWidget(self.default_button)
         self.verify_button = QPushButton("Verify Library")
         self.verify_button.clicked.connect(self.verify)
         controls.addWidget(self.verify_button)
+        self.project_button = QPushButton("Create Editable Mod Project…")
+        self.project_button.setToolTip(
+            "Make an independent mod project from this archive's verified "
+            "custom-signed staging copy; the reference library stays unchanged.")
+        self.project_button.clicked.connect(self.create_mod_project)
+        controls.addWidget(self.project_button)
         self.remove_button = QPushButton("Remove Selected…")
         self.remove_button.clicked.connect(self.remove_selected)
         controls.addWidget(self.remove_button)
@@ -193,10 +211,12 @@ class AssetLibraryDialog(QDialog):
 
     def _sync(self):
         running = self.controller.busy
-        for button in (self.add_button, self.key_button,
-                       self.default_button, self.verify_button, self.remove_button):
+        for button in (self.add_button, self.key_button, self.all_button,
+                       self.default_button, self.verify_button,
+                       self.remove_button, self.project_button):
             button.setEnabled(not running)
         self.remove_button.setEnabled(not running and bool(self.table.selectedItems()))
+        self.project_button.setEnabled(not running and bool(self.table.selectedItems()))
         self.cancel_button.setEnabled(running)
 
     def add_paks(self):
@@ -225,6 +245,65 @@ class AssetLibraryDialog(QDialog):
                 "Select an installed EvolveGame with the shared / animation PAKs.")
             return
         self.controller.import_files(files, self.stage)
+
+    def import_all_game(self):
+        from asset_library_bulk import discover_game_paks
+        try:
+            scan = discover_game_paks(self.game)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Full-game scan unavailable", str(exc))
+            return
+        if not scan.files:
+            QMessageBox.information(
+                self, "No game archives", "No PAKs were found in the EvolveGame folder.")
+            return
+        total = scan.packed_bytes / (1024 ** 3)
+        free = scan.available_bytes / (1024 ** 3)
+        todo = len(scan.files) - scan.already_imported
+        if QMessageBox.question(
+            self, "Import ALL Evolve game PAKs?",
+            "This is an OPTIONAL one-time extraction of every .pak found "
+            "inside your installed EvolveGame.\n\n"
+            "%d PAKs found (%d already imported).\n"
+            "%.2f GiB of compressed PAK input.\n"
+            "%.2f GiB free on the Asset Library drive.\n\n"
+            "Extracted data can occupy several times the compressed size. "
+            "Check disk space first. Each PAK is signature-verified, and "
+            "unsupported archives will be reported rather than silently used.\n\n"
+            "Original PAKs will NOT change. You may cancel; completed archives "
+            "will remain and can be reused when you retry.\n\n"
+            "Start importing the remaining %d archives?"
+            % (len(scan.files), scan.already_imported, total, free, todo),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.controller.import_all_game(scan, self.stage)
+
+    def create_mod_project(self):
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self.rows):
+            return
+        record = self.rows[row]
+        try:
+            from asset_library_bulk import stage_source_for_import
+            relative, staged = stage_source_for_import(
+                record["id"], self.stage, self.game)
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(
+                self, "Archive is reference-only",
+                str(exc) + "\n\nOnly PAKs with a unique custom-signed copy "
+                "in the current staging plan can be built and signed.")
+            return
+        if QMessageBox.question(
+            self, "Create editable mod project?",
+            "Create an independent editable copy of %s from:\n%s\n\n"
+            "The Asset Library stays read-only. Edits are built and signed "
+            "using the existing manager Build Mod command and the custom "
+            "staging key. The project must have changed files before it can "
+            "be built.\n\nContinue?" % (relative, staged),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.accept()
+        self.parent().create_mod_project_from_asset_library(record["id"])
 
     def verify(self):
         self.controller.verify()
