@@ -142,7 +142,6 @@ class QtWorkspaceEditor(QMainWindow):
         self.preview_index = None
         self.character_preview = None
         self.character_skin_choice = None
-        self._model_generation += 1
         self._prepared_animation = None
         self.gpu_windows = []
         self._export_native_pool = None
@@ -258,7 +257,7 @@ class QtWorkspaceEditor(QMainWindow):
         bar = self.menuBar()
         bar.setObjectName('editorMenuBar')
         menus = {name: bar.addMenu(name) for name in
-                 ('File', 'Edit', 'View', 'Model', 'Textures', 'Animation', 'Help')}
+                 ('File', 'Edit', 'View', 'Model', 'Textures', 'Animation', 'Tools', 'Help')}
         self.editor_menus = menus
 
         def action(menu, name, callback, shortcut=None):
@@ -273,8 +272,10 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Export for Blender (.glb)…', self.export_blender_model)
         action('File', 'Export Animated Character (.glb)…', self.export_animated_character)
         action('File', 'Export Model Folder…', self.export_blender_folder)
+        action('File', 'Batch Asset Export…', self.open_asset_search)
         action('Edit', 'Save Text', self.save)
         action('Edit', 'Find Text', self.find_text)
+        action('Edit', 'Visual Gameplay Values…', self.open_gameplay_editor)
         action('Edit', 'Import / Replace File…', self.import_raw)
         action('Edit', 'Restore Original', self.restore_original)
         self.equipment_menu = menus['Model'].addMenu('Equipped Skin')
@@ -285,9 +286,13 @@ class QtWorkspaceEditor(QMainWindow):
             lambda p: p.reset_view()))
         action('Textures', 'Diagnose Texture Links…', self.find_model_textures)
         action('Textures', 'Texture Preview Status…', self.texture_diagnostics)
+        action('Textures', 'Advanced Texture Adjustments…', self.open_texture_editor)
         action('Textures', 'Choose Extracted Texture Folder…', self.choose_texture_folder)
         action('Textures', 'Use Automatic Cross-PAK Lookup', self.use_auto_textures)
         action('Textures', 'Reload Model Textures', self.refresh_model_textures)
+        action('Tools', 'Search All Extracted Assets…', self.open_asset_search)
+        action('Tools', 'Batch Export Assets…', self.open_asset_search)
+        action('Tools', 'Visual Gameplay Editor…', self.open_gameplay_editor)
         action('Animation', 'Find Extracted Animations…', self.choose_animation_folder)
         action('Animation', 'Load Animated GLB…', lambda: self._with_model_panel(
             lambda p: p.load_animation()))
@@ -343,6 +348,27 @@ class QtWorkspaceEditor(QMainWindow):
         }
         for key, value in values.items():
             self._view_actions[key].setChecked(value)
+
+    def open_gameplay_editor(self):
+        try:
+            from qt_asset_studio import GameplayValuesDialog
+            GameplayValuesDialog(self).exec()
+        except (ValueError,OSError,RuntimeError) as exc:
+            QMessageBox.warning(self,'Visual Gameplay Editor',str(exc))
+
+    def open_texture_editor(self):
+        try:
+            from qt_asset_studio import TextureAdjustDialog
+            TextureAdjustDialog(self).exec()
+        except (ValueError,OSError,RuntimeError) as exc:
+            QMessageBox.warning(self,'Advanced Texture Editor',str(exc))
+
+    def open_asset_search(self):
+        try:
+            from qt_asset_studio import AssetSearchDialog
+            AssetSearchDialog(self).exec()
+        except (ValueError,OSError,RuntimeError) as exc:
+            QMessageBox.warning(self,'Asset Search & Batch Export',str(exc))
 
     def texture_diagnostics(self):
         if self.mode != 'models' or self.mesh is None:
@@ -895,6 +921,10 @@ class QtWorkspaceEditor(QMainWindow):
         menu.addAction('Import Over / Replace', self.import_raw)
         menu.addAction('Restore Original Extraction', self.restore_original)
         menu.addAction('Export Raw File', self.export_raw)
+        if section=='files' and self.current and self.current.lower().endswith('.xml'):
+            menu.addAction('Visual Gameplay Values…', self.open_gameplay_editor)
+        if section=='images':
+            menu.addAction('Advanced Texture Adjustments…', self.open_texture_editor)
         menu.addAction('Reveal Extracted File in Explorer', self.explore)
         menu.addAction('Open Extracted File in External App', self.open_extracted_external)
         menu.addAction('Copy Extracted Absolute Path', self.copy_extracted_path)
