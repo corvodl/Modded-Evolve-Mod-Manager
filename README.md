@@ -1,10 +1,15 @@
-# Evolve Stage 2 Mod Manager — v1.1.5
+# Evolve Stage 2 Mod Manager — v1.1.6
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.5 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.6 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.6
+
+- Export supported CryEngine models and folders to Blender-ready GLB files.
+- Models now use GPU preview by default when supported.
 
 ## What's new in v1.1.5
 
@@ -84,6 +89,14 @@ The portable Windows release bundles Python and its required application depende
 | **Play & Restore** | Guided offline launch, swap state, and restoration/recovery of original game files |
 | **Settings** | Projects, stage and launch-helper folders; maintenance and advanced workflows |
 | **Credits** | Project links and attribution |
+
+### Blender model export and GPU preview
+
+In **Modding**, choose **Export Model Folder** to convert supported unpacked CryEngine `.skinm`, `.chrm`, and `.cgf` render meshes from a selected folder into separate Blender-compatible `.glb` files in a different folder. Unsupported encodings are skipped with a report; original files remain unchanged.
+
+In **Edit Files → Models**, choose **Export for Blender (.glb)** for the currently selected preview mesh, including meshes resolved from a companion file. The native CryEngine export and same-layout native import actions remain available.
+
+On Windows with a working OpenGL driver, the model pane now tries the embedded GPU viewer by default. It falls back to software preview on unsupported platforms or GL initialization errors; **Open GPU Viewer** retains the dedicated controls. GLB exports preserve mesh geometry and available UVs/material slots but do **not** reconstruct bones, rig weights, animation, or missing DDS textures. Arbitrary Blender meshes cannot be imported back into Evolve's native model format through this exporter.
 
 ### Mod Profiles & Library
 

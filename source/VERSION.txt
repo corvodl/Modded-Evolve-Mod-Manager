@@ -1,1 +1,1 @@
-1.1.5 - Mod Profiles and Saved Mod Sets
+1.1.6 - Blender Export and Default GPU Preview
