@@ -1327,8 +1327,12 @@ class QtManager(QMainWindow):
             self.archive_label = ''
         else:
             self.archive_label = selected
-            if selected in self.batch_workspaces:
-                self.current_workspace = str(self.batch_workspaces[selected])
+            # Never carry a prior PAK's workspace into a different selection.
+            from project_selection import workspace_for_archive
+            matched = workspace_for_archive(
+                self.stage_path, selected, self.current_workspace,
+                self.batch_workspaces)
+            self.current_workspace = str(matched) if matched else ''
         self.external_pak = ''
 
     def _pak_locations(self, rel):
@@ -1418,7 +1422,11 @@ class QtManager(QMainWindow):
             self.failure(error)
 
     def open_unpacked(self):
-        target = Path(self.current_workspace)/'files'
+        try:
+            current = self._workspace_for_selected_archive()
+        except (ValueError,OSError):
+            current = None
+        target = current/'files' if current else Path('__no_matching_project__')
         if not target.is_dir():
             self.failure('Unpack the selected PAK first.')
         else:
@@ -1517,11 +1525,32 @@ class QtManager(QMainWindow):
         self.persist()
         self.open_editor()
 
+    def _workspace_for_selected_archive(self):
+        from project_selection import workspace_for_archive
+        rel = self._selected_rel()
+        if rel not in self.archive_entries:
+            raise ValueError('Select a staged PAK before opening it.')
+        return workspace_for_archive(
+            self.stage_path, rel, self.current_workspace,
+            self.batch_workspaces)
+
     def open_editor_or_unpack(self):
-        if self.current_workspace and (Path(self.current_workspace)/'files').is_dir():
-            self.open_editor()
-        else:
-            self.extract()
+        try:
+            if any(p.startswith('loose-file:') for p in self.selected_archives()):
+                self.open_editor()
+                return
+            matching = self._workspace_for_selected_archive()
+            if matching is not None:
+                self.current_workspace = str(matching)
+                self.workspace_input.setText(self.current_workspace)
+                self.persist()
+                self.open_editor()
+            else:
+                # Selected PAK is new (or the prior extraction belongs to
+                # another source). Always unpack it into a fresh project.
+                self.extract()
+        except (ValueError,OSError) as exc:
+            self.failure(exc)
 
     def _editor_collection(self):
         mapping = {}
@@ -1559,7 +1588,14 @@ class QtManager(QMainWindow):
                     raise ValueError('Installed game location is unknown.')
                 editor = QtLooseFileEditor(self, game, loose, self.projects_path)
             else:
-                ws = self._workspace().resolve()
+                # Verify selection identity even on the explicit Edit Files
+                # button, not just on double click.
+                ws = self._workspace_for_selected_archive()
+                if ws is None:
+                    raise ValueError(
+                        'The selected PAK has no matching extracted project. '
+                        'Double-click it to unpack a fresh project.')
+                self.current_workspace = str(ws)
                 for editor in self.editors:
                     if (isinstance(editor, QtWorkspaceEditor) and editor.isVisible()
                             and editor.workspace == ws):
