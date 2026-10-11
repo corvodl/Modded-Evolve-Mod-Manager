@@ -110,9 +110,9 @@ class OnDemandCAFs(unittest.TestCase):
             return self.info, b'', b'', ANIM_PAK
 
         with patch('universal_stage.allowed_paks',
-                   return_value={'Game/' + ANIM_PAK: 'Game/' + ANIM_PAK}), \\
+                   return_value={'Game/' + ANIM_PAK: 'Game/' + ANIM_PAK}), \
              patch('evolve_pak_rekey.extract_plain_cdr',
-                   side_effect=signed_directory), \\
+                   side_effect=signed_directory), \
              patch('evolve_gameplay_editor.decrypt_entry', return_value=HEADER):
             resolved, extracted, origin = demand.resolve_caf_for_play(
                 reference, stage_root=self.stage, game_root=self.game)
