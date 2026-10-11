@@ -10,11 +10,26 @@ foreach ($name in @("EvolveModManager.exe","EvolveModWorker.exe","BUILD_COMMIT.t
     throw "Windows application has not been built: $name"
   }
 }
-if ((Test-Path (Join-Path $build "Data")) -or
-    (Get-ChildItem -LiteralPath $build -Recurse -File | Where-Object {
-      $_.Name -match '(?i)\.pak$|^private_key\.pem$|\.customkey-'
-    })) {
-  throw "Refusing to package game assets or personal Data."
+# The compiled application's screenshot smoke test creates a writable Data
+# folder in this build directory. It is deliberately *never* an installer source.
+# Inspect only whitelisted application resources, not the user's Data folder.
+$allowed = @("EvolveModManager.exe","EvolveModWorker.exe","_internal",
+             "Docs","START-HERE.txt","BUILD_COMMIT.txt","BUILD_CHANNEL.txt")
+foreach ($file in @(Get-ChildItem -LiteralPath $build -Force)) {
+  if ($file.Name -notin ($allowed + @("Data"))) {
+    throw "Unexpected file at application build root: $($file.Name)"
+  }
+}
+foreach ($folder in @("_internal","Docs")) {
+  $source = Join-Path $build $folder
+  if (!(Test-Path -LiteralPath $source -PathType Container)) { continue }
+  $sensitive = Get-ChildItem -LiteralPath $source -Recurse -File -Force |
+    Where-Object { $_.Name -match '(?i)\.pak$|^private_key\.pem$|\.customkey-' } |
+    Select-Object -First 1
+  if ($sensitive) { throw "Sensitive file found in installer source: $($sensitive.FullName)" }
+}
+if (Test-Path (Join-Path $build "Data")) {
+  Write-Host "Skipping runtime-generated Data folder (not packaged)."
 }
 if (-not $Version) {
   $Version = ((Get-Content -LiteralPath (Join-Path $root "source/VERSION.txt") -Raw).Trim() -split ' - ',2)[0]
