@@ -55,6 +55,26 @@ def _exact_loose(index, virtual, preferred_workspace=None):
         return local[0]
     if len(matches) == 1:
         return matches[0][1]
+    # Import All Game PAKs can expose the same virtual CAF through multiple
+    # archives. Do not call it "missing" merely because the index has more
+    # than one owner. Only resolve duplicates when their bytes are identical;
+    # conflicting copies remain ambiguous instead of guessing.
+    pool = local if local else [file for _, file in matches]
+    if len(pool) > 1:
+        import hashlib
+        digests = set()
+        for file in pool:
+            h = hashlib.sha256()
+            try:
+                with file.open('rb') as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                        h.update(chunk)
+            except OSError:
+                return None
+            digests.add(h.digest())
+            if len(digests) > 1:
+                return None
+        return pool[0]
     return None
 
 
