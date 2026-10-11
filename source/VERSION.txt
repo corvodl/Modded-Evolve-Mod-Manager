@@ -1,1 +1,1 @@
-1.1.13 - Visual Gameplay and Asset Studio
+1.1.14 - Asset Intelligence and Project Cleanup
