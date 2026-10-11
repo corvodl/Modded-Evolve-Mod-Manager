@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: beta-windows-release
+  group: beta-windows-release-current
   cancel-in-progress: true
 
 jobs:
