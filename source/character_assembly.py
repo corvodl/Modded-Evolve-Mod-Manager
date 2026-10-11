@@ -27,6 +27,7 @@ class CharacterPreview:
     omitted: tuple
     equipment_options: tuple = ()
     selected_equipment: str = ''
+    rig_parts: tuple = ()
 
 
 def _parse_cdf(raw):
@@ -164,7 +165,7 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
     requested = primary + chosen
     if not requested:
         return None
-    included, omitted, parts = [], [], []
+    included, omitted, parts, rig_parts = [], [], [], []
     for label, skin in requested[:8]:
         render = skin + 'm'
         path = _resolve_file(index, render, workspace)
@@ -184,10 +185,13 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
             materials = None
             omitted.append(label + ' textures: ' + str(exc))
         parts.append((label, mesh, materials))
+        skin_path = _resolve_file(index, skin, workspace)
+        rig_parts.append((render, Path(path), Path(skin_path) if skin_path else None,
+                          len(mesh.vertices)))
         included.append(label)
     if not parts:
         return None
     mesh, materials = combine_meshes(parts)
     return CharacterPreview(mesh, materials, cdf, skeleton,
                             tuple(included), tuple(omitted),
-                            tuple(options), chosen[0][1] if chosen else 'body')
+                            tuple(options), chosen[0][1] if chosen else 'body', tuple(rig_parts))
