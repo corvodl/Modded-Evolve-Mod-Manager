@@ -424,6 +424,9 @@ class QtManager(QMainWindow):
         self.status = _label('Ready — read Instructions before connecting an installed game.', muted=True)
         footer = QHBoxLayout()
         footer.addWidget(self.status, 1)
+        self.shared_asset_label = _label('Shared: indexing…', muted=True)
+        self.shared_asset_label.setToolTip('Six shared Hunter / Monster / Creature archives are indexed in the background.')
+        footer.addWidget(self.shared_asset_label)
         self.version_label = _label(app_version())
         self.version_label.setObjectName('version')
         footer.addWidget(self.version_label)
@@ -1613,6 +1616,9 @@ class QtManager(QMainWindow):
         if status == self._shared_catalog_last_status:
             return
         self._shared_catalog_last_status = status
+        if hasattr(self, 'shared_asset_label'):
+            self.shared_asset_label.setText('Shared: ' + (status.split(',')[0].replace('Ready: ', '') if status.startswith('Ready:') else 'indexing…' if status.startswith('Scanning') else 'unavailable'))
+            self.shared_asset_label.setToolTip(status)
         if status.startswith('Ready:'):
             self._log('Shared references: ' + status)
             # A model may have opened while indexing was still running.
