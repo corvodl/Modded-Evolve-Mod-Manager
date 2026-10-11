@@ -28,13 +28,28 @@ class CharacterPipelineTests(unittest.TestCase):
             file.write_bytes(b'CrChF\x07\x00\x00' + struct.pack('<II', 1, 16) + b'\0'*16)
             refs = parse_animation_references(payload,
                 lambda virtual: file if virtual.endswith('/tech_idle_forward.caf') else None)
-            self.assertEqual(2, len(refs))
+            self.assertEqual(3, len(refs))
+            self.assertEqual('dba', refs[0].kind)
+            self.assertEqual('DBA: tech_3p', refs[0].name)
+            self.assertEqual('metadata', native_clip_playability(refs[0])[0])
             self.assertEqual('characters/hunters/merc_tech/animations/3p/tech_idle_forward.caf',
-                             refs[0].virtual_path)
-            self.assertTrue(refs[0].available)
-            self.assertFalse(refs[1].available)
+                             refs[1].virtual_path)
+            self.assertTrue(refs[1].available)
+            self.assertFalse(refs[2].available)
             self.assertTrue(caf_header(file))
             self.assertEqual('nw_alert_stand_idle_forward', prefer_idle(refs).name)
+
+    def test_database_source_can_use_external_converter_for_playback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            database = Path(folder) / 'hunter_tracks.dba'
+            database.write_bytes(b'DBA fixture only: no native decoder')
+            ref = AnimationReference(
+                'DBA: hunter_tracks', 'characters/hunters/merc_tech/animations/3p/hunter_tracks.dba',
+                'dba', True, database)
+            state, hint = native_clip_playability(ref)
+            self.assertEqual('converter', state)
+            self.assertIn('converter', hint)
+            self.assertNotIn('native DBA decoder is bundled', hint.replace('No ', 'A '))
 
     def test_layered_aimposes_are_not_claimed_as_standalone_playback(self):
         layered = AnimationReference(
