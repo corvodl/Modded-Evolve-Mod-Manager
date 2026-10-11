@@ -1720,8 +1720,11 @@ class QtManager(QMainWindow):
             return
         self._shared_catalog_last_status = status
         if hasattr(self, 'shared_asset_label'):
-            self.shared_asset_label.setText('Shared: ' + (status.split(',')[0].replace('Ready: ', '') if status.startswith('Ready:') else 'indexing…' if status.startswith('Scanning') else 'unavailable'))
-            self.shared_asset_label.setToolTip(status)
+            # The permanent extracted Asset Library is now the primary source.
+            # Transient shared PAK scans are only a fallback and must not
+            # overwrite the Asset Library progress/status shown in the footer.
+            self.shared_asset_label.setToolTip(
+                self.asset_library_controller.status + '\nArchive fallback: ' + status)
         if status.startswith('Ready:'):
             self._log('Shared references: ' + status)
             # A model may have opened while indexing was still running.
