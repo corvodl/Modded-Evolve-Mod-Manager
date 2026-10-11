@@ -276,6 +276,14 @@ class QtWorkspaceEditor(QMainWindow):
         self.status.setWordWrap(True)
         bottom = QHBoxLayout()
         bottom.addWidget(self.status, 1)
+        self.dependency_button=QPushButton('Dependencies…')
+        self.dependency_button.setEnabled(False)
+        menu=QMenu(self.dependency_button)
+        menu.addAction('Asset Dependency Graph',self.open_dependency_graph)
+        menu.addAction('Find Missing Textures',self.open_texture_resolver)
+        menu.addAction('Validate Blender Export',self.inspect_blender_export)
+        self.dependency_button.setMenu(menu)
+        bottom.addWidget(self.dependency_button)
         self.version_label = QLabel(app_version())
         self.version_label.setObjectName('version')
         self.version_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -413,7 +421,19 @@ class QtWorkspaceEditor(QMainWindow):
                         all(isinstance(n, int) and n > 0 for n in pair)):
                     split.setSizes(pair)
 
+    def _capture_playback_preferences(self):
+        if self.current and self.mode=='models' and self.model_panel is not None:
+            prefs=self.manager.settings.get('animation_playback_preferences',{})
+            if not isinstance(prefs,dict):
+                prefs={}
+            key=project_session_key(self.workspace)+'|'+self.current.casefold()
+            prefs[key]=self.model_panel.playback_preferences()
+            while len(prefs)>200:
+                prefs.pop(next(iter(prefs)))
+            self.manager.settings['animation_playback_preferences']=prefs
+
     def _save_project_session(self):
+        self._capture_playback_preferences()
         if self._dirty():
             return
         selected={}
@@ -854,6 +874,8 @@ class QtWorkspaceEditor(QMainWindow):
 
     def load(self, rel):
         if rel != self.current:
+            self._capture_playback_preferences()
+        if rel != self.current:
             self.character_skin_choice = None
         self.current = rel
         self.stream = None
@@ -862,6 +884,9 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.texture_message = 'No texture lookup has run'
         self.mode = self._category(rel)
+        self.dependency_button.setEnabled(self.mode=='models')
+        if self.mode != 'models':
+            self.dependency_button.setText('Dependencies…')
         self._model_generation += 1
         path = checked_path(self.workspace, rel)
         if self.mode == 'models':
@@ -971,6 +996,12 @@ class QtWorkspaceEditor(QMainWindow):
         self._prepared_animation = data['animation']
         self._materials_error = data['materials_error']
         self._model_prepared = True
+        refs=data['animation'][0]
+        mapped=(self.materials.count if self.materials is not None else 0)
+        slots=(len(self.materials.textures) if self.materials is not None else 0)
+        count=sum(getattr(ref,'available',False) for ref in refs)
+        self.dependency_button.setText('Assets: %d/%d textures · %d animations'%
+                                       (mapped,slots,count))
         self._update_equipment_menu()
         self._paint_model(view, self.mesh)
         self.status.setText(
@@ -1080,6 +1111,10 @@ class QtWorkspaceEditor(QMainWindow):
 
             self.model_panel.set_native_catalog(refs, idle, config,
                                                 loader=build_native_clip)
+            prefs=self.manager.settings.get('animation_playback_preferences',{})
+            key=project_session_key(self.workspace)+'|'+self.current.casefold()
+            if isinstance(prefs,dict) and isinstance(prefs.get(key),dict):
+                self.model_panel.restore_playback_preferences(prefs[key])
             self.model_panel._info.setText(
                 mesh.source_name + '  •  ' + mesh.description +
                 '\n' + self.texture_message[:260])
@@ -1123,6 +1158,7 @@ class QtWorkspaceEditor(QMainWindow):
         self._save_project_session()
         target = self.archive_map[name]
         new_records = self._read_records(target)
+        self.dependency_button.setEnabled(False)
         self.workspace, self.records = target, new_records
         self.favorites_only.setChecked(False)
         self.preview_index = None
