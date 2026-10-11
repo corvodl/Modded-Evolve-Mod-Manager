@@ -59,3 +59,21 @@ def set_offline(game_root, block, *, runner=None, platform=None):
     if result.returncode or _netsh(show, runner).returncode == 0:
         raise RuntimeError("Could not remove the manager's outbound firewall rule.")
     return False
+
+
+def offline_rule_active(game_root, *,runner=None,platform=None):
+    """Read-only check that this exact Evolve executable is outbound-blocked.
+
+    Conservative: parsing cannot safely establish protection on localized or
+    nonstandard netsh output, so uncertain results return False.
+    """
+    if (os.name if platform is None else platform)!='nt':
+        return False
+    runner=runner or subprocess.run
+    exe=target_executable(game_root)
+    show=_netsh(['show','rule','name='+rule_name(exe),'verbose'],runner)
+    if show.returncode:
+        return False
+    result=(show.stdout or '').casefold()
+    return ('block' in result and str(exe).casefold() in result and
+            'out' in result and 'yes' in result)
