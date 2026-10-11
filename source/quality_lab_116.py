@@ -34,10 +34,15 @@ def project_health(workspace, *, file_limit=MAX_PROJECT_FILES):
             malformed.append(str(relative)[:100])
             continue
         try:
-            target = checked_path(root, relative)
-            if not target.is_file() or target.is_symlink():
+            from evolve_pak_workspace import normalized_name
+            candidate = root / 'files' / normalized_name(relative)
+            if candidate.is_symlink():
+                unsafe.append(relative)
+                continue
+            if not candidate.is_file():
                 missing.append(relative)
                 continue
+            target = checked_path(root, relative)
             total += target.stat().st_size
             if (relative.lower().endswith(xml_types) and
                     target.stat().st_size <= 2 * 1024 * 1024):
