@@ -1023,9 +1023,10 @@ class QtGPUModelPanel(QWidget):
             'Actions / Other'))
         self.native_motion_filter.currentIndexChanged.connect(self._filter_native_catalog)
         native_filters.addWidget(self.native_motion_filter)
-        self.native_result_count = QLabel('No animation references loaded')
-        native_filters.addWidget(self.native_result_count, 1)
         layout.addLayout(native_filters)
+        self.native_result_count = QLabel('No animation references loaded')
+        self.native_result_count.setWordWrap(True)
+        layout.addWidget(self.native_result_count)
 
         native_row = QHBoxLayout()
         self.native_clip_select = QComboBox()
