@@ -499,9 +499,14 @@ class QtGPUModelPanel(QWidget):
             return
         payload, details = result
         try:
-            from model_animation import AnimatedGLB
-            imported = AnimatedGLB(payload, 'Native Evolve animation')
-            self._show_animated(imported, auto_play=True)
+            if isinstance(payload, tuple):
+                imported, geometry = payload
+            else:
+                from model_animation import AnimatedGLB
+                imported = AnimatedGLB(payload, 'Native Evolve animation')
+                geometry = None
+            self._show_animated(imported, auto_play=True,
+                                prepared_geometry=geometry)
         except (ValueError, OSError) as exc:
             self.native_info.setText('CAF playback rejected: ' + str(exc)[:230])
             return
@@ -527,12 +532,13 @@ class QtGPUModelPanel(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, 'Animation import failed', str(exc))
 
-    def _show_animated(self, imported, *, auto_play):
+    def _show_animated(self, imported, *, auto_play, prepared_geometry=None):
         self.anim_timer.stop()
         self.anim_playing = False
         self.play_button.setText('Play')
         self.animated = imported
-        self.canvas.set_mesh(imported.preview_mesh, imported.materials)
+        self.canvas.set_mesh(imported.preview_mesh, imported.materials,
+                             prepared_geometry=prepared_geometry)
         self.clip_select.blockSignals(True)
         self.clip_select.clear()
         self.clip_select.addItems(tuple(imported.clips))
