@@ -1052,7 +1052,8 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.addItem('Select referenced animation', -1)
         for i, ref in enumerate(references):
             state, detail = native_clip_playability(ref)
-            suffix = {'missing': ' (not extracted)',
+            suffix = {'missing': ' (search PAK on play)',
+                      'extractable': ' (extract on play)',
                       'metadata': ' (graph/database)',
                       'layered': ' (layered / requires base pose)',
                       'candidate': ''}[state]
@@ -1078,10 +1079,12 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.blockSignals(False)
         layered = sum(native_clip_playability(ref)[0] == 'layered'
                       for ref in references)
+        extractable = sum(native_clip_playability(ref)[0] == 'extractable'
+                          for ref in references)
         missing = sum(native_clip_playability(ref)[0] == 'missing'
                       for ref in references)
-        summary = (f'{len(available)} standalone candidates, {layered} layered poses, '
-                   f'{missing} missing files • {len(references)} mapped animations')
+        summary = (f'{len(available)} extracted CAFs, {extractable} in signed PAKs, '
+                   f'{missing} unlocated, {layered} layered • {len(references)} mappings')
         if idle:
             summary += ' • Idle: ' + idle.name
         if description:
@@ -1108,7 +1111,11 @@ class QtGPUModelPanel(QWidget):
         ref = self._native_references[ref_index]
         state, detail = native_clip_playability(ref)
         self.play_native_button.setEnabled(
-            bool(self._native_loader and state == 'candidate'))
+            bool(self._native_loader and state in ('candidate', 'extractable', 'missing')))
+        self.play_native_button.setText(
+            'Extract & Play' if state == 'extractable'
+            else 'Search PAK & Play' if state == 'missing'
+            else 'Play Game Clip')
         if state == 'layered':
             self.native_info.setText(
                 'Layered pose: ' + ref.name + '\n' + detail +
@@ -1128,13 +1135,15 @@ class QtGPUModelPanel(QWidget):
             return
         ref = self._native_references[i]
         state, reason = native_clip_playability(ref)
-        if state != 'candidate':
+        if state not in ('candidate', 'extractable', 'missing'):
             self.native_info.setText(reason + '\n' + ref.virtual_path)
             self.play_native_button.setEnabled(False)
             return
         self._native_generation += 1
         token = self._native_generation
-        self.native_info.setText('Decoding standalone CAF and rigged model in background…')
+        self.native_info.setText(
+            ('Locating and extracting exact CAF from verified game PAK…'
+             if state != 'candidate' else 'Decoding standalone CAF and rigged model…'))
         self.play_native_button.setEnabled(False)
         job = _NativeConversion(self._native_loader, ref, token, self._native_signals)
         self._native_pool.start(job)
@@ -1159,8 +1168,22 @@ class QtGPUModelPanel(QWidget):
         except (ValueError, OSError) as exc:
             self.native_info.setText('CAF playback rejected: ' + str(exc)[:230])
             return
+        resolved = details.get('_resolved_caf_reference')
+        if resolved is not None:
+            from character_animation_catalog import native_clip_playability
+            i = self.native_clip_select.currentData()
+            if isinstance(i, int) and 0 <= i < len(self._native_references):
+                updated = list(self._native_references)
+                updated[i] = resolved
+                self._native_references = tuple(updated)
+                self.native_clip_select.setItemText(i + 1, resolved.name)
+                self.native_clip_select.setItemData(
+                    i + 1, native_clip_playability(resolved)[1], Qt.ToolTipRole)
+                self.play_native_button.setText('Play Game Clip')
+        origin = details.get('_animation_asset_origin', '')
+        fetched = 'Extracted on demand from ' + origin + ' • ' if details.get('_extracted_on_play') else ''
         self.native_info.setText(
-            'Native motion playing • %d bone channels • %s' %
+            fetched + 'Native motion playing • %d bone channels • %s' %
             (details.get('bone_channels',0), self.clip_select.currentText()))
 
     def load_animation(self):
