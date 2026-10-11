@@ -1585,15 +1585,22 @@ class QtWorkspaceEditor(QMainWindow):
                     raise ValueError('Imported bytes are not UTF-8 text.') from error
                 if '\0' in text:
                     raise ValueError('Imported text contains a NUL byte.')
-                save_text(self.workspace, rel, text, expected, raw,
-                          self.records[rel].get('format') == 'cryxml')
+                from qt_operation_progress import run_busy
+                run_busy(self, 'Import text asset', 'Validating and saving ' + rel,
+                         lambda: save_text(
+                             self.workspace, rel, text, expected, raw,
+                             self.records[rel].get('format') == 'cryxml'))
             else:
                 if QMessageBox.question(
                     self, 'Replace binary extracted file?',
                     'Keep a previous-byte backup before importing an unknown binary file?',
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                     return
-                replace_raw_file(self.workspace, rel, target, expected)
+                from qt_operation_progress import run_busy
+                run_busy(self, 'Import replacement file',
+                         'Backing up and replacing ' + rel,
+                         lambda: replace_raw_file(
+                             self.workspace, rel, target, expected))
         self._import_and_reload(replace)
 
     def restore_original(self):
@@ -1713,11 +1720,15 @@ class QtWorkspaceEditor(QMainWindow):
             rel = self.current
             if self.manager.busy:
                 raise RuntimeError('Wait for current manager task.')
-            if self.stream:
-                replace_stream(self.workspace, rel, path, self.stream.hashes)
-            else:
-                replace_dds(self.workspace, rel, path,
-                            sha_file(checked_path(self.workspace, rel)))
+            from qt_operation_progress import run_busy
+            def write_dds():
+                if self.stream:
+                    replace_stream(self.workspace, rel, path, self.stream.hashes)
+                else:
+                    replace_dds(self.workspace, rel, path,
+                                sha_file(checked_path(self.workspace, rel)))
+            run_busy(self, 'Import DDS texture',
+                     'Validating, backing up and writing ' + rel, write_dds)
             self.load(rel)
             self.status.setText('Imported compatible DDS, backups retained: '+rel)
         except Exception as exc:
