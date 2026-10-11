@@ -83,6 +83,28 @@ class MaterialRenderingTests(unittest.TestCase):
                 finally:editor.window.destroy()
         finally:root.destroy()
 
+    def test_unstaged_model_workspace_uses_permanent_shared_library(self):
+        from material_preview import _workspace_index
+        with tempfile.TemporaryDirectory() as directory:
+            workspace=Path(directory)/"model"
+            file=workspace/"files"/"characters"/"hunters"/"merc_tech"/"tech_3p.mtl"
+            file.parent.mkdir(parents=True)
+            file.write_text("<Material/>")
+            shared=Path(directory)/"library"/"eyeball_3p_diff.dds.0"
+            shared.parent.mkdir(parents=True)
+            shared.write_bytes(b"fixture")
+            key="characters/hunters/shared/textures/eyeball_3p_diff.dds.0"
+            with patch("material_preview.related_asset_index",return_value=None), \
+                 patch("material_preview.load_workspace",
+                       return_value={"entries":[
+                           {"path":"characters/hunters/merc_tech/tech_3p.mtl"}]}), \
+                 patch("asset_library.extracted_index",return_value={
+                     key:[{"file":shared,"relative":key,"workspace":None}]}):
+                index=_workspace_index(workspace)
+            self.assertIn(key,index)
+            self.assertIn("characters/hunters/merc_tech/tech_3p.mtl",index)
+            self.assertEqual(index[key][0]["file"],shared)
+
     def test_nested_extracted_ts_textures_and_bad_diffuse_are_reported(self):
         from material_preview import _external_lookup
         with tempfile.TemporaryDirectory() as folder:
