@@ -69,9 +69,31 @@ def parse_animation_references(data, exists):
     return tuple(out)
 
 
+def native_clip_playability(reference):
+    """UI-safe preview classification; not a promise of skeleton compatibility.
+
+    CryEngine aim-pose and additive files are layers for an animation graph.
+    They cannot play as independent GLB clips with the current converter.
+    """
+    if not reference.available:
+        return 'missing', 'Animation data has not been extracted.'
+    if reference.kind != 'caf':
+        return 'metadata', 'Blendspaces / animation databases need the CryEngine animation graph.'
+    name = reference.name.casefold()
+    if ('aimpose' in name or 'additive' in name or
+            re.search(r'(^|[_\\-])aim[_\\-]', name)):
+        return 'layered', (
+            'Layered/additive aim pose. Needs a compatible base animation and '
+            'CryEngine blend weights; standalone playback is not supported.')
+    return 'candidate', (
+        'Standalone playback candidate. The native CAF decoder will verify '
+        'bone controllers and animation flags when opened.')
+
+
+
 def prefer_idle(references):
     """Pick a verified idle, favoring neutral standing over contextual idles."""
-    available = [ref for ref in references if ref.available and ref.kind == 'caf'
+    available = [ref for ref in references if native_clip_playability(ref)[0] == 'candidate'
                  and re.search(r'(^|_)idle($|_)', ref.name.casefold())]
     if not available:
         return None
