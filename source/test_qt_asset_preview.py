@@ -53,6 +53,15 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         library_home.start()
         self.addCleanup(library_home.stop)
         self.parent = QMainWindow()
+        self.parent.settings = {}
+        self.parent.persist = lambda: None
+        self.parent.busy = False
+        self.parent.stage_path = str(root / 'stage')
+        self.parent.projects_path = str(root / 'projects')
+        self.parent.game_root = None
+        self.parent._find_game_root = lambda: None
+        self.parent.open_pak_diff = lambda: None
+        self.parent.open_level_editor = lambda *_: None
         self.parent.export_library_archive_by_id = lambda identifier: None
         self.addCleanup(self.parent.close)
         self.window = QtAssetPreviewWindow(self.parent, {
@@ -81,6 +90,36 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         self.assertIn('previewing and exporting only', labels)
         self.assertNotIn('Save Changes', [
             x.text() for x in self.window.findChildren(QLabel)])
+
+    def test_same_modding_editor_model_tools_but_no_import_or_save(self):
+        from qt_workspace_editor import QtWorkspaceEditor
+        self.assertIsInstance(self.window, QtWorkspaceEditor)
+        self.assertEqual(self.window.editor_split.objectName(),
+                         'unifiedEditorSplitter')
+        self.assertIs(self.window.file_tree, self.window.tree)
+        self.assertTrue(self.window.read_only_library)
+        self.assertTrue(self.window.actions['files']['Save'].isHidden())
+        self.assertTrue(self.window.actions['files']['Import / Replace File'].isHidden())
+        self.assertTrue(self.window.actions['images']['Import DDS'].isHidden())
+        self.assertTrue(self.window.actions['images']['Import PNG'].isHidden())
+        self.assertFalse(self.window.save_shortcut.isEnabled())
+        model_names = [action.text() for action in
+                       self.window.editor_menus['Model'].actions()
+                       if action.isVisible()]
+        self.assertIn('Open GPU Viewer in New Window', model_names)
+        self.assertIn('Compare Models Side by Side…', model_names)
+        self.assertNotIn('Import Same-Layout Model…', model_names)
+        with self.assertRaises(PermissionError):
+            self.window.import_dds()
+        with self.assertRaises(PermissionError):
+            self.window.import_png()
+        with self.assertRaises(PermissionError):
+            self.window.import_model()
+        with self.assertRaises(PermissionError):
+            self.window._import_and_reload(lambda _: None)
+        self.window.save()
+        self.assertEqual(self.source.read_text(encoding='utf-8'),
+                         '<Character name="Maggie"/>')
 
 
 if __name__ == '__main__':
