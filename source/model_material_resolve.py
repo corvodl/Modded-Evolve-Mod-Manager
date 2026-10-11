@@ -115,7 +115,144 @@ def find_model_material(index, model_relative, *, preferred_workspace=None):
     model = normalized_name(model_relative)
     parent = PurePosixPath(model).parent.as_posix()
     stem = PurePosixPath(model).stem
-    bases = [stem, re.sub(r'_lod\d+$', '', stem, flags=re.I)]
+    no_lod = re.sub(r'_lod\d+
+
+    def check(name, reason):
+        virtual = _material_path(name, parent)
+        if virtual is None:
+            return None
+        choices = [virtual]
+        if parent != '.' and not virtual.casefold().startswith(
+                ('characters/', 'objects/', 'materials/', 'textures/', 'levels/')):
+            choices.insert(0, parent + '/' + virtual)
+        for path in choices:
+            folded = path.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            attempts.append(path)
+            record = _found(index, path, preferred_workspace)
+            if record is not None:
+                return (record, reason, tuple(attempts))
+        return None
+
+    for base in dict.fromkeys(bases):
+        result = check((PurePosixPath(parent) / (base+'.mtl')).as_posix(),
+                       'same-name material')
+        if result:
+            return result
+    for hint, reason in _cdf_hints(index, model, preferred_workspace):
+        result = check(hint, reason)
+        if result:
+            return result
+    for hint, reason in _embedded_hints(index, model, preferred_workspace):
+        result = check(hint, reason)
+        if result:
+            return result
+    # The game sometimes shortens equipment render names such as *world
+    # while material files keep the base equipment name. Only consider
+    # a strong, unique same-directory prefix; never merge two candidates.
+    local = []
+    for candidate in index:
+        if not candidate.endswith('.mtl'):
+            continue
+        if PurePosixPath(candidate).parent.as_posix().casefold() != parent.casefold():
+            continue
+        material_stem = PurePosixPath(candidate).stem.casefold()
+        simple_stem = re.sub(r'_lod\d+$', '', stem, flags=re.I).casefold()
+        if (len(material_stem) >= 9 and len(simple_stem) > len(material_stem)
+                and simple_stem.startswith(material_stem)):
+            local.append(candidate)
+    if len(local) == 1:
+        result = check(local[0], 'unique equipment-prefix material')
+        if result:
+            return result
+    return None, 'unresolved', tuple(attempts)
+
+
+def nearby_model_materials(index, model_relative, limit=12):
+    """Diagnostic suggestions only, not implicitly assigned to a model."""
+    model = normalized_name(model_relative)
+    parent = PurePosixPath(model).parent.as_posix().casefold()
+    # Diagnostic hints include nested Materials/ folders under this
+    # character. They are NOT automatically assigned to a mesh.
+    return tuple(sorted(
+        key for key in index if key.endswith('.mtl')
+        and (PurePosixPath(key).parent.as_posix().casefold() == parent
+             or key.casefold().startswith(parent + '/'))
+    )[:limit])
+, '', stem, flags=re.I)
+    # Evolve often names the visual mesh *_3p or *_fp but its single
+    # character material simply <character>.mtl. Only try exact same-
+    # directory names; never perform a broad fuzzy cross-character match.
+    perspective_base = re.sub(r'_(?:3p|fp)
+
+    def check(name, reason):
+        virtual = _material_path(name, parent)
+        if virtual is None:
+            return None
+        choices = [virtual]
+        if parent != '.' and not virtual.casefold().startswith(
+                ('characters/', 'objects/', 'materials/', 'textures/', 'levels/')):
+            choices.insert(0, parent + '/' + virtual)
+        for path in choices:
+            folded = path.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            attempts.append(path)
+            record = _found(index, path, preferred_workspace)
+            if record is not None:
+                return (record, reason, tuple(attempts))
+        return None
+
+    for base in dict.fromkeys(bases):
+        result = check((PurePosixPath(parent) / (base+'.mtl')).as_posix(),
+                       'same-name material')
+        if result:
+            return result
+    for hint, reason in _cdf_hints(index, model, preferred_workspace):
+        result = check(hint, reason)
+        if result:
+            return result
+    for hint, reason in _embedded_hints(index, model, preferred_workspace):
+        result = check(hint, reason)
+        if result:
+            return result
+    # The game sometimes shortens equipment render names such as *world
+    # while material files keep the base equipment name. Only consider
+    # a strong, unique same-directory prefix; never merge two candidates.
+    local = []
+    for candidate in index:
+        if not candidate.endswith('.mtl'):
+            continue
+        if PurePosixPath(candidate).parent.as_posix().casefold() != parent.casefold():
+            continue
+        material_stem = PurePosixPath(candidate).stem.casefold()
+        simple_stem = re.sub(r'_lod\d+$', '', stem, flags=re.I).casefold()
+        if (len(material_stem) >= 9 and len(simple_stem) > len(material_stem)
+                and simple_stem.startswith(material_stem)):
+            local.append(candidate)
+    if len(local) == 1:
+        result = check(local[0], 'unique equipment-prefix material')
+        if result:
+            return result
+    return None, 'unresolved', tuple(attempts)
+
+
+def nearby_model_materials(index, model_relative, limit=12):
+    """Diagnostic suggestions only, not implicitly assigned to a model."""
+    model = normalized_name(model_relative)
+    parent = PurePosixPath(model).parent.as_posix().casefold()
+    # Diagnostic hints include nested Materials/ folders under this
+    # character. They are NOT automatically assigned to a mesh.
+    return tuple(sorted(
+        key for key in index if key.endswith('.mtl')
+        and (PurePosixPath(key).parent.as_posix().casefold() == parent
+             or key.casefold().startswith(parent + '/'))
+    )[:limit])
+, '', no_lod, flags=re.I)
+    bases = list(dict.fromkeys((stem, no_lod, perspective_base)))
     attempts, seen = [], set()
 
     def check(name, reason):
