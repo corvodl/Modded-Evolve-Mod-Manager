@@ -6,6 +6,8 @@ It never accesses installed PAKs or writes extracted workspace files.
 from __future__ import annotations
 import math
 import sys
+import json
+from pathlib import Path
 import numpy as np
 
 from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess, QObject, Signal, QRunnable, QThreadPool
@@ -609,6 +611,31 @@ class QtGPUModelPanel(QWidget):
         self.timeline_markers.currentIndexChanged.connect(self.goto_timeline_marker)
         timeline.addWidget(self.timeline_markers,1)
         layout.addLayout(timeline)
+        navigation = QHBoxLayout()
+        for title, seconds in (('−1s', -1.), ('−0.1s', -.1), ('+0.1s', .1), ('+1s', 1.)):
+            item = QPushButton(title)
+            item.clicked.connect(lambda checked=False, delta=seconds: self.nudge_timeline(delta))
+            navigation.addWidget(item)
+        self.playlist_items = QComboBox()
+        self.playlist_items.setToolTip('Ordered decoded animation clips; no unconverted CAF data is inferred.')
+        navigation.addWidget(self.playlist_items, 1)
+        for title, callback in (('+ Clip', self.add_playlist_clip),
+                                ('− Clip', self.remove_playlist_clip),
+                                ('Prev', lambda: self.move_playlist(-1)),
+                                ('Next', lambda: self.move_playlist(1))):
+            btn=QPushButton(title)
+            btn.clicked.connect(lambda checked=False, fn=callback: fn())
+            navigation.addWidget(btn)
+        layout.addLayout(navigation)
+        presets = QHBoxLayout()
+        for title, callback in (('Save Playlist…', self.save_animation_playlist),
+                                ('Load Playlist…', self.load_animation_playlist),
+                                ('Compare Clips', self.compare_playlist_clips)):
+            btn=QPushButton(title)
+            btn.clicked.connect(lambda checked=False, fn=callback: fn())
+            presets.addWidget(btn)
+        presets.addStretch()
+        layout.addLayout(presets)
         self.anim_status = QLabel('Animation playback: load a rigged GLB containing clips, or '
                                   'use an optional CryEngine converter for CAF/DBA files.')
         self.anim_status.setWordWrap(True)
@@ -734,6 +761,8 @@ class QtGPUModelPanel(QWidget):
         self.clip_select.blockSignals(True)
         self.clip_select.clear()
         self.clip_select.addItems(tuple(imported.clips))
+        self.playlist_items.clear()
+        self.playlist_items.addItems(tuple(imported.clips))
         idle = next((name for name in imported.clips if
                      'idle' in name.casefold() and 'additive' not in name.casefold()), None)
         if idle:
@@ -743,6 +772,103 @@ class QtGPUModelPanel(QWidget):
         self._display_animation_frame()
         if auto_play and (idle or len(imported.clips)==1):
             self.toggle_play()
+
+    def nudge_timeline(self, seconds):
+        if self.animated is None or not self.clip_select.currentText():
+            return
+        duration = self.animated.clips[self.clip_select.currentText()][0]
+        self.anim_position = max(0., min(duration, self.anim_position + float(seconds)))
+        self._display_animation_frame()
+
+    def add_playlist_clip(self):
+        clip = self.clip_select.currentText()
+        if self.animated is not None and clip and self.playlist_items.findText(clip) < 0:
+            self.playlist_items.addItem(clip)
+            self.playlist_items.setCurrentText(clip)
+
+    def remove_playlist_clip(self):
+        index = self.playlist_items.currentIndex()
+        if index >= 0:
+            self.playlist_items.removeItem(index)
+
+    def move_playlist(self, step):
+        clips = [self.playlist_items.itemText(i) for i in range(self.playlist_items.count())]
+        if not clips or self.animated is None:
+            return
+        index = self.playlist_items.currentIndex()
+        index = (index + step) % len(clips)
+        self.playlist_items.setCurrentIndex(index)
+        self.clip_select.setCurrentText(clips[index])
+        self.anim_position = 0.
+        self._display_animation_frame()
+
+    def save_animation_playlist(self):
+        if self.animated is None:
+            QMessageBox.information(self,'Animation Workspace','Load a playable animation first.')
+            return
+        from quality_lab_116 import animation_playlist
+        names = [self.playlist_items.itemText(i) for i in range(self.playlist_items.count())]
+        if not names:
+            names = [self.clip_select.currentText()]
+        markers = [self.timeline_markers.itemData(i) for i in range(1,self.timeline_markers.count())
+                   if self.timeline_markers.itemData(i)]
+        try:
+            value = animation_playlist(names,markers,loop=self.loop_enabled.isChecked(),
+                      speed=self.playback_speed.currentData())
+            path,_=QFileDialog.getSaveFileName(self,'Save animation playlist',
+                      'Evolve-Animation-Playlist.json','JSON (*.json)')
+            if path:
+                Path(path).write_text(json.dumps(value,indent=2),encoding='utf-8')
+                self.anim_status.setText('Saved local animation playlist: '+Path(path).name)
+        except (OSError,ValueError) as exc:
+            QMessageBox.warning(self,'Invalid playlist',str(exc))
+
+    def load_animation_playlist(self):
+        if self.animated is None:
+            QMessageBox.information(self,'Animation Workspace','Load a playable GLB or CAF clip first.')
+            return
+        from quality_lab_116 import validate_animation_playlist
+        path,_=QFileDialog.getOpenFileName(self,'Load animation playlist','','JSON (*.json)')
+        if not path:
+            return
+        try:
+            file=Path(path)
+            if file.stat().st_size>512*1024:
+                raise ValueError('Playlist exceeds 512 KiB.')
+            data,matched,missing=validate_animation_playlist(
+                json.loads(file.read_text('utf-8')),self.animated.clips)
+            self.playlist_items.clear()
+            self.playlist_items.addItems(matched)
+            self.timeline_markers.clear()
+            self.timeline_markers.addItem('Markers',None)
+            for clip,seconds in data['markers']:
+                if clip in matched and seconds <= self.animated.clips[clip][0]:
+                    self.timeline_markers.addItem('%s at %.2fs'%(clip,seconds),(clip,seconds))
+            self.loop_enabled.setChecked(data['loop'])
+            best=min(range(self.playback_speed.count()),key=lambda i:
+                     abs(self.playback_speed.itemData(i)-data['speed']))
+            self.playback_speed.setCurrentIndex(best)
+            if matched:
+                self.clip_select.setCurrentText(matched[0])
+            self.anim_status.setText('%d clips loaded; %d unavailable in current model.'%
+                                     (len(matched),len(missing)))
+        except (OSError,ValueError,TypeError) as exc:
+            QMessageBox.warning(self,'Playlist load failed',str(exc))
+
+    def compare_playlist_clips(self):
+        if self.animated is None:
+            return
+        from quality_lab_116 import compare_animation_clips
+        clips = [self.playlist_items.itemText(i) for i in range(self.playlist_items.count())]
+        if len(clips)<2:
+            QMessageBox.information(self,'Compare clips','Add at least two playable clips to the playlist.')
+            return
+        try:
+            comparison=compare_animation_clips(self.animated.clips, clips[0], clips[1])
+            QMessageBox.information(self,'Clip Duration Comparison',
+                                    json.dumps(comparison,indent=2))
+        except ValueError as exc:
+            QMessageBox.warning(self,'Compare clips',str(exc))
 
     def step_frame(self, direction):
         if self.animated is None or not self.clip_select.currentText():
@@ -813,6 +939,15 @@ class QtGPUModelPanel(QWidget):
             if self.loop_enabled.isChecked() and duration>0:
                 self.anim_position %= duration
             else:
+                clips = [self.playlist_items.itemText(i) for i in range(self.playlist_items.count())]
+                here = self.clip_select.currentText()
+                next_index = clips.index(here) + 1 if here in clips else len(clips)
+                if next_index < len(clips):
+                    self.playlist_items.setCurrentIndex(next_index)
+                    self.clip_select.setCurrentText(clips[next_index])
+                    self.anim_position = 0.
+                    self._display_animation_frame()
+                    return
                 self.anim_position = max(0.,duration)
                 self.anim_playing = False
                 self.anim_timer.stop()
