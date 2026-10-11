@@ -69,7 +69,7 @@ class LibraryExportProgressTests(unittest.TestCase):
         def callback(name, done, total):
             seen.append(done)
         def cancelled():
-            return 21 in seen
+            return 20 in seen
         with self.assertRaisesRegex(InterruptedError, 'cancelled'):
             export_archive_layout(
                 self.identifier, self.dest, root=self.library,
