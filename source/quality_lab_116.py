@@ -111,7 +111,7 @@ def benchmark_workspace(workspace, *, sample_count=32):
             try:
                 from model_asset import inspect_model
                 start = time.perf_counter()
-                inspect_model(target.read_bytes(), rel)
+                inspect_model(target.read_bytes())
                 model_ms = round((time.perf_counter()-start)*1000, 3)
                 model_name = rel
             except (ValueError, TypeError, OSError):
