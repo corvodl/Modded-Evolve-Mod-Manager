@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.13', (
+        'Add visual gameplay values and texture adjustment editors.',
+        'Search assets across PAKs, batch export files, and share mod profiles.',
+        'Expand GPU viewing with camera presets, lighting, and screenshots.',
+    )),
     ('1.1.12', (
         'Play supported native Evolve CAF animations, with compatible idle autoplay.',
         'View assembled characters and export animated, textured Blender GLBs.',

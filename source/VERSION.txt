@@ -1,1 +1,1 @@
-1.1.12 - Native CAF Animation and Character Viewer
+1.1.13 - Visual Gameplay and Asset Studio
