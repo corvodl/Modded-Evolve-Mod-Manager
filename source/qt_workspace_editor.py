@@ -527,6 +527,7 @@ class QtWorkspaceEditor(QMainWindow):
             info.setMargin(12)
             dock.setWidget(info)
             self.addDockWidget(Qt.RightDockWidgetArea,dock)
+            dock.hide()
             self._diagnostics_dock=dock
             self._diagnostics_label=info
             self._diagnostics_timer=QTimer(self)
@@ -735,8 +736,10 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode != 'models' or self.mesh is None:
             QMessageBox.information(self, 'Texture preview', 'Select a model first.')
             return
+        clear_model_cache(self.workspace)
+        self.preview_index = None
         self.load(self.current)
-        self.status.setText(self.texture_message)
+        self.status.setText('Reloading materials and textures…')
 
     @staticmethod
     def _button(name, callback):
@@ -904,8 +907,8 @@ class QtWorkspaceEditor(QMainWindow):
 
     def _load_model_background(self, rel):
         """Load heavy CryEngine files and textures away from the GUI thread."""
-        from async_model_resolve import resolve_model
         self._model_prepared = False
+        self._model_started_at = time.perf_counter()
         view = self.views['models']
         self.model_fallback.setPixmap(QPixmap())
         self.model_fallback.setText('Loading character and textures…')
@@ -921,11 +924,11 @@ class QtWorkspaceEditor(QMainWindow):
         token = self._model_generation
 
         def resolve(_unused):
-            result = resolve_model(source_workspace, rel,
+            data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
                 projects_root=projects, stage_root=stage,
                 texture_folder=tex, animation_index=ani,
                 equipment=equipment, index=index)
-            return result, None
+            return (data, cache_hit, load_ms), None
 
         # Tests and headless software previews retain deterministic synchronous
         # behavior. Real GPU viewing runs all expensive preparation in a worker.
@@ -956,7 +959,9 @@ class QtWorkspaceEditor(QMainWindow):
             view.setCurrentWidget(self.model_fallback)
             self.status.setText('3D preview unavailable: ' + error[:260])
             return
-        data, _unused = result
+        data, cache_hit, load_ms = result[0]
+        self.model_cache_hit = cache_hit
+        self.model_load_ms = round(load_ms, 2)
         self.raw = data['raw']
         self.mesh = data['mesh']
         self.materials = data['materials']
@@ -1034,6 +1039,15 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_panel.set_static_mesh(mesh, materials,
                                                  prepared_geometry=self._prepared_geometry)
             view.setCurrentWidget(self.model_panel)
+            camera=getattr(self,'_restored_camera',None)
+            if isinstance(camera,dict):
+                for name in ('rotation','pan'):
+                    if name in camera:
+                        setattr(self.model_gpu,name,list(camera[name]))
+                if 'zoom' in camera:
+                    self.model_gpu.zoom=camera['zoom']
+                self.model_gpu.update()
+                self._restored_camera=None
             from character_animation_catalog import discover_animations
             anim_model = (self.character_preview.skeleton if self.character_preview
                           else self.current)
@@ -1106,6 +1120,7 @@ class QtWorkspaceEditor(QMainWindow):
             self.archive_select.setCurrentText(old)
             self.archive_select.blockSignals(False)
             return
+        self._save_project_session()
         target = self.archive_map[name]
         new_records = self._read_records(target)
         self.workspace, self.records = target, new_records
@@ -1119,6 +1134,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.manager.output_pak = ''
         self.manager.persist()
         self.populate()
+        QTimer.singleShot(0,self._restore_project_session)
         self.status.setText('Browsing ' + name + ' | Build Mod applies only to this PAK.')
 
     def change_tab(self, index):
@@ -1168,6 +1184,7 @@ class QtWorkspaceEditor(QMainWindow):
 
     def reload(self):
         if self.current and self._confirm_buffer():
+            clear_model_cache(self.workspace)
             self.preview_index = None
             self.load(self.current)
 
@@ -1714,6 +1731,7 @@ class QtWorkspaceEditor(QMainWindow):
         if not self._confirm_buffer():
             event.ignore()
             return
+        self._save_project_session()
         self._model_generation += 1
         if self.model_panel is not None and not self.model_panel.close():
             event.ignore()
