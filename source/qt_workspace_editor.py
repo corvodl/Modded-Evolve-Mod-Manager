@@ -975,8 +975,11 @@ class QtWorkspaceEditor(QMainWindow):
                 for i, part in enumerate(parts[:-1]):
                     key = '/'.join(parts[:i + 1])
                     if key not in folders:
-                        folder = QTreeWidgetItem([part, ''])
-                        folder.setToolTip(0, key)
+                        from character_aliases import pretty_folder
+                        display = pretty_folder(part, '/'.join(parts[:i]))
+                        folder = QTreeWidgetItem([display, ''])
+                        folder.setToolTip(0, key + (
+                            '\\nCharacter: ' + display if display != part else ''))
                         if parent is not None:
                             parent.addChild(folder)
                         else:
@@ -1403,7 +1406,11 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_panel.restore_playback_preferences(prefs[key])
             # Keep the viewport readable; detailed mesh/texture diagnostics
             # remain available on hover rather than taking up viewport rows.
-            self.model_panel._info.setText('User Perspective  •  ' + mesh.source_name)
+            from character_aliases import character_alias
+            actor = character_alias(self.current)
+            actor_prefix = (actor + '  •  ') if actor else ''
+            self.model_panel._info.setText(
+                'User Perspective  •  ' + actor_prefix + mesh.source_name)
             self.model_panel._info.setToolTip(
                 mesh.description + '\n' + self.texture_message[:1000])
             self.model_gpu.update()
