@@ -415,7 +415,7 @@ class UnrealStyleLevelEditor(QMainWindow):
 
     def _populate(self):
         self.layers_list.clear()
-        for name in sorted(self.project.layers):
+        for name in (self.project.known_layers or sorted(self.project.layers)):
             row=QTreeWidgetItem([Path(name).stem])
             row.setToolTip(0,name)
             row.setData(0,Qt.UserRole,name)
@@ -436,13 +436,17 @@ class UnrealStyleLevelEditor(QMainWindow):
                 break
             if needle and needle not in (obj.name+" "+obj.kind+" "+obj.layer+" "+obj.geometry).casefold():
                 continue
-            if obj.layer not in group:
-                header=QTreeWidgetItem([Path(obj.layer).stem,"Layer"])
+            node = self.project._node(obj.layer,obj.index)
+            real_layer = node.get("Layer") or Path(obj.layer).stem
+            group_key = (obj.layer,real_layer)
+            if group_key not in group:
+                header=QTreeWidgetItem([real_layer,"Layer"])
+                header.setToolTip(0,obj.layer)
                 self.outliner.addTopLevelItem(header)
-                group[obj.layer]=header
+                group[group_key]=header
             item=QTreeWidgetItem([obj.name[:90],obj.kind[:45]])
             item.setData(0,Qt.UserRole,(obj.layer,obj.index))
-            group[obj.layer].addChild(item)
+            group[group_key].addChild(item)
             count+=1
             if self.selected==(obj.layer,obj.index):
                 item.setSelected(True)
@@ -515,7 +519,9 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.viewport.active=self.selected
         obj=self.project.get(layer,index)
         self.details_name.setText(obj.name)
-        self.details_kind.setText("Type: "+obj.kind+"  •  Layer: "+Path(layer).stem)
+        node = self.project._node(layer,index)
+        self.details_kind.setText(
+            "Type: "+obj.kind+"  •  Layer: "+(node.get("Layer") or Path(layer).stem))
         self.geometry_label.setText("Model reference: "+(obj.geometry or "Not specified"))
         self._refreshing=True
         for key,values in (("Pos",obj.pos),("Rotate",obj.rotate or (0,0,0,1)),
