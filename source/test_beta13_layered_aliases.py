@@ -49,6 +49,23 @@ class LayeredAnimationTests(unittest.TestCase):
             glb.sample_layered('stand_idle','stand_idle',.5,.3)
 
 
+class MaterialNameFallbackTests(unittest.TestCase):
+    def test_third_person_mesh_can_use_verified_same_character_base_mtl(self):
+        from tempfile import TemporaryDirectory
+        from model_material_resolve import find_model_material
+        with TemporaryDirectory() as temp:
+            folder = Path(temp)
+            real = folder / 'lennox.mtl'
+            real.write_text('<Material/>')
+            rel = 'characters/hunters/merc_lennox/lennox.mtl'
+            index = {rel: [{'file': real, 'relative': rel,
+                            'archive': 'lennox_ts.pak', 'workspace': None}]}
+            record, basis, tested = find_model_material(
+                index, 'characters/hunters/merc_lennox/lennox_3p.skinm')
+            self.assertEqual(record['relative'], rel)
+            self.assertEqual(basis, 'same-name material')
+            self.assertIn(rel, tested)
+
 class AliasMappingTests(unittest.TestCase):
     def test_all_seven_internal_names_resolve(self):
         expected = {
