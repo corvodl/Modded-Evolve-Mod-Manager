@@ -13,7 +13,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 - Extract map/character PAKs with their known companion files; open maps in Level Editor.
 - Read placed entities from mission XML when no standalone .lyr data exists.
 
-## What's new in v1.1.18-beta.3
+## What's new in v1.1.18-beta.2
 
 - Add a permanent extracted PAK Asset Library with custom archive imports.
 - Improve animation asset lookup and simplify the model editor explorer.
