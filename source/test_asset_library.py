@@ -111,6 +111,36 @@ class ExtractedAssetLibraryTests(TestCase):
         self.assertEqual(lib.imported_archives(self.library)[0]["name"],
                          special.name)
 
+    def test_required_archive_status_checks_expected_names_not_total_count(self):
+        # An arbitrary tenth PAK must not make the six+three archive check pass.
+        other = self.game / "custom_objects.pak"
+        other.write_bytes(b"synthetic custom PAK")
+        with patch("evolve_pak_rekey.extract_plain_cdr",
+                   return_value=(self.info, b"", b"", other.name)), \
+             patch("evolve_gameplay_editor.decrypt_entry",
+                   side_effect=lambda source, info, entry: self.data[entry]):
+            lib.import_pak(other, root=self.library, extra_keys=[self.key])
+        status = lib.required_archive_status(self.library)
+        self.assertEqual((status["shared"], status["animations"]), (0, 0))
+        self.assertEqual(len(status["missing"]), 9)
+        self._import()
+        status = lib.required_archive_status(self.library)
+        self.assertEqual((status["shared"], status["animations"]), (1, 0))
+        self.assertEqual(len(status["missing"]), 8)
+        self.assertIn("characters_hunters_shared_data.pak", status["missing"])
+        self.assertEqual(
+            lib.reference_status(
+                "characters/hunters/shared/textures/eyeball_3p_diff.dds.0",
+                self.library), ("characters_hunters_shared_ts.pak",))
+
+    def test_missing_library_file_is_not_counted_as_complete(self):
+        self._import()
+        index = lib.extracted_index(self.library)
+        index[next(iter(index))][0]["file"].unlink()
+        self.assertEqual(lib.required_archive_status(self.library)["shared"], 0)
+        with self.assertRaisesRegex(ValueError, "missing or damaged"):
+            lib.import_pak(self.source, root=self.library, extra_keys=[self.key])
+
     def test_discovery_only_nine_game_defaults(self):
         (self.game / "bin64_SteamRetail").mkdir()
         (self.game / "bin64_SteamRetail" / "Evolve.exe").write_bytes(b"fixture")
