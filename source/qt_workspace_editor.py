@@ -601,7 +601,25 @@ class QtWorkspaceEditor(QMainWindow):
                 anim_model, self.preview_index,
                 preferred_workspace=self.workspace,
                 loose_index=self.loose_animation_index)
-            self.model_panel.set_native_catalog(refs, idle, config)
+            from native_character_glb import create_character_glb
+            # Capture plain paths and immutable preview objects; background
+            # decoding never touches a QWidget or live Qt project state.
+            source_workspace = self.workspace
+            source_relative = self.current
+            source_index = self.preview_index
+            source_character = self.character_preview
+            source_textures = self.texture_folder
+            source_projects = self.manager.projects_path
+            source_stage = self.manager.stage_path
+
+            def build_native_clip(ref):
+                return create_character_glb(
+                    source_workspace, source_relative, source_index,
+                    character=source_character, texture_folder=source_textures,
+                    projects_root=source_projects, stage_root=source_stage, clip=ref)
+
+            self.model_panel.set_native_catalog(refs, idle, config,
+                                                loader=build_native_clip)
             self.model_panel._info.setText(
                 mesh.source_name + '  •  ' + mesh.description +
                 '\n' + self.texture_message[:260])
@@ -1063,7 +1081,20 @@ class QtWorkspaceEditor(QMainWindow):
                 refs, idle, _config = discover_animations(
                     anim_model, self.preview_index, preferred_workspace=self.workspace,
                     loose_index=self.loose_animation_index)
-                dialog.panel.set_native_catalog(refs, idle)
+                from native_character_glb import create_character_glb
+                source_workspace = self.workspace
+                source_relative = self.current
+                source_index = self.preview_index
+                source_character = self.character_preview
+                source_textures = self.texture_folder
+                source_projects = self.manager.projects_path
+                source_stage = self.manager.stage_path
+                def popout_loader(ref):
+                    return create_character_glb(
+                        source_workspace, source_relative, source_index,
+                        character=source_character, texture_folder=source_textures,
+                        projects_root=source_projects, stage_root=source_stage, clip=ref)
+                dialog.panel.set_native_catalog(refs, idle, loader=popout_loader)
             dialog.setAttribute(Qt.WA_DeleteOnClose, False)
             self.gpu_windows.append(dialog)
             self.status.setText(self.current + material_note)
