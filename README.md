@@ -1,10 +1,16 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.9
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.10
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.9 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.10 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.18-beta.10
+
+- Asset Library model preview reads its extracted PAK manifest and no longer requires a Modding .evolve-pak-workspace.json file.
+- Verify equipment material mappings through the character CDF, compiled model references, then unique same-directory associations; never automatically select ambiguous material files.
+- Diagnose Texture Links reports the actual material source or unassigned candidates instead of incorrectly assuming every equipment mesh has a same-named .mtl.
 
 ## What's new in v1.1.18-beta.9
 
