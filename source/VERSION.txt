@@ -1,1 +1,1 @@
-1.1.6 - Blender Export and Default GPU Preview
+1.1.7 - Cross-PAK Blender Textures and Asset Labels

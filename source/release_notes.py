@@ -4,6 +4,10 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.7', (
+        'Blender GLB exports can include diffuse textures from unpacked companion PAKs.',
+        'Clarified model, skeleton and animation archive descriptions.',
+    )),
     ('1.1.6', (
         'Export supported CryEngine models and folders to Blender-ready GLB files.',
         'Models now use GPU preview by default when supported.',
