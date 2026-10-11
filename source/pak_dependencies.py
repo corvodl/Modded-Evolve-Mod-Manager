@@ -139,6 +139,30 @@ def plan_dependencies(selected, available):
                 tuple(missing), tuple(reasons))
 
 
+def remaining_companions(selected, available, library_covered):
+    """Return archives to extract and companions resolved by the library.
+
+    Explicitly selected archives are ALWAYS extracted as editable workspaces.
+    Only implicit dependencies can be satisfied by a complete imported PAK.
+    """
+    requested = tuple(selected)
+    covered = {path.casefold() for path in library_covered}
+    explicit = {path.casefold() for path in requested}
+    todo, resolved, seen = [], [], set()
+    for source in requested:
+        plan = plan_dependencies(source, available)
+        for rel in plan.all_paks:
+            key = rel.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            if key not in explicit and key in covered:
+                resolved.append(rel)
+            else:
+                todo.append(rel)
+    return tuple(todo), tuple(resolved)
+
+
 def plan_report(plan):
     text = [f"Dependency family: {plan.group}",
             f"Selected: {plan.selected}",
