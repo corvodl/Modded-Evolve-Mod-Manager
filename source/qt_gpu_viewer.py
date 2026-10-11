@@ -755,6 +755,9 @@ class QtGPUModelPanel(QWidget):
         self.native_info = QLabel('Native game animations: not scanned')
         self.native_info.setWordWrap(True)
         self._overlay_sections['Animation'][1].addWidget(self.native_info)
+        # Keep the selected clip's status immediately under its browser.
+        self._overlay_sections['Animation'][1].removeWidget(self.native_info)
+        self.animation_sections['Game Animation Browser'][1].layout().addWidget(self.native_info)
         foot=QLabel('Renderer 3.0 approximates CryEngine materials; check optional maps in the texture diagnostics. '
                     'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
@@ -976,7 +979,33 @@ class QtGPUModelPanel(QWidget):
         self.canvas.update()
 
     def _prepare_animation_controls(self, layout):
-        from PySide6.QtWidgets import QSlider
+        from PySide6.QtWidgets import QSlider, QToolButton, QWidget
+        # Reusable Blender-like disclosure rows: collapsed sections consume
+        # no height and keep the narrow GPU popover usable at 720p.
+        self.animation_sections = {}
+        def disclosure(title, opened):
+            heading = QToolButton(self)
+            heading.setObjectName('animationSection' + title.replace(' ', ''))
+            heading.setText(('▾  ' if opened else '▸  ') + title)
+            heading.setCheckable(True)
+            heading.setChecked(opened)
+            heading.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            body = QWidget(self)
+            inner = QVBoxLayout(body)
+            inner.setContentsMargins(3, 3, 3, 6)
+            inner.setSpacing(4)
+            layout.addWidget(heading)
+            layout.addWidget(body)
+            body.setVisible(opened)
+            def toggle(active):
+                body.setVisible(active)
+                heading.setText(('▾  ' if active else '▸  ') + title)
+            heading.toggled.connect(toggle)
+            self.animation_sections[title] = (heading, body)
+            return inner
+        catalog_layout = disclosure('Game Animation Browser', True)
+        playback_layout = disclosure('Playback Controls', False)
+        playlist_layout = disclosure('Clips & Playlists', False)
         line = QHBoxLayout()
         import_button = QPushButton('Load Animation GLB…')
         import_button.clicked.connect(self.load_animation)
@@ -991,7 +1020,7 @@ class QtGPUModelPanel(QWidget):
         self.play_button = QPushButton('Play')
         self.play_button.clicked.connect(self.toggle_play)
         line.addWidget(self.play_button)
-        layout.addLayout(line)
+        playback_layout.addLayout(line)
         native_header = QHBoxLayout()
         native_header.addWidget(QLabel('Game animations'))
         self.native_search = QLineEdit()
@@ -1006,7 +1035,7 @@ class QtGPUModelPanel(QWidget):
             'Re-read the current Asset Library and update this model\'s animation references.')
         self.native_refresh_button.clicked.connect(self.refresh_native_catalog)
         native_header.addWidget(self.native_refresh_button)
-        layout.addLayout(native_header)
+        catalog_layout.addLayout(native_header)
 
         native_filters = QHBoxLayout()
         self.native_state_filter = QComboBox()
@@ -1023,10 +1052,10 @@ class QtGPUModelPanel(QWidget):
             'Actions / Other'))
         self.native_motion_filter.currentIndexChanged.connect(self._filter_native_catalog)
         native_filters.addWidget(self.native_motion_filter)
-        layout.addLayout(native_filters)
+        catalog_layout.addLayout(native_filters)
         self.native_result_count = QLabel('No animation references loaded')
         self.native_result_count.setWordWrap(True)
-        layout.addWidget(self.native_result_count)
+        catalog_layout.addWidget(self.native_result_count)
 
         native_row = QHBoxLayout()
         self.native_clip_select = QComboBox()
@@ -1040,7 +1069,7 @@ class QtGPUModelPanel(QWidget):
         self.play_native_button = QPushButton('Play Game Clip')
         self.play_native_button.clicked.connect(self.load_native)
         native_row.addWidget(self.play_native_button)
-        layout.addLayout(native_row)
+        catalog_layout.addLayout(native_row)
         # Scrubber lives in the always-visible narrow playback strip.
         self.seek = QSlider(Qt.Horizontal)
         self.seek.setRange(0, 1000)
@@ -1072,14 +1101,14 @@ class QtGPUModelPanel(QWidget):
         self.timeline_markers.addItem('Markers',None)
         self.timeline_markers.currentIndexChanged.connect(self.goto_timeline_marker)
         timeline_secondary.addWidget(self.timeline_markers,1)
-        layout.addLayout(timeline)
-        layout.addLayout(timeline_secondary)
+        playback_layout.addLayout(timeline)
+        playback_layout.addLayout(timeline_secondary)
         navigation = QHBoxLayout()
         for title, seconds in (('−1s', -1.), ('−0.1s', -.1), ('+0.1s', .1), ('+1s', 1.)):
             item = QPushButton(title)
             item.clicked.connect(lambda checked=False, delta=seconds: self.nudge_timeline(delta))
             navigation.addWidget(item)
-        layout.addLayout(navigation)
+        playback_layout.addLayout(navigation)
         navigation_secondary = QHBoxLayout()
         self.playlist_items = QComboBox()
         self.playlist_items.setToolTip('Ordered decoded animation clips; no unconverted CAF data is inferred.')
@@ -1091,7 +1120,7 @@ class QtGPUModelPanel(QWidget):
             btn=QPushButton(title)
             btn.clicked.connect(lambda checked=False, fn=callback: fn())
             navigation_secondary.addWidget(btn)
-        layout.addLayout(navigation_secondary)
+        playlist_layout.addLayout(navigation_secondary)
         presets = QHBoxLayout()
         for title, callback in (('Save Playlist…', self.save_animation_playlist),
                                 ('Load Playlist…', self.load_animation_playlist),
@@ -1100,12 +1129,12 @@ class QtGPUModelPanel(QWidget):
             btn.clicked.connect(lambda checked=False, fn=callback: fn())
             presets.addWidget(btn)
         presets.addStretch()
-        layout.addLayout(presets)
+        playlist_layout.addLayout(presets)
         self.anim_status = QLabel('Animation playback: load a rigged GLB containing clips, or '
                                   'use an optional CryEngine converter for CAF/DBA files.')
         self.anim_status.setWordWrap(True)
         self.anim_status.setVisible(not self.compact)
-        layout.addWidget(self.anim_status)
+        playback_layout.addWidget(self.anim_status)
         self.animated = None
         self.anim_position = 0.
         self.anim_playing = False
