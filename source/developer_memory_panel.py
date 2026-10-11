@@ -60,10 +60,11 @@ def _fill(table, rows):
 class DeveloperMemoryPanel(QWidget):
     """Attach, scan, inspect, edit, undo and watch one Evolve.exe process."""
 
-    def __init__(self, parent=None, offline_game_provider=None):
+    def __init__(self, parent=None, offline_game_provider=None, write_permission=None):
         super().__init__(parent)
         self._closed = False
         self._offline_game_provider = offline_game_provider
+        self._write_permission = write_permission
         self._job_serial = 0
         self._jobs = set()
         self._active_scan_token = None
@@ -172,7 +173,9 @@ class DeveloperMemoryPanel(QWidget):
         self.hex_edit.setMaximumHeight(90)
         hex_layout.addWidget(self.hex_edit)
         actions = QHBoxLayout()
-        actions.addWidget(_button('Write Edited Hex', self.write_hex))
+        self.write_button = _button('Write Edited Hex', self.write_hex)
+        self.write_button.setEnabled(False)
+        actions.addWidget(self.write_button)
         self.undo_button = _button('Undo Last Write', self.undo_write)
         self.undo_button.setEnabled(False)
         actions.addWidget(self.undo_button)
@@ -194,6 +197,7 @@ class DeveloperMemoryPanel(QWidget):
         self.watch_timer.timeout.connect(self._watch_tick)
         self.watch.toggled.connect(self._watch_toggled)
         self.refresh_interval.currentIndexChanged.connect(self._watch_toggled)
+        self.set_write_enabled(False)
 
     def start(self):
         if self._closed:
@@ -435,12 +439,23 @@ class DeveloperMemoryPanel(QWidget):
             self.hex_status.setText('Read failed: ' + str(exc))
 
     def _require_offline_write(self):
+        if self._write_permission is not None:
+            return self._write_permission()
         from online_guard import offline_rule_active
         if (self._offline_game_provider is None or
                 not offline_rule_active(self._offline_game_provider())):
             raise PermissionError(
                 'Memory writes require Evolve outbound network blocking '
                 'in an isolated offline test session.')
+
+    def set_write_enabled(self, enabled):
+        self.write_button.setEnabled(bool(enabled))
+        self.undo_button.setEnabled(bool(enabled) and bool(self._undo))
+        self.hex_edit.setReadOnly(not enabled)
+        self.hex_status.setText(
+            'Writes enabled for this Developer session; confirmations required.'
+            if enabled else
+            'Memory writes disabled. Enable Memory Writing in Developer settings.')
 
     def write_hex(self):
         try:
@@ -469,7 +484,7 @@ class DeveloperMemoryPanel(QWidget):
                 raise OSError('Not all bytes were written.')
             self._undo.append((pid, address, original, replacement))
             self._undo = self._undo[-32:]
-            self.undo_button.setEnabled(True)
+            self.undo_button.setEnabled(self.write_button.isEnabled())
             self.hex_status.setText('Wrote %d bytes. Undo is available.' % done)
             self.read_hex()
         except Exception as exc:
@@ -477,6 +492,7 @@ class DeveloperMemoryPanel(QWidget):
 
     def undo_write(self):
         try:
+            self._require_offline_write()
             pid = self._pid_required()
             if not self._undo:
                 raise ValueError('No writes to undo.')
@@ -491,7 +507,7 @@ class DeveloperMemoryPanel(QWidget):
                 return
             write_memory(pid, address, before)
             self._undo.pop()
-            self.undo_button.setEnabled(bool(self._undo))
+            self.undo_button.setEnabled(bool(self._undo) and self.write_button.isEnabled())
             self.address.setText('0x%016X' % address)
             self.read_hex()
             self.hex_status.setText('Restored the previous byte values.')
