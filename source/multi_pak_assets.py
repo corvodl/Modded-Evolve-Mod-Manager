@@ -180,6 +180,15 @@ def _resolve(index, ref, *, preferred_workspace=None):
         hits = index.get(name.casefold(), [])
         if not hits:
             continue
+        # Explicit extracted projects take precedence over background shared
+        # archives; only materialize an asset from shared PAKs when otherwise
+        # unavailable. Never decrypt every archive during startup.
+        concrete = [hit for hit in hits if "_shared_archive" not in hit]
+        if concrete:
+            hits = concrete
+        else:
+            from shared_pak_cache import materialize_shared_record
+            hits = [materialize_shared_record(hit) for hit in hits]
         # The project currently being edited is a stronger association than
         # duplicate material paths in older batch projects.
         if preferred is not None:
@@ -290,6 +299,11 @@ def project_asset_index(workspace, projects_root, stage_root):
             catalog[rel.casefold()].append({'archive': Path(data['source_pak']).name,
                                              'workspace': other.resolve(),
                                              'relative': rel, 'file': path})
+    # Merge metadata from known shared archives only after the asynchronous
+    # signed-directory scan finishes. This does not eagerly unpack PAK data.
+    from shared_pak_cache import shared_asset_index
+    for key, hits in shared_asset_index(stage).items():
+        catalog[key].extend(hits)
     return catalog
 
 
@@ -299,7 +313,12 @@ def related_asset_index(workspace, projects_root=None, stage_root=None):
     if index is not None:
         return index
     collection = collection_for_workspace(workspace)
-    return _asset_index(*collection) if collection else None
+    result = _asset_index(*collection) if collection else None
+    if result is not None and stage_root:
+        from shared_pak_cache import shared_asset_index
+        for key, hits in shared_asset_index(stage_root).items():
+            result[key].extend(hits)
+    return result
 
 
 def locate_related_asset(workspace, virtual_path, projects_root=None, stage_root=None):
