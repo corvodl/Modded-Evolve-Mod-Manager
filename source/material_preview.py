@@ -63,7 +63,15 @@ def _workspace_index(workspace, projects_root=None, stage_root=None):
         rel = normalized_name(entry['path'])
         path = (root / rel).resolve()
         if path.is_relative_to(root) and path.is_file() and not path.is_symlink():
-            index.setdefault(rel.casefold(), []).append({'file': path, 'workspace': workspace, 'relative': rel})
+            index.setdefault(rel.casefold(), []).append(
+                {'file': path, 'workspace': workspace, 'relative': rel})
+    # If a manually imported/extracted character isn't associated with this
+    # signing stage, its own files still have first priority. The permanent
+    # extracted Asset Library must *also* be visible, otherwise all nine PAKs
+    # can be present and Kala still reports missing shared DDS files.
+    from asset_library import extracted_index
+    for name, records in extracted_index().items():
+        index.setdefault(name, []).extend(records)
     return index
 
 
