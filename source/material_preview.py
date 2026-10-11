@@ -164,8 +164,9 @@ def _decode_texture(item):
     return tex
 
 
-def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None):
-    index = _workspace_index(workspace, projects_root, stage_root)
+def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None):
+    if index is None:
+        index = _workspace_index(workspace, projects_root, stage_root)
     stem = Path(model_relative).with_suffix('').as_posix()
     bases = [stem, re.sub(r'_lod\d+$', '', stem, flags=re.IGNORECASE)]
     material = next((item for b in bases if (item := _find_unique(index, b+'.mtl', preferred_workspace=workspace)) is not None), None)
@@ -178,9 +179,17 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         root = ET.fromstring(raw)
     except ET.ParseError as error:
         raise ValueError('Cannot parse model material XML.') from error
-    subs = list(root.findall('./SubMaterials/Material'))
-    if not subs:
-        subs = [root]
+    # Nested multi-materials occur in character equipment. Flatten leaves
+    # in source order so submesh IDs and texture slots remain aligned.
+    def leaves(item):
+        children = item.findall('./SubMaterials/Material')
+        if not children:
+            yield item
+        else:
+            for child in children:
+                yield from leaves(child)
+
+    subs = list(leaves(root))
     result=[]; names=[]; issues=[]
     for item in subs:
         name = item.get('Name') or 'unnamed'

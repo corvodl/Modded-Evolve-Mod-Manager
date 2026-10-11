@@ -137,7 +137,24 @@ class QtWorkspaceEditor(QMainWindow):
         self.model_fallback = None
         self.model_cpu = None
         self.texture_folder = None
+        self.animation_folder = None
+        self.loose_animation_index = None
+        self.preview_index = None
+        self.character_preview = None
+        self.character_skin_choice = None
+        self._model_generation += 1
+        self._prepared_animation = None
         self.gpu_windows = []
+        self._export_native_pool = None
+        self._export_native_signals = None
+        self._export_native_target = None
+        self._model_pool = None
+        self._model_signals = None
+        self._model_generation = 0
+        self._model_prepared = False
+        self._prepared_geometry = None
+        self._prepared_animation = None
+        self._materials_error = ''
         self.materials = None
         self.texture_message = 'No model selected'
         # A main window has the standard Win32 maximize/restore non-dialog frame.
@@ -254,11 +271,14 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Open File Folder', self.explore)
         action('File', 'Export Native Model…', self.export_model)
         action('File', 'Export for Blender (.glb)…', self.export_blender_model)
+        action('File', 'Export Animated Character (.glb)…', self.export_animated_character)
         action('File', 'Export Model Folder…', self.export_blender_folder)
         action('Edit', 'Save Text', self.save)
         action('Edit', 'Find Text', self.find_text)
         action('Edit', 'Import / Replace File…', self.import_raw)
         action('Edit', 'Restore Original', self.restore_original)
+        self.equipment_menu = menus['Model'].addMenu('Equipped Skin')
+        self.equipment_menu.setEnabled(False)
         action('Model', 'Import Same-Layout Model…', self.import_model)
         action('Model', 'Open GPU Viewer in New Window', self.open_gpu_viewer)
         action('Model', 'Reset Camera', lambda: self._with_model_panel(
@@ -268,6 +288,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('Textures', 'Choose Extracted Texture Folder…', self.choose_texture_folder)
         action('Textures', 'Use Automatic Cross-PAK Lookup', self.use_auto_textures)
         action('Textures', 'Reload Model Textures', self.refresh_model_textures)
+        action('Animation', 'Find Extracted Animations…', self.choose_animation_folder)
         action('Animation', 'Load Animated GLB…', lambda: self._with_model_panel(
             lambda p: p.load_animation()))
         action('Animation', 'Import Original CAF/DBA…', lambda: self._with_model_panel(
@@ -345,7 +366,7 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode != 'models' or self.mesh is None:
             QMessageBox.information(self, 'Texture preview', 'Select a model first.')
             return
-        self._paint_model(self.views['models'], self.mesh)
+        self.load(self.current)
         self.status.setText(self.texture_message)
 
     @staticmethod
@@ -441,13 +462,20 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(str(exc))
 
     def load(self, rel):
+        if rel != self.current:
+            self.character_skin_choice = None
         self.current = rel
         self.stream = None
         self.mesh = None
         self.materials = None
+        self.character_preview = None
         self.texture_message = 'No texture lookup has run'
         self.mode = self._category(rel)
+        self._model_generation += 1
         path = checked_path(self.workspace, rel)
+        if self.mode == 'models':
+            self._load_model_background(rel)
+            return
         self.raw = path.read_bytes()
         if self.mode == 'files':
             control = self.views['files']
@@ -484,28 +512,95 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(rel + ' | ' + info.description +
                                 ' | largest mip only' +
                                 (' | streaming fragments' if self.stream else ''))
-        else:
-            view = self.views['models']
+
+    def _load_model_background(self, rel):
+        """Load heavy CryEngine files and textures away from the GUI thread."""
+        from async_model_resolve import resolve_model
+        self._model_prepared = False
+        view = self.views['models']
+        self.model_fallback.setPixmap(QPixmap())
+        self.model_fallback.setText('Loading character and textures…')
+        view.setCurrentWidget(self.model_fallback)
+        self.status.setText(rel + ' | Preparing GPU model…')
+        source_workspace = self.workspace
+        index = self.preview_index
+        projects = self.manager.projects_path
+        stage = self.manager.stage_path
+        tex = self.texture_folder
+        ani = self.loose_animation_index
+        equipment = self.character_skin_choice
+        token = self._model_generation
+
+        def resolve(_unused):
+            result = resolve_model(source_workspace, rel,
+                projects_root=projects, stage_root=stage,
+                texture_folder=tex, animation_index=ani,
+                equipment=equipment, index=index)
+            return result, None
+
+        # Tests and headless software previews retain deterministic synchronous
+        # behavior. Real GPU viewing runs all expensive preparation in a worker.
+        platform = os.environ.get('QT_QPA_PLATFORM','').casefold()
+        if platform in ('offscreen','minimal') or not self.isVisible():
             try:
-                info = inspect_model(self.raw)
-                report = info.description
-            except ValueError as exc:
-                report = str(exc) + '\nNative export remains available.'
-            try:
-                mesh = find_preview_mesh(
-                    self.workspace, rel, self.raw,
-                    projects_root=self.manager.projects_path,
-                    stage_root=self.manager.stage_path)
-                self.mesh = mesh
-                self._paint_model(view, mesh)
-                self.status.setText(
-                    rel + ' | ' + report + ' | ' + self.texture_message)
+                self._model_ready(token, resolve(None), None)
             except (ValueError, OSError) as exc:
-                self.model_fallback.setPixmap(QPixmap())
-                self.model_fallback.setText(rel + '\n\n' + report +
-                                            '\n\n3D preview unavailable: ' + str(exc))
-                view.setCurrentWidget(self.model_fallback)
-                self.status.setText(rel + ' | Native model inspection')
+                self._model_ready(token, None, str(exc))
+            return
+        from qt_gpu_viewer import _NativeConversion, _NativeResult
+        from PySide6.QtCore import QThreadPool
+        if self._model_pool is None:
+            self._model_pool = QThreadPool(self)
+            self._model_pool.setMaxThreadCount(2)
+            self._model_signals = _NativeResult(self)
+            self._model_signals.completed.connect(self._model_ready)
+        self._model_pool.start(
+            _NativeConversion(resolve, None, token, self._model_signals))
+
+    def _model_ready(self, token, result, error):
+        if token != self._model_generation or self.mode != 'models':
+            return
+        view = self.views['models']
+        if error:
+            self.model_fallback.setPixmap(QPixmap())
+            self.model_fallback.setText(self.current + '\\n\\n3D preview unavailable: ' + error)
+            view.setCurrentWidget(self.model_fallback)
+            self.status.setText('3D preview unavailable: ' + error[:260])
+            return
+        data, _unused = result
+        self.raw = data['raw']
+        self.mesh = data['mesh']
+        self.materials = data['materials']
+        self.preview_index = data['index']
+        self.character_preview = data['character']
+        self._prepared_geometry = data['geometry']
+        self._prepared_animation = data['animation']
+        self._materials_error = data['materials_error']
+        self._model_prepared = True
+        self._update_equipment_menu()
+        self._paint_model(view, self.mesh)
+        self.status.setText(
+            self.current + ' | ' + data['report'] + ' | ' + self.texture_message)
+
+    def _update_equipment_menu(self):
+        self.equipment_menu.clear()
+        preview = self.character_preview
+        self.equipment_menu.setEnabled(bool(preview and preview.equipment_options))
+        if not preview:
+            return
+        choices = [('Body only', 'body')] + list(preview.equipment_options)
+        for label, virtual in choices:
+            action = self.equipment_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(virtual.casefold() == preview.selected_equipment.casefold())
+            action.triggered.connect(
+                lambda checked=False, name=virtual: self._select_character_equipment(name))
+
+    def _select_character_equipment(self, name):
+        if self.mode != 'models' or not self.current:
+            return
+        self.character_skin_choice = name
+        self.load(self.current)
 
     def _paint_model(self, view, mesh):
         """The complete GPU controls are embedded by default in the Models tab."""
@@ -514,13 +609,17 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             from qt_gpu_viewer import QtGPUModelPanel
-            materials = None
+            materials = self.materials if self._model_prepared else (
+                self.character_preview.materials if self.character_preview else None)
             try:
-                from material_preview import load_preview_materials
-                materials = load_preview_materials(
-                    self.workspace, mesh.source_name or self.current,
-                    self.texture_folder, projects_root=self.manager.projects_path,
-                    stage_root=self.manager.stage_path)
+                if materials is None and self._model_prepared:
+                    raise ValueError(self._materials_error or 'No model diffuse textures available')
+                if materials is None:
+                    from material_preview import load_preview_materials
+                    materials = load_preview_materials(
+                        self.workspace, mesh.source_name or self.current,
+                        self.texture_folder, projects_root=self.manager.projects_path,
+                        stage_root=self.manager.stage_path, index=self.preview_index)
                 active = sorted({slot for _, _, slot in mesh.subsets
                                  if slot < len(materials.textures)})
                 mapped = sum(materials.textures[slot] is not None
@@ -529,18 +628,55 @@ class QtWorkspaceEditor(QMainWindow):
                     f'Textures: {mapped}/{len(active)} used material slots, '
                     f'{materials.count} decoded DDS from {materials.source}'
                     + (' | ' + materials.issues[0][:100] if materials.issues else ''))
+                if self.character_preview:
+                    self.texture_message += ' | CDF parts: ' + ', '.join(
+                        self.character_preview.included)
             except (ValueError, OSError) as error:
                 self.texture_message = 'Untextured: ' + str(error)
             self.materials = materials
             if self.model_panel is None:
-                self.model_panel = QtGPUModelPanel(view, mesh, materials, compact=True)
+                self.model_panel = QtGPUModelPanel(view, mesh, materials, compact=True,
+                                                  prepared_geometry=self._prepared_geometry)
                 self.model_panel.setObjectName('primaryGpuModelViewer')
                 view.addWidget(self.model_panel)
                 self.model_gpu = self.model_panel.canvas
                 self.model_gpu.setObjectName('defaultGpuModelPreview')
             else:
-                self.model_panel.set_static_mesh(mesh, materials)
+                self.model_panel.set_static_mesh(mesh, materials,
+                                                 prepared_geometry=self._prepared_geometry)
             view.setCurrentWidget(self.model_panel)
+            from character_animation_catalog import discover_animations
+            anim_model = (self.character_preview.skeleton if self.character_preview
+                          else self.current)
+            refs, idle, config = (
+                self._prepared_animation if self._prepared_animation is not None
+                else discover_animations(
+                    anim_model, self.preview_index,
+                    preferred_workspace=self.workspace,
+                    loose_index=self.loose_animation_index))
+            from native_character_glb import create_character_glb
+            # Capture plain paths and immutable preview objects; background
+            # decoding never touches a QWidget or live Qt project state.
+            source_workspace = self.workspace
+            source_relative = self.current
+            source_index = self.preview_index
+            source_character = self.character_preview
+            source_textures = self.texture_folder
+            source_projects = self.manager.projects_path
+            source_stage = self.manager.stage_path
+
+            def build_native_clip(ref):
+                blob, details = create_character_glb(
+                    source_workspace, source_relative, source_index,
+                    character=source_character, texture_folder=source_textures,
+                    projects_root=source_projects, stage_root=source_stage, clip=ref)
+                from model_animation import AnimatedGLB
+                from gpu_model_preview import prepare_geometry
+                imported = AnimatedGLB(blob,'Original Evolve animation')
+                return (imported, prepare_geometry(imported.preview_mesh)), details
+
+            self.model_panel.set_native_catalog(refs, idle, config,
+                                                loader=build_native_clip)
             self.model_panel._info.setText(
                 mesh.source_name + '  •  ' + mesh.description +
                 '\n' + self.texture_message[:260])
@@ -584,6 +720,9 @@ class QtWorkspaceEditor(QMainWindow):
         target = self.archive_map[name]
         new_records = self._read_records(target)
         self.workspace, self.records = target, new_records
+        self.preview_index = None
+        self.character_preview = None
+        self.character_skin_choice = None
         self.current, self.loaded_text, self.raw = None, '', b''
         self.manager.current_workspace = str(target)
         self.manager.archive_label = name
@@ -600,6 +739,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.tabs.setCurrentIndex(0)
                 self.tabs.blockSignals(False)
                 return
+        self._model_generation += 1
         self.current, self.mode = None, None
 
     def save(self):
@@ -636,6 +776,7 @@ class QtWorkspaceEditor(QMainWindow):
 
     def reload(self):
         if self.current and self._confirm_buffer():
+            self.preview_index = None
             self.load(self.current)
 
     def explore(self):
@@ -811,13 +952,100 @@ class QtWorkspaceEditor(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self,'DDS import rejected',str(exc))
 
+    def export_animated_character(self):
+        """Export native CAF clips with a verified character rig, read-only."""
+        if self.mode != 'models' or not self.mesh or not self.current:
+            QMessageBox.information(self, 'Animated Blender export',
+                                    'Open a supported character model first.')
+            return
+        from character_animation_catalog import discover_animations
+        from native_character_glb import create_character_glb
+        from qt_gpu_viewer import _NativeConversion, _NativeResult
+        from PySide6.QtCore import QThreadPool
+        skeleton = (self.character_preview.skeleton if self.character_preview
+                    else self.current)
+        refs, _, source = discover_animations(
+            skeleton, self.preview_index, preferred_workspace=self.workspace,
+            loose_index=self.loose_animation_index)
+        clips = tuple(r for r in refs if r.available and r.kind == 'caf'
+                      and 'additive' not in r.name.casefold()
+                      and 'aimpose' not in r.name.casefold())
+        if not clips:
+            QMessageBox.information(self, 'Animated Blender export',
+                                    'No compatible extracted CAF clips found for this skeleton.')
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self, 'Export complete character with native animations',
+            str(Path(self.manager.projects_path)/
+                (Path(self.current).stem + '-animated.glb')),
+            'Blender animated glTF 2.0 (*.glb)')
+        if not target:
+            return
+        target = Path(target).resolve().with_suffix('.glb')
+        protected = (self.workspace/'files').resolve()
+        if target.is_relative_to(protected):
+            QMessageBox.warning(self,'Animated Blender export',
+                                'Choose an export location outside extracted game assets.')
+            return
+        if len(clips) > 256:
+            QMessageBox.warning(self,'Animated Blender export',
+                                'More than 256 matching animations; refine the selection.')
+            return
+        if self._export_native_pool is None:
+            self._export_native_pool = QThreadPool(self)
+            self._export_native_pool.setMaxThreadCount(1)
+            self._export_native_signals = _NativeResult(self)
+            self._export_native_signals.completed.connect(self._export_animated_ready)
+        workspace, relative = self.workspace, self.current
+        index, character = self.preview_index, self.character_preview
+        tex = self.texture_folder
+        projects, stage = self.manager.projects_path, self.manager.stage_path
+        self._export_native_target = target
+        self._export_native_token = getattr(self,'_export_native_token',0)+1
+        token = self._export_native_token
+
+        def produce(_reference):
+            payload, report = create_character_glb(
+                workspace, relative, index, character=character,
+                texture_folder=tex, projects_root=projects,
+                stage_root=stage, clips=clips)
+            import os
+            import tempfile
+            # Atomic export: never leave a half-written GLB on failure.
+            fd, temporary = tempfile.mkstemp(
+                prefix='.evolve-animation-',suffix='.glb',dir=target.parent)
+            try:
+                with os.fdopen(fd,'wb') as output:
+                    output.write(payload)
+                os.replace(temporary,target)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            return b'', report
+
+        self.status.setText('Exporting %d original CryEngine animations…' % len(clips))
+        self._export_native_pool.start(
+            _NativeConversion(produce,None,token,self._export_native_signals))
+
+    def _export_animated_ready(self, token, result, error):
+        if token != getattr(self,'_export_native_token',None):
+            return
+        if error:
+            self.status.setText('Animated Blender export failed: ' + error[:260])
+            QMessageBox.warning(self,'Animated Blender export',error)
+            return
+        _, report = result
+        self.status.setText(
+            'Exported %d animated clips into %s' %
+            (report.get('animations',0),self._export_native_target))
+
     def export_blender_model(self):
         """Export current mesh and diffuse textures from compatible unpacked PAKs."""
         if self.mode != 'models' or not self.current or self.mesh is None:
             QMessageBox.information(self, 'Export for Blender',
                                     'Select a supported CryEngine model first.')
             return
-        name = Path(self.mesh.source_name or self.current).stem + '.glb'
+        name = Path(self.current).stem + '.glb'
         destination, _ = QFileDialog.getSaveFileName(
             self, 'Export Blender model (geometry and available textures)',
             str(Path(self.manager.projects_path) / name),
@@ -830,15 +1058,22 @@ class QtWorkspaceEditor(QMainWindow):
                 target = target.with_suffix('.glb')
             if not target.parent.is_dir():
                 raise FileNotFoundError('Choose an existing export folder.')
-            mesh_source = self.mesh.source_name or self.current
+            # Native GLB skin weights correspond to the individual .skinm,
+            # not the assembled preview vertex order. Preserve rigged export
+            # semantics by exporting the original model, never the composite.
+            mesh_source = self.current
+            export_mesh = (find_preview_mesh(
+                self.workspace, self.current, self.raw,
+                projects_root=self.manager.projects_path,
+                stage_root=self.manager.stage_path) if self.character_preview else self.mesh)
             payload, report = textured_model_from_workspace(
-                self.mesh, self.workspace, mesh_source,
+                export_mesh, self.workspace, mesh_source,
                 texture_folder=self.texture_folder,
                 projects_root=self.manager.projects_path,
                 stage_root=self.manager.stage_path)
             target.write_bytes(payload)
             message = ('Exported %d vertices, %d triangles, %d diffuse textures. %s.' %
-                       (len(self.mesh.vertices), len(self.mesh.triangles),
+                       (len(export_mesh.vertices), len(export_mesh.triangles),
                         report['texture_count'], report['rig_status']))
             self.status.setText(message)
             if report['texture_count'] == 0:
@@ -903,6 +1138,23 @@ class QtWorkspaceEditor(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self,'Model import rejected',str(exc))
 
+    def choose_animation_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, 'Choose extracted game animation root (containing characters/...)')
+        if not folder:
+            return
+        from character_animation_catalog import asset_directory_index
+        try:
+            self.loose_animation_index = asset_directory_index(folder)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, 'Animation scan', str(exc))
+            return
+        self.animation_folder = Path(folder).resolve()
+        if self.current and self.mode == 'models':
+            self.load(self.current)
+        else:
+            self.status.setText('Extracted animation directory indexed: ' + folder)
+
     def choose_texture_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self, 'Choose unpacked TS texture folder (recursive lookup)')
@@ -953,11 +1205,13 @@ class QtWorkspaceEditor(QMainWindow):
             from qt_gpu_viewer import QtGPUModelDialog
             material_note = ''
             try:
-                materials = load_preview_materials(
-                    self.workspace, self.mesh.source_name or self.current,
-                    self.texture_folder,
-                    projects_root=self.manager.projects_path,
-                    stage_root=self.manager.stage_path)
+                materials = self.materials
+                if materials is None:
+                    materials = load_preview_materials(
+                        self.workspace, self.current,
+                        self.texture_folder,
+                        projects_root=self.manager.projects_path,
+                        stage_root=self.manager.stage_path, index=self.preview_index)
                 material_note = (f' | GPU diffuse textures: {materials.count}'
                                  f' | source: {materials.source}')
             except (ValueError, OSError) as error:
@@ -965,6 +1219,31 @@ class QtWorkspaceEditor(QMainWindow):
                 materials = None
                 material_note = ' | Untextured: ' + str(error)[:180]
             dialog = QtGPUModelDialog(self, self.mesh, materials)
+            if self.model_panel is not None:
+                from character_animation_catalog import discover_animations
+                anim_model = (self.character_preview.skeleton if self.character_preview
+                              else self.current)
+                refs, idle, _config = discover_animations(
+                    anim_model, self.preview_index, preferred_workspace=self.workspace,
+                    loose_index=self.loose_animation_index)
+                from native_character_glb import create_character_glb
+                source_workspace = self.workspace
+                source_relative = self.current
+                source_index = self.preview_index
+                source_character = self.character_preview
+                source_textures = self.texture_folder
+                source_projects = self.manager.projects_path
+                source_stage = self.manager.stage_path
+                def popout_loader(ref):
+                    blob, details = create_character_glb(
+                        source_workspace, source_relative, source_index,
+                        character=source_character, texture_folder=source_textures,
+                        projects_root=source_projects, stage_root=source_stage, clip=ref)
+                    from model_animation import AnimatedGLB
+                    from gpu_model_preview import prepare_geometry
+                    imported = AnimatedGLB(blob,'Original Evolve animation')
+                    return (imported, prepare_geometry(imported.preview_mesh)), details
+                dialog.panel.set_native_catalog(refs, idle, loader=popout_loader)
             dialog.setAttribute(Qt.WA_DeleteOnClose, False)
             self.gpu_windows.append(dialog)
             self.status.setText(self.current + material_note)
@@ -1037,6 +1316,7 @@ class QtWorkspaceEditor(QMainWindow):
         if not self._confirm_buffer():
             event.ignore()
             return
+        self._model_generation += 1
         if self.model_panel is not None and not self.model_panel.close():
             event.ignore()
             return

@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.12', (
+        'Play supported native Evolve CAF animations, with compatible idle autoplay.',
+        'View assembled characters and export animated, textured Blender GLBs.',
+        'Load models in the background and refresh GPU textures correctly.',
+    )),
     ('1.1.11', (
         'Organized model actions into a compact File, View and Animation menu bar.',
         'Improved cross-PAK diffuse texture lookup and added texture diagnostics.',
