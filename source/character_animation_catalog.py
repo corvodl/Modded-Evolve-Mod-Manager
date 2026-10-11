@@ -91,8 +91,11 @@ def native_clip_playability(reference):
         if reference.in_archive:
             return 'extractable', ('Found in signed PAK metadata. Click Extract & Play '
                                    'to decode only this CAF into the preview cache.')
-        return 'missing', ('Not extracted. Click Search PAK & Play to locate this '
-                           'exact animation in verified installed/staged PAKs.')
+        return 'missing', (
+            'No standalone CAF exists at this exact path in the extracted library. '
+            'Some CryEngine animation mappings refer to tracks stored inside DBA '
+            'databases rather than individual CAF files. Search verified PAKs '
+            'for this exact CAF; DBA playback is not yet supported.')
     return 'candidate', ('Standalone playback candidate. The native CAF decoder '
                           'will verify bone controllers and flags before playback.')
 
