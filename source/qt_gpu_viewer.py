@@ -63,6 +63,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.textured = True
         self._last = None
         self.gl_error = None
+        self.light_strength = 1.0
+        self.background_mode = 'Dark'
 
     def set_mesh(self, mesh, materials=None, prepared_geometry=None):
         geometry = (prepared_geometry if prepared_geometry is not None
@@ -80,6 +82,29 @@ class QtGLModelCanvas(QOpenGLWidget):
                 self._upload_textures()
             finally:
                 self.doneCurrent()
+        self.update()
+
+    def set_camera_preset(self, choice):
+        orientations = {
+            'Front': (0.,0.), 'Back':(180.,0.),
+            'Left':(-90.,0.), 'Right':(90.,0.),
+            'Top':(0.,90.), 'Bottom':(0.,-90.),
+            'Isometric':(-30.,14.),
+        }
+        if choice not in orientations:
+            raise ValueError('Unknown camera preset')
+        self.rotation=list(orientations[choice])
+        self.pan=[0.,0.]
+        self.update()
+
+    def set_light_strength(self, percentage):
+        self.light_strength=max(.2,min(2.0,float(percentage)/100.))
+        self.update()
+
+    def set_background(self, name):
+        if name not in ('Dark','Studio Grey'):
+            raise ValueError('Unsupported viewport background')
+        self.background_mode=name
         self.update()
 
     def set_shading(self, name):
@@ -203,6 +228,13 @@ class QtGLModelCanvas(QOpenGLWidget):
             GL_VERTEX_ARRAY, GL_NORMAL_ARRAY, GL_TEXTURE_COORD_ARRAY,
             GL_FILL, GL_LINE, GL_FRONT, GL_BACK, GL_AMBIENT,
         )
+        background = (0.092,0.09,0.115,1.0) if self.background_mode=='Dark' else (0.26,0.27,0.29,1.0)
+        from OpenGL.GL import glClearColor, glLightfv, GL_LIGHT0, GL_DIFFUSE
+        glClearColor(*background)
+        strength=self.light_strength
+        glLightfv(GL_LIGHT0,GL_DIFFUSE,
+                  [min(1.0,0.83*strength),min(1.0,0.85*strength),
+                   min(1.0,0.91*strength),1.0])
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         if self.geometry is None:
             return
@@ -342,6 +374,27 @@ class QtGPUModelPanel(QWidget):
         line.addStretch()
         layout.addWidget(options)
         options.setVisible(not compact)
+        # Short, always-visible controls also work in the embedded viewer.
+        studio = QHBoxLayout()
+        studio.addWidget(QLabel('Camera'))
+        self.camera_combo = QComboBox()
+        self.camera_combo.addItems(('Isometric','Front','Back','Left','Right','Top','Bottom'))
+        self.camera_combo.currentTextChanged.connect(self.canvas.set_camera_preset)
+        studio.addWidget(self.camera_combo)
+        studio.addWidget(QLabel('Lighting'))
+        self.lighting_slider = QSlider(Qt.Horizontal)
+        self.lighting_slider.setRange(20,200)
+        self.lighting_slider.setValue(100)
+        self.lighting_slider.setMaximumWidth(125)
+        self.lighting_slider.valueChanged.connect(self.canvas.set_light_strength)
+        studio.addWidget(self.lighting_slider)
+        self.background_combo = QComboBox()
+        self.background_combo.addItems(('Dark','Studio Grey'))
+        self.background_combo.currentTextChanged.connect(self.canvas.set_background)
+        studio.addWidget(self.background_combo)
+        studio.addWidget(QPushButton('Save View…',clicked=self.save_viewport))
+        studio.addStretch()
+        layout.addLayout(studio)
         self._prepare_animation_controls(layout)
         self.native_info = QLabel('Native game animations: not scanned')
         self.native_info.setWordWrap(True)
@@ -371,6 +424,20 @@ class QtGPUModelPanel(QWidget):
         self.native_info.setText('Native game animations: not scanned')
         self.canvas.set_mesh(mesh, materials, prepared_geometry=prepared_geometry)
         self._info.setText(mesh.source_name + '  •  ' + mesh.description)
+
+    def save_viewport(self):
+        filename,_=QFileDialog.getSaveFileName(
+            self,'Save GPU model viewport','Evolve-Model-Preview.png',
+            'PNG images (*.png)')
+        if not filename:
+            return
+        try:
+            if not self.canvas.isValid():
+                raise ValueError('GPU viewport is unavailable.')
+            if not self.canvas.grabFramebuffer().save(filename, 'PNG'):
+                raise ValueError('Could not write the viewport screenshot.')
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self,'Viewport screenshot',str(exc))
 
     def reset_view(self):
         self.canvas.rotation[:]=[-30.,14.]
