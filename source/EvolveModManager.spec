@@ -22,7 +22,7 @@ hidden = [
     'workspace_file_actions', 'pak_browser', 'portable_bundle',
     'first_run_setup', 'old_prepared', 'loose_game_files',
     'loose_file_editor', 'qt_manager', 'qt_workspace_editor',
-    'qt_gpu_viewer', 'qt_asset_studio', 'studio_tools', 'qt_asset_intelligence', 'asset_intelligence', 'project_lifecycle', 'project_selection', 'qt_font_health', 'desktop_shortcut', 'orphaned_swap_recovery',
+    'qt_gpu_viewer', 'qt_asset_studio', 'studio_tools', 'qt_asset_intelligence', 'asset_intelligence', 'qt_workflow_lab', 'workflow_lab', 'qt_task_queue', 'asset_geometry_cache', 'material_editor_v2', 'qt_developer_lab', 'developer_runtime_lab', 'developer_network_lab', 'developer_private_services', 'developer_support_lab', 'project_lifecycle', 'project_selection', 'qt_font_health', 'desktop_shortcut', 'orphaned_swap_recovery',
 ]
 for package in ('cryptography', 'frida', 'twofish', 'PIL'):
     d, b, h = collect_all(package)
