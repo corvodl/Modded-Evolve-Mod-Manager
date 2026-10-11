@@ -282,6 +282,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.equipment_menu.setEnabled(False)
         action('Model', 'Import Same-Layout Model…', self.import_model)
         action('Model', 'Open GPU Viewer in New Window', self.open_gpu_viewer)
+        action('Model', 'Compare Models Side by Side…', self.open_model_compare)
         action('Model', 'Reset Camera', lambda: self._with_model_panel(
             lambda p: p.reset_view()))
         action('Textures', 'Diagnose Texture Links…', self.find_model_textures)
@@ -362,6 +363,13 @@ class QtWorkspaceEditor(QMainWindow):
             TextureAdjustDialog(self).exec()
         except (ValueError,OSError,RuntimeError) as exc:
             QMessageBox.warning(self,'Advanced Texture Editor',str(exc))
+
+    def open_model_compare(self):
+        try:
+            from qt_asset_studio import ModelCompareDialog
+            ModelCompareDialog(self).exec()
+        except (ValueError,OSError,RuntimeError) as exc:
+            QMessageBox.warning(self,'Compare Models',str(exc))
 
     def open_asset_search(self):
         try:
