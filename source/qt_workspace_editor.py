@@ -1878,9 +1878,22 @@ class QtWorkspaceEditor(QMainWindow):
         if not destination:
             return
         try:
-            results, skipped = export_extracted_folder(
-                source, destination, projects_root=self.manager.projects_path,
-                stage_root=self.manager.stage_path, texture_folder=self.texture_folder)
+            from qt_operation_progress import progress_dialog
+            meter = progress_dialog(
+                self, 'Export Blender folder', 'Scanning model exports…', 0)
+            try:
+                def progress(label, done, total):
+                    meter.setRange(0, max(1, total))
+                    meter.setValue(done)
+                    meter.setLabelText(label + ' • %d / %d' % (done, total))
+                    QApplication.processEvents()
+                results, skipped = export_extracted_folder(
+                    source, destination, projects_root=self.manager.projects_path,
+                    stage_root=self.manager.stage_path,
+                    texture_folder=self.texture_folder,
+                    progress=progress, cancelled=meter.wasCanceled)
+            finally:
+                meter.close()
             textured = sum(bool(details['texture_count']) for _, _, _, details in results)
             rigged = sum(bool(details.get('bone_count')) for _, _, _, details in results)
             note = ('%d GLB exports (%d textured, %d rigged); %d skipped. '
