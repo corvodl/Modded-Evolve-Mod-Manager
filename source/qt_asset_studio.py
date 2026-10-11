@@ -11,7 +11,7 @@ from pathlib import Path
 import tempfile
 
 from PIL import Image, ImageEnhance
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, QThreadPool
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QTabWidget,
     QLabel, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -390,3 +390,111 @@ class AssetSearchDialog(QDialog):
                 '%d exported, %d skipped.\n%s'%(passed,len(report)-passed,folder))
         except (ValueError,OSError) as exc:
             QMessageBox.critical(self,'Batch export failed',str(exc))
+
+
+class ModelCompareDialog(QDialog):
+    """Two independent GPU previews with optional synchronized cameras."""
+    def __init__(self,editor):
+        super().__init__(editor)
+        if editor.mode!='models' or editor.mesh is None:
+            raise ValueError('Open a model in the GPU viewer first.')
+        from qt_gpu_viewer import QtGLModelCanvas, _NativeResult
+        self.editor=editor
+        self.setWindowTitle('Model Viewer 2.0 — Side-by-Side Comparison')
+        self.resize(1250,730)
+        self.setMinimumSize(760,450)
+        root=QVBoxLayout(self)
+        controls=QHBoxLayout()
+        controls.addWidget(QLabel('Compare with'))
+        self.choice=QComboBox()
+        self.choice.addItems(sorted((p for p in editor.records if editor._category(p)=='models'),
+                             key=str.casefold))
+        self.choice.setMaxVisibleItems(25)
+        controls.addWidget(self.choice,1)
+        controls.addWidget(_button('Load Comparison',self.load_compare))
+        self.sync=QCheckBox('Sync cameras')
+        self.sync.setChecked(True)
+        controls.addWidget(self.sync)
+        controls.addWidget(_button('Save Comparison PNG…',self.screenshot))
+        controls.addWidget(_button('Close',self.accept))
+        root.addLayout(controls)
+        captions=QHBoxLayout()
+        self.left_label=QLabel('Current: '+editor.current)
+        self.right_label=QLabel('Choose a second model')
+        captions.addWidget(self.left_label,1)
+        captions.addWidget(self.right_label,1)
+        root.addLayout(captions)
+        views=QHBoxLayout()
+        self.left=QtGLModelCanvas(editor.mesh,editor.materials,self,
+                                 prepared_geometry=editor._prepared_geometry)
+        self.right=QtGLModelCanvas(editor.mesh,editor.materials,self,
+                                  prepared_geometry=editor._prepared_geometry)
+        views.addWidget(self.left,1)
+        views.addWidget(self.right,1)
+        root.addLayout(views,1)
+        self.status=QLabel('Select a second model. Hold and drag to rotate; mouse wheel zooms.')
+        root.addWidget(self.status)
+        self._token=0
+        self._pool=QThreadPool(self)
+        self._pool.setMaxThreadCount(1)
+        self._signals=_NativeResult(self)
+        self._signals.completed.connect(self._ready)
+        self._timer=QTimer(self)
+        self._timer.timeout.connect(self._sync_views)
+        self._timer.start(70)
+        if editor.current in [self.choice.itemText(i) for i in range(self.choice.count())]:
+            self.choice.setCurrentText(editor.current)
+
+    def _sync_views(self):
+        if not self.sync.isChecked():
+            return
+        if (self.left.rotation!=self.right.rotation or
+            self.left.pan!=self.right.pan or self.left.zoom!=self.right.zoom):
+            self.right.rotation=list(self.left.rotation)
+            self.right.pan=list(self.left.pan)
+            self.right.zoom=self.left.zoom
+            self.right.update()
+
+    def load_compare(self):
+        from async_model_resolve import resolve_model
+        from qt_gpu_viewer import _NativeConversion
+        rel=self.choice.currentText()
+        if not rel:
+            return
+        workspace=self.editor.workspace
+        projects=self.editor.manager.projects_path
+        stage=self.editor.manager.stage_path
+        textures=self.editor.texture_folder
+        index=self.editor.preview_index
+        ani=self.editor.loose_animation_index
+        self._token+=1
+        token=self._token
+        self.status.setText('Loading '+rel+' in the background…')
+
+        def resolve(_):
+            return resolve_model(workspace,rel,projects_root=projects,
+                stage_root=stage,texture_folder=textures,
+                animation_index=ani,index=index),None
+
+        self._pool.start(_NativeConversion(resolve,None,token,self._signals))
+
+    def _ready(self,token,result,error):
+        if token!=self._token:
+            return
+        if error:
+            self.status.setText('Comparison model unavailable: '+error[:200])
+            return
+        loaded,_=result
+        self.right.set_mesh(loaded['mesh'],loaded['materials'],
+                            prepared_geometry=loaded['geometry'])
+        self.right_label.setText('Comparison: '+self.choice.currentText())
+        self.status.setText('Use Sync cameras to match the current model viewpoint.')
+
+    def screenshot(self):
+        filename,_=QFileDialog.getSaveFileName(
+            self,'Save model comparison','Evolve-Model-Comparison.png',
+            'PNG (*.png)')
+        if not filename:
+            return
+        if not self.grab().save(filename,'PNG'):
+            QMessageBox.warning(self,'Model comparison','Could not save PNG.')
