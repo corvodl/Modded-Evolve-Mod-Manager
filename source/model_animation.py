@@ -84,6 +84,8 @@ def _local_matrix(node, changes=None):
     mat = _quaternion_matrix(rotation)
     mat[:3,:3] *= scale[None,:]
     mat[:3,3] = translation
+    if not np.isfinite(mat).all():
+        raise ValueError('Non-finite glTF joint transform.')
     return mat
 
 
@@ -176,7 +178,7 @@ class AnimatedGLB:
             if len(idx)%3 or len(idx)>1_500_000 or idx.min()<0 or idx.max()>=len(coords):
                 raise ValueError('Invalid animated mesh triangle indices.')
             previous=sum(len(x) for x in pos_list)
-            previous_indices=sum(len(x) for x in face_list)
+            previous_indices=sum(len(x)*3 for x in face_list)
             face_list.append(idx.reshape(-1,3)+previous)
             groups.append((previous_indices,len(idx),min(254,primitive.get('material',0))))
             pos_list.append(coords)
@@ -217,7 +219,7 @@ class AnimatedGLB:
                     raise ValueError('Invalid clip timestamps.')
                 tracks.append(AnimationTrack(node,path,times,vals,mode))
                 duration=max(duration,float(times[-1]))
-            if tracks and duration<=3600:
+            if tracks and 0.001 < duration <= 3600:
                 name=animation.get('name') or 'Clip %d'%(i+1)
                 while name in self.clips:
                     name+=' (copy)'
