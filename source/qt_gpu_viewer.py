@@ -1237,7 +1237,7 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.addItem('Select an animation…', -1)
         suffixes = {
             'candidate': ' [Library]', 'extractable': ' [Packed]',
-            'missing': ' [No loose CAF]', 'layered': ' [Layered]',
+            'missing': ' [CAF not indexed]', 'layered': ' [Layered]',
             'metadata': ' [Graph / DBA unavailable]',
             'converter': ' [DBA converter]'}
         preferred = 0
@@ -1279,7 +1279,8 @@ class QtGPUModelPanel(QWidget):
             (state == 'converter') or bool(
                 self._native_loader and state in ('candidate', 'extractable', 'missing')))
         self.play_native_button.setText(
-            'Convert DBA & Play' if state == 'converter'
+            ('Find in DBA & Play' if ref.kind == 'caf' else 'Convert DBA & Play')
+            if state == 'converter'
             else 'Extract & Play' if state == 'extractable'
             else 'Search PAK & Play' if state == 'missing'
             else 'Play Game Clip')
@@ -1632,9 +1633,15 @@ class QtGPUModelPanel(QWidget):
         """Explicit optional local converter; never downloads or bundles GPL code."""
         from animation_converter_bridge import validate_conversion
         selected = self.native_clip_select.currentData()
-        source = (str(self._native_references[selected].file)
-                  if isinstance(selected,int) and 0 <= selected < len(self._native_references)
-                  and self._native_references[selected].available else None)
+        ref = (self._native_references[selected]
+               if isinstance(selected,int) and
+               0 <= selected < len(self._native_references) else None)
+        self._pending_dba_clip = (
+            ref.name if ref is not None and ref.kind == 'caf'
+            and not ref.available and ref.dba_file is not None else None)
+        source = (
+            str(ref.dba_file) if self._pending_dba_clip else
+            str(ref.file) if ref is not None and ref.available and ref.file else None)
         if not source:
             source, _ = QFileDialog.getOpenFileName(
                 self, 'Select native character or original animation source', '',
@@ -1642,26 +1649,21 @@ class QtGPUModelPanel(QWidget):
         if not source:
             return
         is_dba = Path(source).suffix.casefold() == '.dba'
-        converter, _ = QFileDialog.getOpenFileName(
-            self, 'Select installed Cryengine-Converter executable (not bundled)',
-            '', 'Converter executable (*.exe)')
-        if not converter:
+        from animation_converter_bridge import (
+            bundled_converter, extracted_asset_root, preview_output_folder)
+        try:
+            converter = bundled_converter()
+        except FileNotFoundError as exc:
+            QMessageBox.warning(self, 'Bundled animation converter', str(exc))
             return
-        asset_root = QFileDialog.getExistingDirectory(
-            self, 'Choose unpacked game asset root containing animation files')
-        if not asset_root:
-            return
-        output = QFileDialog.getExistingDirectory(
-            self, 'Choose an empty or dedicated output folder for converted GLBs')
-        if not output:
-            return
-        if QMessageBox.question(self, 'Run external converter?',
-                'The manager will launch the executable you selected locally '
-                'to convert original CAF/DBA tracks into GLB. '
-                'Only run software you trust. Continue?',
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No) != QMessageBox.Yes:
-            return
+        asset_root = extracted_asset_root(source)
+        if asset_root is None:
+            root = QFileDialog.getExistingDirectory(
+                self, 'Choose extracted game asset root (not an executable)')
+            if not root:
+                return
+            asset_root = Path(root)
+        output = preview_output_folder()
         try:
             program, args = validate_conversion(
                 converter, source, asset_root, output)
@@ -1676,7 +1678,8 @@ class QtGPUModelPanel(QWidget):
                 lambda _err: self.anim_status.setText(
                     'Converter failed to start. Check its installation and permissions.'))
             self.converter_process.start()
-            self.anim_status.setText('Converting original CryEngine animations…')
+            self.anim_status.setText(
+            'Converting packed animation with bundled Cryengine-Converter…')
         except Exception as exc:
             QMessageBox.warning(self, 'Animation conversion', str(exc))
 
@@ -1686,9 +1689,22 @@ class QtGPUModelPanel(QWidget):
                 'External conversion failed (exit %d). Verify that CAF/DBA '
                 'tracks and matching skeleton are unpacked.' % code)
             return
-        # A DBA can contain many motions. Play directly when exactly one
-        # glTF was generated; otherwise allow an explicit choice instead of
-        # silently playing an unrelated clip.
+        # A missing CAF may live inside a DBA. Never play the wrong packed
+        # motion just because it was the first converted output.
+        exact_clip = getattr(self, '_pending_dba_clip', None)
+        self._pending_dba_clip = None
+        if exact_clip:
+            try:
+                from converted_motion import converted_motion
+                file, clip = converted_motion(folder, exact_clip)
+                self._load_animation_file(str(file))
+                if self.animated is not None:
+                    self.clip_select.setCurrentText(clip)
+                    self.select_clip(clip)
+                    self.toggle_play() if not self.anim_playing else None
+            except (OSError, ValueError) as exc:
+                self.anim_status.setText(str(exc)[:300])
+            return
         paths = [path for path in Path(folder).rglob('*.glb')
                  if path.is_file() and not path.is_symlink()]
         if len(paths) == 1:
