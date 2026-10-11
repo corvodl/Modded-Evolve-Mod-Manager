@@ -1619,7 +1619,9 @@ class QtWorkspaceEditor(QMainWindow):
             source = checked_path(self.workspace, rel)
             dest, _ = QFileDialog.getSaveFileName(self,'Export raw file',source.name)
             if dest:
-                shutil.copyfile(source, dest)
+                from qt_operation_progress import copy_file_progress
+                copy_file_progress(source, dest, parent=self,
+                                   title='Export extracted file')
         except Exception as exc:
             QMessageBox.critical(self, 'Export failed', str(exc))
 
@@ -1671,7 +1673,9 @@ class QtWorkspaceEditor(QMainWindow):
                             'PNG (*.png)')
         if path:
             try:
-                export_png(self.raw, Path(path))
+                from qt_operation_progress import run_busy
+                run_busy(self, 'Export texture as PNG', 'Decoding DDS…',
+                         lambda: export_png(self.raw, Path(path)))
                 self.status.setText('Exported PNG: '+path)
             except Exception as exc:
                 QMessageBox.critical(self,'Could not export PNG',str(exc))
@@ -1840,12 +1844,19 @@ class QtWorkspaceEditor(QMainWindow):
                 self.workspace, self.current, self.raw,
                 projects_root=self.manager.projects_path,
                 stage_root=self.manager.stage_path) if self.character_preview else self.mesh)
-            payload, report = textured_model_from_workspace(
-                export_mesh, self.workspace, mesh_source,
-                texture_folder=self.texture_folder,
-                projects_root=self.manager.projects_path,
-                stage_root=self.manager.stage_path)
-            target.write_bytes(payload)
+            from qt_operation_progress import run_busy
+            def convert_for_blender():
+                payload, report = textured_model_from_workspace(
+                    export_mesh, self.workspace, mesh_source,
+                    texture_folder=self.texture_folder,
+                    projects_root=self.manager.projects_path,
+                    stage_root=self.manager.stage_path)
+                target.write_bytes(payload)
+                return report
+            report = run_busy(
+                self, 'Export Blender model',
+                'Preparing model, texture links and rigging…',
+                convert_for_blender)
             message = ('Exported %d vertices, %d triangles, %d diffuse textures. %s.' %
                        (len(export_mesh.vertices), len(export_mesh.triangles),
                         report['texture_count'], report['rig_status']))
