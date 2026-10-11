@@ -316,6 +316,9 @@ class QtGPUModelPanel(QWidget):
         layout.addWidget(options)
         options.setVisible(not compact)
         self._prepare_animation_controls(layout)
+        self.native_info = QLabel('Native game animations: not scanned')
+        self.native_info.setWordWrap(True)
+        layout.addWidget(self.native_info)
         foot=QLabel('Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
@@ -336,6 +339,8 @@ class QtGPUModelPanel(QWidget):
         self.anim_time.setText('0.00 / 0.00 s')
         self.anim_status.setText(
             'Load an animated GLB or import original clips using an external converter.')
+        self.native_clip_select.clear()
+        self.native_info.setText('Native game animations: not scanned')
         self.canvas.set_mesh(mesh, materials)
         self._info.setText(mesh.source_name + '  •  ' + mesh.description)
 
@@ -364,6 +369,15 @@ class QtGPUModelPanel(QWidget):
         self.play_button.clicked.connect(self.toggle_play)
         line.addWidget(self.play_button)
         layout.addLayout(line)
+        native_row = QHBoxLayout()
+        native_row.addWidget(QLabel('Game clips'))
+        self.native_clip_select = QComboBox()
+        self.native_clip_select.setObjectName('referencedNativeAnimations')
+        self.native_clip_select.setToolTip(
+            'CryEngine references are indexed here. Only converted GLB clips can be played.')
+        self.native_clip_select.currentIndexChanged.connect(self._native_selection)
+        native_row.addWidget(self.native_clip_select, 1)
+        layout.addLayout(native_row)
         line2 = QHBoxLayout()
         self.seek = QSlider(Qt.Horizontal)
         self.seek.setRange(0, 1000)
@@ -386,6 +400,34 @@ class QtGPUModelPanel(QWidget):
         self.anim_clock = QElapsedTimer()
         self.converter_process = None
 
+    def set_native_catalog(self, references, idle=None, description=''):
+        """Show exact native references without misrepresenting CAF metadata as playback."""
+        self.native_clip_select.blockSignals(True)
+        self.native_clip_select.clear()
+        self.native_clip_select.addItem('Select referenced animation', None)
+        for ref in references:
+            label = ref.name + ('' if ref.available else ' (not extracted)')
+            self.native_clip_select.addItem(label, (ref.virtual_path, ref.available))
+        if idle is not None:
+            pos = next((i for i, ref in enumerate(references, 1)
+                        if ref.name == idle.name and ref.virtual_path == idle.virtual_path), 0)
+            self.native_clip_select.setCurrentIndex(pos)
+        self.native_clip_select.blockSignals(False)
+        count = sum(ref.kind == 'caf' and ref.available for ref in references)
+        self.native_info.setText(
+            '%d/%d native CAF mappings available%s. Native CAF playback requires '
+            'decoding/conversion; compatible animated GLBs play in the timeline.' %
+            (count, len(references), ' • idle: ' + idle.name if idle else ''))
+
+    def _native_selection(self, position):
+        item = self.native_clip_select.itemData(position)
+        if item:
+            path, exists = item
+            self.native_info.setText(
+                ('Extracted: ' if exists else 'Missing: ') + path +
+                ' • Convert with a supported CryEngine tool to play. '
+                'A CAF reference is not a decoded GLB clip.')
+
     def load_animation(self):
         path, _ = QFileDialog.getOpenFileName(
             self, 'Choose a skinned GLB containing animation clips', '',
@@ -407,10 +449,17 @@ class QtGPUModelPanel(QWidget):
             self.clip_select.addItems(tuple(imported.clips))
             self.clip_select.blockSignals(False)
             self.anim_position = 0.
+            idle = next((name for name in imported.clips if
+                         'idle' in name.casefold() and 'additive' not in name.casefold()),
+                        None)
+            if idle:
+                self.clip_select.setCurrentText(idle)
             self._display_animation_frame()
             self.anim_status.setText(
                 '%d playable clips imported from %s. Original game files unchanged.' %
                 (len(imported.clips), path))
+            if idle:
+                self.toggle_play()
         except Exception as exc:
             QMessageBox.warning(self, 'Animation import failed', str(exc))
 
