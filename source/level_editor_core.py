@@ -84,6 +84,24 @@ class LevelProject:
         self._originals = {}
         self._original_attrs = {}
         self.skipped = []
+        self.known_layers = []
+        # Runtime level.pak archives store editor layer declarations in
+        # leveldata.xml even when no standalone .lyr files exist.
+        meta = next((name for name in available
+                     if Path(name).name.casefold() == "leveldata.xml"), None)
+        if meta:
+            path = self.root.joinpath(*meta.split("/"))
+            if path.is_file() and not path.is_symlink() and path.stat().st_size < MAX_LAYER_BYTES:
+                try:
+                    from evolve_gameplay_editor import parse_cryxml_text
+                    root = parse_cryxml_text(path.read_bytes())
+                    layers = root.find("Layers")
+                    if layers is not None:
+                        self.known_layers = sorted({
+                            el.get("Name") for el in layers if el.get("Name")
+                        }, key=str.casefold)
+                except (OSError, ValueError, ET.ParseError):
+                    pass
         self.undo_stack = []
         self.redo_stack = []
         if names[0].casefold().startswith("levels/"):
