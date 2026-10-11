@@ -110,9 +110,9 @@ class NativeCafTests(unittest.TestCase):
                 AnimationReference('root_idle', 'root_idle.caf', 'caf', True, good),
                 AnimationReference('unreadable', 'unreadable.caf', 'caf', True, bad),
             )
-            with patch('native_character_glb.find_preview_mesh',return_value=mesh), \\
+            with (patch('native_character_glb.find_preview_mesh',return_value=mesh),
                  patch('native_character_glb.textured_model_from_workspace',
-                       return_value=(rigged,{'rig_status':'Rigged: synthetic'})):
+                       return_value=(rigged,{'rig_status':'Rigged: synthetic'}))):
                 output, report = create_character_glb(
                     root, 'synthetic.skinm', {}, clips=references)
             self.assertEqual(report['animations'], 1)
