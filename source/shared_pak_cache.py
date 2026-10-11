@@ -429,6 +429,13 @@ def shared_asset_index(stage):
             for key, records in _installed.index.items():
                 if key not in combined:
                     combined[key].extend(records)
+        # The permanent Asset Library contains FULLY EXTRACTED virtual files,
+        # not lazy archive records. Prefer its immutable imported versions to
+        # transient indexed PAK entries. Editable project files remain the
+        # strongest preference inside multi_pak_assets._resolve.
+        from asset_library import extracted_index
+        for key, records in extracted_index().items():
+            combined[key] = list(records)
         return dict(combined)
 
 
