@@ -1,0 +1,29 @@
+name: Verify beta event bridge
+
+on:
+  push:
+    branches: [beta]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beta-event-bridge
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax-check event bridge and Qt source
+        run: |
+          python -m py_compile source/developer_event_catalog.py source/developer_event_live.py source/qt_game_events.py source/qt_live_event_controls.py source/qt_developer_lab.py
+      - name: Run catalog and authenticated local transport tests
+        working-directory: source
+        run: python -m unittest -v test_developer_event_catalog test_developer_event_live
