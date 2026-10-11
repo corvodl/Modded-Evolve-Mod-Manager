@@ -625,7 +625,6 @@ class QtManager(QMainWindow):
         view_menu.addAction('Refresh Imported PAK List', self.refresh_library_table)
         tools_menu = bar.addMenu('Tools')
         tools_menu.addAction('Verify / Remove Imported PAKs…', self.open_asset_library)
-        tools_menu.addAction('Create Editable Mod Project…', self.create_library_project_from_tab)
         layout.addWidget(bar)
         controls = QHBoxLayout()
         self.asset_search = QLineEdit()
