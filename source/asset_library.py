@@ -152,6 +152,42 @@ def required_archive_status(root=None):
     }
 
 
+def covered_stage_archives(candidates, root=None):
+    """Return stage-relative companions already fully present as loose files.
+
+    Conservatively match the imported source's actual GAME-relative path,
+    not merely an archive basename. Skip incomplete/warning-bearing imports.
+    This is called on user-requested unpack, not every frame/asset lookup.
+    """
+    from evolve_pak_workspace import normalized_name
+    target = {normalized_name(path).casefold(): path for path in candidates}
+    if not target:
+        return set()
+    covered = set()
+    for folder in _manifest_dirs(_home(root)):
+        try:
+            manifest = _load_manifest(folder)
+            if manifest.get("warnings") or not manifest["entries"]:
+                continue
+            source = str(manifest.get("source", "")).replace("\\", "/").casefold()
+            matches = [rel for rel in target if source.endswith("/" + rel)]
+            if not matches:
+                continue
+            base = (folder / "files").resolve()
+            for entry in manifest["entries"]:
+                relpath = normalized_name(entry["path"])
+                file = base.joinpath(*relpath.split("/"))
+                if (file.is_symlink() or not file.is_file()
+                        or not file.resolve().is_relative_to(base)
+                        or file.stat().st_size != entry["bytes"]):
+                    break
+            else:
+                covered.update(matches)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return {target[rel] for rel in covered}
+
+
 def reference_status(virtual, root=None):
     """Diagnostic: which extracted PAKs actually provide this virtual name."""
     from evolve_pak_workspace import normalized_name
