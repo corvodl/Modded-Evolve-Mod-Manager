@@ -1198,8 +1198,10 @@ class QtManager(QMainWindow):
                 Path(input_folder), Path(output_folder),
                 projects_root=self.projects_path, stage_root=self.stage_path)
             with_textures = sum(bool(info['texture_count']) for _, _, _, info in exported)
+            with_rigs = sum(bool(info.get('bone_count')) for _, _, _, info in exported)
             summary = (f'{len(exported)} models exported to .glb '
-                       f'({with_textures} textured); {len(skipped)} unsupported/skipped.')
+                       f'({with_textures} textured, {with_rigs} rigged); '
+                       f'{len(skipped)} unsupported/skipped.')
             if skipped:
                 (Path(output_folder) / 'Blender_export_report.txt').write_text(
                     '\n'.join(f'{name}: {reason}' for name, reason in skipped),
@@ -1207,8 +1209,8 @@ class QtManager(QMainWindow):
             self.info('Blender export finished',
                       summary + '\n\nOutput folder: ' + output_folder +
                       '\nImport .glb in Blender using File > Import > glTF 2.0. '
-                      'Geometry and available diffuse textures are exported; '
-                      'rig/animation export requires verified skeletal decoding.')
+                      'Geometry, available diffuse textures and supported skeletons '
+                      'are exported. Animation track export is not yet available.')
         except Exception as exc:
             self.failure(exc)
 
