@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.12', (
+        'Bundle Cryengine-Converter and source for DBA previews without selecting an external EXE.',
+        'Add collapsible animation controls and DBA fallback for missing CAF references.',
+        'Resolve DDS streaming across imported PAKs and display physical asset paths.',
+    )),
     ('1.1.18-beta.11', (
         'DBA databases can be selected for converter-backed animation playback with a compatible installed converter.',
         'Show real progress when extracting and importing PAKs or exporting individual and batch files.',
