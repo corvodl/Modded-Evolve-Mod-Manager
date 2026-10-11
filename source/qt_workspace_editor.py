@@ -130,14 +130,29 @@ class QtLooseFileEditor(QMainWindow):
 class QtWorkspaceEditor(QMainWindow):
     TABS = ('files', 'images', 'models')
 
-    def __init__(self, manager, workspace, archive_map=None):
+    def __init__(self, manager, workspace, archive_map=None, *, library_archive=None):
         super().__init__(manager)
         self.manager = manager
         self.workspace = Path(workspace).resolve(strict=True)
-        from project_selection import editor_collection_for_workspace
-        self.archive_map = editor_collection_for_workspace(
-            self.workspace, archive_map or {})
-        self.records = self._read_records(self.workspace)
+        self.library_archive = library_archive
+        self.read_only_library = library_archive is not None
+        if self.read_only_library:
+            from asset_library import imported_archives
+            from asset_library_preview import archive_folder, archive_entries
+            self.archive_map = {
+                entry['name'] + ' [' + entry['id'][:8] + ']':
+                    archive_folder(entry['id'])
+                for entry in imported_archives()
+            }
+            self.records = {
+                relative: {'path': relative, 'format': 'raw'}
+                for relative in archive_entries(library_archive['id'])
+            }
+        else:
+            from project_selection import editor_collection_for_workspace
+            self.archive_map = editor_collection_for_workspace(
+                self.workspace, archive_map or {})
+            self.records = self._read_records(self.workspace)
         self.favorites = set(manager.settings.get('favorite_assets',[]))
         self.current = None
         self.raw = b''
@@ -153,7 +168,10 @@ class QtWorkspaceEditor(QMainWindow):
         self.texture_folder = None
         self.animation_folder = None
         self.loose_animation_index = None
-        self.preview_index = None
+        self.preview_index = (
+            __import__('asset_library_preview', fromlist=['library_model_index'])
+            .library_model_index(library_archive['id'])
+            if self.read_only_library else None)
         self.character_preview = None
         self.character_skin_choice = None
         self._prepared_animation = None
@@ -180,7 +198,9 @@ class QtWorkspaceEditor(QMainWindow):
         self._diagnostics_timer = None
         # A main window has the standard Win32 maximize/restore non-dialog frame.
         self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
-        self.setWindowTitle('Edit Files — Evolve PAK Workspace')
+        self.setWindowTitle(
+            'Asset Library — Preview Files (Read Only)' if self.read_only_library
+            else 'Edit Files — Evolve PAK Workspace')
         self.resize(1210, 790)
         self.setMinimumSize(660, 460)
         self.setStyleSheet(manager.styleSheet())
@@ -324,7 +344,10 @@ class QtWorkspaceEditor(QMainWindow):
         self.editor_split.setStretchFactor(1, 2)
         self.editor_split.setSizes([940, 310])
         main.addWidget(self.editor_split, 1)
-        self.status = QLabel('Files remain inside the extracted project; build and add each PAK separately.')
+        self.status = QLabel(
+            'Asset Library: preview and export only; editing and importing are disabled.'
+            if self.read_only_library else
+            'Files remain inside the extracted project; build and add each PAK separately.')
         self.status.setWordWrap(True)
         bottom = QHBoxLayout()
         bottom.addWidget(self.status, 1)
@@ -352,7 +375,54 @@ class QtWorkspaceEditor(QMainWindow):
         self.recovery_timer=QTimer(self)
         self.recovery_timer.setInterval(30000)
         self.recovery_timer.timeout.connect(self._autosave_recovery)
-        self.recovery_timer.start()
+        if self.read_only_library:
+            self.recovery_timer.stop()
+            self._enforce_library_read_only_ui()
+        else:
+            self.recovery_timer.start()
+
+    def _enforce_library_read_only_ui(self):
+        """Same editor/viewer, with no reachable editing or import commands."""
+        permitted = {
+            'File': {'Open File Folder', 'Export Native Model…',
+                     'Export for Blender (.glb)…',
+                     'Export Animated Character (.glb)…',
+                     'Export Model Folder…'},
+            'Edit': {'Find Text'},
+            'View': None,
+            'Model': {'Open GPU Viewer in New Window',
+                      'Compare Models Side by Side…',
+                      'Validate Blender Export…',
+                      'Asset Dependency Graph…', 'Reset Camera',
+                      'Equipped Skin'},
+            'Textures': {'Diagnose Texture Links…',
+                         'Texture Preview Status…',
+                         'Use Automatic Cross-PAK Lookup',
+                         'Reload Model Textures'},
+            'Animation': {'Find Extracted Animations…', 'Play / Pause'},
+            'Tools': {'Performance Monitor'},
+            'Help': None,
+        }
+        for name, menu in self.editor_menus.items():
+            allowed = permitted.get(name)
+            if allowed is None:
+                continue
+            for action in menu.actions():
+                if action.text() not in allowed:
+                    action.setVisible(False)
+                    action.setEnabled(False)
+        for name in ('Save', 'Import / Replace File', 'Restore Original'):
+            button = self.actions['files'].get(name)
+            if button is not None:
+                button.hide()
+                button.setEnabled(False)
+        for name in ('Import DDS', 'Import PNG'):
+            button = self.actions['images'].get(name)
+            if button is not None:
+                button.hide()
+                button.setEnabled(False)
+        self.save_shortcut.setEnabled(False)
+        self.views['files'].setReadOnly(True)
 
     def _build_editor_menus(self):
         """Blender-style discoverable menu bar; no oversized model-action rows."""
@@ -886,6 +956,11 @@ class QtWorkspaceEditor(QMainWindow):
             entries = [rel for rel in entries if not is_split_dds(rel) or
                        int(rel.rsplit('.', 1)[1]) ==
                        first[rel.rsplit('.', 1)[0].casefold()]]
+            full_count = len(entries)
+            if self.read_only_library:
+                # Large full-game imports stay fully searchable without
+                # allocating tens of thousands of Qt tree items at once.
+                entries = entries[:2500]
             # Collapse only verified model families. Children retain their
             # exact virtual file paths, so editing/favorites still work.
             from model_families import group_model_families
@@ -961,7 +1036,10 @@ class QtWorkspaceEditor(QMainWindow):
                 tree.setCurrentItem(restored)
             if needle:
                 tree.expandAll()
-            self.explorer_count.setText(str(len(entries)) + ' files')
+            self.explorer_count.setText(
+                ('%d of %d files (search to narrow)' % (len(entries), full_count))
+                if self.read_only_library and full_count > len(entries)
+                else str(len(entries)) + ' files')
         finally:
             tree.blockSignals(False)
         self.last_populate_ms = round((time.perf_counter() - started) * 1000, 3)
@@ -976,6 +1054,8 @@ class QtWorkspaceEditor(QMainWindow):
         return rel
 
     def _dirty(self):
+        if self.read_only_library:
+            return False
         return (self.mode == 'files' and self.current and
                 self.views['files'].toPlainText() != self.loaded_text)
 
@@ -1020,6 +1100,11 @@ class QtWorkspaceEditor(QMainWindow):
             self.dependency_button.setText('Dependencies…')
         self._model_generation += 1
         path = checked_path(self.workspace, rel)
+        if self.read_only_library:
+            from asset_library_preview import archive_entries
+            path = archive_entries(self.library_archive['id']).get(rel)
+            if path is None:
+                raise FileNotFoundError('This imported library asset is missing or changed.')
         if self.mode == 'models':
             self._load_model_background(rel)
             return
@@ -1040,9 +1125,11 @@ class QtWorkspaceEditor(QMainWindow):
                     control.setPlainText('Binary file. Use Import/Export or external editor.')
                 else:
                     control.setPlainText(plain)
-                    control.setReadOnly(False)
+                    control.setReadOnly(self.read_only_library)
                     self.loaded_text = plain
-            self.status.setText(rel + ' | project copy only')
+            self.status.setText(
+                rel + (' | Asset Library — read-only preview'
+                       if self.read_only_library else ' | project copy only'))
             self._load_recovery()
         elif self.mode == 'images':
             if is_split_dds(rel):
@@ -1083,6 +1170,10 @@ class QtWorkspaceEditor(QMainWindow):
         self.status.setText(rel + ' | Preparing GPU model…')
         source_workspace = self.workspace
         index = self.preview_index
+        if self.read_only_library:
+            from asset_library_preview import library_model_index
+            index = library_model_index(self.library_archive['id'])
+            self.preview_index = index
         projects = self.manager.projects_path
         stage = self.manager.stage_path
         # Character-specific animation CAFs may live in their own signed PAK,
@@ -1378,6 +1469,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.current, self.mode = None, None
 
     def save(self):
+        if self.read_only_library:
+            return
         if self.mode != 'files' or not self.current:
             return
         control = self.views['files']
@@ -1452,6 +1545,8 @@ class QtWorkspaceEditor(QMainWindow):
             QMessageBox.critical(self, 'Could not copy game path', str(exc))
 
     def _import_and_reload(self, action):
+        if self.read_only_library:
+            raise PermissionError('The Asset Library is read-only; use Modding to edit files.')
         try:
             if self.manager.busy:
                 raise RuntimeError('Wait until current manager task finishes.')
@@ -1521,6 +1616,21 @@ class QtWorkspaceEditor(QMainWindow):
             QMessageBox.critical(self, 'Export failed', str(exc))
 
     def show_context_menu(self, section, position):
+        if self.read_only_library:
+            tree = self.file_tree
+            item = tree.itemAt(position)
+            if item is None or not item.data(0, Qt.UserRole):
+                return
+            tree.setCurrentItem(item)
+            menu = QMenu(tree)
+            menu.addAction('Preview / Open', self.load_selection)
+            menu.addAction('Toggle Favorite ★', self.toggle_favorite)
+            menu.addAction('Export Original File…', self.export_raw)
+            menu.addAction('Open Asset Library Folder', self.explore)
+            menu.addAction('Copy Relative Path',
+                           lambda: QApplication.clipboard().setText(self.selected()))
+            menu.exec(tree.mapToGlobal(position))
+            return
         tree = self.file_tree
         item = tree.itemAt(position)
         if item is None or not item.data(0, Qt.UserRole):
@@ -1581,6 +1691,8 @@ class QtWorkspaceEditor(QMainWindow):
             QMessageBox.critical(self,'PNG import rejected',str(exc))
 
     def _replace_texture(self, path):
+        if self.read_only_library:
+            raise PermissionError('The Asset Library does not allow texture imports.')
         try:
             rel = self.current
             if self.manager.busy:
@@ -1765,6 +1877,8 @@ class QtWorkspaceEditor(QMainWindow):
                 QMessageBox.critical(self,'Model export failed',str(exc))
 
     def import_model(self):
+        if self.read_only_library:
+            raise PermissionError('Model import is disabled in the Asset Library.')
         if self.mode != 'models' or not self.current:
             return
         target, _ = QFileDialog.getOpenFileName(self,'Import same-layout native model',
