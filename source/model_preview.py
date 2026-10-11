@@ -132,7 +132,8 @@ def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_roo
 
 
 def render_mesh(mesh: PreviewMesh, width=720, height=480, yaw=-0.5, elevation=0.24,
-                zoom=1.0, wireframe=False, max_draw_triangles=MAX_DRAW_TRIANGLES) -> Image.Image:
+                zoom=1.0, wireframe=False, max_draw_triangles=MAX_DRAW_TRIANGLES,
+                pan=(0., 0.)) -> Image.Image:
     """Simple non-GPU shaded/outline render. No material/texture decoding."""
     width = max(128, min(int(width), 1600))
     height = max(128, min(int(height), 1200))
@@ -148,8 +149,8 @@ def render_mesh(mesh: PreviewMesh, width=720, height=480, yaw=-0.5, elevation=0.
         a,b,c=x-cx,y-cy,z-cz
         rx=a*ca - b*sa
         ry=a*sa + b*ca
-        screen_x=width*.5 + rx*scale
-        screen_y=height*.5 + (-c*ce + ry*se)*scale
+        screen_x=width*.5 + float(pan[0]) + rx*scale
+        screen_y=height*.5 + float(pan[1]) + (-c*ce + ry*se)*scale
         depth=ry*ce + c*se
         points.append((screen_x, screen_y))
         depths.append(depth)
