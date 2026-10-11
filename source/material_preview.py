@@ -55,7 +55,15 @@ def _workspace_index(workspace, projects_root=None, stage_root=None):
     workspace = Path(workspace).resolve()
     linked = related_asset_index(workspace, projects_root, stage_root)
     if linked is not None:
-        return linked
+        # Persistent imports remain visible even when a multi-PAK project
+        # or stage workspace supplied the initial lookup index.
+        from asset_library import extracted_index
+        merged = {key: list(hits) for key, hits in linked.items()}
+        for name, records in extracted_index().items():
+            known = {str(hit.get('file')) for hit in merged.get(name, ())}
+            merged.setdefault(name, []).extend(
+                hit for hit in records if str(hit.get('file')) not in known)
+        return merged
     # Build an index from the workspace manifest; avoid scanning arbitrary files.
     index = {}
     root = (workspace / 'files').resolve()
