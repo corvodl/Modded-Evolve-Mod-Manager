@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
-    QDockWidget, QTreeWidgetItemIterator,
+    QDockWidget, QTreeWidgetItemIterator, QFrame,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
@@ -186,108 +186,142 @@ class QtWorkspaceEditor(QMainWindow):
         self.setCentralWidget(center)
         main = QVBoxLayout(center)
         self._build_editor_menus()
-        tools = QHBoxLayout()
-        self.search = QLineEdit()
-        self.search.setPlaceholderText('Search extracted files…')
-        self.search.textChanged.connect(self.populate)
-        tools.addWidget(self.search, 1)
-        self.favorites_only = QPushButton('★ Favorites')
-        self.favorites_only.setCheckable(True)
-        self.favorites_only.toggled.connect(self.populate)
-        tools.addWidget(self.favorites_only)
-        self.sidebar_button = QPushButton('☰ File Explorer')
+        # One always-present explorer drives the three internal viewers.
+        # Category tabs are implementation details, never exposed to users.
+        top = QHBoxLayout()
+        self.current_file_label = QLabel('Select a file from File Explorer')
+        self.current_file_label.setObjectName('currentWorkspaceAsset')
+        top.addWidget(self.current_file_label, 1)
+        self.sidebar_button = QPushButton('☰ Hide File Explorer')
+        self.sidebar_button.setObjectName('fileExplorerToggle')
         self.sidebar_button.setCheckable(True)
         self.sidebar_button.setChecked(True)
-        self.sidebar_button.setToolTip('Show or hide the file explorer for this editor tab (Ctrl+B).')
+        self.sidebar_button.setToolTip('Show / hide the asset explorer (Ctrl+B)')
         self.sidebar_button.toggled.connect(self.toggle_file_explorer)
-        tools.addWidget(self.sidebar_button)
-        tools.addWidget(self._button('Open File Folder', self.explore))
-        tools.addWidget(self._button('Reload', self.reload))
-        tools.addWidget(self._button('Help', self.help))
-        main.addLayout(tools)
+        top.addWidget(self.sidebar_button)
+        main.addLayout(top)
 
-        self.archive_select = None
-        if len(self.archive_map) > 1:
-            self.archive_select = QComboBox()
-            self.archive_select.addItems(list(self.archive_map))
-            current = next((name for name, p in self.archive_map.items()
-                            if p == self.workspace), '')
-            self.archive_select.setCurrentText(current)
-            self.archive_select.currentTextChanged.connect(self.switch_archive)
-            main.addWidget(self.archive_select)
-
+        self.editor_split = QSplitter(Qt.Horizontal)
+        self.editor_split.setObjectName('unifiedEditorSplitter')
         self.tabs = QTabWidget()
-        self.tabs.currentChanged.connect(self.change_tab)
-        self.tabs.currentChanged.connect(lambda _index: self._sync_file_explorer_button())
-        self.trees, self.views, self.actions, self.splitters = {}, {}, {}, {}
-        for section, label in zip(self.TABS, ('Files / Text', 'Images / Textures', 'Models')):
+        self.tabs.setObjectName('internalFileTypeViewer')
+        self.tabs.tabBar().hide()
+        self.tabs.setDocumentMode(True)
+        self.tabs.setStyleSheet('QTabWidget::pane { border: 0; }')
+        self.trees, self.views, self.actions = {}, {}, {}
+        self.splitters = {section: self.editor_split for section in self.TABS}
+        for section, label in zip(self.TABS, ('Text', 'Textures', '3D Model')):
             tab = QWidget()
             box = QVBoxLayout(tab)
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(2)
             widgets = {}
-            # Model functions live in the Blender-style menu bar, not a grid
-            # of large buttons above the canvas.
             if section in ('files', 'images'):
-                toolbar = QHBoxLayout()
+                bar = QHBoxLayout()
                 actions = (
                     (('Save', self.save), ('Find Text', self.find_text),
-                     ('Import / Replace File', self.import_raw), ('Restore Original', self.restore_original))
+                     ('Import / Replace File', self.import_raw),
+                     ('Restore Original', self.restore_original))
                     if section == 'files' else
                     (('Export PNG', self.export_png), ('Import DDS', self.import_dds),
                      ('Import PNG', self.import_png))
                 )
-                for text, fn in actions:
-                    widgets[text] = self._button(text, fn)
-                    toolbar.addWidget(widgets[text])
-                toolbar.addStretch()
-                box.addLayout(toolbar)
-            split = QSplitter(Qt.Horizontal)
-            tree = QTreeWidget()
-            tree.setColumnCount(3)
-            tree.setHeaderLabels(('File / Folder','Size','Modified'))
-            tree.setSortingEnabled(True)
-            tree.setColumnWidth(0,235)
-            tree.setColumnWidth(1,75)
-            tree.setColumnWidth(2,112)
-            tree.itemSelectionChanged.connect(self.load_selection)
-            tree.setContextMenuPolicy(Qt.CustomContextMenu)
-            tree.customContextMenuRequested.connect(lambda position, s=section:
-                                                     self.show_context_menu(s, position))
-            if section != 'models':
-                split.addWidget(tree)
+                for text, callback in actions:
+                    widgets[text] = self._button(text, callback)
+                    bar.addWidget(widgets[text])
+                bar.addStretch(1)
+                box.addLayout(bar)
             if section == 'files':
                 view = QPlainTextEdit()
                 view.setReadOnly(True)
                 view.setTabStopDistance(35)
             elif section == 'images':
-                view = QLabel('Select a DDS texture.')
+                view = QLabel('Choose a DDS texture in File Explorer.')
                 view.setAlignment(Qt.AlignCenter)
                 view.setWordWrap(True)
             else:
                 view = QStackedWidget()
-                self.model_fallback = QLabel('Select a CryEngine model. GPU preview is the default on Windows.')
+                self.model_fallback = QLabel(
+                    'Choose a CryEngine character or model in File Explorer.')
                 self.model_fallback.setAlignment(Qt.AlignCenter)
                 self.model_fallback.setWordWrap(True)
                 view.addWidget(self.model_fallback)
                 self.model_cpu = QtCPUModelCanvas(view)
                 self.model_cpu.setObjectName('cpuModelPreview')
                 view.addWidget(self.model_cpu)
-            split.addWidget(view)
-            if section == 'models':
-                # Keep the requested asset explorer on the right of the model.
-                split.addWidget(tree)
-                split.setStretchFactor(0, 5)
-                split.setStretchFactor(1, 1)
-                tree.setVisible(False)
-            else:
-                split.setStretchFactor(0, 1)
-                split.setStretchFactor(1, 4)
-            box.addWidget(split, 1)
+            box.addWidget(view, 1)
             self.tabs.addTab(tab, label)
-            self.trees[section] = tree
-            self.splitters[section] = split
             self.views[section] = view
             self.actions[section] = widgets
-        main.addWidget(self.tabs, 1)
+        self.editor_split.addWidget(self.tabs)
+
+        self.explorer = QFrame()
+        self.explorer.setObjectName('fileExplorerPane')
+        self.explorer.setStyleSheet(
+            'QFrame#fileExplorerPane { background: #222128; '
+            'border-left: 2px solid #62545e; }'
+            'QLabel#fileExplorerHeading { font-weight: bold; '
+            'font-size: 13px; color: #f3edf2; }')
+        explorer_box = QVBoxLayout(self.explorer)
+        explorer_box.setContentsMargins(8, 8, 8, 8)
+        explorer_box.setSpacing(7)
+        explorer_head = QHBoxLayout()
+        title = QLabel('▤  FILE EXPLORER')
+        title.setObjectName('fileExplorerHeading')
+        explorer_head.addWidget(title, 1)
+        self.explorer_count = QLabel('')
+        explorer_head.addWidget(self.explorer_count)
+        explorer_box.addLayout(explorer_head)
+
+        self.archive_select = None
+        if len(self.archive_map) > 1:
+            explorer_box.addWidget(QLabel('PAK / PROJECT'))
+            self.archive_select = QComboBox()
+            self.archive_select.setObjectName('explorerPakSelect')
+            self.archive_select.setToolTip('Change the extracted PAK opened in this editor')
+            self.archive_select.addItems(list(self.archive_map))
+            current_archive = next(
+                (name for name, path in self.archive_map.items()
+                 if path == self.workspace), '')
+            self.archive_select.setCurrentText(current_archive)
+            self.archive_select.currentTextChanged.connect(self.switch_archive)
+            explorer_box.addWidget(self.archive_select)
+
+        self.search = QLineEdit()
+        self.search.setObjectName('fileExplorerSearch')
+        self.search.setPlaceholderText('Search files and folders…')
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.populate)
+        explorer_box.addWidget(self.search)
+        explorer_controls = QHBoxLayout()
+        self.favorites_only = QPushButton('★ Favorites')
+        self.favorites_only.setCheckable(True)
+        self.favorites_only.toggled.connect(self.populate)
+        explorer_controls.addWidget(self.favorites_only)
+        explorer_controls.addWidget(self._button('Open Folder', self.explore))
+        explorer_controls.addStretch()
+        explorer_box.addLayout(explorer_controls)
+
+        self.file_tree = QTreeWidget()
+        self.file_tree.setObjectName('unifiedAssetExplorerTree')
+        self.file_tree.setColumnCount(2)
+        self.file_tree.setHeaderLabels(('File / Folder', 'Size'))
+        self.file_tree.setSortingEnabled(True)
+        self.file_tree.setColumnWidth(0, 260)
+        self.file_tree.setColumnWidth(1, 75)
+        self.file_tree.setAlternatingRowColors(True)
+        self.file_tree.itemSelectionChanged.connect(self.load_selection)
+        self.file_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_tree.customContextMenuRequested.connect(
+            lambda point: self.show_context_menu('files', point))
+        explorer_box.addWidget(self.file_tree, 1)
+        self.trees = {section: self.file_tree for section in self.TABS}
+        self._explorer_visible = True
+        self.editor_split.addWidget(self.explorer)
+        self.editor_split.setStretchFactor(0, 5)
+        self.editor_split.setStretchFactor(1, 2)
+        self.editor_split.setSizes([940, 310])
+        main.addWidget(self.editor_split, 1)
         self.status = QLabel('Files remain inside the extracted project; build and add each PAK separately.')
         self.status.setWordWrap(True)
         bottom = QHBoxLayout()
@@ -406,11 +440,10 @@ class QtWorkspaceEditor(QMainWindow):
         menus['View'].aboutToShow.connect(self._sync_view_menu)
 
     def _sync_file_explorer_button(self):
-        section = self.TABS[self.tabs.currentIndex()]
-        showing = self._sidebar_visibility.get(section, True)
+        showing = self._explorer_visible
         self.sidebar_button.blockSignals(True)
         self.sidebar_button.setChecked(showing)
-        self.sidebar_button.setText('☰ Hide Explorer' if showing else '☰ File Explorer')
+        self.sidebar_button.setText('☰ Hide File Explorer' if showing else '☰ Show File Explorer')
         self.sidebar_button.blockSignals(False)
         if hasattr(self, '_file_explorer_action'):
             self._file_explorer_action.blockSignals(True)
@@ -418,9 +451,10 @@ class QtWorkspaceEditor(QMainWindow):
             self._file_explorer_action.blockSignals(False)
 
     def toggle_file_explorer(self, visible):
-        section = self.TABS[self.tabs.currentIndex()]
-        self._sidebar_visibility[section] = bool(visible)
-        self.trees[section].setVisible(bool(visible))
+        self._explorer_visible = bool(visible)
+        self.explorer.setVisible(bool(visible))
+        if visible:
+            self.editor_split.setSizes([940, 310])
         self._sync_file_explorer_button()
 
     def set_workspace_layout(self, name):
@@ -428,14 +462,9 @@ class QtWorkspaceEditor(QMainWindow):
                    'Files First': (3, 2)}
         if name not in options:
             raise ValueError('Unknown layout preset.')
-        left, right = options[name]
-        for section, split in self.splitters.items():
-            split.setSizes([right * 120, left * 120] if section == 'models'
-                           else [left * 120, right * 120])
-        if name == 'Model Focus':
-            self.tabs.setCurrentIndex(2)
-        elif name == 'Files First':
-            self.tabs.setCurrentIndex(0)
+        explorer_width, viewport_width = options[name]
+        self.toggle_file_explorer(True)
+        self.editor_split.setSizes([viewport_width * 120, explorer_width * 120])
 
     def save_workspace_layout(self):
         self.manager.settings['editor_workspace_layout'] = {
@@ -457,11 +486,10 @@ class QtWorkspaceEditor(QMainWindow):
             self.tabs.setCurrentIndex(tab)
         sizes = settings.get('sizes', {})
         if isinstance(sizes, dict):
-            for name, split in self.splitters.items():
-                pair = sizes.get(name)
-                if (isinstance(pair, list) and len(pair) == 2 and
-                        all(isinstance(n, int) and n > 0 for n in pair)):
-                    split.setSizes(pair)
+            pair = sizes.get('models') or sizes.get('files')
+            if (isinstance(pair, list) and len(pair) == 2 and
+                    all(isinstance(n, int) and n > 0 for n in pair)):
+                self.editor_split.setSizes(pair)
 
     def _capture_playback_preferences(self):
         if self.current and self.mode=='models' and self.model_panel is not None:
