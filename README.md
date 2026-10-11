@@ -1,10 +1,16 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.8
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.9
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.8 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.9 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.18-beta.9
+
+- Asset Library files now open in the exact Modding editor's Blender-style file explorer, grouped model view, full GPU renderer, character CDF assemblies, textures and native animation timeline.
+- The shared viewer is read-only in Asset Library mode: import, save, overwrite and game-editing actions are removed and guarded.
+- Open Asset Library Folder launches Windows Explorer at the extracted reference directory. Original-file, PNG, GLB and virtual-path layout exports remain available.
 
 ## What's new in v1.1.18-beta.8
 
