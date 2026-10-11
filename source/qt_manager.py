@@ -418,6 +418,8 @@ class QtManager(QMainWindow):
         from qt_asset_library import AssetLibraryController
         self.asset_library_controller = AssetLibraryController(self)
         self.asset_library_controller.finished.connect(self._asset_library_finished)
+        self.asset_library_controller.started.connect(self._library_task_started)
+        self.asset_library_controller.progress.connect(self._library_task_progress)
         self.refresh_library_table()
         self._auto_library_scanned_game = None
         self._settings_page()
@@ -433,6 +435,15 @@ class QtManager(QMainWindow):
         self.status = _label('Ready — read Instructions before connecting an installed game.', muted=True)
         footer = QHBoxLayout()
         footer.addWidget(self.status, 1)
+        self.operation_progress = QProgressBar(self)
+        self.operation_progress.setObjectName('fileOperationProgress')
+        self.operation_progress.setRange(0, 100)
+        self.operation_progress.setValue(0)
+        self.operation_progress.setFormat('%p%')
+        self.operation_progress.setFixedWidth(190)
+        self.operation_progress.setToolTip('Progress of the current file operation')
+        self.operation_progress.hide()
+        footer.addWidget(self.operation_progress)
         self.shared_asset_label = _label('Asset Library: ready to import', muted=True)
         self.shared_asset_label.setToolTip('Extracted files from verified shared, animation and user-added PAKs.')
         footer.addWidget(self.shared_asset_label)
@@ -812,7 +823,11 @@ class QtManager(QMainWindow):
         from asset_library_preview import export_archive_layout
         if not self.asset_library_controller._start(
                 'export-layout',
-                lambda: export_archive_layout(identifier, destination)):
+                lambda: export_archive_layout(
+                    identifier, destination,
+                    progress=lambda label, done, total:
+                        self.asset_library_controller.progress.emit(
+                            label, done, total))):
             self.info('Asset Library', 'Another library task is still running.')
 
     def create_library_project_from_tab(self):
@@ -1715,6 +1730,9 @@ class QtManager(QMainWindow):
             return
         self.busy = True
         self.status.setText(label + '…')
+        from operation_progress import ProgressStream
+        self._file_progress_stream = ProgressStream()
+        self._show_file_progress(label)
         self._success = success
         self._steps = list(steps)
         self._task_label = label
@@ -1750,19 +1768,26 @@ class QtManager(QMainWindow):
     def _process_output(self):
         output = bytes(self.process.readAllStandardOutput()).decode('utf-8', errors='replace')
         if output:
-            self._log(output)
-            if 'HOOK READY' in output or 'Automatic CreateProcessW hook ready' in output:
+            events, visible = self._file_progress_stream.feed(output)
+            for label, completed, total in events:
+                self._set_file_progress(label, completed, total)
+            if visible:
+                self._log(visible)
+            if 'HOOK READY' in visible or 'Automatic CreateProcessW hook ready' in visible:
                 self.status.setText('Launcher ready — press Play in the Evolve client.')
-            if 'SWAP COMPLETE' in output:
+            if 'SWAP COMPLETE' in visible:
                 self.status.setText('Modded files swapped. Evolve is starting…')
 
     def _process_finished(self, code, status):
+        for label, completed, total in self._file_progress_stream.flush()[0]:
+            self._set_file_progress(label, completed, total)
         if code:
             self._task_finished(self._task_label, code)
         else:
             self._run_next_step()
 
     def _task_finished(self, name, code):
+        self.operation_progress.hide()
         self.busy = False
         self.process = None
         if code:
@@ -2000,7 +2025,30 @@ class QtManager(QMainWindow):
             self._auto_library_scanned_game = key
             self.shared_asset_label.setText('Asset Library: importing…')
 
+    def _library_task_started(self, action):
+        self._show_file_progress('Asset Library: ' + action)
+
+    def _library_task_progress(self, label, completed, total):
+        self._set_file_progress(label, completed, total)
+
+    def _show_file_progress(self, label):
+        self.operation_progress.setRange(0, 0)
+        self.operation_progress.setToolTip(label)
+        self.operation_progress.show()
+
+    def _set_file_progress(self, label, completed, total):
+        if total > 0:
+            self.operation_progress.setRange(0, int(total))
+            self.operation_progress.setValue(min(int(completed), int(total)))
+        else:
+            self.operation_progress.setRange(0, 0)
+        self.operation_progress.setToolTip(
+            '%s • %d / %d files' % (label, completed, total))
+        self.operation_progress.show()
+        self.status.setText(label + ' • %d / %d' % (completed, total))
+
     def _asset_library_finished(self, action, result, error):
+        self.operation_progress.hide()
         self.refresh_library_table()
         if action == 'export-layout':
             if error:
