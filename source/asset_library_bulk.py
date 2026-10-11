@@ -143,8 +143,7 @@ def project_command(import_id, stage, workspace, game=None, *, library_root=None
         raise FileExistsError("Editable project folder already exists.")
     if target.is_relative_to(Path(stage).resolve()):
         raise ValueError("Do not create editable projects inside signed staging.")
-    from app_runtime import ROOT
-    script = ROOT / "evolve_pak_workspace.py"
+    script = Path(__file__).resolve().parent / "evolve_pak_workspace.py"
     args = [sys.executable, "-u", str(script), "extract",
             "--pak", str(pak), "--public-key",
             str(Path(stage) / "mykeys" / "public_key.bin"),
