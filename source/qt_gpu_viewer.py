@@ -15,7 +15,7 @@ from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
-    QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea)
+    QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
 
@@ -71,6 +71,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.rotation = [-30.0, 14.0]
         self.zoom = 1.0
         self.pan = [0., 0.]
+        self.navigation_mode = 'orbit'
+        self.grid_visible = True
         self.wireframe = False
         self.textured = True
         self._last = None
@@ -470,13 +472,18 @@ class QtGPUModelPanel(QWidget):
         self.setObjectName('gpuModelControlPanel')
         self.setMinimumSize(300, 230)
         layout=QVBoxLayout(self)
+        layout.setContentsMargins(3,3,3,3)
+        layout.setSpacing(2)
         self._info=QLabel(mesh.source_name+'  •  '+mesh.description)
         self._info.setWordWrap(False)
         self._info.setToolTip(mesh.source_name + '  •  ' + mesh.description)
         self._info.setMaximumHeight(28)
-        layout.addWidget(self._info)
+        # A viewport breadcrumb replaces the layout-consuming title row.
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
+        mode_label = QLabel('Object Mode')
+        mode_label.setToolTip('Read-only CryEngine preview')
+        toolbar.addWidget(mode_label)
         self._overlay_buttons = {}
         for section in ('View', 'Materials', 'Animation'):
             button = QToolButton(self)
@@ -488,15 +495,29 @@ class QtGPUModelPanel(QWidget):
             toolbar.addWidget(button)
             self._overlay_buttons[section] = button
         toolbar.addStretch(1)
+        self._grid_toggle = QToolButton(self)
+        self._grid_toggle.setText('Grid')
+        self._grid_toggle.setCheckable(True)
+        self._grid_toggle.setChecked(True)
+        self._grid_toggle.toggled.connect(lambda state: (setattr(self.canvas,'grid_visible', state),self.canvas.update()))
+        toolbar.addWidget(self._grid_toggle)
+        self._wire_toggle = QToolButton(self)
+        self._wire_toggle.setText('Wire')
+        self._wire_toggle.setCheckable(True)
+        toolbar.addWidget(self._wire_toggle)
         self._play_shortcut = QToolButton(self)
         self._play_shortcut.setText('▶  Play')
         self._play_shortcut.setToolTip('Play / pause current animation')
         self._play_shortcut.clicked.connect(self.toggle_play)
-        toolbar.addWidget(self._play_shortcut)
         layout.addLayout(toolbar)
         self.canvas=QtGLModelCanvas(mesh,materials,self,prepared_geometry=prepared_geometry)
         self.canvas.setObjectName('embeddedGpuCanvas')
         layout.addWidget(self.canvas,1)
+        self._info.setParent(self.canvas)
+        self._info.setObjectName('viewportBreadcrumb')
+        self._info.setText('User Perspective  •  '+mesh.source_name)
+        self._info.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._info.setStyleSheet('QLabel#viewportBreadcrumb { background: rgba(22,22,26,165); color: #f0edf2; padding: 4px 7px; border-radius: 4px; }')
         self._overlay = QScrollArea(self.canvas)
         self._overlay.setObjectName('modelOverlayControls')
         self._overlay.setWidgetResizable(True)
@@ -522,12 +543,15 @@ class QtGPUModelPanel(QWidget):
             page.setVisible(False)
         self._overlay.hide()
         self.canvas.installEventFilter(self)
+        self._create_viewport_navigation()
         options = QWidget(self)
         line=QHBoxLayout(options)
         line.setContentsMargins(0, 0, 0, 0)
         wire=QCheckBox('Wireframe')
         self.wire_checkbox = wire
         wire.toggled.connect(lambda value:(setattr(self.canvas,'wireframe',value),self.canvas.update()))
+        wire.toggled.connect(self._wire_toggle.setChecked)
+        self._wire_toggle.toggled.connect(wire.setChecked)
         line.addWidget(wire)
         textured=QCheckBox('Textures')
         self.texture_checkbox = textured
@@ -619,6 +643,91 @@ class QtGPUModelPanel(QWidget):
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
         self._overlay_sections['View'][1].addWidget(foot)
+        self._build_compact_timeline(layout)
+        QTimer.singleShot(0,self._position_overlay)
+
+    def _create_viewport_navigation(self):
+        self._tool_rail = QFrame(self.canvas)
+        self._tool_rail.setObjectName('viewportToolRail')
+        self._tool_rail.setStyleSheet('QFrame#viewportToolRail { background: rgba(31,31,36,220); border: 1px solid #49464e; border-radius: 5px; }')
+        rail = QVBoxLayout(self._tool_rail)
+        rail.setContentsMargins(3,4,3,4)
+        rail.setSpacing(3)
+        self._navigation_group = QButtonGroup(self)
+        self._navigation_group.setExclusive(True)
+        for symbol,mode,hint in (
+            ('R','orbit','Orbit with left drag'),
+            ('H','pan','Pan with left drag'),
+            ('Z','zoom','Zoom with vertical left drag')):
+            button = QToolButton(self._tool_rail)
+            button.setText(symbol)
+            button.setToolTip(hint)
+            button.setFixedSize(31,34)
+            button.setCheckable(True)
+            button.setChecked(mode == 'orbit')
+            self._navigation_group.addButton(button)
+            button.clicked.connect(lambda _checked=False,m=mode: setattr(self.canvas,'navigation_mode',m))
+            rail.addWidget(button)
+        fit = QToolButton(self._tool_rail)
+        fit.setText('F')
+        fit.setToolTip('Frame the character')
+        fit.setFixedSize(31,34)
+        fit.clicked.connect(self.reset_view)
+        rail.addWidget(fit)
+        rail.addStretch()
+        self._axis_widget = QFrame(self.canvas)
+        self._axis_widget.setObjectName('viewportAxisControls')
+        self._axis_widget.setStyleSheet('QFrame#viewportAxisControls { background: rgba(31,31,36,220); border: 1px solid #49464e; border-radius: 14px; }')
+        axes = QHBoxLayout(self._axis_widget)
+        axes.setContentsMargins(3,3,3,3)
+        axes.setSpacing(2)
+        for name,preset,color in (
+            ('X','Right','#d87982'), ('Y','Back','#91b88b'), ('Z','Top','#78a6d2')):
+            button = QToolButton(self._axis_widget)
+            button.setText(name)
+            button.setToolTip('View along '+name+' axis')
+            button.setStyleSheet('QToolButton { color: '+color+'; font-weight: bold; }')
+            button.clicked.connect(lambda _checked=False,p=preset: self.canvas.set_camera_preset(p))
+            axes.addWidget(button)
+
+    def _position_navigation(self):
+        if not hasattr(self,'_tool_rail'):
+            return
+        self._tool_rail.setGeometry(8,43,40,min(174,max(34,self.canvas.height()-48)))
+        self._tool_rail.raise_()
+        self._axis_widget.setGeometry(max(0,self.canvas.width()-117),8,108,36)
+        self._axis_widget.raise_()
+        self._info.setGeometry(12,7,max(30,self.canvas.width()-145),29)
+        self._info.raise_()
+
+    def _build_compact_timeline(self,parent_layout):
+        strip = QFrame(self)
+        strip.setObjectName('viewportTimeline')
+        strip.setStyleSheet('QFrame#viewportTimeline { background: #212126; border-top: 1px solid #47424a; }')
+        bar = QHBoxLayout(strip)
+        bar.setContentsMargins(6,2,6,2)
+        bar.setSpacing(5)
+        bar.addWidget(QLabel('Timeline'))
+        prev = QToolButton(strip)
+        prev.setText('◀')
+        prev.setToolTip('Previous frame')
+        prev.clicked.connect(lambda: self.step_frame(-1))
+        bar.addWidget(prev)
+        bar.addWidget(self._play_shortcut)
+        nxt = QToolButton(strip)
+        nxt.setText('▶|')
+        nxt.setToolTip('Next frame')
+        nxt.clicked.connect(lambda: self.step_frame(1))
+        bar.addWidget(nxt)
+        bar.addWidget(self.seek,1)
+        bar.addWidget(self.anim_time)
+        more = QToolButton(strip)
+        more.setText('⋮')
+        more.setToolTip('Animation tools')
+        more.clicked.connect(lambda: self.toggle_overlay('Animation'))
+        bar.addWidget(more)
+        strip.setFixedHeight(38)
+        parent_layout.addWidget(strip)
 
     def toggle_overlay(self, section, shown=None):
         """Display just one model tool group over the viewport."""
@@ -640,11 +749,12 @@ class QtGPUModelPanel(QWidget):
     def _position_overlay(self):
         if not hasattr(self, '_overlay') or self._overlay is None:
             return
-        width = max(200, min(610, self.canvas.width() - 20))
+        width = max(180, min(570, self.canvas.width() - 70))
         page = self._overlay_sections.get(self._active_overlay)
         wanted = (page[0].sizeHint().height() + 35) if page else 200
-        height = max(100, min(wanted, 540, self.canvas.height() - 20))
-        self._overlay.setGeometry(10, 10, width, height)
+        height = max(80, min(wanted, 510, self.canvas.height() - 55))
+        self._overlay.setGeometry(56, 43, width, height)
+        self._position_navigation()
 
     def eventFilter(self, obj, event):
         if obj is getattr(self, 'canvas', None) and event.type() == QEvent.Resize:
@@ -725,7 +835,8 @@ class QtGPUModelPanel(QWidget):
         self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
         self.solid_geometry.blockSignals(False)
         self._populate_material_slots(mesh,materials)
-        self._info.setText(mesh.source_name + '  •  ' + mesh.description)
+        self._info.setText('User Perspective  •  ' + mesh.source_name)
+        self._info.setToolTip(mesh.source_name + '  •  ' + mesh.description)
 
     def save_viewport(self):
         filename,_=QFileDialog.getSaveFileName(
@@ -776,14 +887,11 @@ class QtGPUModelPanel(QWidget):
         self.play_native_button.clicked.connect(self.load_native)
         native_row.addWidget(self.play_native_button)
         layout.addLayout(native_row)
-        line2 = QHBoxLayout()
+        # Scrubber lives in the always-visible narrow playback strip.
         self.seek = QSlider(Qt.Horizontal)
         self.seek.setRange(0, 1000)
         self.seek.sliderMoved.connect(self.seek_to)
-        line2.addWidget(self.seek, 1)
         self.anim_time = QLabel('0.00 / 0.00 s')
-        line2.addWidget(self.anim_time)
-        layout.addLayout(line2)
         timeline=QHBoxLayout()
         timeline.addWidget(QLabel('Speed'))
         self.playback_speed=QComboBox()
