@@ -51,7 +51,7 @@ class IndexedMaterialsTests(TestCase):
     def _texture(self, filename, different=False):
         file = self.root / filename
         data = fixture_dds('DXT5', (16, 16), 1)
-        file.write_bytes(data[:-1] + b'\\x01' if different else data)
+        file.write_bytes(data[:-1] + bytes([1]) if different else data)
         return file
 
     def _record(self, file, virtual):
@@ -98,9 +98,9 @@ class IndexedMaterialsTests(TestCase):
         file = self._texture('face.dds')
         extra = {virtual: [self._record(file, virtual)]}
         with patch('material_preview.related_asset_index',
-                   return_value={self.material: self.index[self.material]}), \\
-             patch('asset_library.extracted_index', return_value=extra):
-            result = _workspace_index(self.workspace, self.root, self.root)
+                   return_value={self.material: self.index[self.material]}):
+            with patch('asset_library.extracted_index', return_value=extra):
+                result = _workspace_index(self.workspace, self.root, self.root)
         self.assertIn(virtual, result)
 
 
