@@ -261,24 +261,41 @@ def _original_public_key(stage):
     return None
 
 
-def warm_shared_catalog(stage, cache_root=None):
-    """Background task. Errors are exposed through shared_catalog_status."""
-    global _current, _error, _status
+def warm_shared_catalog(stage, cache_root=None, game_root=None):
+    """Index verified staged and original archives on a background worker."""
+    global _current, _installed, _error, _status
     path = Path(stage).resolve()
     cache = Path(cache_root).resolve() if cache_root else _default_cache().resolve()
-    key = path / "mykeys" / "public_key.bin"
+    staged, original, problems = None, None, []
     try:
-        candidate = SharedCatalog(path, cache, key).scan()
-        with _lock:
-            _current = candidate
-            _error = ""
-            _status = ("Ready: %d shared PAKs, %d references" %
-                       (len(candidate.archives), len(candidate.index)))
+        staged = SharedCatalog(path, cache, path / 'mykeys' / 'public_key.bin').scan()
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
-        with _lock:
-            _current = None
-            _error = str(exc)
-            _status = "Unavailable: " + str(exc)[:160]
+        problems.append('staged: ' + str(exc)[:100])
+    if game_root:
+        original_key = _original_public_key(path)
+        if original_key is None:
+            problems.append('original PAK public key not found')
+        else:
+            try:
+                original = SharedCatalog(
+                    path, cache.with_name(cache.name + 'Original'),
+                    original_key, installed_game=game_root).scan()
+                problems.extend(original.warnings[:2])
+            except (OSError, ValueError, RuntimeError, KeyError) as exc:
+                problems.append('original: ' + str(exc)[:100])
+    with _lock:
+        _current, _installed = staged, original
+        _error = '; '.join(problems)
+        a = len(staged.archives) if staged else 0
+        b = len(original.archives) if original else 0
+        if a or b:
+            keys = set(staged.index if staged else ())
+            keys.update(original.index if original else ())
+            _status = 'Ready: %d staged + %d original PAKs, %d shared paths' % (a, b, len(keys))
+            if problems:
+                _status += ' | ' + '; '.join(problems[:2])
+        else:
+            _status = 'Unavailable: ' + (_error or 'No verified shared archives')
 
 
 def start_shared_catalog(stage, cache_root=None):
