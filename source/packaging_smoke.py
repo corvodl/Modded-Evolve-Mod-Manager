@@ -25,7 +25,8 @@ assert (BUNDLE/"assets"/"hunt.ico").is_file()
 assert (BUNDLE/"assets"/"hunt.png").is_file()
 assert (BUNDLE/"VERSION.txt").is_file()
 from version_info import app_version
-assert app_version() == "v1.1.4"
+from release_notes import RELEASE_NOTES
+assert app_version() == "v" + RELEASE_NOTES[0][0]
 assert (BUNDLE/"reference"/"RSAKeyData.bin").is_file()
 assert (BUNDLE/"reference"/"inject.dll").is_file()
 assert (BUNDLE/"reference"/"inject.dll").read_bytes()[0x870:0x8fc] == (BUNDLE/"reference"/"RSAKeyData.bin").read_bytes()

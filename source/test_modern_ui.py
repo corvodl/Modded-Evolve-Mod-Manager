@@ -1,5 +1,5 @@
-from version_info import app_version
 """Modern dark/red UI regressions: minimal tabs and on-demand instructions."""
+from version_info import app_version
 import json
 from pathlib import Path
 import tempfile
