@@ -298,7 +298,7 @@ def warm_shared_catalog(stage, cache_root=None, game_root=None):
             _status = 'Unavailable: ' + (_error or 'No verified shared archives')
 
 
-def start_shared_catalog(stage, cache_root=None):
+def start_shared_catalog(stage, cache_root=None, game_root=None):
     """One daemon per stage. Never block GUI startup or editor opening."""
     global _worker, _status
     path = Path(stage).resolve()
@@ -309,7 +309,7 @@ def start_shared_catalog(stage, cache_root=None):
             return False
         _status = "Scanning signed shared PAK directories..."
         _worker = threading.Thread(
-            target=warm_shared_catalog, args=(path, cache_root),
+            target=warm_shared_catalog, args=(path, cache_root, game_root),
             daemon=True, name="SharedPAKAssetIndex")
         _worker.start()
     return True
