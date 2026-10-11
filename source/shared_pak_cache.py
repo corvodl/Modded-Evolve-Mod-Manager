@@ -170,9 +170,11 @@ class SharedCatalog:
     def is_current(self):
         try:
             from universal_stage import allowed_paks
-            listed = sorted(rel for rel in allowed_paks(self.stage).values()
-                            if Path(rel).name.casefold() in self.archive_names)
-            if listed != sorted(a.relative for a in self.archives):
+            listed = sorted(rel for rel, _ in self._candidate_files())
+            indexed = sorted(a.relative for a in self.archives)
+            if self.installed_game is None and listed != indexed:
+                return False
+            if self.installed_game is not None and not set(indexed).issubset(listed):
                 return False
             return all((a.path.stat().st_size, a.path.stat().st_mtime_ns)
                        == a.fingerprint for a in self.archives)
