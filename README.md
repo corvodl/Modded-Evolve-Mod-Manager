@@ -1,10 +1,15 @@
-# Evolve Stage 2 Mod Manager — v1.1.7
+# Evolve Stage 2 Mod Manager — v1.1.8
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.7 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.8 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.8
+
+- Blender exports can now include original CryEngine rigs and skin weights.
+- Added verified bone hierarchy and bind-pose conversion for supported models.
 
 ## What's new in v1.1.7
 
@@ -105,7 +110,9 @@ On Windows with a working OpenGL driver, the model pane now tries the embedded G
 
 The **Data** archive generally contains meshes, skeleton files and animation configuration references; the **TS** archive supplies texture streams and may include other companion animation assets depending on its actual contents. Sunny's provided texture archive contains DDS fragments but **no** CAF or DBA animation tracks. The bspace/comb definitions are not animated joint keyframes.
 
-GLB export preserves geometry, UVs and available diffuse textures, but **does not yet include a validated Blender armature, bone hierarchy, rig deformation, or animation playback**. Per-vertex skin weights can be inspected, but reconstructing native chr bind poses and bone parents requires additional decoding. Arbitrary Blender meshes cannot be imported back into Evolve's native model format through this exporter.
+GLB export now also includes the original **bone hierarchy, inverse-bind matrices, and per-vertex skin weights** when a compatible character **.skin** or **.chr** file accompanies the matching render-mesh **.skinm** or **.chrm**. The converter resolves per-subset local bone palettes, verifies joint transforms and refuses inconsistent skinning data. In **Edit Files → Models**, the export result explicitly says whether the model was rigged and gives a reason when not.
+
+**Animation clips are not yet imported:** character animation configuration files are not the underlying CAF/DBA keyframe tracks. Rigged GLBs can be posed and edited in Blender, but reproducing the original Evolve animations requires a separate CAF/DBA decoder. Edited Blender meshes still cannot be repackaged automatically into native Evolve model files.
 
 ### Mod Profiles & Library
 

@@ -1,1 +1,1 @@
-1.1.7 - Cross-PAK Blender Textures and Asset Labels
+1.1.8 - Rigged Blender Model Export
