@@ -471,7 +471,7 @@ class QtWorkspaceEditor(QMainWindow):
         return rel
 
     def _dirty(self):
-        return (self.mode == 'text' and self.current and
+        return (self.mode == 'files' and self.current and
                 self.views['files'].toPlainText() != self.loaded_text)
 
     def _confirm_buffer(self):
