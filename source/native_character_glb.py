@@ -69,22 +69,28 @@ def create_character_glb(workspace, relative, index, *, character=None,
             if not entry.available or entry.file is None or entry.kind != 'caf':
                 skipped.append(entry.name + ': not extracted')
                 continue
-            if 'additive' in entry.name.casefold() or 'aimpose' in entry.name.casefold():
-                skipped.append(entry.name + ': layered/additive motion')
+            from character_animation_catalog import native_clip_playability
+            state, reason = native_clip_playability(entry)
+            if state == 'layered':
+                skipped.append(entry.name + ': requires CryEngine base-pose blending')
                 continue
             try:
                 data = entry.file.read_bytes()
                 motion = decode_caf(data)
                 matched = sum(t.controller_id in compatible_bones for t in motion.tracks)
-                if motion.additive or matched < min(3, max(1, len(motion.tracks)//4)):
-                    raise ValueError('incompatible or additive skeleton tracks')
+                if motion.additive:
+                    raise ValueError('CAF flagged additive; requires base-pose blending')
+                if matched < min(3, max(1, len(motion.tracks)//4)):
+                    raise ValueError('controller IDs do not match this character skeleton')
                 if not any(t.rotation_times or t.position_times for t in motion.tracks):
                     raise ValueError('no keyframe tracks')
                 playable.append((entry.name, data))
             except (ValueError, OSError) as exc:
                 skipped.append(entry.name + ': ' + str(exc)[:110])
         if not playable:
-            raise ValueError('No independently playable native CAF clips; '
+            raise ValueError('No standalone native CAF clip could be played. '
+                             'Layered aim poses require a base animation; '
+                             'select a standalone idle/stand/run clip. Details: '
                              + '; '.join(skipped[:3]))
         try:
             blob, anim_report = append_caf_animations(blob, playable)
