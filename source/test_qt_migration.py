@@ -68,9 +68,15 @@ class QtMigrationTests(unittest.TestCase):
 
     def test_all_pages_and_instruction_information_survive(self):
         self.assertEqual(SECTIONS, (
-            'Instructions','Modding','Play & Restore','Settings','Credits',
-            "What's New",'Developer'))
-        self.assertEqual(self.win.stack.count(), 7)
+            'Instructions','Asset Library','Modding','Play & Restore','Settings',
+            'Credits',"What's New",'Developer'))
+        self.assertEqual(self.win.stack.count(), 8)
+        self.assertLess(SECTIONS.index('Asset Library'), SECTIONS.index('Modding'))
+        self.assertEqual(self.win.asset_table.columnCount(), 6)
+        self.assertIn('previewing and exporting', ' '.join(
+            item.text() for item in
+            self.win.pages['asset_library'].findChildren(QLabel)).casefold()
+            .replace('preview and export', 'previewing and exporting'))
         self.assertEqual(self.win.stack.currentIndex(), 0)
         self.assertTrue(self.win.menu_button.text().startswith('☰'))
         self.assertIn('modded-evolve.com',
