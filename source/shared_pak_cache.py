@@ -105,7 +105,35 @@ class SharedCatalog:
                     "workspace": None, "_shared_archive": archive,
                     "_shared_entry": entry_name,
                 })
+        # Remove obsolete self-owned cache generations when the stage/key
+        # changes. Unrelated folders and symlink directories are untouched.
+        if self.cache_root.is_dir():
+            keep = {archive.cache_dir.name for archive in self.archives}
+            for stale in self.cache_root.iterdir():
+                if (stale.is_dir() and not stale.is_symlink()
+                        and re.fullmatch(r"[0-9a-f]{20}", stale.name)
+                        and stale.name not in keep):
+                    shutil.rmtree(stale)
+            for archive in self.archives:
+                if archive.cache_dir.is_dir():
+                    for existing in archive.cache_dir.rglob("*"):
+                        if existing.is_symlink():
+                            continue
+                        if existing.is_file() and not existing.name.endswith(".building"):
+                            self._retained += existing.stat().st_size
         return self
+
+    def is_current(self):
+        try:
+            from universal_stage import allowed_paks
+            listed = sorted(rel for rel in allowed_paks(self.stage).values()
+                            if Path(rel).name.casefold() in SHARED_NAMES)
+            if listed != sorted(a.relative for a in self.archives):
+                return False
+            return all((a.path.stat().st_size, a.path.stat().st_mtime_ns)
+                       == a.fingerprint for a in self.archives)
+        except (OSError, ValueError, RuntimeError):
+            return False
 
     def _check_source(self, archive):
         stat = archive.path.stat()
@@ -121,9 +149,10 @@ class SharedCatalog:
         dest = archive.cache_dir / virtual
         with self._read_lock:
             self._check_source(archive)
-            if not dest.is_relative_to(archive.cache_dir):
+            if (dest.is_symlink() or not dest.resolve().is_relative_to(
+                    archive.cache_dir.resolve())):
                 raise ValueError("Unsafe shared-cache asset path.")
-            if not dest.is_file():
+            if True:  # verify streaming siblings even when part 0 is cached
                 requested = [virtual]
                 match = re.search(r"\.dds\.0$", virtual, re.I)
                 if match:
@@ -139,6 +168,8 @@ class SharedCatalog:
                     if entry is None:
                         continue
                     target = archive.cache_dir / normalized_name(asset)
+                    if target.is_symlink() or not target.resolve().is_relative_to(archive.cache_dir.resolve()):
+                        raise ValueError('Untrusted shared preview cache path.')
                     if target.is_file():
                         continue
                     raw = decrypt_entry(archive.path, archive.verified_info, entry)
@@ -195,7 +226,7 @@ def start_shared_catalog(stage, cache_root=None):
     with _lock:
         if _worker and _worker.is_alive():
             return False
-        if _current is not None and _current.stage == path:
+        if _current is not None and _current.stage == path and _current.is_current():
             return False
         _status = "Scanning signed shared PAK directories..."
         _worker = threading.Thread(
@@ -224,6 +255,6 @@ def materialize_shared_record(record):
         return record
     with _lock:
         catalog = _current
-    if catalog is None or archive not in catalog.archives:
+    if catalog is None or not any(item is archive for item in catalog.archives):
         raise ValueError("Shared index expired; refresh shared assets.")
     return catalog.materialize(record)
