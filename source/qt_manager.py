@@ -816,6 +816,12 @@ class QtManager(QMainWindow):
             muted=True))
         backup_row.addWidget(_button('Client Verification & Recovery Guide',
                                       self.client_recovery_guide))
+        backup_row.addWidget(_button('Review Duplicate PAK Copies…',
+                                      self.open_pak_copy_cleanup))
+        backup_row.addWidget(_label(
+            'Scans old game-folder copies without touching live PAKs or restoration '
+            'backups. Recycling is manual and only offered for byte-identical '
+            'copies after recovery checks.', muted=True))
 
         _settings_heading(lay, 'LAUNCH PREFERENCES',
                           'Prepare modifications before pressing Play and monitor launch progress.')
@@ -1030,6 +1036,23 @@ class QtManager(QMainWindow):
             self.persist()
         except OSError as exc:
             self._log('Could not save preferences: ' + str(exc))
+
+    def open_pak_copy_cleanup(self):
+        try:
+            game = self._find_game_root()
+            if not game:
+                chosen = QFileDialog.getExistingDirectory(
+                    self, 'Select installed EvolveGame to inspect')
+                if not chosen:
+                    return
+                game = Path(chosen)
+            from qt_pak_copy_cleanup import DuplicatePAKCleanupDialog
+            dialog = DuplicatePAKCleanupDialog(
+                self, game, self.swap_path,
+                journal_roots=(DATA_HOME, self.swap_path))
+            dialog.exec()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
 
     def client_recovery_guide(self):
         self.info('Client verification and recovery',
