@@ -141,6 +141,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.loose_animation_index = None
         self.preview_index = None
         self.character_preview = None
+        self.character_skin_choice = None
         self.gpu_windows = []
         self.materials = None
         self.texture_message = 'No model selected'
@@ -263,6 +264,8 @@ class QtWorkspaceEditor(QMainWindow):
         action('Edit', 'Find Text', self.find_text)
         action('Edit', 'Import / Replace File…', self.import_raw)
         action('Edit', 'Restore Original', self.restore_original)
+        self.equipment_menu = menus['Model'].addMenu('Equipped Skin')
+        self.equipment_menu.setEnabled(False)
         action('Model', 'Import Same-Layout Model…', self.import_model)
         action('Model', 'Open GPU Viewer in New Window', self.open_gpu_viewer)
         action('Model', 'Reset Camera', lambda: self._with_model_panel(
@@ -446,6 +449,8 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(str(exc))
 
     def load(self, rel):
+        if rel != self.current:
+            self.character_skin_choice = None
         self.current = rel
         self.stream = None
         self.mesh = None
@@ -510,7 +515,8 @@ class QtWorkspaceEditor(QMainWindow):
                         self.workspace, rel, self.preview_index,
                         texture_folder=self.texture_folder,
                         projects_root=self.manager.projects_path,
-                        stage_root=self.manager.stage_path)
+                        stage_root=self.manager.stage_path,
+                        equipment=self.character_skin_choice)
                 except (ValueError, OSError) as exc:
                     self.texture_message = 'Character assembly unavailable: ' + str(exc)
                 mesh = (self.character_preview.mesh if self.character_preview else
@@ -519,6 +525,7 @@ class QtWorkspaceEditor(QMainWindow):
                             projects_root=self.manager.projects_path,
                             stage_root=self.manager.stage_path))
                 self.mesh = mesh
+                self._update_equipment_menu()
                 self._paint_model(view, mesh)
                 self.status.setText(
                     rel + ' | ' + report + ' | ' + self.texture_message)
@@ -528,6 +535,26 @@ class QtWorkspaceEditor(QMainWindow):
                                             '\n\n3D preview unavailable: ' + str(exc))
                 view.setCurrentWidget(self.model_fallback)
                 self.status.setText(rel + ' | Native model inspection')
+
+    def _update_equipment_menu(self):
+        self.equipment_menu.clear()
+        preview = self.character_preview
+        self.equipment_menu.setEnabled(bool(preview and preview.equipment_options))
+        if not preview:
+            return
+        choices = [('Body only', 'body')] + list(preview.equipment_options)
+        for label, virtual in choices:
+            action = self.equipment_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(virtual.casefold() == preview.selected_equipment.casefold())
+            action.triggered.connect(
+                lambda checked=False, name=virtual: self._select_character_equipment(name))
+
+    def _select_character_equipment(self, name):
+        if self.mode != 'models' or not self.current:
+            return
+        self.character_skin_choice = name
+        self.load(self.current)
 
     def _paint_model(self, view, mesh):
         """The complete GPU controls are embedded by default in the Models tab."""
@@ -620,6 +647,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.workspace, self.records = target, new_records
         self.preview_index = None
         self.character_preview = None
+        self.character_skin_choice = None
         self.current, self.loaded_text, self.raw = None, '', b''
         self.manager.current_workspace = str(target)
         self.manager.archive_label = name
