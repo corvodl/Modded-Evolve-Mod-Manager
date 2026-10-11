@@ -70,7 +70,37 @@ def load_catalog():
             tuple(int(x.strip()) for x in counts.split("/") if x.strip())))
     if not events:
         raise ValueError("No events in developer catalog")
-    return tuple(events)
+    # V3 CSV is the comprehensive developer export. Preserve the familiar
+    # curated groups for 357 events, and add the remaining 177 from the scan.
+    # An empty CSV ID is explicitly unresolved, never a callable guessed hash.
+    import csv
+    import io
+    from developer_events_all_v3 import SOURCE_CSV
+    curated = {event.name: event for event in events}
+    complete = []
+    for row in csv.DictReader(io.StringIO(SOURCE_CSV)):
+        name = row['event']
+        original = curated.get(name)
+        event_id = row['id'].strip()
+        uncertain = not event_id or event_id.endswith('?')
+        fields = []
+        for token in row['fields'].split():
+            if ':' not in token:
+                raise ValueError('Malformed field of ' + name)
+            key, kind = token.split(':', 1)
+            if kind not in ('entity','string','bool','int','float'):
+                raise ValueError('Unknown V3 field type: ' + kind)
+            fields.append((key, kind))
+        complete.append(EventSpec(
+            original.category if original else 'Additional game events',
+            name, event_id or 'unresolved', uncertain,
+            tuple(re.findall(r'0x[0-9a-fA-F]+',row['send_site_rvas'])),
+            tuple(re.findall(r'0x[0-9a-fA-F]+',row['send_funcs'])),
+            row['net'] == 'networked', row['kept'] == 'kept',
+            tuple(fields), original.counts if original else ()))
+    if len(complete) != 534 or len({e.name for e in complete}) != len(complete):
+        raise ValueError('Comprehensive event catalog is incomplete.')
+    return tuple(complete)
 
 
 def filter_catalog(query="", category="All categories", scope="All seats / local",
