@@ -559,6 +559,7 @@ class QtManager(QMainWindow):
         actions.addWidget(self.file_filter)
         actions.addWidget(_button('Refresh', self.refresh_archives))
         actions.addWidget(_button('External PAK…', self.browse_external_pak))
+        actions.addWidget(_button('Mod Profiles', self.open_mod_profiles, primary=True))
         root.addLayout(actions)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(('Folder', 'Description', 'File', 'Type / Project', 'Size'))
@@ -1141,6 +1142,44 @@ class QtManager(QMainWindow):
         if selected:
             self.fields[key].setText(selected)
             self.save_settings()
+
+    def open_mod_profiles(self):
+        """Open the profile library without changing the installed game."""
+        try:
+            if self.busy:
+                raise RuntimeError('Finish the current operation before editing profiles.')
+            from qt_mod_profiles import ModProfilesDialog
+            suggested = Path(self.output_pak) if self.output_pak else None
+            dialog = ModProfilesDialog(
+                self, DATA_HOME / 'Profiles', self.stage_path,
+                self.apply_mod_profile, suggested_pak=suggested)
+            dialog.exec()
+        except Exception as exc:
+            self.failure(exc)
+
+    def apply_mod_profile(self, profile_id):
+        """Queue signed PAK staging in a worker, not the Qt thread."""
+        if self.busy:
+            raise RuntimeError('Wait for the current operation to finish.')
+        if not self.flush_editors():
+            raise RuntimeError('Save or close pending file edits first.')
+        from launch_integration import state_status
+        phase = state_status(Path(self.swap_path)).phase
+        if phase not in ('missing', 'restored', 'prepared'):
+            raise RuntimeError('Restore any active or interrupted modded play session first.')
+        command = [sys.executable, '-u', str(ROOT / 'mod_profiles.py'),
+                   'apply', '--root', str(DATA_HOME / 'Profiles'),
+                   '--stage', str(Path(self.stage_path)),
+                   '--swap', str(Path(self.swap_path)),
+                   '--profile', profile_id if profile_id is not None else 'baseline']
+        def complete():
+            self.refresh_archives()
+            self.refresh_swap_status()
+            self.info('Mod profile staged',
+                      'The selected profile was applied to the signing stage. '
+                      'No installed game files were changed.')
+        self.run_steps([('Applying signed Mod Profile', command)],
+                       'Apply Mod Profile', complete)
 
     def browse_external_pak(self):
         source, _ = QFileDialog.getOpenFileName(self, 'Choose custom-signed PAK',
