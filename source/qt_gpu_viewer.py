@@ -65,6 +65,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.gl_error = None
         self.light_strength = 1.0
         self.background_mode = 'Dark'
+        self.visible_material_slot = None
 
     def set_mesh(self, mesh, materials=None, prepared_geometry=None):
         geometry = (prepared_geometry if prepared_geometry is not None
@@ -82,6 +83,10 @@ class QtGLModelCanvas(QOpenGLWidget):
                 self._upload_textures()
             finally:
                 self.doneCurrent()
+        self.update()
+
+    def set_visible_material_slot(self, slot):
+        self.visible_material_slot=None if slot is None else int(slot)
         self.update()
 
     def set_camera_preset(self, choice):
@@ -267,6 +272,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         try:
             # Draw independent submaterial groups without duplicating geometry.
             for first,count,slot in arrays.draws:
+                if self.visible_material_slot is not None and slot != self.visible_material_slot:
+                    continue
                 tex = self.textures[slot] if use_uv and slot < len(self.textures) else 0
                 if tex:
                     glEnable(GL_TEXTURE_2D)
@@ -397,6 +404,18 @@ class QtGPUModelPanel(QWidget):
         studio.addWidget(save_view)
         studio.addStretch()
         layout.addLayout(studio)
+        inspector=QHBoxLayout()
+        inspector.addWidget(QLabel('Mesh materials'))
+        self.part_select=QComboBox()
+        self.part_select.setObjectName('modelMaterialPartInspector')
+        self.part_select.currentIndexChanged.connect(
+            lambda _: self.canvas.set_visible_material_slot(self.part_select.currentData()))
+        inspector.addWidget(self.part_select,1)
+        uvbutton=QPushButton('Show UV Layout…')
+        uvbutton.clicked.connect(self.show_uv_layout)
+        inspector.addWidget(uvbutton)
+        layout.addLayout(inspector)
+        self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(layout)
         self.native_info = QLabel('Native game animations: not scanned')
         self.native_info.setWordWrap(True)
@@ -406,6 +425,54 @@ class QtGPUModelPanel(QWidget):
         foot.setWordWrap(True)
         foot.setVisible(not compact)
         layout.addWidget(foot)
+
+    def _populate_material_slots(self,mesh,materials):
+        slots=sorted({part[2] for part in mesh.subsets}) if mesh.subsets else [0]
+        self.part_select.blockSignals(True)
+        self.part_select.clear()
+        self.part_select.addItem('All parts',None)
+        for slot in slots:
+            title=(materials.names[slot] if materials and slot<len(materials.names)
+                   else 'Material slot %d'%slot)
+            self.part_select.addItem('%d — %s'%(slot,title[:75]),slot)
+        self.part_select.blockSignals(False)
+        self.canvas.set_visible_material_slot(None)
+
+    def show_uv_layout(self):
+        from io import BytesIO
+        from PIL import Image, ImageDraw
+        from PySide6.QtGui import QPixmap
+        mesh=self.canvas.mesh
+        if len(mesh.uvs)!=len(mesh.vertices):
+            QMessageBox.information(self,'UV layout','This mesh has no decoded UV coordinates.')
+            return
+        image=Image.new('RGB',(800,800),(25,25,29))
+        painter=ImageDraw.Draw(image)
+        for line in range(0,801,100):
+            painter.line(((line,0),(line,799)),fill=(58,58,64))
+            painter.line(((0,line),(799,line)),fill=(58,58,64))
+        slot=self.part_select.currentData()
+        faces=mesh.triangles
+        parts=mesh.subsets or ((0,len(faces)*3,0),)
+        for start,count,material in parts:
+            if slot is not None and material!=slot:
+                continue
+            for face in faces[start//3:(start+count)//3]:
+                coords=[(mesh.uvs[i][0]*800,(1-mesh.uvs[i][1])*800)
+                        for i in face]
+                painter.line(coords+[coords[0]],fill=(229,103,119),width=1)
+        output=BytesIO()
+        image.save(output,format='PNG')
+        dialog=QDialog(self)
+        dialog.setWindowTitle('UV Layout — '+mesh.source_name)
+        lay=QVBoxLayout(dialog)
+        preview=QLabel()
+        pix=QPixmap()
+        pix.loadFromData(output.getvalue(),'PNG')
+        preview.setPixmap(pix)
+        lay.addWidget(preview)
+        dialog.resize(830,850)
+        dialog.exec()
 
     def set_static_mesh(self, mesh, materials=None, prepared_geometry=None):
         """Switch project model while ensuring prior clip playback is stopped."""
@@ -425,6 +492,7 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.clear()
         self.native_info.setText('Native game animations: not scanned')
         self.canvas.set_mesh(mesh, materials, prepared_geometry=prepared_geometry)
+        self._populate_material_slots(mesh,materials)
         self._info.setText(mesh.source_name + '  •  ' + mesh.description)
 
     def save_viewport(self):
@@ -486,6 +554,31 @@ class QtGPUModelPanel(QWidget):
         self.anim_time = QLabel('0.00 / 0.00 s')
         line2.addWidget(self.anim_time)
         layout.addLayout(line2)
+        timeline=QHBoxLayout()
+        timeline.addWidget(QLabel('Speed'))
+        self.playback_speed=QComboBox()
+        for label,number in (('0.25×',0.25),('0.5×',0.5),('1×',1.0),
+                             ('1.5×',1.5),('2×',2.0)):
+            self.playback_speed.addItem(label,number)
+        self.playback_speed.setCurrentIndex(2)
+        timeline.addWidget(self.playback_speed)
+        self.loop_enabled=QCheckBox('Loop')
+        self.loop_enabled.setChecked(True)
+        timeline.addWidget(self.loop_enabled)
+        previous=QPushButton('◀ Frame')
+        previous.clicked.connect(lambda: self.step_frame(-1))
+        timeline.addWidget(previous)
+        nxt=QPushButton('Frame ▶')
+        nxt.clicked.connect(lambda: self.step_frame(1))
+        timeline.addWidget(nxt)
+        marker=QPushButton('Add Marker')
+        marker.clicked.connect(self.add_timeline_marker)
+        timeline.addWidget(marker)
+        self.timeline_markers=QComboBox()
+        self.timeline_markers.addItem('Markers',None)
+        self.timeline_markers.currentIndexChanged.connect(self.goto_timeline_marker)
+        timeline.addWidget(self.timeline_markers,1)
+        layout.addLayout(timeline)
         self.anim_status = QLabel('Animation playback: load a rigged GLB containing clips, or '
                                   'use an optional CryEngine converter for CAF/DBA files.')
         self.anim_status.setWordWrap(True)
@@ -621,6 +714,28 @@ class QtGPUModelPanel(QWidget):
         if auto_play and (idle or len(imported.clips)==1):
             self.toggle_play()
 
+    def step_frame(self, direction):
+        if self.animated is None or not self.clip_select.currentText():
+            return
+        duration=self.animated.clips[self.clip_select.currentText()][0]
+        self.anim_position=min(duration,max(0.,self.anim_position+direction/30.))
+        self._display_animation_frame()
+
+    def add_timeline_marker(self):
+        if self.animated is None or not self.clip_select.currentText():
+            return
+        label='%s at %.2fs'%(self.clip_select.currentText(),self.anim_position)
+        self.timeline_markers.addItem(label,
+            (self.clip_select.currentText(),self.anim_position))
+        self.timeline_markers.setCurrentIndex(0)
+
+    def goto_timeline_marker(self,index):
+        data=self.timeline_markers.itemData(index)
+        if data and self.animated is not None and data[0] in self.animated.clips:
+            self.clip_select.setCurrentText(data[0])
+            self.anim_position=data[1]
+            self._display_animation_frame()
+
     def select_clip(self, _name):
         self.anim_position = 0.
         self._display_animation_frame()
@@ -662,10 +777,16 @@ class QtGPUModelPanel(QWidget):
         if not self.anim_playing or self.animated is None:
             return
         elapsed = min(.15, self.anim_clock.restart()/1000.)
-        self.anim_position += elapsed
+        self.anim_position += elapsed*self.playback_speed.currentData()
         duration = self.animated.clips[self.clip_select.currentText()][0]
         if self.anim_position >= duration:
-            self.anim_position %= duration
+            if self.loop_enabled.isChecked() and duration>0:
+                self.anim_position %= duration
+            else:
+                self.anim_position = max(0.,duration)
+                self.anim_playing = False
+                self.anim_timer.stop()
+                self.play_button.setText('Play')
         self._display_animation_frame()
 
     def seek_to(self, value):

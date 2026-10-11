@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.14', (
+        'Fix PAK double-click reopening the wrong extracted project.',
+        'Add safe old-project cleanup, PAK diffs, asset dependencies and mod validation.',
+        'Improve animation timelines, model parts, file search and project history.',
+    )),
     ('1.1.13', (
         'Add visual gameplay values and texture adjustment editors.',
         'Search assets across PAKs, batch export files, and share mod profiles.',
