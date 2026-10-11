@@ -1,10 +1,17 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.11
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.12
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.11 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.12 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.18-beta.12
+
+- Bundle the separately executed GPLv2 Cryengine-Converter v2.0.0 with corresponding source ZIP and pinned SHA256; users no longer select an external converter EXE.
+- Make the animation popup sections collapsible. Missing CAFs may resolve via their character's verified DBA; only the exact converted clip is played.
+- Resolve streamed DDS fragments across imported PAK folders and show actual source paths in the texture/animation diagnostics.
+- Converter compatibility with Evolve-specific DBA variants still requires an actual game sample. Truly missing or ambiguous motions remain unavailable.
 
 ## What's new in v1.1.18-beta.11
 
