@@ -26,6 +26,8 @@ class AnimationReference:
     available: bool
     file: Path | None = None
     in_archive: bool = False  # signed directory names known; bytes still unextracted
+    dba_file: Path | None = None  # verified declared database, not a guessed CAF
+    dba_virtual_path: str | None = None
 
 
 def _xml(data):
@@ -89,9 +91,8 @@ def native_clip_playability(reference):
     if reference.kind == 'dba':
         if reference.available and reference.file is not None:
             return 'converter', (
-                'DBA animation database is available. A compatible, separately '
-                'installed CryEngine converter is required to produce animated '
-                'GLB tracks for playback. No native DBA decoder is bundled.')
+                'DBA database is available for bundled converter-backed '
+                'animation preview. Track compatibility is checked after conversion.')
         return 'metadata', (
             'DBA database has not been extracted. Import its source animation PAK '
             'into the Asset Library before converting it.')
@@ -107,11 +108,15 @@ def native_clip_playability(reference):
         if reference.in_archive:
             return 'extractable', ('Found in signed PAK metadata. Click Extract & Play '
                                    'to decode only this CAF into the preview cache.')
+        if reference.dba_file is not None and reference.dba_virtual_path:
+            return 'converter', (
+                'No standalone CAF is expected for this mapping: the character '
+                'declares a DBA animation database. Convert its packed tracks '
+                'and play only if the requested clip is found by exact name.')
         return 'missing', (
-            'No standalone CAF exists at this exact path in the extracted library. '
-            'Some CryEngine animation mappings refer to tracks stored inside DBA '
-            'databases rather than individual CAF files. Search verified PAKs '
-            'for this exact CAF; DBA playback is not yet supported.')
+            'No standalone CAF at the exact path in indexed or verified PAKs. '
+            'This motion may be stored in a DBA; no verified database could '
+            'be uniquely linked to this character yet.')
     return 'candidate', ('Standalone playback candidate. The native CAF decoder '
                           'will verify bone controllers and flags before playback.')
 
@@ -292,6 +297,43 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
                 Path(key).stem, key, Path(key).suffix[1:], True, Path(concrete)))
             known.add(key)
     confirmed.extend(extra_graph)
+    # CryEngine streams animations from declared DBA containers. Absence of a
+    # loose CAF is normal; associate its reference ONLY if this skeleton's
+    # animation map resolves one unambiguous concrete database. An exact
+    # clip-name match is still required after conversion.
+    from dataclasses import replace
+    databases = {
+        ref.virtual_path.casefold(): ref
+        for ref in confirmed if ref.kind == 'dba'
+        and ref.available and ref.file is not None
+    }
+    # Also expand explicit $TracksDatabase wildcard declarations against
+    # verified extracted files. Never select an arbitrary other character DBA.
+    for row in raw_mappings:
+        if (row.get('name') or '').strip().casefold() != '$tracksdatabase':
+            continue
+        pattern = (row.get('path') or '').replace('\\', '/').strip()
+        if not pattern or '..' in pattern.split('/'):
+            continue
+        if not pattern.startswith(('characters/', 'animations/')):
+            pattern = base + pattern
+        for key in sorted(index):
+            if len(databases) >= 16:
+                break
+            if not key.endswith('.dba') or not fnmatchcase(key, pattern.casefold()):
+                continue
+            path = resolve(key)
+            if path is not None:
+                databases[key.casefold()] = AnimationReference(
+                    'DBA: ' + Path(key).stem, key, 'dba', True, Path(path))
+    if len(databases) == 1:
+        database = next(iter(databases.values()))
+        confirmed = [
+            replace(ref, dba_file=database.file,
+                    dba_virtual_path=database.virtual_path)
+            if ref.kind == 'caf' and not ref.available and not ref.in_archive
+            else ref for ref in confirmed
+        ]
     # Characters commonly have standalone CAF files omitted from their
     # .chrparams (the latter points at packed DBA tracks and blendspaces).
     # Permit such clips ONLY if their embedded controller CRC32 IDs match
