@@ -50,6 +50,14 @@ class QtMigrationTests(unittest.TestCase):
         self.win.show()
         self.application.processEvents()
 
+    def test_gpu_popup_toolbar_uses_real_icons(self):
+        from qt_gpu_viewer import _viewport_tool_icon
+        for kind in ('View','Materials','Animation','Grid','Solid','Wire'):
+            with self.subTest(kind=kind):
+                icon=_viewport_tool_icon(kind)
+                self.assertFalse(icon.isNull())
+                self.assertFalse(icon.pixmap(18,18).isNull())
+
     def test_ascii_glyphs_render_as_distinct_letters_not_squares(self):
         font = self.application.font()
         self.assertTrue(glyphs_readable(font), ui_family())
