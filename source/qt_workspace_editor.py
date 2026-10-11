@@ -30,6 +30,8 @@ from dds_png_import import encode_png_as_dds, compression_for_dds
 from model_asset import is_model, inspect_model, export_model, replace_model
 from model_preview import find_preview_mesh, render_mesh
 from model_blender_export import glb_bytes, convert_folder
+from model_textured_export import (
+    textured_model_from_workspace, export_extracted_folder, weight_stream_status)
 from multi_pak_assets import model_material_links
 from workspace_file_actions import (
     checked_path, sha_file, replace_raw_file, extracted_original_backup,
@@ -662,36 +664,46 @@ class QtWorkspaceEditor(QDialog):
             QMessageBox.critical(self,'DDS import rejected',str(exc))
 
     def export_blender_model(self):
-        """Export the verified preview mesh as Blender-compatible geometry."""
+        """Export current mesh and diffuse textures from compatible unpacked PAKs."""
         if self.mode != 'models' or not self.current or self.mesh is None:
             QMessageBox.information(self, 'Export for Blender',
-                'Select a supported model (or its render-mesh companion) first.')
+                                    'Select a supported CryEngine model first.')
             return
         name = Path(self.mesh.source_name or self.current).stem + '.glb'
         destination, _ = QFileDialog.getSaveFileName(
-            self, 'Export Blender glTF model', str(Path(self.manager.projects_path)/name),
+            self, 'Export Blender model (geometry and available textures)',
+            str(Path(self.manager.projects_path) / name),
             'Blender glTF 2.0 (*.glb)')
         if not destination:
             return
         try:
             target = Path(destination)
-            if target.suffix.lower() != '.glb':
+            if target.suffix.casefold() != '.glb':
                 target = target.with_suffix('.glb')
             if not target.parent.is_dir():
                 raise FileNotFoundError('Choose an existing export folder.')
-            payload = glb_bytes(self.mesh, name=Path(self.current).stem)
+            mesh_source = self.mesh.source_name or self.current
+            payload, report = textured_model_from_workspace(
+                self.mesh, self.workspace, mesh_source,
+                texture_folder=self.texture_folder,
+                projects_root=self.manager.projects_path,
+                stage_root=self.manager.stage_path)
             target.write_bytes(payload)
-            self.status.setText(
-                'Exported %s: %d vertices / %d triangles (geometry + UV only)' %
-                (target.name, len(self.mesh.vertices), len(self.mesh.triangles)))
+            message = ('Exported %d vertices, %d triangles, %d diffuse textures. '
+                       'No Blender armature generated: original skeleton transforms '
+                       'still require a validated decoder.' %
+                       (len(self.mesh.vertices), len(self.mesh.triangles),
+                        report['texture_count']))
+            self.status.setText(message)
+            if report['texture_count'] == 0:
+                self.status.setText(message + ' Missing: ' + report['texture_status'][:180])
         except Exception as exc:
             QMessageBox.critical(self, 'Blender export failed', str(exc))
 
     def export_blender_folder(self):
-        """Convert .skinm and other supported render meshes in a chosen folder."""
+        """Export supported meshes with textures from other unpacked PAK workspaces."""
         source = QFileDialog.getExistingDirectory(
-            self, 'Choose model folder (can be outside the workspace)',
-            str(self.workspace / 'files'))
+            self, 'Choose unpacked model folder', str(self.workspace / 'files'))
         if not source:
             return
         destination = QFileDialog.getExistingDirectory(
@@ -700,17 +712,19 @@ class QtWorkspaceEditor(QDialog):
         if not destination:
             return
         try:
-            results, skipped = convert_folder(Path(source), Path(destination))
-            note = '%d Blender .glb meshes exported. %d unsupported/skipped.' % (
-                len(results), len(skipped))
+            results, skipped = export_extracted_folder(
+                source, destination, projects_root=self.manager.projects_path,
+                stage_root=self.manager.stage_path, texture_folder=self.texture_folder)
+            textured = sum(bool(details['texture_count']) for _, _, _, details in results)
+            note = ('%d GLB exports (%d with diffuse textures); %d skipped. '
+                    'Armature and animation tracks are not yet exported.' %
+                    (len(results), textured, len(skipped)))
             if skipped:
-                notes = Path(destination) / 'Blender_export_report.txt'
-                notes.write_text(
-                    'Skipped CryEngine models:\n' +
+                (Path(destination) / 'Blender_export_report.txt').write_text(
                     '\n'.join(name + ': ' + reason for name, reason in skipped),
                     encoding='utf-8')
-            self.status.setText(note + ' Output: ' + destination)
-            QMessageBox.information(self, 'Export for Blender', note)
+            self.status.setText(note)
+            QMessageBox.information(self, 'Blender export', note)
         except Exception as exc:
             QMessageBox.critical(self, 'Folder export failed', str(exc))
 
@@ -822,9 +836,13 @@ class QtWorkspaceEditor(QDialog):
             'Images / Textures: preview DDS, export PNG and import compatible DDS/PNG. '
             'Streaming .dds.0/.1 files are reassembled and replaced together.\n\n'
             'Models: GPU rendering opens by default on supported Windows systems; '
-            'software preview is the fallback. Export for Blender writes editable '
-            'geometry and UVs as .glb, or export entire model folders. '
-            'CryEngine bones, animations and original textures are not recreated.\n\n'
+            'software preview is the fallback. Export for Blender writes geometry, '
+            'UVs and diffuse textures from matching unpacked PAK workspaces. '
+            'Model/skeleton data comes from the character Data PAK; texture '
+            'fragments typically come from the companion TS PAK. '
+            'Animation definitions can accompany models, while actual CAF/DBA '
+            'tracks must be present separately. Rig export is still pending '
+            'verified decoding of the native skeleton hierarchy and transforms.\n\n'
             'Native export and same-layout native import remain available. '
             'Open GPU Viewer offers additional lighting and texture controls.')
 
