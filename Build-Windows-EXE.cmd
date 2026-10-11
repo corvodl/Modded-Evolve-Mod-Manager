@@ -36,6 +36,8 @@ if not defined GITHUB_REF_NAME set "GITHUB_REF_NAME=local"
 > ".build\app-dist\EvolveModManager\BUILD_COMMIT.txt" echo %GITHUB_SHA%
 if /i "%GITHUB_REF_NAME%"=="main" (
   > ".build\app-dist\EvolveModManager\BUILD_CHANNEL.txt" echo main
+) else if /i "%GITHUB_REF_NAME%"=="beta" (
+  > ".build\app-dist\EvolveModManager\BUILD_CHANNEL.txt" echo beta
 ) else (
   > ".build\app-dist\EvolveModManager\BUILD_CHANNEL.txt" echo experimental
 )
