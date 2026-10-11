@@ -435,7 +435,9 @@ class QtManager(QMainWindow):
         QTimer.singleShot(0, self._position_drawer)
         QTimer.singleShot(400, lambda: report_startup_ready(APP_HOME))
         # Both release channels are verified; beta updates always need approval.
-        if self.build_channel() in ('main','beta'):
+        if (self.build_channel() in ('main','beta') and
+                not any(flag in sys.argv for flag in
+                        ('--capture-screenshot','--capture-modding-screenshot'))):
             QTimer.singleShot(2500, lambda: self.check_updates(silent=True))
         if self.bundle_error:
             QTimer.singleShot(500, lambda: self.failure(self.bundle_error))
