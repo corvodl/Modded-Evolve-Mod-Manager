@@ -1146,16 +1146,23 @@ class QtWorkspaceEditor(QMainWindow):
         self._materials_error = data['materials_error']
         self._model_prepared = True
         refs=data['animation'][0]
-        mapped=(self.materials.count if self.materials is not None else 0)
-        slots=(len(self.materials.textures) if self.materials is not None else 0)
-        count=sum(getattr(ref,'available',False) for ref in refs)
-        total=sum(getattr(ref,'kind',None)=='caf' for ref in refs)
+        # Count material slots actually used by the preview (the .mtl often
+        # declares unused submaterials). Never count .bspace graph assets as CAF.
+        slots_used = sorted({slot for _, _, slot in self.mesh.subsets
+                             if self.materials is not None and
+                             0 <= slot < len(self.materials.textures)})
+        slots = len(slots_used)
+        mapped = sum(self.materials.textures[slot] is not None
+                     for slot in slots_used) if self.materials else 0
+        caf_refs = tuple(ref for ref in refs if ref.kind == 'caf')
+        count = sum(bool(ref.available) for ref in caf_refs)
+        total = len(caf_refs)
         self.dependency_button.setText(
-            'Assets: %d/%d textures · %d/%d CAF clips' %
+            'Assets: %d/%d used textures · %d/%d standalone CAFs' %
             (mapped, slots, count, total))
         issues=(self.materials.issues if self.materials is not None else ())
         self.dependency_button.setToolTip(
-            'CAF mappings: %d • extracted: %d\n'
+            'Named CAF mappings: %d • indexed loose CAF candidates: %d\n'
             'Texture diagnostic issues:\n%s\n'
             'Open Assets for full texture/animation diagnostics.' %
             (total, count, '\n'.join(issues[:8]) or
