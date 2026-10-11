@@ -224,6 +224,12 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
     if not parts:
         return None
     mesh, materials = combine_meshes(parts)
+    if omitted and materials is not None:
+        from dataclasses import replace
+        # Render failures must show which actual CDF part/MTL/texture failed,
+        # even if the assembled mesh itself remains visible.
+        materials = replace(
+            materials, issues=tuple(materials.issues) + tuple(omitted))
     return CharacterPreview(mesh, materials, cdf, skeleton,
                             tuple(included), tuple(omitted),
                             tuple(options), chosen[0][1] if chosen else 'body', tuple(rig_parts))
