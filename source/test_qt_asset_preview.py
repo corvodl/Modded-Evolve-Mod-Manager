@@ -37,13 +37,27 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         self.source = self.folder / 'files' / self.relative
         self.source.parent.mkdir(parents=True)
         self.source.write_text('<Character name="Maggie"/>', encoding='utf-8')
+        # The viewer must group real virtual paths without parsing/changing
+        # these synthetic binary mesh fixtures.
+        self.models = [
+            'characters/scrap/scrap_3p.skinm',
+            'characters/scrap/scrap_3p_lod1.skinm',
+            'characters/scrap/scrap_3p_lod2.skinm',
+        ]
+        for model in self.models:
+            target = self.folder / 'files' / model
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b'fixture')
         (self.folder / 'asset-library.json').write_text(json.dumps({
             'version': 1,
             'name': 'characters_hunters_maggie_data.pak',
-            'entries': [{
+            'entries': ([{
                 'path': self.relative,
                 'bytes': self.source.stat().st_size,
-            }],
+            }] + [{
+                'path': relative,
+                'bytes': (self.folder / 'files' / relative).stat().st_size,
+            } for relative in self.models]),
         }), encoding='utf-8')
 
         # Patch the one backend source of truth, not archive lookups in just
@@ -90,6 +104,22 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         self.assertIn('previewing and exporting only', labels)
         self.assertNotIn('Save Changes', [
             x.text() for x in self.window.findChildren(QLabel)])
+
+    def test_model_lods_share_a_grouped_explorer_family(self):
+        from PySide6.QtWidgets import QTreeWidgetItemIterator
+        iterator = QTreeWidgetItemIterator(self.window.tree)
+        found = {}
+        while iterator.value():
+            node = iterator.value()
+            rel = node.data(0, Qt.UserRole)
+            if rel in self.models:
+                found[rel] = node
+            iterator += 1
+        self.assertEqual(set(found), set(self.models))
+        primary = found[self.models[0]]
+        for lod in self.models[1:]:
+            self.assertIs(found[lod].parent(), primary)
+        self.assertTrue(primary.text(0).casefold().find('model') >= 0)
 
     def test_same_modding_editor_model_tools_but_no_import_or_save(self):
         from qt_workspace_editor import QtWorkspaceEditor
