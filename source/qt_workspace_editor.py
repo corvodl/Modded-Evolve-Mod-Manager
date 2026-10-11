@@ -145,6 +145,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.mesh = None
         self.model_gpu = None
         self.model_panel = None
+        self._sidebar_visibility = {'files': True, 'images': True, 'models': False}
         self.model_fallback = None
         self.model_cpu = None
         self.texture_folder = None
@@ -194,6 +195,12 @@ class QtWorkspaceEditor(QMainWindow):
         self.favorites_only.setCheckable(True)
         self.favorites_only.toggled.connect(self.populate)
         tools.addWidget(self.favorites_only)
+        self.sidebar_button = QPushButton('☰ File Explorer')
+        self.sidebar_button.setCheckable(True)
+        self.sidebar_button.setChecked(True)
+        self.sidebar_button.setToolTip('Show or hide the file explorer for this editor tab (Ctrl+B).')
+        self.sidebar_button.toggled.connect(self.toggle_file_explorer)
+        tools.addWidget(self.sidebar_button)
         tools.addWidget(self._button('Open File Folder', self.explore))
         tools.addWidget(self._button('Reload', self.reload))
         tools.addWidget(self._button('Help', self.help))
@@ -211,6 +218,7 @@ class QtWorkspaceEditor(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self.change_tab)
+        self.tabs.currentChanged.connect(lambda _index: self._sync_file_explorer_button())
         self.trees, self.views, self.actions, self.splitters = {}, {}, {}, {}
         for section, label in zip(self.TABS, ('Files / Text', 'Images / Textures', 'Models')):
             tab = QWidget()
@@ -244,7 +252,8 @@ class QtWorkspaceEditor(QMainWindow):
             tree.setContextMenuPolicy(Qt.CustomContextMenu)
             tree.customContextMenuRequested.connect(lambda position, s=section:
                                                      self.show_context_menu(s, position))
-            split.addWidget(tree)
+            if section != 'models':
+                split.addWidget(tree)
             if section == 'files':
                 view = QPlainTextEdit()
                 view.setReadOnly(True)
@@ -263,8 +272,15 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_cpu.setObjectName('cpuModelPreview')
                 view.addWidget(self.model_cpu)
             split.addWidget(view)
-            split.setStretchFactor(0, 1)
-            split.setStretchFactor(1, 4)
+            if section == 'models':
+                # Keep the requested asset explorer on the right of the model.
+                split.addWidget(tree)
+                split.setStretchFactor(0, 5)
+                split.setStretchFactor(1, 1)
+                tree.setVisible(False)
+            else:
+                split.setStretchFactor(0, 1)
+                split.setStretchFactor(1, 4)
             box.addWidget(split, 1)
             self.tabs.addTab(tab, label)
             self.trees[section] = tree
@@ -296,6 +312,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.find_shortcut = QShortcut(QKeySequence.Find, self)
         self.find_shortcut.activated.connect(self.find_text)
         self.populate()
+        self._sync_file_explorer_button()
         self.recovery_timer=QTimer(self)
         self.recovery_timer.setInterval(30000)
         self.recovery_timer.timeout.connect(self._autosave_recovery)
@@ -374,6 +391,12 @@ class QtWorkspaceEditor(QMainWindow):
             a.setCheckable(True)
             self._view_actions[choice] = a
         menus['View'].addSeparator()
+        explorer_action = menus['View'].addAction('File Explorer')
+        explorer_action.setCheckable(True)
+        explorer_action.setShortcut('Ctrl+B')
+        explorer_action.setChecked(True)
+        explorer_action.toggled.connect(self.toggle_file_explorer)
+        self._file_explorer_action = explorer_action
         for name in ('Balanced', 'Model Focus', 'Files First'):
             action('View', 'Layout: ' + name, lambda n=name: self.set_workspace_layout(n))
         action('View', 'Save Current Layout Preset', self.save_workspace_layout)
@@ -382,14 +405,33 @@ class QtWorkspaceEditor(QMainWindow):
         self._view_actions['faceted'].setChecked(True)
         menus['View'].aboutToShow.connect(self._sync_view_menu)
 
+    def _sync_file_explorer_button(self):
+        section = self.TABS[self.tabs.currentIndex()]
+        showing = self._sidebar_visibility.get(section, True)
+        self.sidebar_button.blockSignals(True)
+        self.sidebar_button.setChecked(showing)
+        self.sidebar_button.setText('☰ Hide Explorer' if showing else '☰ File Explorer')
+        self.sidebar_button.blockSignals(False)
+        if hasattr(self, '_file_explorer_action'):
+            self._file_explorer_action.blockSignals(True)
+            self._file_explorer_action.setChecked(showing)
+            self._file_explorer_action.blockSignals(False)
+
+    def toggle_file_explorer(self, visible):
+        section = self.TABS[self.tabs.currentIndex()]
+        self._sidebar_visibility[section] = bool(visible)
+        self.trees[section].setVisible(bool(visible))
+        self._sync_file_explorer_button()
+
     def set_workspace_layout(self, name):
         options = {'Balanced': (1, 4), 'Model Focus': (1, 7),
                    'Files First': (3, 2)}
         if name not in options:
             raise ValueError('Unknown layout preset.')
         left, right = options[name]
-        for split in self.splitters.values():
-            split.setSizes([left * 120, right * 120])
+        for section, split in self.splitters.items():
+            split.setSizes([right * 120, left * 120] if section == 'models'
+                           else [left * 120, right * 120])
         if name == 'Model Focus':
             self.tabs.setCurrentIndex(2)
         elif name == 'Files First':
