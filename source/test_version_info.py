@@ -16,6 +16,8 @@ class VersionManifestTests(unittest.TestCase):
             path.write_text('bad', encoding='utf-8')
             self.assertEqual(app_version(path), 'Development build')
         self.assertEqual(app_version(Path(folder) / 'missing'), 'Development build')
+        (Path(folder)/'VERSION.txt').write_text('1.1.18-beta.1 - Preview')
+        self.assertEqual(app_version(Path(folder)/'VERSION.txt'), 'v1.1.18-beta.1')
 
     def test_public_notes_are_brief_current_and_shared_with_readme(self):
         from release_notes import RELEASE_NOTES, markdown
