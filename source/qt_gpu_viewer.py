@@ -573,6 +573,7 @@ class QtGPUModelPanel(QWidget):
         self._info.setText('User Perspective  •  '+mesh.source_name)
         self._info.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._info.setStyleSheet('QLabel#viewportBreadcrumb { background: rgba(22,22,26,165); color: #f0edf2; padding: 4px 7px; border-radius: 4px; }')
+        self._info.show()
         self._overlay = QScrollArea(self.canvas)
         self._overlay.setObjectName('modelOverlayControls')
         self._overlay.setWidgetResizable(True)
