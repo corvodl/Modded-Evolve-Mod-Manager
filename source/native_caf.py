@@ -125,7 +125,9 @@ def _controller(raw, version):
         if align:
             offset = (offset + 3) & ~3
         rotation_times, offset = _read_times(raw, offset, nr, rot_time)
-        if align:
+        # Evolve does not pad the end of a rotation-only controller. Padding
+        # separates blocks, not a trailing empty position section.
+        if align and np_:
             offset = (offset + 3) & ~3
     else:
         rotation_times = ()
@@ -139,7 +141,7 @@ def _controller(raw, version):
                for xyz in positions):
             raise ValueError('Invalid CAF positions')
         offset += np_*12
-        if align:
+        if align and pos_shared:
             offset = (offset + 3) & ~3
         if pos_shared:
             position_times, offset = _read_times(raw, offset, np_, pos_time)
