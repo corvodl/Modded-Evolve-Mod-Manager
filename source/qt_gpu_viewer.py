@@ -10,14 +10,47 @@ import json
 from pathlib import Path
 import numpy as np
 
-from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess, QObject, Signal, QRunnable, QThreadPool, QEvent
-from PySide6.QtGui import QSurfaceFormat
+from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess, QObject, Signal, QRunnable, QThreadPool, QEvent, QSize, QPoint
+from PySide6.QtGui import QSurfaceFormat, QIcon, QPixmap, QPainter, QPen, QColor, QPolygon
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
     QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
+
+
+def _viewport_tool_icon(kind):
+    """Draw toolbar icons without an emoji font or SVG runtime dependency."""
+    canvas = QPixmap(18, 18)
+    canvas.fill(Qt.transparent)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setPen(QPen(QColor("#e9e2e7"), 1.6))
+    painter.setBrush(Qt.NoBrush)
+    if kind == "View":
+        painter.drawEllipse(2, 5, 14, 8)
+        painter.drawEllipse(7, 7, 4, 4)
+    elif kind == "Materials":
+        for x, y in ((3, 3), (10, 3), (3, 10), (10, 10)):
+            painter.drawRect(x, y, 5, 5)
+    elif kind == "Animation":
+        painter.drawRect(2, 3, 14, 12)
+        painter.drawPolygon(QPolygon([QPoint(7, 6), QPoint(7, 12),
+                                       QPoint(12, 9)]))
+    elif kind == "Grid":
+        for v in (4, 9, 14):
+            painter.drawLine(v, 2, v, 16)
+            painter.drawLine(2, v, 16, v)
+    elif kind == "Wire":
+        painter.drawRect(3, 3, 11, 11)
+        painter.drawLine(3, 3, 14, 14)
+        painter.drawLine(14, 3, 3, 14)
+    elif kind == "Solid":
+        painter.setBrush(QColor("#aaa6b6"))
+        painter.drawEllipse(3, 3, 12, 12)
+    painter.end()
+    return QIcon(canvas)
 
 
 class _NativeResult(QObject):
@@ -529,6 +562,10 @@ class QtGPUModelPanel(QWidget):
             button = QToolButton(self)
             button.setObjectName('gpuOverlayButton' + section)
             button.setText(section + ' ▾')
+            button.setIcon(_viewport_tool_icon(section))
+            button.setIconSize(QSize(17, 17))
+            button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            button.setToolTip('Open '+section+' tools over the 3D preview')
             button.setCheckable(True)
             button.clicked.connect(
                 lambda active=False, key=section: self.toggle_overlay(key, active))
@@ -537,6 +574,8 @@ class QtGPUModelPanel(QWidget):
         toolbar.addStretch(1)
         self._grid_toggle = QToolButton(self)
         self._grid_toggle.setText('Grid')
+        self.setIcon(_viewport_tool_icon('Grid'))
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self._grid_toggle.setCheckable(True)
         self._grid_toggle.setChecked(True)
         self._grid_toggle.toggled.connect(lambda state: (setattr(self.canvas,'grid_visible', state),self.canvas.update()))
@@ -545,12 +584,16 @@ class QtGPUModelPanel(QWidget):
         self._shading_group.setExclusive(True)
         self._solid_shading = QToolButton(self)
         self._solid_shading.setText('Solid')
+        self.setIcon(_viewport_tool_icon('Solid'))
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self._solid_shading.setToolTip('Preview without texture colors')
         self._solid_shading.setCheckable(True)
         self._shading_group.addButton(self._solid_shading)
         toolbar.addWidget(self._solid_shading)
         self._material_shading = QToolButton(self)
         self._material_shading.setText('Material')
+        self.setIcon(_viewport_tool_icon('Materials'))
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self._material_shading.setToolTip('Preview with textures and CryEngine material approximation')
         self._material_shading.setCheckable(True)
         self._material_shading.setChecked(True)
@@ -558,6 +601,8 @@ class QtGPUModelPanel(QWidget):
         toolbar.addWidget(self._material_shading)
         self._wire_toggle = QToolButton(self)
         self._wire_toggle.setText('Wire')
+        self.setIcon(_viewport_tool_icon('Wire'))
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self._wire_toggle.setCheckable(True)
         toolbar.addWidget(self._wire_toggle)
         self._play_shortcut = QToolButton(self)
