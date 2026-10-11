@@ -28,6 +28,16 @@ def _exact_loose(index, virtual, preferred_workspace=None):
             archive = record["_shared_archive"]
             entry = record["_shared_entry"]
             file = archive.cache_dir / normalized_name(entry)
+            # Existing cached CAF bytes belong to a specific signed PAK
+            # generation; never replay an obsolete cache after game repair.
+            try:
+                stat = archive.path.stat()
+                if (stat.st_size, stat.st_mtime_ns) != archive.fingerprint:
+                    continue
+                if not file.resolve().is_relative_to(archive.cache_dir.resolve()):
+                    continue
+            except (OSError, ValueError):
+                continue
         else:
             file = record.get("file")
         if not file:
