@@ -475,6 +475,8 @@ class QtManager(QMainWindow):
             self.stack.setCurrentIndex(self._last_public_page)
             if hasattr(self, 'dev_memory_panel'):
                 self.dev_memory_panel.stop()
+            if hasattr(self, 'dev_lab_panel'):
+                self.dev_lab_panel.stop()
             old = self.pages['developer']
             self.stack.removeWidget(old)
             old.hide()
@@ -925,12 +927,20 @@ class QtManager(QMainWindow):
         self.dev_memory_panel = DeveloperMemoryPanel()
         panel.addWidget(self.dev_memory_panel)
         lay.addWidget(card)
+        card, panel = _card('Developer diagnostics',
+            'Live pointer/snapshot tools and isolated relay, session and '
+            'trace diagnostics. Local fixture services cannot target public endpoints.')
+        from qt_developer_lab import DeveloperLabPanel
+        self.dev_lab_panel = DeveloperLabPanel(self._developer_game)
+        panel.addWidget(self.dev_lab_panel)
+        lay.addWidget(card)
         lay.addWidget(_button('Lock and leave',
                               lambda: self.open_page(self._last_public_page)))
         lay.addStretch()
         self.stack.insertWidget(self._developer_index, scroll)
         self.pages['developer'] = scroll
         QTimer.singleShot(0, self.dev_memory_panel.start)
+        QTimer.singleShot(0, self.dev_lab_panel.refresh_pids)
 
     def _developer_game(self):
         state = state_status(Path(self.swap_path))
