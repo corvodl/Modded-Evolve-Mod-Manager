@@ -25,6 +25,8 @@ class CharacterPreview:
     skeleton: str
     included: tuple
     omitted: tuple
+    equipment_options: tuple = ()
+    selected_equipment: str = ''
 
 
 def _parse_cdf(raw):
@@ -131,7 +133,7 @@ def combine_meshes(items):
 
 
 def assemble_character(workspace, selected, index, *, texture_folder=None,
-                       projects_root=None, stage_root=None):
+                       projects_root=None, stage_root=None, equipment=None):
     """Return None when no owning CDF exists or fewer than two skins resolve.
 
     Only select the character body and explicitly selected weapon/skin. Extra
@@ -148,9 +150,18 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
                if label.casefold() in ('body', 'hands', 'character', 'base', 'main')]
     if not primary and skins:
         primary = [skins[0]]
-    selected_equipment = [(label, rel) for label, rel in skins
-                          if rel.casefold() == selected_skin and (label, rel) not in primary]
-    requested = primary + selected_equipment
+    options = [(label, rel) for label, rel in skins if (label, rel) not in primary]
+    if equipment == 'body':
+        chosen = []
+    elif equipment:
+        chosen = [(label, rel) for label, rel in options if rel.casefold() == equipment.casefold()]
+    else:
+        selected_matches = [(label, rel) for label, rel in options
+                            if rel.casefold() == selected_skin]
+        # The first CDF skin after the body is the character's default
+        # equipped appearance. Draw exactly ONE, never every overlapping gun.
+        chosen = selected_matches or options[:1]
+    requested = primary + chosen
     if not requested:
         return None
     included, omitted, parts = [], [], []
@@ -178,4 +189,5 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         return None
     mesh, materials = combine_meshes(parts)
     return CharacterPreview(mesh, materials, cdf, skeleton,
-                            tuple(included), tuple(omitted))
+                            tuple(included), tuple(omitted),
+                            tuple(options), chosen[0][1] if chosen else 'body')
