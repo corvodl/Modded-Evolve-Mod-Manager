@@ -8,6 +8,9 @@ echo Building the portable Evolve Mod Manager...
 echo Build computer needs Python 3.11 x64. The finished app includes Python.
 call source\Setup-Environment.cmd
 if errorlevel 1 goto failed
+rem Pin and bundle the independent GPLv2 converter and its complete source.
+powershell -NoProfile -ExecutionPolicy Bypass -File "source\Prepare-Cryengine-Converter.ps1"
+if errorlevel 1 goto failed
 rem Always derive the Windows taskbar/EXE icon from the tracked black/red PNG.
 "%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" source\build_brand_icons.py
 if errorlevel 1 goto failed
