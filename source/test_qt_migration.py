@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox, QToolButton, QLineEdit
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox, QToolButton, QLineEdit
 
 from launch_integration import SwapStatus
 from qt_manager import QtManager, SECTIONS, qt_style
@@ -370,8 +370,15 @@ class QtMigrationTests(unittest.TestCase):
         editor = QtWorkspaceEditor(self.win,ws)
         self.addCleanup(editor.close)
         self.assertEqual(editor.tabs.count(),3)
+        self.assertIsInstance(editor, QMainWindow)
+        self.assertIsNotNone(editor.centralWidget())
         self.assertTrue(editor.windowFlags() & Qt.WindowMaximizeButtonHint)
-        self.assertTrue(editor.isSizeGripEnabled())
+        self.assertFalse(editor.windowFlags() & Qt.MSWindowsFixedSizeDialogHint)
+        editor.showMaximized()
+        self.application.processEvents()
+        self.assertTrue(editor.isMaximized())
+        editor.showNormal()
+        self.application.processEvents()
         from qt_cpu_model_viewer import QtCPUModelCanvas
         self.assertIsInstance(editor.model_cpu, QtCPUModelCanvas)
         self.assertIsNotNone(editor.model_fallback)
@@ -406,6 +413,14 @@ class QtMigrationTests(unittest.TestCase):
     def test_gpu_model_renderer_is_native_qt_without_tk_mainloop(self):
         code = Path(__file__).with_name('qt_gpu_viewer.py').read_text(encoding='utf-8')
         self.assertIn("class QtGLModelCanvas(QOpenGLWidget)", code)
+        self.assertIn("class QtGPUModelPanel(QWidget)", code)
+        self.assertIn("class QtGPUModelDialog(QDialog)", code)
+        self.assertIn("self._prepare_animation_controls(layout)", code)
+        editor = Path(__file__).with_name('qt_workspace_editor.py').read_text(encoding='utf-8')
+        self.assertIn('class QtWorkspaceEditor(QMainWindow)', editor)
+        self.assertIn('QtGPUModelPanel(view, mesh, materials)', editor)
+        self.assertIn("view.setCurrentWidget(self.model_panel)", editor)
+        self.assertIn("self.model_panel.set_static_mesh(mesh, materials)", editor)
         self.assertIn("glDrawElements", code)
         self.assertIn("glTexImage2D", code)
         self.assertNotIn("tkinter", code)

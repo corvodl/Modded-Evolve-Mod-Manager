@@ -76,7 +76,7 @@ class BlenderExportTests(unittest.TestCase):
         for required in ('defaultGpuModelPreview', 'Export for Blender (.glb)',
                          'Export Model Folder', 'Export Native Model',
                          'Import Same-Layout Model', '_software_model_preview',
-                         'QtGLModelCanvas'):
+                         'QtGPUModelPanel'):
             with self.subTest(required=required):
                 self.assertIn(required, code)
 

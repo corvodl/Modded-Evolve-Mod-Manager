@@ -1,10 +1,15 @@
-# Evolve Stage 2 Mod Manager — v1.1.9
+# Evolve Stage 2 Mod Manager — v1.1.10
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.9 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.10 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.10
+
+- The full GPU model viewer now opens directly inside Edit Files.
+- File editor windows now support normal maximize and restore controls.
 
 ## What's new in v1.1.9
 
@@ -118,6 +123,12 @@ The **Data** archive generally contains meshes, skeleton files and animation con
 GLB export now also includes the original **bone hierarchy, inverse-bind matrices, and per-vertex skin weights** when a compatible character **.skin** or **.chr** file accompanies the matching render-mesh **.skinm** or **.chrm**. The converter resolves per-subset local bone palettes, verifies joint transforms and refuses inconsistent skinning data. In **Edit Files → Models**, the export result explicitly says whether the model was rigged and gives a reason when not.
 
 **Animation clips are not yet imported:** character animation configuration files are not the underlying CAF/DBA keyframe tracks. Rigged GLBs can be posed and edited in Blender, but reproducing the original Evolve animations requires a separate CAF/DBA decoder. Edited Blender meshes still cannot be repackaged automatically into native Evolve model files.
+
+### In-editor GPU viewer and maximizable windows (v1.1.10)
+
+**Edit Files → Models** now uses the complete GPU viewer in the right pane by default on supported Windows OpenGL drivers. You can adjust wireframe, texture visibility, faceted/smooth shading, quality, camera reset, import original CAF/DBA animations through an optional converter, load animated GLB files, and play/scrub clips without leaving the editor. The **Open GPU Viewer** action remains available for an optional separate pop-out window.
+
+**Edit Files** and the loose-file editor now use standard resizable top-level windows with native title-bar maximize and restore controls. On computers without working OpenGL, the existing interactive CPU fallback remains in use. Neither model viewing nor resizing modifies installed game assets.
 
 ### Model camera, shading and animations (v1.1.9)
 

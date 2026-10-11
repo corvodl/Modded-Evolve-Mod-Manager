@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
+    QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
     QComboBox, QFileDialog, QMessageBox, QSlider)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
@@ -30,7 +30,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         format.setDepthBufferSize(24)
         format.setSamples(2)
         self.setFormat(format)
-        self.setMinimumSize(450, 340)
+        self.setMinimumSize(260, 180)
         self.mesh = mesh
         self.shading = 'faceted'
         self.geometry = prepare_geometry(mesh, shading=self.shading)
@@ -269,22 +269,19 @@ class QtGLModelCanvas(QOpenGLWidget):
         super().closeEvent(event)
 
 
-class QtGPUModelDialog(QDialog):
-    """Actual native Qt GPU model window with mesh and material details."""
+class QtGPUModelPanel(QWidget):
+    """Reusable GPU viewer with camera, material and animation controls."""
 
     def __init__(self,parent,mesh,materials=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
-        self.setSizeGripEnabled(True)
-        self.setWindowTitle('CryEngine Model — Qt GPU Viewer')
-        self.resize(990,750)
-        self.setMinimumSize(620,460)
-        self.setStyleSheet(parent.styleSheet())
+        self.setObjectName('gpuModelControlPanel')
+        self.setMinimumSize(300, 230)
         layout=QVBoxLayout(self)
-        info=QLabel(mesh.source_name+'  •  '+mesh.description)
-        info.setWordWrap(True)
-        layout.addWidget(info)
+        self._info=QLabel(mesh.source_name+'  •  '+mesh.description)
+        self._info.setWordWrap(True)
+        layout.addWidget(self._info)
         self.canvas=QtGLModelCanvas(mesh,materials,self)
+        self.canvas.setObjectName('embeddedGpuCanvas')
         layout.addWidget(self.canvas,1)
         line=QHBoxLayout()
         wire=QCheckBox('Wireframe')
@@ -315,6 +312,23 @@ class QtGPUModelDialog(QDialog):
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
         layout.addWidget(foot)
+
+    def set_static_mesh(self, mesh, materials=None):
+        """Switch project model while ensuring prior clip playback is stopped."""
+        self.anim_timer.stop()
+        self.anim_playing = False
+        self.play_button.setText('Play')
+        self.animated = None
+        self.clip_select.blockSignals(True)
+        self.clip_select.clear()
+        self.clip_select.blockSignals(False)
+        self.anim_position = 0.
+        self.seek.setValue(0)
+        self.anim_time.setText('0.00 / 0.00 s')
+        self.anim_status.setText(
+            'Load an animated GLB or import original clips using an external converter.')
+        self.canvas.set_mesh(mesh, materials)
+        self._info.setText(mesh.source_name + '  •  ' + mesh.description)
 
     def reset_view(self):
         self.canvas.rotation[:]=[-30.,14.]
@@ -507,3 +521,24 @@ class QtGPUModelDialog(QDialog):
             self.converter_process.kill()
             self.converter_process.waitForFinished(3000)
         super().closeEvent(event)
+
+
+class QtGPUModelDialog(QDialog):
+    """Optional pop-out version of the same panel used in the editor."""
+
+    def __init__(self, parent, mesh, materials=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+        self.setSizeGripEnabled(True)
+        self.setWindowTitle('CryEngine Model — GPU Viewer')
+        self.resize(990, 750)
+        self.setMinimumSize(620, 460)
+        self.setStyleSheet(parent.styleSheet())
+        layout = QVBoxLayout(self)
+        self.panel = QtGPUModelPanel(self, mesh, materials)
+        layout.addWidget(self.panel)
+        self.canvas = self.panel.canvas
+
+    def reset_view(self):
+        self.panel.reset_view()

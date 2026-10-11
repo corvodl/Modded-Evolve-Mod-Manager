@@ -20,7 +20,7 @@ from PIL import Image
 from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtGui import QPixmap, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
 )
@@ -53,18 +53,20 @@ def _image_pixmap(image):
         return pixmap
 
 
-class QtLooseFileEditor(QDialog):
+class QtLooseFileEditor(QMainWindow):
     def __init__(self, parent, game_root, relative, projects):
         super().__init__(parent)
         self.relative = relative
         self.projects = Path(projects).resolve()
         self.copy = copy_to_project(game_root, relative, self.projects)
         self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
-        self.setSizeGripEnabled(True)
         self.setWindowTitle('Game File Copy — ' + self.copy.name)
         self.resize(850, 590)
+        self.setMinimumSize(520, 340)
+        center = QWidget(self)
+        self.setCentralWidget(center)
         self.text = QPlainTextEdit()
-        layout = QVBoxLayout(self)
+        layout = QVBoxLayout(center)
         layout.addWidget(QLabel(str(self.copy)))
         layout.addWidget(QLabel('Private project copy — the installed game file is never modified.'))
         top = QHBoxLayout()
@@ -115,7 +117,7 @@ class QtLooseFileEditor(QDialog):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
 
-class QtWorkspaceEditor(QDialog):
+class QtWorkspaceEditor(QMainWindow):
     TABS = ('files', 'images', 'models')
 
     def __init__(self, manager, workspace, archive_map=None):
@@ -131,18 +133,21 @@ class QtWorkspaceEditor(QDialog):
         self.mode = None
         self.mesh = None
         self.model_gpu = None
+        self.model_panel = None
         self.model_fallback = None
         self.model_cpu = None
         self.texture_folder = None
         self.gpu_windows = []
         self.materials = None
+        # A main window has the standard Win32 maximize/restore non-dialog frame.
         self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
-        self.setSizeGripEnabled(True)
         self.setWindowTitle('Edit Files — Evolve PAK Workspace')
         self.resize(1210, 790)
         self.setMinimumSize(660, 460)
         self.setStyleSheet(manager.styleSheet())
-        main = QVBoxLayout(self)
+        center = QWidget(self)
+        self.setCentralWidget(center)
+        main = QVBoxLayout(center)
         tools = QHBoxLayout()
         self.search = QLineEdit()
         self.search.setPlaceholderText('Search extracted files…')
@@ -390,8 +395,8 @@ class QtWorkspaceEditor(QDialog):
                 self.mesh = mesh
                 self._paint_model(view, mesh)
                 self.status.setText(rel + ' | ' + report +
-                                    ' | Drag: rotate; right/middle/Shift-drag: pan; '
-                                    'wheel: zoom; Open GPU Viewer for animation controls.')
+                                    ' | GPU panel: drag to rotate; middle/right drag to pan; '
+                                    'scroll to zoom. Shading and animation controls below.')
             except (ValueError, OSError) as exc:
                 self.model_fallback.setPixmap(QPixmap())
                 self.model_fallback.setText(rel + '\n\n' + report +
@@ -400,13 +405,12 @@ class QtWorkspaceEditor(QDialog):
                 self.status.setText(rel + ' | Native model inspection')
 
     def _paint_model(self, view, mesh):
-        """Prefer embedded hardware OpenGL, falling back to software when required."""
-        # CI/offscreen platforms cannot allocate a real WGL/Qt GL surface.
+        """The complete GPU controls are embedded by default in the Models tab."""
         if os.environ.get('QT_QPA_PLATFORM', '').lower() in ('offscreen', 'minimal'):
             self._software_model_preview(mesh)
             return
         try:
-            from qt_gpu_viewer import QtGLModelCanvas
+            from qt_gpu_viewer import QtGPUModelPanel
             materials = None
             try:
                 from material_preview import load_preview_materials
@@ -416,13 +420,15 @@ class QtWorkspaceEditor(QDialog):
                     stage_root=self.manager.stage_path)
             except (ValueError, OSError):
                 pass
-            if self.model_gpu is None:
-                self.model_gpu = QtGLModelCanvas(mesh, materials, parent=view)
+            if self.model_panel is None:
+                self.model_panel = QtGPUModelPanel(view, mesh, materials)
+                self.model_panel.setObjectName('primaryGpuModelViewer')
+                view.addWidget(self.model_panel)
+                self.model_gpu = self.model_panel.canvas
                 self.model_gpu.setObjectName('defaultGpuModelPreview')
-                view.addWidget(self.model_gpu)
             else:
-                self.model_gpu.set_mesh(mesh, materials)
-            view.setCurrentWidget(self.model_gpu)
+                self.model_panel.set_static_mesh(mesh, materials)
+            view.setCurrentWidget(self.model_panel)
             self.model_gpu.update()
             QTimer.singleShot(450, self._check_gpu_preview)
         except Exception as exc:
@@ -432,18 +438,24 @@ class QtWorkspaceEditor(QDialog):
         if self.model_gpu is None or not self.model_gpu.isVisible():
             return
         if not self.model_gpu.isValid() and self.mesh is not None:
-            self._software_model_preview(self.mesh, reason='OpenGL context unavailable')
+            self._software_model_preview(
+                self.mesh, reason='OpenGL context unavailable')
 
     def _software_model_preview(self, mesh, reason=''):
         view = self.views['models']
-        if self.model_gpu is not None:
-            view.setCurrentWidget(self.model_fallback)
-            self.model_gpu.deleteLater()
+        if self.model_panel is not None:
+            view.setCurrentWidget(self.model_cpu)
+            self.model_panel.anim_timer.stop()
+            self.model_panel.anim_playing = False
+            self.model_panel.hide()
+            self.model_panel.deleteLater()
+            self.model_panel = None
             self.model_gpu = None
         self.model_cpu.set_mesh(mesh, reason)
         view.setCurrentWidget(self.model_cpu)
         if reason:
-            self.status.setText('Software preview (GPU unavailable: ' + reason[:140] + ')')
+            self.status.setText(
+                'Software preview (GPU unavailable: ' + reason[:140] + ')')
 
     def switch_archive(self, name):
         if name not in self.archive_map or self.archive_map[name] == self.workspace:
@@ -782,7 +794,9 @@ class QtWorkspaceEditor(QDialog):
             self.texture_folder = Path(folder)
             self.materials = None
             self.status.setText('GPU preview texture folder selected: '+folder)
-            # Existing GPU dialogs can be updated by reopening them.
+            if self.mesh is not None and self.current:
+                self._paint_model(self.views['models'], self.mesh)
+            # Optional separate GPU windows retain their current material source.
 
     def open_gpu_viewer(self):
         if self.mode != 'models' or not self.current or self.mesh is None:
@@ -868,11 +882,16 @@ class QtWorkspaceEditor(QDialog):
             'Native export and same-layout native import remain available. '
             'Viewer: left-drag rotates, right/middle-drag pans, wheel zooms. '
             'Faceted shading preserves armor edges; smooth shading is optional. '
+            'The Models tab contains the full GPU viewer and animation timeline. '
+            'Open GPU Viewer optionally pops out the same controls. '
             'Original CAF/DBA clips can be converted by a separately installed '
             'CryEngine converter, then imported as animated GLB files.')
 
     def closeEvent(self, event):
         if not self._confirm_buffer():
+            event.ignore()
+            return
+        if self.model_panel is not None and not self.model_panel.close():
             event.ignore()
             return
         super().closeEvent(event)

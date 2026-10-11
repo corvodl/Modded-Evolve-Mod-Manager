@@ -1,1 +1,1 @@
-1.1.9 - Animation Viewer and Model Editor Controls
+1.1.10 - In-Editor GPU Model Viewer and Window Controls
