@@ -129,7 +129,7 @@ def _external_lookup(folder, ref):
     return None
 
 
-def _decode_texture(item):
+def _decode_texture(item, *, index=None):
     path = item['file']
     if path.stat().st_size > MAX_TEXTURE_BYTES:
         raise ValueError('Texture fragment exceeds the 64 MiB preview limit.')
@@ -150,6 +150,23 @@ def _decode_texture(item):
                 match = re.fullmatch(re.escape(base) + r'\.(\d+)', child.name, re.IGNORECASE)
                 if match and child.is_file() and not child.is_symlink():
                     parts[int(match.group(1))] = child
+            # The Asset Library stores each signed PAK under its own import
+            # root. A streamed DDS can have its .0 in a character PAK and
+            # high-resolution .1/.2 parts in a different textures PAK.
+            # Resolve exact VIRTUAL paths across all indexed PAKs, never
+            # guess by basename or concatenate conflicting payloads.
+            if index:
+                stem = relative[:-2]
+                for number in range(1, 64):
+                    virtual = stem + '.' + str(number)
+                    hit = _find_unique(index, virtual)
+                    if hit is None:
+                        if number not in parts:
+                            break
+                        continue
+                    candidate = Path(hit['file'])
+                    if not candidate.is_symlink() and candidate.is_file():
+                        parts[number] = candidate
             if 0 not in parts:
                 raise ValueError('Missing DDS .0 header.')
             first = path.read_bytes()
@@ -158,7 +175,9 @@ def _decode_texture(item):
                 raw = first
             else:
                 if len(parts) < 2 or set(parts) != set(range(len(parts))):
-                    raise ValueError('Texture folder is missing DDS streaming parts.')
+                    raise ValueError('Texture folder is missing DDS streaming parts for ' +
+                                     relative + ' across imported PAKs; found fragments ' +
+                                     ', '.join(str(i) for i in sorted(parts)))
                 sizes = _mip_sizes(info, first)
                 n_tail = [n for n in range(1, info.mipmaps) if sum(sizes[-n:]) == len(first)-info.data_offset]
                 if len(n_tail) != 1 or len(parts) != info.mipmaps-n_tail[0]+1:
@@ -282,7 +301,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         hit = find_texture(ref)
         if hit is None:
             return None
-        return _decode_texture(hit)
+        return _decode_texture(hit, index=index)
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]
     for item in subs:
@@ -320,7 +339,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 issues.append(name + ': DDS missing for ' + diffuse)
                 result.append(None)
                 continue
-            result.append(_decode_texture(found))
+            result.append(_decode_texture(found, index=index))
         except (ValueError, OSError) as error:
             issues.append(name + ': ' + str(error))
             result.append(None)
