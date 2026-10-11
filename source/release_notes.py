@@ -4,6 +4,10 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.1', (
+        'Add a separate experimental Beta release with a Windows installer.',
+        'Offer only the newest verified Stable or Beta update in the manager.',
+    )),
     ('1.1.17.1', (
         'Add a Windows installer with optional Desktop and Start Menu shortcuts.',
         'Compare Stable and Beta releases and offer only the newest version.',
