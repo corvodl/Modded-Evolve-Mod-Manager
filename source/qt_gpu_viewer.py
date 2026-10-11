@@ -1013,7 +1013,7 @@ class QtGPUModelPanel(QWidget):
         self.native_state_filter.setObjectName('nativeAnimationStateFilter')
         self.native_state_filter.addItems((
             'All availability', 'Ready in library', 'In PAK (extract on play)',
-            'Not found', 'Layered / additive', 'Graph / DBA'))
+            'Not found', 'Layered / additive', 'Graph / unavailable', 'DBA converter'))
         self.native_state_filter.currentIndexChanged.connect(self._filter_native_catalog)
         native_filters.addWidget(self.native_state_filter)
         self.native_motion_filter = QComboBox()
@@ -1185,7 +1185,7 @@ class QtGPUModelPanel(QWidget):
         filt = self.native_state_filter.currentIndex()
         motion = self.native_motion_filter.currentIndex()
         kinds = {1: 'candidate', 2: 'extractable', 3: 'missing',
-                 4: 'layered', 5: 'metadata'}
+                 4: 'layered', 5: 'metadata', 6: 'converter'}
         matching = []
         for i, ref in enumerate(self._native_references):
             state, _ = native_clip_playability(ref)
