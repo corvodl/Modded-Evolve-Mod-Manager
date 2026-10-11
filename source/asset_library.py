@@ -111,6 +111,55 @@ def imported_archives(root=None):
     return tuple(result)
 
 
+def required_archive_status(root=None):
+    """Report six shared + three animation PAK coverage, not arbitrary PAK count.
+
+    Only complete imported manifests with readable extracted files count.
+    Missing archives and per-PAK skipped files are visible to the user.
+    """
+    root = _home(root)
+    found = {}
+    for folder in _manifest_dirs(root):
+        try:
+            manifest = _load_manifest(folder)
+            name = str(manifest.get("name", "")).casefold()
+            if name not in DEFAULT_NAMES or not manifest.get("entries"):
+                continue
+            base = (folder / "files").resolve()
+            if not all(
+                (file := base.joinpath(*entry["path"].split("/"))).is_file()
+                and not file.is_symlink()
+                and file.resolve().is_relative_to(base)
+                and file.stat().st_size == entry["bytes"]
+                for entry in manifest["entries"]
+            ):
+                continue
+            found[name] = {
+                "archive": manifest["name"], "files": len(manifest["entries"]),
+                "warnings": len(manifest.get("warnings", [])),
+                "source": str(manifest.get("source", "")),
+            }
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    missing = tuple(sorted(DEFAULT_NAMES - found.keys()))
+    return {
+        "shared": sum(name.startswith("characters_") for name in found),
+        "animations": sum(name.startswith("animations") for name in found),
+        "present": len(found), "required": len(DEFAULT_NAMES),
+        "missing": missing,
+        "warnings": sum(x["warnings"] for x in found.values()),
+        "complete": not missing, "archives": found,
+    }
+
+
+def reference_status(virtual, root=None):
+    """Diagnostic: which extracted PAKs actually provide this virtual name."""
+    from evolve_pak_workspace import normalized_name
+    key = normalized_name(virtual).casefold()
+    return tuple(sorted({str(x["archive"]) for x in
+                         extracted_index(root).get(key, ())}))
+
+
 def extracted_index(root=None):
     """Read-only catalog of extracted loose files; never decrypts at lookup."""
     global _index_cache, _index_fingerprint
@@ -224,7 +273,8 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
                     prior_manifest.get("source_size") == stat.st_size and
                     prior_manifest.get("source_mtime_ns") == stat.st_mtime_ns):
                 if all((prior / "files" / entry["path"]).is_file()
-                       for entry in prior_manifest["entries"]):
+                       and (prior / "files" / entry["path"]).stat().st_size
+                       == entry["bytes"] for entry in prior_manifest["entries"]):
                     return {"status": "already-imported", "id": prior.name,
                             "name": source.name, "entries": len(prior_manifest["entries"])}
         except (OSError, ValueError, KeyError, TypeError):
@@ -235,8 +285,14 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
     if target.is_dir() and (target / MANIFEST).is_file():
         manifest = _load_manifest(target)
         if manifest.get("source_sha256") == sha:
-            return {"status": "already-imported", "id": slug, "name": source.name,
-                    "entries": len(manifest["entries"])}
+            base = target / "files"
+            if all((base / entry["path"]).is_file() and
+                   (base / entry["path"]).stat().st_size == entry["bytes"]
+                   for entry in manifest["entries"]):
+                return {"status": "already-imported", "id": slug,
+                        "name": source.name, "entries": len(manifest["entries"])}
+            raise ValueError("Cached extraction has missing or damaged files. "
+                             "Remove this archive in Asset Library and re-import it.")
     if target.exists():
         raise ValueError("An incomplete/conflicting library import exists: " + slug)
     if len(_manifest_dirs(root)) >= MAX_ARCHIVES:
