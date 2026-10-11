@@ -1149,8 +1149,8 @@ class QtGPUModelPanel(QWidget):
             state, _ = native_clip_playability(ref)
             counts[state] += 1
         self._native_catalog_summary = (
-            '%d in library • %d packed • %d not found • %d layered • %d graph • '
-            '%d total mappings' %
+            '%d loose CAF candidates • %d packed CAF paths • %d no standalone CAF '
+            '(some may be DBA tracks) • %d layered • %d graph • %d total mappings' %
             (counts['candidate'], counts['extractable'], counts['missing'],
              counts['layered'], counts['metadata'], len(references)))
         if description:
@@ -1207,7 +1207,7 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.addItem('Select an animation…', -1)
         suffixes = {
             'candidate': ' [Library]', 'extractable': ' [Packed]',
-            'missing': ' [Not found]', 'layered': ' [Layered]',
+            'missing': ' [No loose CAF]', 'layered': ' [Layered]',
             'metadata': ' [Graph]'}
         preferred = 0
         for position, (i, ref, state) in enumerate(shown, 1):
