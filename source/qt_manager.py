@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QSplitter, QPlainTextEdit, QMessageBox,
     QFileDialog, QDialog, QDialogButtonBox, QFormLayout, QProgressDialog,
     QCheckBox, QMenu, QAbstractItemView, QSizePolicy, QProgressBar, QTabWidget,
-    QToolButton, QStyle, QInputDialog, QColorDialog,
+    QToolButton, QStyle, QInputDialog, QColorDialog, QMenuBar,
 )
 
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
@@ -606,9 +606,55 @@ class QtManager(QMainWindow):
         title.setObjectName('sectionTitle')
         root.addWidget(title)
         root.addWidget(_label('Browse signed PAKs and project copies. Readable names are inferred from filenames; signed paths are unchanged.', muted=True))
+        menu_bar = QMenuBar(page)
+        menu_bar.setObjectName('moddingMenuBar')
+        self.modding_menu = menu_bar
+        menu_bar.setNativeMenuBar(False)
+        def menu_commands(label, commands):
+            menu = menu_bar.addMenu(label)
+            for title, callback in commands:
+                if title is None:
+                    menu.addSeparator()
+                else:
+                    act = menu.addAction(title)
+                    act.triggered.connect(lambda _checked=False, cb=callback: cb())
+        menu_commands('File', (
+            ('Unpack PAK + known dependencies', self.extract),
+            ('Unpack selected PAKs + dependencies', self.extract_batch),
+            ('Import External PAK…', self.browse_external_pak),
+            (None, None),
+            ('Projects…', self.open_project_dashboard),
+            ('Open Unpacked Files', self.open_unpacked),
+        ))
+        menu_commands('Edit', (
+            ('Edit Files', self.open_editor),
+            ('Level Editor 1.0', self.open_level_editor),
+            ('Review Changes', self.diff),
+            (None, None),
+            ('Build Mod', self.build),
+            ('Add Mod', self.install),
+            ('Import Modified PAK', self.import_modified_pak),
+            ('Undo Staged Mod', self.rollback),
+        ))
+        menu_commands('View', (
+            ('Refresh PAK list', self.refresh_archives),
+            ('PAK / dependencies information', self.inspect_pak),
+            ('Show staged PAK location', lambda: self.reveal_pak(original=False)),
+            ('Show original PAK location', lambda: self.reveal_pak(original=True)),
+        ))
+        menu_commands('Tools', (
+            ('Mod Profiles…', self.open_mod_profiles),
+            ('Asset Library / Add PAKs…', self.open_asset_library),
+            ('Export Model Folder…', self.export_model_folder),
+            ('PAK Diff…', self.open_pak_diff),
+            ('Task Manager…', self.open_task_manager),
+            ('Offline Test…', self.build_offline_test),
+        ))
+        menu_commands('Help', (('Modding Help', lambda: self.show_help(0)),))
+        root.addWidget(menu_bar)
         actions = QHBoxLayout()
         self.search = QLineEdit()
-        self.search.setPlaceholderText('Search PAK filename or description…')
+        self.search.setPlaceholderText('Search PAKs, map names, dependency groups…')
         self.search.textChanged.connect(self.refresh_table)
         actions.addWidget(self.search, 1)
         self.file_filter = QComboBox()
@@ -616,16 +662,10 @@ class QtManager(QMainWindow):
         self.file_filter.currentTextChanged.connect(self.refresh_table)
         actions.addWidget(self.file_filter)
         actions.addWidget(_button('Refresh', self.refresh_archives))
-        actions.addWidget(_button('External PAK…', self.browse_external_pak))
-        actions.addWidget(_button('Mod Profiles', self.open_mod_profiles, primary=True))
-        actions.addWidget(_button('Export Model Folder', self.export_model_folder))
-        actions.addWidget(_button('PAK Diff…', self.open_pak_diff))
-        actions.addWidget(_button('Projects', self.open_project_dashboard))
-        actions.addWidget(_button('Tasks', self.open_task_manager))
-        actions.addWidget(_button('Offline Test…', self.build_offline_test))
         root.addLayout(actions)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(('Folder', 'Description', 'File', 'Type / Project', 'Size'))
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(
+            ('Dependency Group', 'Folder', 'Description', 'File', 'Type / Project', 'Size'))
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -633,11 +673,13 @@ class QtManager(QMainWindow):
         self.table.setSortingEnabled(True)
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.table.setColumnWidth(0, 170)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.table.setColumnWidth(0, 215)
+        self.table.setColumnWidth(1, 160)
         self.table.itemSelectionChanged.connect(self._select_archive)
         self.table.itemDoubleClicked.connect(lambda _: self.open_editor_or_unpack())
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -645,22 +687,20 @@ class QtManager(QMainWindow):
         root.addWidget(self.table, 1)
         self.archive_count = _label('No PAKs loaded', muted=True)
         root.addWidget(self.archive_count)
-        for group in (
-            (('Unpack PAK', self.extract, False),
-             ('Unpack Selected PAKs', self.extract_batch, False),
-             ('Edit Files', self.open_editor, True),
-             ('Level Editor 1.0', self.open_level_editor, False),
-             ('Review Changes', self.diff, False)),
-            (('Build Mod', self.build, True),
-             ('Add Mod', self.install, False),
-             ('Import Modified PAK', self.import_modified_pak, False),
-             ('Undo Staged Mod', self.rollback, False)),
+        # Keep just four high-frequency actions visible; all specialist
+        # commands are available through the menu bar and context menu.
+        quick = QHBoxLayout()
+        for title, fn, main in (
+            ('Unpack + Dependencies', self.extract, False),
+            ('Edit Files', self.open_editor, True),
+            ('Level Editor 1.0', self.open_level_editor, False),
+            ('Build Mod', self.build, True),
         ):
-            bar = QHBoxLayout()
-            for title, func, primary in group:
-                bar.addWidget(_action_with_info(
-                    title, func, ACTION_HINTS[title], primary=primary), 1)
-            root.addLayout(bar)
+            button = _button(title, fn, primary=main)
+            button.setToolTip(ACTION_HINTS.get(title,
+                'Unpack selected PAK and known companion archives into separate projects.'))
+            quick.addWidget(button, 1)
+        root.addLayout(quick)
         self.stack.addWidget(page)
         self.pages['modding'] = page
 
@@ -1762,7 +1802,14 @@ class QtManager(QMainWindow):
         selected = set(self.selected_archives())
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
-        records = matching_archives(self.archive_entries, query) if mode != 'Game files' else []
+        from pak_dependencies import group_title
+        records = ([
+            rel for rel in matching_archives(self.archive_entries, query)
+            if True] if mode != 'Game files' else [])
+        if query and mode != 'Game files':
+            groups = [rel for rel in self.archive_entries
+                      if query.casefold() in group_title(rel).casefold()]
+            records = sorted(set(records) | set(groups), key=str.casefold)
         for rel in records:
             name, folder = describe_archive(rel)
             ws = self.batch_workspaces.get(rel)
@@ -1771,7 +1818,9 @@ class QtManager(QMainWindow):
                 size = (Path(self.stage_path)/'paks'/Path(*rel.split('/'))).stat().st_size
             except OSError:
                 size = -1
-            self._insert_row(rel, (folder, archive_description(rel), name, status, format_size(size)))
+            self._insert_row(rel, (group_title(rel), folder,
+                                   archive_description(rel), name, status,
+                                   format_size(size)))
         # Read-only loose-file discovery uses the existing bounds-checked scanner.
         loose_count = 0
         if mode != 'PAK archives':
@@ -1784,12 +1833,13 @@ class QtManager(QMainWindow):
                             continue
                         name, folder = describe_archive(record.relative)
                         self._insert_row('loose-file:' + record.relative,
-                                         (folder, 'Game file', name, 'Game file',
-                                          format_size(record.size)))
+                                         ('Loose game files', folder, 'Game file', name,
+                                          'Game file', format_size(record.size)))
                         loose_count += 1
                 except (OSError, ValueError) as exc:
                     self._log('Loose file scan unavailable: ' + str(exc))
         self.table.setSortingEnabled(True)
+        self.table.sortItems(0, Qt.AscendingOrder)
         self.archive_count.setText(
             f'{len(records) + loose_count} files ({len(records)} PAKs, {loose_count} game files)')
         if selected:
