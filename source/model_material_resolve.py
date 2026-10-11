@@ -169,5 +169,10 @@ def nearby_model_materials(index, model_relative, limit=12):
     """Diagnostic suggestions only, not implicitly assigned to a model."""
     model = normalized_name(model_relative)
     parent = PurePosixPath(model).parent.as_posix().casefold()
-    return tuple(sorted(key for key in index if key.endswith('.mtl')
-                        and PurePosixPath(key).parent.as_posix().casefold() == parent)[:limit])
+    # Diagnostic hints include nested Materials/ folders under this
+    # character. They are NOT automatically assigned to a mesh.
+    return tuple(sorted(
+        key for key in index if key.endswith('.mtl')
+        and (PurePosixPath(key).parent.as_posix().casefold() == parent
+             or key.casefold().startswith(parent + '/'))
+    )[:limit])
