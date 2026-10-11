@@ -8,10 +8,9 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## What's new in v1.1.18-beta.4
 
-- Add clearer icons to the GPU model preview overlays and shading controls.
-- Verify six shared character PAKs and three animation PAKs individually.
-- Refresh model dependencies after importing PAKs; resolve shared assets for manual projects.
-- Show referenced versus extracted CAF counts and texture diagnostic warnings.
+- Optionally import **all signed PAKs** discovered in your installed game into the permanent Asset Library, with progress, cancellation, storage estimates and reusable completed imports.
+- Select an imported PAK to create an **editable mod project** from its verified custom-signed stage copy; edit files and use **Build Mod** for packing, signing and verification.
+- Improve shared/animation PAK coverage reporting, model dependency refresh and icons for the GPU preview controls.
 
 ## What's new in v1.1.18-beta.3
 
