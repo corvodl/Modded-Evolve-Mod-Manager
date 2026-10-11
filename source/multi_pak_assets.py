@@ -348,7 +348,7 @@ def locate_batch_asset(workspace, virtual_path):
     return hits[0]['file'] if state == 'found' else None
 
 
-def model_material_links(workspace, model_relative, projects_root=None, stage_root=None):
+def model_material_links(workspace, model_relative, projects_root=None, stage_root=None, *, index=None):
     """Locate material texture references across a batch, WITHOUT applying shaders.
 
     Results are for the UI and manual selection only. Ambiguous paths are never
@@ -357,7 +357,8 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
     from xml.etree import ElementTree as ET
     workspace = Path(workspace).resolve()
     normalized_name(model_relative)
-    index = related_asset_index(workspace, projects_root, stage_root)
+    if index is None:
+        index = related_asset_index(workspace, projects_root, stage_root)
     has_links = index is not None
     if index is None:
         index = defaultdict(list)
@@ -410,6 +411,14 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
             continue
         seen.add(signature)
         matches,resolution = _resolve(index, ref, preferred_workspace=material['workspace'])
+        if resolution == 'missing':
+            virtual = ref.strip().replace('\\', '/')
+            if virtual and not virtual.startswith('/') and ':' not in virtual and '..' not in virtual.split('/'):
+                parent = Path(material['relative']).parent.as_posix()
+                if parent != '.':
+                    matches,resolution = _resolve(
+                        index, parent + '/' + virtual,
+                        preferred_workspace=material['workspace'])
         textures.append({'map':kind, 'reference':ref, 'status':resolution,
                          'archives':[m['archive'] for m in matches],
                          'paths':[m['relative'] for m in matches]})
