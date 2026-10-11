@@ -85,6 +85,46 @@ class LevelCoreTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"changed on disk"):
             scene.save()
 
+    def test_real_evolve_level_layout_without_lyr_uses_mission_xml(self):
+        """Level.pak actually contains leveldata.xml, mission_*.xml, no .lyr."""
+        file = self.files / "mission_mission0.xml"
+        xml = (
+            b'<Mission Name="Mission0"><Objects>'
+            b'<Entity Name="AnimObject" EntityId="673" EntityClass="AnimObject" '
+            b'Layer="ManMade" Pos="303.936,314.97638,50.38" '
+            b'Rotate="0.89493436,0,0,-0.446" Scale="1,1,1" '
+            b'UnknownGameProperty="preserved"/>'
+            b'<Object Name="Rock" Type="Brush" Pos="10,20,30" '
+            b'Geometry="objects/rocks/rock.cgf"/>'
+            b'</Objects></Mission>'
+        )
+        file.write_bytes(xml)
+        (self.files/"leveldata.xml").write_bytes(
+            b'<LevelData><LevelInfo Name="Lava_Rivers" /></LevelData>')
+        (self.files/"levelinfo.xml").write_bytes(
+            b'<LevelInfo Name="game/Levels/Lava_Rivers"/>')
+        fake = patch("evolve_pak_workspace.load_workspace", return_value={
+            "source_pak":"Game/levels/Lava_Rivers/level.pak",
+            "entries":[{"path":"mission_mission0.xml"},
+                       {"path":"leveldata.xml"},{"path":"levelinfo.xml"}]})
+        with fake:
+            self.assertTrue(LevelProject.contains_levels(self.workspace))
+            scene = LevelProject(self.workspace)
+        self.assertEqual(scene.level_name, "Lava_Rivers")
+        self.assertEqual(scene.layer_source,
+                         "CryEngine mission_*.xml object placements")
+        self.assertEqual(len(scene.objects),2)
+        self.assertEqual(scene.objects[0].kind,"Entity")
+        self.assertEqual(scene.objects[0].pos,(303.936,314.97638,50.38))
+        scene.apply("mission_mission0.xml",0,"Pos",(100,200,300))
+        scene.save()
+        saved = ET.fromstring(file.read_bytes())
+        self.assertEqual(saved.find("Objects/Entity").get("UnknownGameProperty"),
+                         "preserved")
+        self.assertEqual(saved.find("Objects/Entity").get("Pos"),"100,200,300")
+        self.assertEqual((self.workspace/".level-editor-backups"/
+                          "mission_mission0.xml").read_bytes(),xml)
+
     def test_parse_vec_untrusted_strings(self):
         self.assertEqual(parse_vec("1,2,3"),(1.,2.,3.))
         self.assertIsNone(parse_vec("1e309,2,3"))
