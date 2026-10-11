@@ -420,6 +420,9 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.makeCurrent()
         try:
             self._release_textures()
+            if self._renderer3 is not None:
+                self._renderer3.close()
+                self._renderer3 = None
         finally:
             self.doneCurrent()
         super().closeEvent(event)
@@ -452,13 +455,12 @@ class QtGPUModelPanel(QWidget):
         textured.setChecked(True)
         textured.toggled.connect(lambda value:(setattr(self.canvas,'textured',value),self.canvas.update()))
         line.addWidget(textured)
-        enhanced=QCheckBox('Renderer 3.0')
+        line.addWidget(QLabel('Shading'))
         enhanced.setToolTip('Normal/specular maps and opacity with a GLSL shader; legacy fallback if unavailable.')
         enhanced.setChecked(True)
         enhanced.toggled.connect(self.canvas.set_enhanced_materials)
         self.enhanced_checkbox=enhanced
-        line.addWidget(enhanced)
-        line.addWidget(QLabel('Shading'))
+
         shading = QComboBox()
         self.shading_combo = shading
         shading.addItems(('Faceted (hard edges)', 'Smooth'))
@@ -479,6 +481,12 @@ class QtGPUModelPanel(QWidget):
         options.setVisible(not compact)
         # Short, always-visible controls also work in the embedded viewer.
         studio = QHBoxLayout()
+        enhanced=QCheckBox('Renderer 3.0')
+        enhanced.setToolTip('Enhanced shader supports normal/specular maps and opacity. Legacy fallback remains available.')
+        enhanced.setChecked(True)
+        enhanced.toggled.connect(self.canvas.set_enhanced_materials)
+        self.enhanced_checkbox=enhanced
+        studio.addWidget(enhanced)
         studio.addWidget(QLabel('Camera'))
         self.camera_combo = QComboBox()
         self.camera_combo.addItems(('Isometric','Front','Back','Left','Right','Top','Bottom'))
