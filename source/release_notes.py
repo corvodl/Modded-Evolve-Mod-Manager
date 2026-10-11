@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.10', (
+        'Fix Asset Library GPU model previews expecting a Modding workspace JSON.',
+        'Resolve equipment materials through verified CDF and compiled mesh links, not only same-name MTL files.',
+        'Improve texture diagnostics with exact material associations and missing-link details.',
+    )),
     ('1.1.18-beta.9', (
         'Give Asset Library previews the same model grouping, native GPU viewport, menus and animation controls as Modding.',
         'Keep Asset Library preview and export read-only, with file imports and modification controls disabled.',
