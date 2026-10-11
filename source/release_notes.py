@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.8', (
+        'Browse and preview extracted Asset Library PAKs in their own read-only tab.',
+        'Export original PAK layouts, PNG textures and supported Blender models.',
+        'Correct texture-link diagnostics for assembled character attachments.',
+    )),
     ('1.1.18-beta.7', (
         'Keep the editor PAK selector in sync with the active project.',
         'Recover more cross-PAK character textures from the Asset Library.',
