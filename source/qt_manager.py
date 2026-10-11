@@ -1335,6 +1335,8 @@ class QtManager(QMainWindow):
                 self.stage_path, selected, self.current_workspace,
                 self.batch_workspaces)
             self.current_workspace = str(matched) if matched else ''
+            if hasattr(self,'workspace_input'):
+                self.workspace_input.setText(self.current_workspace)
         self.external_pak = ''
 
     def _pak_locations(self, rel):
@@ -1528,7 +1530,11 @@ class QtManager(QMainWindow):
         self.open_editor()
 
     def _workspace_for_selected_archive(self):
-        from project_selection import workspace_for_archive
+        from project_selection import workspace_for_archive, workspace_matches
+        if self.external_pak:
+            return (Path(self.current_workspace).resolve()
+                    if workspace_matches(self.current_workspace,self.external_pak)
+                    else None)
         rel = self._selected_rel()
         if rel not in self.archive_entries:
             raise ValueError('Select a staged PAK before opening it.')
