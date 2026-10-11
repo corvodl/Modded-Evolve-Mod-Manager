@@ -228,10 +228,21 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                     from shared_pak_cache import materialize_shared_record
                     record = materialize_shared_record(record)
                 hits[str(Path(record['file']).resolve())] = record
-                if len(hits)>8:
+                if len(hits) > 32:
                     return None
-        if len(hits) != 1:
+        if not hits:
             return None
+        # A shared TS PAK, custom signed stage and user's imported game PAK
+        # may all contain the SAME DDS at different physical locations.
+        # Deduplicate by bytes, not absolute filenames. Never choose between
+        # different DDS payloads based on an ambiguous basename.
+        if len(hits) > 1:
+            from multi_pak_assets import _content_fingerprint
+            try:
+                if len({_content_fingerprint(hit['file']) for hit in hits.values()}) != 1:
+                    return None
+            except OSError:
+                return None
         return next(iter(hits.values()))
 
     def optional_map(item, names):
