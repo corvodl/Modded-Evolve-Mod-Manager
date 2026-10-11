@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QFileDialog, QLabel, QMessageBox, QTreeWidgetItemIterator,
+    QApplication, QFileDialog, QLabel, QMessageBox, QTreeWidgetItemIterator,
 )
 
 from qt_workspace_editor import QtWorkspaceEditor
@@ -108,7 +108,14 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
                 self, 'Export original read-only asset', Path(rel).name)
             if not output:
                 return
-            target = export_file(self.identifier, rel, output)
+            from asset_library_preview import _outside_library
+            from qt_operation_progress import copy_file_progress
+            source = archive_entries(self.identifier).get(rel)
+            if source is None:
+                raise FileNotFoundError('Original reference file not found.')
+            target = copy_file_progress(
+                source, _outside_library(output), parent=self,
+                title='Export original Asset Library file')
             self.status.setText('Exported original file: ' + str(target))
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, 'Asset export', str(error))
@@ -125,7 +132,9 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             target = Path(output)
             if target.suffix.casefold() != '.png':
                 target = target.with_suffix('.png')
-            export_library_png(self.identifier, self.current, target)
+            from qt_operation_progress import run_busy
+            run_busy(self, 'Export DDS as PNG', 'Decoding ' + self.current,
+                     lambda: export_library_png(self.identifier, self.current, target))
             self.status.setText('Exported texture copy: ' + str(target))
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, 'Texture export', str(error))
@@ -144,7 +153,10 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             target = Path(output)
             if target.suffix.casefold() != '.glb':
                 target = target.with_suffix('.glb')
-            target, details = export_glb(self.identifier, self.current, target)
+            from qt_operation_progress import run_busy
+            target, details = run_busy(
+                self, 'Export Blender GLB', 'Preparing geometry, textures and rig…',
+                lambda: export_glb(self.identifier, self.current, target))
             self.status.setText(
                 'Blender GLB exported: %d textures; rig: %s | %s' %
                 (details['textures'], details['rig'], target))
@@ -170,9 +182,17 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         from asset_library_preview import _outside_library
         try:
             root = _outside_library(output)
+            from qt_operation_progress import progress_dialog
+            meter = progress_dialog(
+                self, 'Export Blender model files', 'Preparing Blender exports…',
+                max(1, len(models)))
             converted = 0
             failed = []
-            for rel in models:
+            for position, rel in enumerate(models, 1):
+                if meter.wasCanceled():
+                    failed.append('Cancelled after %d models' % (position - 1))
+                    break
+                meter.setLabelText('Exporting ' + rel)
                 destination = root / Path(rel).with_suffix('.glb')
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 try:
@@ -180,6 +200,9 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
                     converted += 1
                 except (OSError, ValueError) as error:
                     failed.append(rel + ': ' + str(error)[:70])
+                meter.setValue(position)
+                QApplication.processEvents()
+            meter.close()
             self.status.setText(
                 'Exported %d Blender model(s); %d unsupported | %s' %
                 (converted, len(failed), output))
