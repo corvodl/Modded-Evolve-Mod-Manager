@@ -19,7 +19,7 @@ from multi_pak_assets import _resolve
 
 def create_character_glb(workspace, relative, index, *, character=None,
                          texture_folder=None, projects_root=None, stage_root=None,
-                         clip=None, clips=None):
+                         clip=None, clips=None, allow_layered=False):
     """Return (GLB bytes, details), optionally containing an original CAF clip.
 
     The preview and rigged export use the same character assembly selection.
@@ -54,6 +54,10 @@ def create_character_glb(workspace, relative, index, *, character=None,
     selected_clips = (tuple(clips) if clips is not None
                       else (clip,) if clip is not None else ())
     if selected_clips:
+        if allow_layered and (len(selected_clips) != 2 or
+                              selected_clips[0].kind != 'caf' or
+                              selected_clips[1].kind != 'caf'):
+            raise ValueError('Layered animation needs one verified base CAF and one overlay CAF.')
         if len(selected_clips) > 256:
             raise ValueError('Export at most 256 animation clips per model')
         document, _ = _unpack_glb(blob)
@@ -71,15 +75,19 @@ def create_character_glb(workspace, relative, index, *, character=None,
                 continue
             from character_animation_catalog import native_clip_playability
             state, reason = native_clip_playability(entry)
-            if state == 'layered':
-                skipped.append(entry.name + ': requires CryEngine base-pose blending')
+            if state == 'layered' and not allow_layered:
+                skipped.append(entry.name + ': needs a compatible base animation')
                 continue
+            if allow_layered and entry is selected_clips[0] and state == 'layered':
+                raise ValueError('Base animation must be a standalone non-additive CAF.')
             try:
                 data = entry.file.read_bytes()
                 motion = decode_caf(data)
                 matched = sum(t.controller_id in compatible_bones for t in motion.tracks)
-                if motion.additive:
+                if motion.additive and not allow_layered:
                     raise ValueError('CAF flagged additive; requires base-pose blending')
+                if motion.additive and entry is selected_clips[0]:
+                    raise ValueError('Base animation cannot be an additive controller.')
                 if matched < min(3, max(1, len(motion.tracks)//4)):
                     raise ValueError('controller IDs do not match this character skeleton')
                 if not any(t.rotation_times or t.position_times for t in motion.tracks):
@@ -87,16 +95,24 @@ def create_character_glb(workspace, relative, index, *, character=None,
                 playable.append((entry.name, data))
             except (ValueError, OSError) as exc:
                 skipped.append(entry.name + ': ' + str(exc)[:110])
+        if allow_layered and len(playable) != 2:
+            raise ValueError('Both base and layered controllers must be decoded for blending: '
+                             + '; '.join(skipped[:3]))
         if not playable:
             raise ValueError('No standalone native CAF clip could be played. '
                              'Layered aim poses require a base animation; '
                              'select a standalone idle/stand/run clip. Details: '
                              + '; '.join(skipped[:3]))
         try:
-            blob, anim_report = append_caf_animations(blob, playable)
+            blob, anim_report = append_caf_animations(
+                blob, playable, allow_layered=allow_layered)
         except ValueError:
             # Rare files contain valid controllers but unsupported glTF
             # timelines. Retry independently so valid clips still export.
+            if allow_layered:
+                # A layered pair is atomic: exporting one without its base
+                # would result in an invalid/misleading preview.
+                raise
             assembled, channels, count = blob, 0, 0
             for name, data in playable:
                 try:
@@ -110,6 +126,8 @@ def create_character_glb(workspace, relative, index, *, character=None,
                 raise ValueError('None of the native CAFs could be exported')
             blob, anim_report = assembled, {
                 'clips': count, 'bone_channels': channels}
+        if allow_layered and anim_report['clips'] != 2:
+            raise ValueError('Layered clip export must contain both compatible motions.')
         details['animations'] = anim_report['clips']
         details['bone_channels'] = anim_report['bone_channels']
         details['skipped_animations'] = len(skipped)
