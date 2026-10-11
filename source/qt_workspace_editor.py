@@ -884,6 +884,16 @@ class QtWorkspaceEditor(QMainWindow):
             entries = [rel for rel in entries if not is_split_dds(rel) or
                        int(rel.rsplit('.', 1)[1]) ==
                        first[rel.rsplit('.', 1)[0].casefold()]]
+            # Collapse only verified model families. Children retain their
+            # exact virtual file paths, so editing/favorites still work.
+            from model_families import group_model_families
+            family_by_parent = group_model_families(entries)
+            member_to_parent = {
+                member: parent for parent, group in family_by_parent.items()
+                for member in group.members if member != parent
+            }
+            grouped_nodes = {}
+            self._model_group_items = {}
             restored = None
             for rel in entries:
                 parent = None
@@ -913,12 +923,38 @@ class QtWorkspaceEditor(QMainWindow):
                 item = QTreeWidgetItem([symbol + parts[-1], size])
                 item.setData(0, Qt.UserRole, rel)
                 item.setToolTip(0, category.title() + ' • ' + rel)
+                if rel in member_to_parent:
+                    # The parent may appear later alphabetically, so defer
+                    # these children until every primary model is registered.
+                    grouped_nodes.setdefault(member_to_parent[rel], []).append(item)
+                    if rel == previous:
+                        restored = item
+                    continue
+                group = family_by_parent.get(rel)
+                if group is not None:
+                    item.setText(0, symbol + group.title)
+                    item.setToolTip(0, 'Open complete game character; expand for individual LODs, skins and dependencies.')
+                    item.setText(1, str(len(group.members)) + ' assets')
+                    grouped_nodes.setdefault(rel, [])
+                    # Register this primary as a model family header.
+                    if not hasattr(self, '_model_group_items'):
+                        self._model_group_items = {}
+                    self._model_group_items[rel] = item
                 if parent is not None:
                     parent.addChild(item)
                 else:
                     tree.addTopLevelItem(item)
                 if rel == previous:
                     restored = item
+            for owner, children in grouped_nodes.items():
+                primary_item = getattr(self, '_model_group_items', {}).get(owner)
+                if primary_item is None:
+                    # A filter may exclude the primary: keep matching children.
+                    for child in children:
+                        tree.addTopLevelItem(child)
+                    continue
+                for child in children:
+                    primary_item.addChild(child)
             if restored is not None:
                 tree.setCurrentItem(restored)
             if needle:
