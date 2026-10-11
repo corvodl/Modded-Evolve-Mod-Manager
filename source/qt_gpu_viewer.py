@@ -554,6 +554,31 @@ class QtGPUModelPanel(QWidget):
         self.anim_time = QLabel('0.00 / 0.00 s')
         line2.addWidget(self.anim_time)
         layout.addLayout(line2)
+        timeline=QHBoxLayout()
+        timeline.addWidget(QLabel('Speed'))
+        self.playback_speed=QComboBox()
+        for label,number in (('0.25×',0.25),('0.5×',0.5),('1×',1.0),
+                             ('1.5×',1.5),('2×',2.0)):
+            self.playback_speed.addItem(label,number)
+        self.playback_speed.setCurrentIndex(2)
+        timeline.addWidget(self.playback_speed)
+        self.loop_enabled=QCheckBox('Loop')
+        self.loop_enabled.setChecked(True)
+        timeline.addWidget(self.loop_enabled)
+        previous=QPushButton('◀ Frame')
+        previous.clicked.connect(lambda: self.step_frame(-1))
+        timeline.addWidget(previous)
+        nxt=QPushButton('Frame ▶')
+        nxt.clicked.connect(lambda: self.step_frame(1))
+        timeline.addWidget(nxt)
+        marker=QPushButton('Add Marker')
+        marker.clicked.connect(self.add_timeline_marker)
+        timeline.addWidget(marker)
+        self.timeline_markers=QComboBox()
+        self.timeline_markers.addItem('Markers',None)
+        self.timeline_markers.currentIndexChanged.connect(self.goto_timeline_marker)
+        timeline.addWidget(self.timeline_markers,1)
+        layout.addLayout(timeline)
         self.anim_status = QLabel('Animation playback: load a rigged GLB containing clips, or '
                                   'use an optional CryEngine converter for CAF/DBA files.')
         self.anim_status.setWordWrap(True)
@@ -689,6 +714,28 @@ class QtGPUModelPanel(QWidget):
         if auto_play and (idle or len(imported.clips)==1):
             self.toggle_play()
 
+    def step_frame(self, direction):
+        if self.animated is None or not self.clip_select.currentText():
+            return
+        duration=self.animated.clips[self.clip_select.currentText()][0]
+        self.anim_position=min(duration,max(0.,self.anim_position+direction/30.))
+        self._display_animation_frame()
+
+    def add_timeline_marker(self):
+        if self.animated is None or not self.clip_select.currentText():
+            return
+        label='%s at %.2fs'%(self.clip_select.currentText(),self.anim_position)
+        self.timeline_markers.addItem(label,
+            (self.clip_select.currentText(),self.anim_position))
+        self.timeline_markers.setCurrentIndex(0)
+
+    def goto_timeline_marker(self,index):
+        data=self.timeline_markers.itemData(index)
+        if data and self.animated is not None and data[0] in self.animated.clips:
+            self.clip_select.setCurrentText(data[0])
+            self.anim_position=data[1]
+            self._display_animation_frame()
+
     def select_clip(self, _name):
         self.anim_position = 0.
         self._display_animation_frame()
@@ -730,10 +777,16 @@ class QtGPUModelPanel(QWidget):
         if not self.anim_playing or self.animated is None:
             return
         elapsed = min(.15, self.anim_clock.restart()/1000.)
-        self.anim_position += elapsed
+        self.anim_position += elapsed*self.playback_speed.currentData()
         duration = self.animated.clips[self.clip_select.currentText()][0]
         if self.anim_position >= duration:
-            self.anim_position %= duration
+            if self.loop_enabled.isChecked() and duration>0:
+                self.anim_position %= duration
+            else:
+                self.anim_position = max(0.,duration)
+                self.anim_playing = False
+                self.anim_timer.stop()
+                self.play_button.setText('Play')
         self._display_animation_frame()
 
     def seek_to(self, value):
