@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import re
 import os
 from pathlib import Path, PurePosixPath
 import subprocess
@@ -27,7 +28,9 @@ ALLOWED_TOP = frozenset({'EvolveModManager.exe', 'EvolveModWorker.exe', '_intern
                          'Docs', 'START-HERE.txt', 'BUILD_COMMIT.txt', 'BUILD_CHANNEL.txt'})
 MAX_ZIP_BYTES = 300 * 1024 * 1024
 MAX_EXPANDED_BYTES = 1_500 * 1024 * 1024
-USER_AGENT = 'EvolveModManager-Updater/1.0'
+USER_AGENT = 'EvolveModManager-Updater/2.0'
+CHANNELS = {'main':'Main', 'beta':'Beta'}
+_VERSION = re.compile(r'^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-(alpha|beta|rc)\.(\d+))?(?:\s+-\s+.*)?$',re.I)
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,7 @@ class Update:
     sha256: str
     url: str
     size: int
+    channel: str = 'main'
 
 
 @dataclass(frozen=True)
@@ -78,7 +82,7 @@ def discover_experimental() -> ExperimentalUpdate | None:
 
 
 def _get(url: str, *, max_bytes=1_000_000) -> bytes:
-    if not url.startswith('https://') or not (url.startswith(API + '/') or url.startswith(f'https://github.com/{REPO}/releases/download/Main/')):
+    if not url.startswith('https://') or not (url.startswith(API + '/') or any(url.startswith(f'https://github.com/{REPO}/releases/download/{tag}/') for tag in CHANNELS.values())):
         raise ValueError('Update URL is not the official project endpoint.')
     req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, 'Accept': 'application/vnd.github+json'})
     # Disallow redirect destinations outside github.com / api.github.com.
@@ -124,6 +128,85 @@ def discover(current_commit: str | None = None) -> Update | None:
     return Update(head, str(manifest.get('version', 'Updated build')).strip()[:140],
                   sha, asset['browser_download_url'], asset['size'])
 
+
+
+def version_key(value: str):
+    """Stable outranks same-number prerelease; new beta outranks older stable."""
+    match=_VERSION.fullmatch(str(value).strip().removeprefix('v'))
+    if match is None:
+        raise ValueError('Invalid release version: '+str(value)[:80])
+    major, minor, patch, hotfix, label, number=match.groups()
+    stage={'alpha':0,'beta':1,'rc':2,None:3}[label.lower() if label else None]
+    return (int(major),int(minor),int(patch),int(hotfix or 0),
+            stage,int(number or 0))
+
+
+def discover_channel(channel: str) -> Update | None:
+    """Match an immutable manifest against the current release branch HEAD."""
+    if channel not in CHANNELS:
+        raise ValueError('Invalid release channel.')
+    branch=json.loads(_get(API+'/branches/'+channel))
+    head=str(branch['commit']['sha']).lower()
+    if not re.fullmatch(r'[0-9a-f]{40}',head):
+        raise ValueError('Invalid channel HEAD.')
+    release=json.loads(_get(API+'/releases/tags/'+CHANNELS[channel]))
+    assets={a['name']:a for a in release.get('assets',[])}
+    if MANIFEST_ASSET not in assets or RELEASE_ASSET not in assets:
+        return None
+    manifest=json.loads(_get(assets[MANIFEST_ASSET]['browser_download_url']))
+    sha=str(manifest.get('sha256','')).lower()
+    asset=assets[RELEASE_ASSET]
+    if (manifest.get('schema') != 1 or str(manifest.get('commit','')).lower()!=head
+            or manifest.get('asset')!=RELEASE_ASSET or
+            not re.fullmatch(r'[0-9a-f]{64}',sha) or
+            manifest.get('channel','main')!=channel or
+            (channel=='beta' and not release.get('prerelease',False)) or
+            not isinstance(asset.get('size'),int) or
+            not 0<asset['size']<=MAX_ZIP_BYTES or
+            manifest.get('bytes')!=asset['size']):
+        return None
+    digest=asset.get('digest')
+    if digest and str(digest).lower()!='sha256:'+sha:
+        return None
+    url=asset.get('browser_download_url','')
+    prefix=f'https://github.com/{REPO}/releases/download/{CHANNELS[channel]}/'
+    if not isinstance(url,str) or not url.startswith(prefix):
+        return None
+    version=str(manifest.get('version','')).strip()
+    version_key(version)
+    return Update(head,version[:140],sha,url,asset['size'],channel)
+
+
+def choose_latest(candidates, installed_version, installed_commit=None):
+    """Offer one strictly newer release (stable wins on equal versions)."""
+    valid=[candidate for candidate in candidates if candidate is not None]
+    if not valid:
+        return None
+    valid.sort(key=lambda x:(version_key(x.version), x.channel=='main'),reverse=True)
+    winner=valid[0]
+    if installed_version:
+        if version_key(winner.version)<=version_key(installed_version):
+            return None
+    elif winner.commit==installed_commit:
+        return None
+    return winner
+
+
+def discover_latest(current_commit=None,current_version=None):
+    """Inspect both stable and beta, not ad-hoc CI artifacts."""
+    candidates=[]
+    errors=[]
+    for channel in CHANNELS:
+        try:
+            candidates.append(discover_channel(channel))
+        except (ValueError,KeyError,OSError,urllib.error.URLError) as exc:
+            errors.append((channel,str(exc)))
+    if not any(candidates):
+        if errors:
+            raise RuntimeError('Cannot verify either release channel: '+
+                               '; '.join(name+': '+reason for name,reason in errors))
+        return None
+    return choose_latest(candidates,current_version,current_commit)
 
 def _validated_zip_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
     files = []
@@ -202,7 +285,9 @@ def download_and_prepare(update: Update, scratch: Path | None = None,
                         if progress: progress('Extracting', unpacked, max(1, expanded))
         staged = extracted / 'EvolveModManager'
         if installed_commit(staged) != update.commit:
-            raise ValueError('Build commit in downloaded application does not match GitHub main.')
+            raise ValueError('Downloaded build commit differs from the selected release.')
+        if (staged/'BUILD_CHANNEL.txt').read_text(encoding='ascii').strip().lower()!=update.channel:
+            raise ValueError('Downloaded build channel differs from the selected release.')
         if progress: progress('Ready', 1, 1)
         return staged
     except BaseException:
@@ -240,6 +325,7 @@ APPLY_PS1 = r'''param(
   [Parameter(Mandatory=$true)][string]$SourceDir,
   [Parameter(Mandatory=$true)][int]$ManagerPid,
   [Parameter(Mandatory=$true)][string]$ExpectedCommit,
+  [ValidateSet('main','beta')][string]$ExpectedChannel = 'main',
   [switch]$Headless
 )
 $ErrorActionPreference = 'Stop'
@@ -315,7 +401,7 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $SourceDir $required))) { throw "Missing update component: $required" }
   }
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_COMMIT.txt') -Raw).Trim() -ne $ExpectedCommit) { throw 'Update commit mismatch.' }
-  if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_CHANNEL.txt') -Raw).Trim().ToLowerInvariant() -ne 'main') { throw 'Update build channel mismatch.' }
+  if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_CHANNEL.txt') -Raw).Trim().ToLowerInvariant() -ne $ExpectedChannel) { throw 'Update build channel mismatch.' }
   Set-UpdateProgress 'Backing up current application...' 5
   New-Item -ItemType Directory -Path $Backup -ErrorAction Stop | Out-Null
   foreach ($name in $Names) {
@@ -447,7 +533,8 @@ def launch_apply(update: Update, staged: Path, app_home: Path, manager_pid: int)
     with log.open('wb') as output:
         subprocess.Popen(['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
                           '-File', str(script), '-TargetDir', str(app_home), '-SourceDir', str(staged),
-                          '-ManagerPid', str(manager_pid), '-ExpectedCommit', update.commit],
+                          '-ManagerPid', str(manager_pid), '-ExpectedCommit', update.commit,
+                          '-ExpectedChannel', update.channel],
                          stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                          creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
     return log
