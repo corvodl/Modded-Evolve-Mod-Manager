@@ -1148,11 +1148,10 @@ class QtWorkspaceEditor(QMainWindow):
         refs=data['animation'][0]
         # Count material slots actually used by the preview (the .mtl often
         # declares unused submaterials). Never count .bspace graph assets as CAF.
-        slots_used = sorted({slot for _, _, slot in self.mesh.subsets
-                             if self.materials is not None and
-                             0 <= slot < len(self.materials.textures)})
+        slots_used = sorted({slot for _, _, slot in self.mesh.subsets if slot >= 0})
         slots = len(slots_used)
-        mapped = sum(self.materials.textures[slot] is not None
+        mapped = sum(slot < len(self.materials.textures)
+                     and self.materials.textures[slot] is not None
                      for slot in slots_used) if self.materials else 0
         caf_refs = tuple(ref for ref in refs if ref.kind == 'caf')
         count = sum(bool(ref.available) for ref in caf_refs)
@@ -1161,11 +1160,12 @@ class QtWorkspaceEditor(QMainWindow):
             'Assets: %d/%d used textures · %d/%d standalone CAFs' %
             (mapped, slots, count, total))
         issues=(self.materials.issues if self.materials is not None else ())
-        missing_slots = (
-            [self.materials.names[slot] if slot < len(self.materials.names)
-             else 'Slot ' + str(slot)
-             for slot in slots_used if self.materials.textures[slot] is None]
-            if self.materials else [])
+        missing_slots = [
+            self.materials.names[slot] if (self.materials and
+            slot < len(self.materials.names)) else 'Unassigned slot ' + str(slot)
+            for slot in slots_used
+            if (self.materials is None or slot >= len(self.materials.textures)
+                or self.materials.textures[slot] is None)]
         self.dependency_button.setToolTip(
             'Named CAF mappings: %d • indexed loose CAF candidates: %d\n'
             'Missing used model slots: %s\n'
