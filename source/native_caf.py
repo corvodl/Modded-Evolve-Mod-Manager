@@ -88,7 +88,7 @@ def _read_times(raw, offset, count, kind):
         raise ValueError('Unsupported CAF time encoding %d' % kind)
     if offset + count * size > len(raw):
         raise ValueError('Truncated CAF time track')
-    codes = {1: 'H', 2: 'B', 4: 'f'}
+    codes = {1: 'B', 2: 'H', 4: 'f'}
     values = tuple(float(x[0]) for x in struct.iter_unpack(
         '<' + codes[size], raw[offset:offset + count * size]))
     if any(not math.isfinite(x) for x in values) or any(
