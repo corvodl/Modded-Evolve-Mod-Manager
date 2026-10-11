@@ -407,7 +407,7 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.addItem('Select referenced animation', None)
         for ref in references:
             label = ref.name + ('' if ref.available else ' (not extracted)')
-            self.native_clip_select.addItem(label, (ref.virtual_path, ref.available))
+            self.native_clip_select.addItem(label, (ref.virtual_path, str(ref.file) if ref.available else None))
         if idle is not None:
             pos = next((i for i, ref in enumerate(references, 1)
                         if ref.name == idle.name and ref.virtual_path == idle.virtual_path), 0)
@@ -422,9 +422,9 @@ class QtGPUModelPanel(QWidget):
     def _native_selection(self, position):
         item = self.native_clip_select.itemData(position)
         if item:
-            path, exists = item
+            path, file = item
             self.native_info.setText(
-                ('Extracted: ' if exists else 'Missing: ') + path +
+                ('Extracted: ' if file else 'Missing: ') + path +
                 ' • Convert with a supported CryEngine tool to play. '
                 'A CAF reference is not a decoded GLB clip.')
 
@@ -487,6 +487,15 @@ class QtGPUModelPanel(QWidget):
 
     def toggle_play(self):
         if self.animated is None:
+            selected = self.native_clip_select.currentData()
+            if selected is not None:
+                QMessageBox.information(
+                    self, 'Native animation',
+                    'This CAF is indexed but not decoded into bone motion. '
+                    'Use Animation > Import Original CAF/DBA with a compatible '
+                    'converter, then play the converted GLB. '
+                    'The manager will not substitute an unrelated pose.')
+                return
             self.load_animation()
             return
         self.anim_playing = not self.anim_playing
@@ -516,9 +525,12 @@ class QtGPUModelPanel(QWidget):
     def import_original(self):
         """Explicit optional local converter; never downloads or bundles GPL code."""
         from animation_converter_bridge import validate_conversion
-        source, _ = QFileDialog.getOpenFileName(
-            self, 'Select native character or original animation source', '',
-            'CryEngine models and animations (*.chr *.skin *.caf *.dba)')
+        chosen = self.native_clip_select.currentData()
+        source = chosen[1] if chosen is not None else None
+        if not source:
+            source, _ = QFileDialog.getOpenFileName(
+                self, 'Select native character or original animation source', '',
+                'CryEngine models and animations (*.chr *.skin *.caf *.dba)')
         if not source:
             return
         converter, _ = QFileDialog.getOpenFileName(
