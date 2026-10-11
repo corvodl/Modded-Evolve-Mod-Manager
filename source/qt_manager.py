@@ -131,6 +131,7 @@ ACTION_HINTS = {
     'Unpack PAK': 'Extract a selected signed PAK into a separate editable project. The installed game is not changed.',
     'Unpack Selected PAKs': 'Extract 2–30 selected signed archives into linked project workspaces. Uses extra disk space.',
     'Edit Files': 'Open the native Qt editor for extracted XML, textures, models, or private project copies.',
+    'Level Editor 1.0': 'Open an extracted level PAK to inspect CryEngine object layers and safely edit placement transforms.',
     'Review Changes': 'Compare the extracted workspace with its source PAK before building a mod.',
     'Build Mod': 'Build and sign a modified PAK from the current project. This does not install it into the game.',
     'Add Mod': 'Stage a built mod for a later offline launch; installed original files stay untouched until the swap.',
@@ -338,6 +339,7 @@ class QtManager(QMainWindow):
         self._queued_task_running = None
         self.process = None
         self.editors = []
+        self.level_editors = []
         self.available_update = None
         self.update_running = False
         self.signals = TaskSignals()
@@ -647,6 +649,7 @@ class QtManager(QMainWindow):
             (('Unpack PAK', self.extract, False),
              ('Unpack Selected PAKs', self.extract_batch, False),
              ('Edit Files', self.open_editor, True),
+             ('Level Editor 1.0', self.open_level_editor, False),
              ('Review Changes', self.diff, False)),
             (('Build Mod', self.build, True),
              ('Add Mod', self.install, False),
@@ -2088,11 +2091,59 @@ class QtManager(QMainWindow):
         # stage installation, bundle export or original-file refresh.
         if hasattr(self, 'dev_memory_panel'):
             self.dev_memory_panel.stop()
+        for editor in self.level_editors:
+            if editor.isVisible() and editor.project.dirty_layers():
+                self.info('Unsaved level edits',
+                          'Save changes in the Level Editor or discard them before building a mod.')
+                return False
         for editor in self.editors:
             if hasattr(editor, 'isVisible') and editor.isVisible() and hasattr(editor, '_confirm_buffer'):
                 if not editor._confirm_buffer():
                     return False
         return True
+
+    def open_level_editor(self, workspace=None):
+        """Open a UE-style object placement editor for an extracted .lyr PAK."""
+        try:
+            if self.busy:
+                raise RuntimeError('Wait for the current extraction or build to finish.')
+            from level_editor_core import LevelProject
+            from qt_level_editor import UnrealStyleLevelEditor
+            folder = None
+            if workspace is not None:
+                folder = Path(workspace)
+            else:
+                try:
+                    folder = self._workspace_for_selected_archive()
+                except (OSError, ValueError):
+                    folder = None
+                if folder is None and self.current_workspace:
+                    candidate = Path(self.current_workspace)
+                    if candidate.is_dir() and LevelProject.contains_levels(candidate):
+                        folder = candidate
+            if folder is None or not LevelProject.contains_levels(folder):
+                chosen = QFileDialog.getExistingDirectory(
+                    self, 'Select an extracted level PAK project',
+                    self.projects_path)
+                if not chosen:
+                    return
+                folder = Path(chosen)
+            if not LevelProject.contains_levels(folder):
+                raise ValueError('The extracted project has no editable .lyr object layers. '
+                                 'Unpack a level PAK first.')
+            folder = Path(folder).resolve()
+            for editor in self.level_editors:
+                if editor.isVisible() and editor.project.workspace == folder:
+                    editor.raise_()
+                    editor.activateWindow()
+                    return
+            editor = UnrealStyleLevelEditor(self, folder)
+            editor.setAttribute(Qt.WA_DeleteOnClose, False)
+            self.level_editors.append(editor)
+            editor.show()
+            editor.raise_()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
 
     def open_editor(self):
         try:
