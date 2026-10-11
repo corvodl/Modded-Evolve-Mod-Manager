@@ -369,9 +369,21 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
                 index[rel.casefold()].append({'archive': '(current PAK)', 'workspace': workspace,
                                              'relative': rel, 'file': candidate})
     from model_material_resolve import (
-        find_model_material, nearby_model_materials)
-    material, basis, checked = find_model_material(
-        index, model_relative, preferred_workspace=workspace)
+        AmbiguousMaterialError, find_model_material, nearby_model_materials)
+    try:
+        material, basis, checked = find_model_material(
+            index, model_relative, preferred_workspace=workspace)
+    except AmbiguousMaterialError as exc:
+        hits, _ = _resolve(index, exc.virtual, preferred_workspace=workspace)
+        return {
+            'material': exc.virtual, 'status': 'ambiguous', 'textures': [],
+            'collection': has_links,
+            'candidates': [{
+                'archive': hit.get('archive', 'Asset Library'),
+                'workspace': str(hit.get('workspace')),
+                'relative': hit.get('relative', exc.virtual),
+            } for hit in hits],
+        }
     if material is None:
         return {
             'material': ', '.join(checked[:6]),
