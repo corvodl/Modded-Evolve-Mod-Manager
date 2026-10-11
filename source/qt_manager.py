@@ -36,20 +36,21 @@ if os.name == 'nt' and getattr(sys, 'frozen', False):
 
 
 from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl
-from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices
+from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices, QColor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout,
     QStackedWidget, QScrollArea, QPushButton, QLineEdit, QComboBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QSplitter, QPlainTextEdit, QMessageBox,
     QFileDialog, QDialog, QDialogButtonBox, QFormLayout, QProgressDialog,
     QCheckBox, QMenu, QAbstractItemView, QSizePolicy, QProgressBar, QTabWidget,
-    QToolButton, QStyle, QInputDialog,
+    QToolButton, QStyle, QInputDialog, QColorDialog,
 )
 
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
 from app_updater import (discover, discover_experimental, download_and_prepare,
                          launch_apply, installed_commit, report_startup_ready)
 from version_info import app_version
+from qt_theme_116 import PALETTES, ROLES, palette, qt_palette_style
 from pak_browser import archive_description, describe_archive, matching_archives, format_size, import_target
 from universal_stage import allowed_paks
 from launch_integration import state_status, launcher_commands, restore_command, package_status, add_missing_scripts
@@ -305,6 +306,14 @@ class QtManager(QMainWindow):
         self.reduce_motion = bool(self.settings.get('reduce_motion', False))
         self.keep_original_snapshots = bool(self.settings.get('keep_original_snapshots', True))
         self.show_activity_on_tasks = bool(self.settings.get('show_activity_on_tasks', True))
+        self.appearance_mode = self.settings.get('appearance_mode', 'Dark')
+        if self.appearance_mode not in PALETTES:
+            self.appearance_mode = 'Dark'
+        self.appearance_overrides = self.settings.get('appearance_colors', {})
+        try:
+            palette(self.appearance_mode, self.appearance_overrides)
+        except (ValueError, AttributeError):
+            self.appearance_overrides = {}
         self._developer_allow_online = False
         self._developer_allow_writes = False
         self._developer_online_write_ack = False
@@ -699,6 +708,28 @@ class QtManager(QMainWindow):
         density.addWidget(self.density_combo)
         density.addStretch()
         general_row.addLayout(density)
+        theme_line = QHBoxLayout()
+        theme_line.addWidget(_label('Color theme'))
+        self.appearance_combo = QComboBox()
+        self.appearance_combo.addItems(('Dark', 'Light'))
+        self.appearance_combo.setCurrentText(self.appearance_mode)
+        self.appearance_combo.currentTextChanged.connect(self._change_appearance_mode)
+        theme_line.addWidget(self.appearance_combo)
+        theme_line.addStretch()
+        general_row.addLayout(theme_line)
+        general_row.addWidget(_label('Customize all interface colors, including the original red accent.', muted=True))
+        self.appearance_color_buttons = {}
+        for role in ROLES:
+            line = QHBoxLayout()
+            line.addWidget(_label(role.replace('_', ' ').title()))
+            picker = _button('Choose color…', lambda key=role: self._choose_appearance_color(key))
+            picker.setObjectName('appearanceColorPicker')
+            self.appearance_color_buttons[role] = picker
+            line.addWidget(picker)
+            line.addStretch()
+            general_row.addLayout(line)
+        general_row.addWidget(_button('Reset Theme Colors', self._reset_appearance_colors))
+        self._update_appearance_labels()
         self.motion_checkbox = QCheckBox('Reduce menu animation')
         self.motion_checkbox.setChecked(self.reduce_motion)
         self.motion_checkbox.toggled.connect(self._save_ui_preferences)
@@ -805,8 +836,35 @@ class QtManager(QMainWindow):
                                   'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
                                   'UPDATES & ADVANCED')
 
+    def _update_appearance_labels(self):
+        colors = palette(self.appearance_mode, self.appearance_overrides)
+        for role, control in getattr(self, 'appearance_color_buttons', {}).items():
+            control.setText(role.title() + ': ' + colors[role].upper())
+
+    def _change_appearance_mode(self, mode):
+        if mode not in PALETTES:
+            return
+        self.appearance_mode = mode
+        self.appearance_overrides = {}
+        self._update_appearance_labels()
+        self._save_ui_preferences()
+
+    def _choose_appearance_color(self, role):
+        current = palette(self.appearance_mode, self.appearance_overrides)[role]
+        chosen = QColorDialog.getColor(QColor(current), self, 'Choose ' + role + ' color')
+        if not chosen.isValid():
+            return
+        self.appearance_overrides[role] = chosen.name()
+        self._update_appearance_labels()
+        self._save_ui_preferences()
+
+    def _reset_appearance_colors(self):
+        self.appearance_overrides = {}
+        self._update_appearance_labels()
+        self._save_ui_preferences()
+
     def _apply_appearance(self):
-        style = qt_style()
+        style = qt_palette_style(qt_style(), self.appearance_mode, self.appearance_overrides)
         if self.ui_density == 'Compact':
             style += """
             QPushButton { padding:5px 10px; }
@@ -814,7 +872,15 @@ class QtManager(QMainWindow):
             QLineEdit, QComboBox { padding:4px; }
             QTableWidget::item { padding:3px; }
             """
+        app = QApplication.instance()
+        if app:
+            app.setStyleSheet(style)
         self.setStyleSheet(style)
+        for editor in getattr(self, 'editors', []):
+            if editor is not None:
+                editor.setStyleSheet(style)
+        if getattr(self, '_log_dialog', None):
+            self._log_dialog.setStyleSheet(style)
         self.menu_animation.setDuration(0 if self.reduce_motion else 205)
 
     def _save_ui_preferences(self, *_):
@@ -1149,9 +1215,9 @@ class QtManager(QMainWindow):
     def toggle_activity(self):
         if self._log_dialog is None:
             box = QDialog(self)
-            box.setWindowTitle('Activity | Evolve Mod Manager')
+            box.setWindowTitle('Activity | Evolve Mod Manager ' + app_version())
             box.resize(920, 460)
-            box.setStyleSheet(qt_style())
+            box.setStyleSheet(self.styleSheet())
             inside = QVBoxLayout(box)
             self.log_widget = QPlainTextEdit()
             self.log_widget.setReadOnly(True)
@@ -1255,6 +1321,8 @@ class QtManager(QMainWindow):
             'reduce_motion': self.reduce_motion,
             'keep_original_snapshots': self.keep_original_snapshots,
             'show_activity_on_tasks': self.show_activity_on_tasks,
+            'appearance_mode': self.appearance_mode,
+            'appearance_colors': self.appearance_overrides,
         })
         save_settings(self.settings)
 
