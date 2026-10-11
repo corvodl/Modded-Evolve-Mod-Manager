@@ -17,7 +17,7 @@ class GameEventsPanel(QWidget):
 
     This panel NEVER writes to game memory or sends network/game events.
     """
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, game_root_provider=None):
         super().__init__(parent)
         self.events = load_catalog()
         self.selected = None
@@ -89,6 +89,13 @@ class GameEventsPanel(QWidget):
         self.scope.currentIndexChanged.connect(self.refresh)
         self.recorder.currentIndexChanged.connect(self.refresh)
         self.table.itemSelectionChanged.connect(self.show_selected)
+        from qt_live_event_controls import LiveEventControls
+        self.live_controls = LiveEventControls(
+            game_root_provider=game_root_provider,
+            current_event=lambda: self.selected,
+            current_fields=lambda: {name: widget.text() for name, widget in self.inputs.items()},
+            output=self.preview, parent=self)
+        root.insertWidget(2, self.live_controls)
         self.refresh()
 
     def refresh(self, *_):
@@ -109,9 +116,13 @@ class GameEventsPanel(QWidget):
         row = self.table.currentRow()
         if row < 0 or row >= len(self.shown):
             self.selected = None
+            if hasattr(self, 'live_controls'):
+                self.live_controls.update_selection()
             return
         event = self.shown[row]
         self.selected = event
+        if hasattr(self, "live_controls"):
+            self.live_controls.update_selection()
         self.summary.setText(
             f"{event.name}   {event.event_id}\n"
             f"Category: {event.category}\n"
@@ -176,3 +187,7 @@ class GameEventsPanel(QWidget):
             self.preview.setPlainText(json.dumps(result, indent=2))
         except (OSError, ValueError, UnicodeError) as exc:
             QMessageBox.warning(self, "Capture import failed", str(exc))
+
+    def stop(self):
+        if hasattr(self, 'live_controls'):
+            self.live_controls.stop()
