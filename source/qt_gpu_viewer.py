@@ -66,6 +66,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.light_strength = 1.0
         self.background_mode = 'Dark'
         self.visible_material_slot = None
+        self.projection_mode = 'Orthographic'
+        self.specular_intensity = 0.35
 
     def set_mesh(self, mesh, materials=None, prepared_geometry=None):
         geometry = (prepared_geometry if prepared_geometry is not None
@@ -87,6 +89,16 @@ class QtGLModelCanvas(QOpenGLWidget):
 
     def set_visible_material_slot(self, slot):
         self.visible_material_slot=None if slot is None else int(slot)
+        self.update()
+
+    def set_projection(self, mode):
+        if mode not in ('Orthographic','Perspective'):
+            raise ValueError('Unknown projection type')
+        self.projection_mode=mode
+        self.update()
+
+    def set_specular(self, value):
+        self.specular_intensity=max(0.,min(1.,float(value)/100.))
         self.update()
 
     def set_camera_preset(self, choice):
@@ -226,12 +238,12 @@ class QtGLModelCanvas(QOpenGLWidget):
             glTranslatef, glRotatef, glColor3f, glEnable, glDisable,
             glEnableClientState, glDisableClientState, glVertexPointer,
             glNormalPointer, glTexCoordPointer, glDrawElements,
-            glPolygonMode, glBindTexture, glMaterialfv,
+            glPolygonMode, glBindTexture, glMaterialfv, glMaterialf, glFrustum,
             GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT,
             GL_PROJECTION, GL_MODELVIEW, GL_TEXTURE_2D, GL_FRONT_AND_BACK,
             GL_DIFFUSE, GL_FLOAT, GL_UNSIGNED_INT, GL_TRIANGLES,
             GL_VERTEX_ARRAY, GL_NORMAL_ARRAY, GL_TEXTURE_COORD_ARRAY,
-            GL_FILL, GL_LINE, GL_FRONT, GL_BACK, GL_AMBIENT,
+            GL_FILL, GL_LINE, GL_FRONT, GL_BACK, GL_AMBIENT, GL_SPECULAR, GL_SHININESS,
         )
         background = (0.092,0.09,0.115,1.0) if self.background_mode=='Dark' else (0.26,0.27,0.29,1.0)
         from OpenGL.GL import glClearColor, glLightfv, GL_LIGHT0, GL_DIFFUSE
@@ -247,7 +259,10 @@ class QtGLModelCanvas(QOpenGLWidget):
         # Mesh is normalized using its known verified center/radius.
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
-        glOrtho(-1.22*aspect,1.22*aspect,-1.22,1.22,-200,200)
+        if self.projection_mode=='Perspective':
+            glFrustum(-0.33*aspect,0.33*aspect,-0.33,0.33,1.0,100.0)
+        else:
+            glOrtho(-1.22*aspect,1.22*aspect,-1.22,1.22,-200,200)
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
         glTranslatef(self.pan[0],self.pan[1],-4.0)
@@ -282,6 +297,9 @@ class QtGLModelCanvas(QOpenGLWidget):
                     glDisable(GL_TEXTURE_2D)
                 glColor3f(0.84,0.82,0.82)
                 glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[0.81,0.8,0.82,1.0])
+                spec=self.specular_intensity
+                glMaterialfv(GL_FRONT_AND_BACK,GL_SPECULAR,[spec,spec,spec,1.0])
+                glMaterialf(GL_FRONT_AND_BACK,GL_SHININESS,38.0)
                 glDrawElements(GL_TRIANGLES,int(count),GL_UNSIGNED_INT,
                                arrays.indices[first:first+count])
         finally:
@@ -414,6 +432,18 @@ class QtGPUModelPanel(QWidget):
         uvbutton=QPushButton('Show UV Layout…')
         uvbutton.clicked.connect(self.show_uv_layout)
         inspector.addWidget(uvbutton)
+        inspector.addWidget(QLabel('Projection'))
+        self.projection_select=QComboBox()
+        self.projection_select.addItems(('Orthographic','Perspective'))
+        self.projection_select.currentTextChanged.connect(self.canvas.set_projection)
+        inspector.addWidget(self.projection_select)
+        inspector.addWidget(QLabel('Gloss'))
+        self.gloss_slider=QSlider(Qt.Horizontal)
+        self.gloss_slider.setRange(0,100)
+        self.gloss_slider.setValue(35)
+        self.gloss_slider.setMaximumWidth(95)
+        self.gloss_slider.valueChanged.connect(self.canvas.set_specular)
+        inspector.addWidget(self.gloss_slider)
         layout.addLayout(inspector)
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(layout)
