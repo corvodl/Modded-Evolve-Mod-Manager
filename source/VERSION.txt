@@ -1,1 +1,1 @@
-1.1.2 - Organized Settings and Faster Mod Preparation
+1.1.3 - Contextual Help and Inline Launch Refresh

@@ -1,13 +1,21 @@
-# Evolve Stage 2 Mod Manager — v1.1.2
+# Evolve Stage 2 Mod Manager — v1.1.3
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.2 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.3 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.3
+
+- Hoverable and keyboard-focusable red `i` icons explain key Modding, Play & Restore and Settings actions without cluttering the layout.
+- Replaced the full-size Refresh Status button with an inline refresh icon beside the launch-status text.
+- Corrected the navigation label to render **Play & Restore**, escaping Qt's `&` accelerator syntax.
 
 ## What's new in v1.1.2
 
+- **Contextual help on hover:** Small red-bordered `i` information controls beside major Modding, Play & Restore, and Settings actions explain exactly what the buttons do, including offline safety and storage implications.
+- **Less clutter in Play & Restore:** A compact native refresh icon sits directly beside the launch-status message, replacing the standalone Refresh Status action. The Menu shows **Play & Restore** correctly, with the ampersand escaped for Qt's mnemonic handling.
 - **Settings grouped inside its own page:** General, Game & Files, Backups & Recovery, Launch Preferences and Updates & Advanced appear as separated sections of the existing scrollable Settings page. The Menu still has only the original five main pages.
 - **Functional customization:** Switch between Comfortable and Compact UI density, reduce the sliding menu animation, and choose whether Activity opens automatically during operations. All settings persist in Data/Settings.
 - **Clearly labeled snapshot preference:** Keep or omit optional *permanent* original-file snapshots on new setups and refreshes. The manager still protects installed originals using lightweight same-volume `.customkey-original` renames during modded launches; those recovery files cannot be disabled by the Settings option.
