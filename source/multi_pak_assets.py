@@ -420,9 +420,34 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
                     matches,resolution = _resolve(
                         index, parent + '/' + virtual,
                         preferred_workspace=material['workspace'])
-        textures.append({'map':kind, 'reference':ref, 'status':resolution,
-                         'archives':[m['archive'] for m in matches],
-                         'paths':[m['relative'] for m in matches]})
+        fragments = []
+        for match in matches:
+            virtual = match.get('relative', '')
+            if not virtual.casefold().endswith('.dds.0'):
+                continue
+            prefix = virtual[:-2]
+            # Report exact virtual fragment owners, even when .0 and higher
+            # mip levels live in different imported PAK directories.
+            for i in range(64):
+                entry = prefix + '.' + str(i)
+                hits, status = _resolve(
+                    index, entry, preferred_workspace=material.get('workspace'))
+                if status != 'found':
+                    if i > 0:
+                        break
+                    continue
+                for hit in hits:
+                    fragments.append({
+                        'part': i, 'archive': hit.get('archive', 'Workspace'),
+                        'virtual': entry, 'physical': str(hit['file']),
+                    })
+        textures.append({
+            'map':kind, 'reference':ref, 'status':resolution,
+            'archives':[m.get('archive', 'Workspace') for m in matches],
+            'paths':[m.get('relative', '') for m in matches],
+            'physical_paths':[str(m['file']) for m in matches],
+            'stream_parts': fragments,
+        })
     return {'material':material['relative'],'material_archive':material.get('archive', 'Asset Library'),
             'status':'found','basis':basis,'textures':textures,'collection':has_links}
 
