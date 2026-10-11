@@ -397,6 +397,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         browser_layout.addLayout(controls)
         self.content=QTreeWidget()
         self.content.setHeaderLabels(("Content","Type","Location"))
+        self.content.itemDoubleClicked.connect(self._open_browser_asset)
         self.content.setAlternatingRowColors(True)
         browser_layout.addWidget(self.content,1)
         vertical.addWidget(browser)
@@ -452,13 +453,51 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.outliner.blockSignals(False)
 
     def _populate_content(self):
+        # Unlike the World Outliner (placed entities), Content Browser
+        # reflects actual files and folders from the editable level workspace.
+        from evolve_pak_workspace import load_workspace, normalized_name
         self.content.clear()
-        for name in sorted(self.project.layers):
-            item=QTreeWidgetItem([Path(name).name,"CryEngine Layer",name])
-            self.content.addTopLevelItem(item)
+        nodes={}
+        catalog=load_workspace(self.project.workspace)
+        filenames=sorted(
+            (normalized_name(entry["path"]) for entry in catalog["entries"]),
+            key=str.casefold)
+        for relative in filenames[:22000]:
+            parts=relative.split("/")
+            parent=None
+            for n,name in enumerate(parts[:-1]):
+                key="/".join(parts[:n+1])
+                if key not in nodes:
+                    folder=QTreeWidgetItem([name,"Folder",key])
+                    if parent is None:
+                        self.content.addTopLevelItem(folder)
+                    else:
+                        parent.addChild(folder)
+                    nodes[key]=folder
+                parent=nodes[key]
+            extension=Path(relative).suffix.casefold()
+            label=("CryEngine Layer" if extension==".lyr" else
+                   "CryEngine Map" if extension==".cry" else
+                   "Texture" if extension in (".dds",".tif") else
+                   "Map Metadata" if extension in (".xml",".dat",".lua") else
+                   extension.lstrip(".").upper() or "File")
+            row=QTreeWidgetItem([parts[-1],label,relative])
+            row.setData(0,Qt.UserRole,relative)
+            if parent is None:
+                self.content.addTopLevelItem(row)
+            else:
+                parent.addChild(row)
         self.path_label.setText(
             f"Extracted workspace / {self.project.level_name} • "
-            f"{len(self.project.layers)} layers • {len(self.project.objects):,} objects")
+            f"{len(filenames):,} files • {len(self.project.layers)} layers • "
+            f"{len(self.project.objects):,} objects")
+
+    def _open_browser_asset(self,item,column=0):
+        relative=item.data(0,Qt.UserRole)
+        if isinstance(relative,str) and relative.casefold().endswith(".lyr"):
+            self.filter.setText(Path(relative).stem)
+            self.statusBar().showMessage(
+                "Filtered World Outliner to " + Path(relative).stem)
 
     def _choose_layer(self,item):
         name=item.data(0,Qt.UserRole)
