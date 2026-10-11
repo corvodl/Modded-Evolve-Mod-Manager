@@ -47,7 +47,10 @@ def numeric_fields(xml_text):
     raw = xml_text.encode('utf-8')
     if b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
         raise ValueError('DTD/entity declarations are unsupported.')
-    validate_xml(raw)
+    try:
+        validate_xml(raw)
+    except expat.ExpatError as exc:
+        raise ValueError('Invalid gameplay XML: ' + str(exc)) from exc
     # Mask XML comments and CDATA without shifting offsets.
     masked = list(xml_text)
     for match in re.finditer(r'<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>', xml_text, re.S):
