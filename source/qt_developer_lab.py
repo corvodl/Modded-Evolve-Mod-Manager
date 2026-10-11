@@ -55,10 +55,12 @@ def row(*items):
 
 
 class DeveloperLabPanel(QWidget):
-    def __init__(self,game_root_provider,parent=None,trace_env_callback=None):
+    def __init__(self,game_root_provider,parent=None,trace_env_callback=None,
+                 write_permission=None):
         super().__init__(parent)
         self.game_root_provider=game_root_provider
         self.trace_env_callback=trace_env_callback
+        self._write_permission=write_permission
         self.last_log=()
         self._service=None
         self.snapshots={}
@@ -126,7 +128,9 @@ class DeveloperLabPanel(QWidget):
         self.patch_data.setPlaceholderText('Replacement hex bytes for Snapshot A')
         patch.addWidget(self.patch_data,1)
         patch.addWidget(button('Export Patch Preset…',self.export_patch))
-        patch.addWidget(button('Apply Offline Preset…',self.apply_patch))
+        self.apply_patch_button = button('Apply Patch…',self.apply_patch)
+        self.apply_patch_button.setEnabled(False)
+        patch.addWidget(self.apply_patch_button)
         layout.addLayout(patch)
         self.memory_output=QPlainTextEdit()
         self.memory_output.setReadOnly(True)
@@ -407,16 +411,17 @@ class DeveloperLabPanel(QWidget):
         except (OSError,ValueError) as exc:
             self.memory_output.setPlainText('Cannot export patch: '+str(exc))
 
+    def set_write_enabled(self,enabled):
+        self.apply_patch_button.setEnabled(bool(enabled))
+
     def apply_patch(self):
         try:
-            from online_guard import offline_rule_active
             from developer_runtime_lab import resolve_patch_preset
             from developer_memory import write_memory
             pid=self._pid()
-            if not offline_rule_active(self.game_root_provider()):
-                raise PermissionError(
-                    'Offline patching requires an active Evolve-specific outbound '
-                    'firewall block. Start an isolated offline game session first.')
+            if self._write_permission is None:
+                raise PermissionError('Memory writes are not enabled for this session.')
+            mode=self._write_permission()
             path,_=QFileDialog.getOpenFileName(
                 self,'Import offline memory preset','','JSON (*.json)')
             if not path:return
@@ -426,8 +431,8 @@ class DeveloperLabPanel(QWidget):
             data=json.loads(file.read_text('utf-8'))
             address,before,after=resolve_patch_preset(pid,data)
             if QMessageBox.question(self,'Apply isolated memory patch',
-                'Write %d bytes at 0x%X in isolated Evolve PID %d? '
-                'Only apply this to a private offline session.'%
+                'Write %d bytes at 0x%X in Evolve PID %d? '
+                'Session write policy: '+mode+'. Confirm this change?'%
                 (len(after),address,pid),
                 QMessageBox.Yes|QMessageBox.No,QMessageBox.No)!=QMessageBox.Yes:
                 return

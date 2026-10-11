@@ -306,6 +306,8 @@ class QtManager(QMainWindow):
         self.keep_original_snapshots = bool(self.settings.get('keep_original_snapshots', True))
         self.show_activity_on_tasks = bool(self.settings.get('show_activity_on_tasks', True))
         self._developer_allow_online = False
+        self._developer_allow_writes = False
+        self._developer_online_write_ack = False
         self._dev_trace_env = {}
         self.external_pak = ''
         self.game_root = None
@@ -478,6 +480,9 @@ class QtManager(QMainWindow):
                 self.dev_memory_panel.stop()
             if hasattr(self, 'dev_lab_panel'):
                 self.dev_lab_panel.stop()
+            # Leaving the gated page resets all memory-write consent.
+            self._developer_allow_writes = False
+            self._developer_online_write_ack = False
             old = self.pages['developer']
             self.stack.removeWidget(old)
             old.hide()
@@ -923,10 +928,34 @@ class QtManager(QMainWindow):
                                'game-specific Windows Firewall rule. No DLL bytes are '
                                'changed. The override is never saved.', muted=True))
         lay.addWidget(card)
+        card, panel = _card('Memory writing permissions',
+            'Read-only inspection is always available after Developer unlock. '
+            'All writing capabilities are disabled until you opt in.')
+        self.dev_writes = QCheckBox('Enable Memory Writing (session only)')
+        self.dev_writes.setObjectName('developerEnableMemoryWrites')
+        self.dev_writes.setChecked(False)
+        self.dev_writes.toggled.connect(self._developer_write_toggle)
+        panel.addWidget(self.dev_writes)
+        self.dev_online_writes = QCheckBox(
+            'Allow Memory Writing While Online — I acknowledge the risks')
+        self.dev_online_writes.setObjectName('developerEnableOnlineMemoryWrites')
+        self.dev_online_writes.setChecked(False)
+        self.dev_online_writes.setEnabled(False)
+        self.dev_online_writes.toggled.connect(self._developer_online_write_toggle)
+        panel.addWidget(self.dev_online_writes)
+        panel.addWidget(_label(
+            'Online writes may affect other players, trigger integrity checks '
+            'or result in account or server sanctions. Requires online access '
+            'enabled above, a separate typed acknowledgment, and confirmation '
+            'for every write. Nothing is saved after leaving Developer.',
+            muted=True))
+        lay.addWidget(card)
         card, panel = _card('Live Evolve memory',
                             'Browse loaded modules, committed memory regions, scan '
                             'values and inspect or edit hex bytes in a running game.')
-        self.dev_memory_panel = DeveloperMemoryPanel(offline_game_provider=self._developer_game)
+        self.dev_memory_panel = DeveloperMemoryPanel(
+            offline_game_provider=self._developer_game,
+            write_permission=self._developer_memory_write_permission)
         panel.addWidget(self.dev_memory_panel)
         lay.addWidget(card)
         card, panel = _card('Developer diagnostics',
@@ -934,7 +963,8 @@ class QtManager(QMainWindow):
             'trace diagnostics. Local fixture services cannot target public endpoints.')
         from qt_developer_lab import DeveloperLabPanel
         self.dev_lab_panel = DeveloperLabPanel(
-            self._developer_game,trace_env_callback=self._set_dev_trace_env)
+            self._developer_game,trace_env_callback=self._set_dev_trace_env,
+            write_permission=self._developer_memory_write_permission)
         panel.addWidget(self.dev_lab_panel)
         lay.addWidget(card)
         lay.addWidget(_button('Lock and leave',
@@ -944,6 +974,58 @@ class QtManager(QMainWindow):
         self.pages['developer'] = scroll
         QTimer.singleShot(0, self.dev_memory_panel.start)
         QTimer.singleShot(0, self.dev_lab_panel.refresh_pids)
+
+    def _developer_memory_write_permission(self):
+        from developer_write_policy import require_developer_write
+        from online_guard import offline_rule_active
+        return require_developer_write(
+            self._developer_allow_writes,
+            self._developer_online_write_ack,
+            self._developer_allow_online,
+            self._developer_game,
+            offline_rule_active)
+
+    def _sync_write_permissions(self):
+        if hasattr(self, 'dev_memory_panel'):
+            self.dev_memory_panel.set_write_enabled(self._developer_allow_writes)
+        if hasattr(self, 'dev_lab_panel'):
+            self.dev_lab_panel.set_write_enabled(self._developer_allow_writes)
+
+    def _developer_write_toggle(self,enabled):
+        self._developer_allow_writes = bool(enabled)
+        if not enabled:
+            self._developer_online_write_ack = False
+            self.dev_online_writes.blockSignals(True)
+            self.dev_online_writes.setChecked(False)
+            self.dev_online_writes.blockSignals(False)
+        self.dev_online_writes.setEnabled(bool(enabled))
+        self._sync_write_permissions()
+
+    def _developer_online_write_toggle(self,enabled):
+        if enabled:
+            if not self._developer_allow_writes or not self._developer_allow_online:
+                self.info('Online memory writing',
+                          'Enable Memory Writing and Allow online connections '
+                          'during modded play before requesting online-write consent.')
+                enabled = False
+            elif not self.confirm(
+                'Online memory writing — risk acknowledgment',
+                'Modifying a live online game can affect other players and '
+                'shared sessions, break game integrity, or trigger account '
+                'penalties. This permission is only for the current unlocked '
+                'Developer session. Continue to the written acknowledgment?'):
+                enabled = False
+            else:
+                phrase,accepted=QInputDialog.getText(
+                    self,'Acknowledge Online Writing Risks',
+                    'Type I ACCEPT to enable online memory writes for this session:')
+                enabled = bool(accepted and phrase.strip() == 'I ACCEPT')
+        self._developer_online_write_ack = bool(enabled)
+        if self.dev_online_writes.isChecked() != bool(enabled):
+            self.dev_online_writes.blockSignals(True)
+            self.dev_online_writes.setChecked(bool(enabled))
+            self.dev_online_writes.blockSignals(False)
+        self._sync_write_permissions()
 
     def _set_dev_trace_env(self,name,value):
         from developer_network_lab import validate_trace_environment
@@ -974,6 +1056,12 @@ class QtManager(QMainWindow):
             if allow or phase in ('swapped', 'swapping', 'interrupted'):
                 set_offline(self._developer_game(), not allow)
             self._developer_allow_online = bool(allow)
+            if not allow:
+                self._developer_online_write_ack = False
+                if hasattr(self,'dev_online_writes'):
+                    self.dev_online_writes.blockSignals(True)
+                    self.dev_online_writes.setChecked(False)
+                    self.dev_online_writes.blockSignals(False)
         except Exception as exc:
             self._developer_allow_online = previous
             self.dev_online.blockSignals(True)
@@ -2339,18 +2427,23 @@ class QtManager(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
-    family = ensure_readable_ui_font(app, strict=('--capture-screenshot' in sys.argv))
-    if '--capture-screenshot' in sys.argv:
+    capture_mode = next((flag for flag in
+        ('--capture-modding-screenshot','--capture-screenshot')
+        if flag in sys.argv),None)
+    family = ensure_readable_ui_font(app, strict=bool(capture_mode))
+    if capture_mode:
         if not glyphs_readable(app.font()):
             raise RuntimeError('Qt screenshot would have unreadable font glyphs.')
         print('Real Qt font rasterization verified:', family, flush=True)
     main_window = QtManager()
     main_window.show()
-    if '--capture-screenshot' in sys.argv:
+    if capture_mode:
+        if capture_mode == '--capture-modding-screenshot':
+            main_window.open_page(SECTIONS.index('Modding'))
         try:
-            destination = Path(sys.argv[sys.argv.index('--capture-screenshot') + 1])
+            destination = Path(sys.argv[sys.argv.index(capture_mode) + 1])
         except (IndexError, ValueError):
-            raise SystemExit('--capture-screenshot requires a PNG path')
+            raise SystemExit(capture_mode + ' requires a PNG path')
         def capture():
             destination.parent.mkdir(parents=True, exist_ok=True)
             image = main_window.grab()  # the live Qt Windows-rendered widget

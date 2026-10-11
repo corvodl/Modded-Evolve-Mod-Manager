@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox, QToolButton, QLineEdit
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox, QToolButton, QLineEdit, QMessageBox
 
 from launch_integration import SwapStatus
 from qt_manager import QtManager, SECTIONS, qt_style
@@ -190,6 +190,37 @@ class QtMigrationTests(unittest.TestCase):
             self.win.open_page(0)
             self.assertTrue(panel._closed)
             self.assertEqual(self.win.pages['developer'].findChildren(DeveloperMemoryPanel), [])
+
+    def test_developer_write_switches_require_acknowledgment_and_reset(self):
+        from developer_memory_panel import DeveloperMemoryPanel
+        with patch('qt_manager.QInputDialog.getText',
+                   return_value=('test-input',True)), \
+             patch('qt_manager.verify_code',return_value=True), \
+             patch('developer_memory_panel.list_evolve_processes',
+                   return_value=[]):
+            self.win.open_page(SECTIONS.index('Developer'))
+        panel=self.win.dev_memory_panel
+        self.assertFalse(self.win._developer_allow_writes)
+        self.assertFalse(self.win._developer_online_write_ack)
+        self.assertFalse(panel.write_button.isEnabled())
+        self.assertFalse(self.win.dev_online_writes.isEnabled())
+        self.win.dev_writes.setChecked(True)
+        self.assertTrue(panel.write_button.isEnabled())
+        self.assertTrue(self.win.dev_online_writes.isEnabled())
+        with patch('qt_manager.QMessageBox.information'):
+            self.win.dev_online_writes.setChecked(True)
+        self.assertFalse(self.win._developer_online_write_ack)
+        with patch('qt_manager.QMessageBox.question',
+                   return_value=QMessageBox.Yes), \
+             patch('qt_manager.QInputDialog.getText',
+                   return_value=('I ACCEPT',True)):
+            self.win._developer_allow_online=True
+            self.win.dev_online_writes.setChecked(True)
+        self.assertTrue(self.win._developer_online_write_ack)
+        self.win.open_page(0)
+        self.assertFalse(self.win._developer_allow_writes)
+        self.assertFalse(self.win._developer_online_write_ack)
+        self.assertEqual(self.win.stack.count(),len(SECTIONS))
 
     def test_developer_cancel_and_invalid_code_keep_previous_page(self):
         self.win.open_page(1)
