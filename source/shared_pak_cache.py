@@ -152,41 +152,40 @@ class SharedCatalog:
             if (dest.is_symlink() or not dest.resolve().is_relative_to(
                     archive.cache_dir.resolve())):
                 raise ValueError("Unsafe shared-cache asset path.")
-            if True:  # verify streaming siblings even when part 0 is cached
-                requested = [virtual]
-                match = re.search(r"\.dds\.0$", virtual, re.I)
-                if match:
-                    base = virtual[:-2].casefold()
-                    requested += [
-                        key for key in archive.entries
-                        if re.fullmatch(re.escape(base) + r"\.\d+", key, re.I)
-                        and key != virtual.casefold()
-                    ]
-                for asset in requested:
-                    key = asset.casefold()
-                    entry = archive.entries.get(key)
-                    if entry is None:
-                        continue
-                    target = archive.cache_dir / normalized_name(asset)
-                    if target.is_symlink() or not target.resolve().is_relative_to(archive.cache_dir.resolve()):
-                        raise ValueError('Untrusted shared preview cache path.')
-                    if target.is_file():
-                        continue
-                    raw = decrypt_entry(archive.path, archive.verified_info, entry)
-                    if raw.startswith(b"CryXmlB\x00"):
-                        tree = decode_cryxml(raw)
-                        raw = ET.tostring(tree, encoding="utf-8", xml_declaration=True)
-                    if self._retained + len(raw) > MAX_CACHE_BYTES:
-                        raise ValueError("Shared preview cache limit reached (512 MiB).")
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    tmp = target.with_name(target.name + ".building")
-                    try:
-                        with tmp.open("xb") as handle:
-                            handle.write(raw)
-                        os.replace(tmp, target)
-                    finally:
-                        tmp.unlink(missing_ok=True)
-                    self._retained += len(raw)
+            requested = [virtual]
+            match = re.search(r"\.dds\.0$", virtual, re.I)
+            if match:
+                base = virtual[:-2].casefold()
+                requested += [
+                    key for key in archive.entries
+                    if re.fullmatch(re.escape(base) + r"\.\d+", key, re.I)
+                    and key != virtual.casefold()
+                ]
+            for asset in requested:
+                key = asset.casefold()
+                entry = archive.entries.get(key)
+                if entry is None:
+                    continue
+                target = archive.cache_dir / normalized_name(asset)
+                if target.is_symlink() or not target.resolve().is_relative_to(archive.cache_dir.resolve()):
+                    raise ValueError('Untrusted shared preview cache path.')
+                if target.is_file():
+                    continue
+                raw = decrypt_entry(archive.path, archive.verified_info, entry)
+                if raw.startswith(b"CryXmlB\x00"):
+                    tree = decode_cryxml(raw)
+                    raw = ET.tostring(tree, encoding="utf-8", xml_declaration=True)
+                if self._retained + len(raw) > MAX_CACHE_BYTES:
+                    raise ValueError("Shared preview cache limit reached (512 MiB).")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                tmp = target.with_name(target.name + ".building")
+                try:
+                    with tmp.open("xb") as handle:
+                        handle.write(raw)
+                    os.replace(tmp, target)
+                finally:
+                    tmp.unlink(missing_ok=True)
+                self._retained += len(raw)
             return {"archive": archive.relative, "workspace": None,
                     "relative": virtual, "file": dest}
 
