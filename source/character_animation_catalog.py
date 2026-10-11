@@ -115,8 +115,9 @@ def native_clip_playability(reference):
                 'and play only if the requested clip is found by exact name.')
         return 'missing', (
             'No standalone CAF at the exact path in indexed or verified PAKs. '
-            'This motion may be stored in a DBA; no verified database could '
-            'be uniquely linked to this character yet.')
+            'This motion may be stored in a DBA, but DBA playback is not yet supported '
+            'for this clip because no verified database could be uniquely linked '
+            'to the selected character.')
     return 'candidate', ('Standalone playback candidate. The native CAF decoder '
                           'will verify bone controllers and flags before playback.')
 
