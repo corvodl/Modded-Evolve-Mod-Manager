@@ -2090,6 +2090,10 @@ class QtManager(QMainWindow):
     def extract(self, auto_level=False):
         try:
             pak, rel = self._selected_stage_pak()
+            from pak_dependencies import is_level_pak
+            # Explicit Unpack on a known level PAK should open the Level
+            # Editor when extraction completes, just like double-click.
+            auto_level = bool(auto_level or (rel and is_level_pak(rel)))
             if rel in self.archive_entries:
                 from pak_dependencies import plan_dependencies
                 plan = plan_dependencies(rel, self.archive_entries)
