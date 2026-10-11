@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.16', (
+        'Improve GPU previews with normal/specular materials and transparency.',
+        'Save animation playlists, refine timelines, and restore editor layouts.',
+        'Add project health checks, benchmarks, and customizable light/dark colors.',
+    )),
     ('1.1.15.1', (
         'Improve compiled interface visual verification and screenshot coverage.',
     )),

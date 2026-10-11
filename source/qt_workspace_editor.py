@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 
 from PIL import Image
 from PySide6.QtCore import Qt, QUrl, QTimer
@@ -42,6 +43,7 @@ from workspace_editor import save_text, validate_xml, digest, TEXT_SUFFIXES, MAX
 from loose_file_editor import save_loose_text
 from loose_game_files import TEXT_EXTENSIONS, copy_to_project
 from evolve_pak_workspace import normalized_name
+from version_info import app_version
 
 
 def _image_pixmap(image):
@@ -75,6 +77,10 @@ class QtLooseFileEditor(QMainWindow):
             top.addWidget(self._button(name, fn))
         layout.addLayout(top)
         layout.addWidget(self.text, 1)
+        stamp = QLabel(app_version())
+        stamp.setObjectName('version')
+        stamp.setAlignment(Qt.AlignRight)
+        layout.addWidget(stamp)
         original = self.copy.read_bytes() if self.copy.stat().st_size <= 5*1024*1024 else None
         if self.copy.suffix.casefold() in TEXT_EXTENSIONS and original is not None:
             try:
@@ -193,7 +199,7 @@ class QtWorkspaceEditor(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self.change_tab)
-        self.trees, self.views, self.actions = {}, {}, {}
+        self.trees, self.views, self.actions, self.splitters = {}, {}, {}, {}
         for section, label in zip(self.TABS, ('Files / Text', 'Images / Textures', 'Models')):
             tab = QWidget()
             box = QVBoxLayout(tab)
@@ -250,12 +256,20 @@ class QtWorkspaceEditor(QMainWindow):
             box.addWidget(split, 1)
             self.tabs.addTab(tab, label)
             self.trees[section] = tree
+            self.splitters[section] = split
             self.views[section] = view
             self.actions[section] = widgets
         main.addWidget(self.tabs, 1)
         self.status = QLabel('Files remain inside the extracted project; build and add each PAK separately.')
         self.status.setWordWrap(True)
-        main.addWidget(self.status)
+        bottom = QHBoxLayout()
+        bottom.addWidget(self.status, 1)
+        self.version_label = QLabel(app_version())
+        self.version_label.setObjectName('version')
+        self.version_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        bottom.addWidget(self.version_label)
+        main.addLayout(bottom)
+        QTimer.singleShot(0, self._restore_workspace_layout)
         self.save_shortcut = QShortcut(QKeySequence.Save, self)
         self.save_shortcut.activated.connect(self.save)
         self.find_shortcut = QShortcut(QKeySequence.Find, self)
@@ -336,9 +350,53 @@ class QtWorkspaceEditor(QMainWindow):
                        lambda c=choice: self._change_model_view(c))
             a.setCheckable(True)
             self._view_actions[choice] = a
+        menus['View'].addSeparator()
+        for name in ('Balanced', 'Model Focus', 'Files First'):
+            action('View', 'Layout: ' + name, lambda n=name: self.set_workspace_layout(n))
+        action('View', 'Save Current Layout Preset', self.save_workspace_layout)
+        action('View', 'Restore Saved Layout', self._restore_workspace_layout)
         self._view_actions['texture'].setChecked(True)
         self._view_actions['faceted'].setChecked(True)
         menus['View'].aboutToShow.connect(self._sync_view_menu)
+
+    def set_workspace_layout(self, name):
+        options = {'Balanced': (1, 4), 'Model Focus': (1, 7),
+                   'Files First': (3, 2)}
+        if name not in options:
+            raise ValueError('Unknown layout preset.')
+        left, right = options[name]
+        for split in self.splitters.values():
+            split.setSizes([left * 120, right * 120])
+        if name == 'Model Focus':
+            self.tabs.setCurrentIndex(2)
+        elif name == 'Files First':
+            self.tabs.setCurrentIndex(0)
+
+    def save_workspace_layout(self):
+        self.manager.settings['editor_workspace_layout'] = {
+            'tab': self.tabs.currentIndex(),
+            'sizes': {section: split.sizes() for section, split in self.splitters.items()},
+        }
+        try:
+            self.manager.persist()
+            self.status.setText('Workspace layout preset saved to manager settings.')
+        except OSError as exc:
+            QMessageBox.warning(self, 'Layout not saved', str(exc))
+
+    def _restore_workspace_layout(self):
+        settings = self.manager.settings.get('editor_workspace_layout', {})
+        if not isinstance(settings, dict):
+            return
+        tab = settings.get('tab', 0)
+        if isinstance(tab, int) and 0 <= tab < self.tabs.count():
+            self.tabs.setCurrentIndex(tab)
+        sizes = settings.get('sizes', {})
+        if isinstance(sizes, dict):
+            for name, split in self.splitters.items():
+                pair = sizes.get(name)
+                if (isinstance(pair, list) and len(pair) == 2 and
+                        all(isinstance(n, int) and n > 0 for n in pair)):
+                    split.setSizes(pair)
 
     def _with_model_panel(self, callback):
         if self.model_panel is None or self.mode != 'models':
@@ -536,10 +594,13 @@ class QtWorkspaceEditor(QMainWindow):
         if not isinstance(data.get('entries'), list):
             raise ValueError('Invalid workspace inventory.')
         entries = {}
+        seen = set()
         for entry in data['entries']:
             rel = normalized_name(entry['path'])
-            if rel != entry['path'] or rel.casefold() in (p.casefold() for p in entries):
+            folded = rel.casefold()
+            if rel != entry['path'] or folded in seen:
                 raise ValueError('Unsafe or duplicated extracted path: '+rel)
+            seen.add(folded)
             entries[rel] = entry
         return entries
 
@@ -551,6 +612,7 @@ class QtWorkspaceEditor(QMainWindow):
         return 'files'
 
     def populate(self):
+        started = time.perf_counter()
         needle = self.search.text().casefold()
         for section, tree in self.trees.items():
             tree.blockSignals(True)
@@ -601,6 +663,7 @@ class QtWorkspaceEditor(QMainWindow):
                 else:
                     tree.addTopLevelItem(item)
             tree.blockSignals(False)
+        self.last_populate_ms = round((time.perf_counter() - started)*1000,3)
 
     def selected(self):
         section = self.TABS[self.tabs.currentIndex()]

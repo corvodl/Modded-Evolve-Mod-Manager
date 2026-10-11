@@ -20,6 +20,8 @@ PATTERNS=(
  ('lobby',re.compile(r'\blobby\b|\bmatchmaking\b',re.I)),
  ('backend',re.compile(r'\bprofile service\b|\bbackend\b|\bhttp\b',re.I)),
  ('match',re.compile(r'\bmatch\b|\bhost\b',re.I)),
+ ('disconnect',re.compile(r'\bdisconnect(?:ed|ion)?\b|\bconnection lost\b',re.I)),
+ ('client',re.compile(r'\bclient\b|\bauthentication\b|\blogin\b',re.I)),
 )
 STATUS_ERROR=re.compile(r'\b(?:error|fail(?:ed|ure)?|timeout|disconnect|refused|unable)\b',re.I)
 IP_RE=re.compile(r'(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)')

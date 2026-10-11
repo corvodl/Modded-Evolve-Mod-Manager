@@ -6,6 +6,8 @@ It never accesses installed PAKs or writes extracted workspace files.
 from __future__ import annotations
 import math
 import sys
+import json
+from pathlib import Path
 import numpy as np
 
 from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess, QObject, Signal, QRunnable, QThreadPool
@@ -56,6 +58,11 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
         self.materials = materials
         self.textures = []
+        self.normal_textures = []
+        self.specular_textures = []
+        self.translucent_slots = set()
+        self.enhanced_materials = True
+        self._renderer3 = None
         self.rotation = [-30.0, 14.0]
         self.zoom = 1.0
         self.pan = [0., 0.]
@@ -85,6 +92,10 @@ class QtGLModelCanvas(QOpenGLWidget):
                 self._upload_textures()
             finally:
                 self.doneCurrent()
+        self.update()
+
+    def set_enhanced_materials(self, enabled):
+        self.enhanced_materials = bool(enabled)
         self.update()
 
     def set_visible_material_slot(self, slot):
@@ -175,13 +186,16 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.update()
 
     def _release_textures(self):
-        if self.textures:
-            try:
-                from OpenGL.GL import glDeleteTextures
-                glDeleteTextures(list(self.textures))
-            except Exception:
-                pass
-            self.textures = []
+        from OpenGL.GL import glDeleteTextures
+        for name in ('textures','normal_textures','specular_textures'):
+            handles = getattr(self,name,[])
+            if handles:
+                try:
+                    glDeleteTextures([handle for handle in handles if handle])
+                except Exception:
+                    pass
+            setattr(self,name,[])
+        self.translucent_slots = set()
 
     def _upload_textures(self):
         from OpenGL.GL import (
@@ -193,21 +207,34 @@ class QtGLModelCanvas(QOpenGLWidget):
         )
         if not self.materials:
             return
+        from OpenGL.GL import GL_RGBA
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-        for im in self.materials.textures:
-            if im is None:
-                self.textures.append(0)
-                continue
-            sample = im.convert('RGB').transpose(__import__('PIL.Image',fromlist=['Transpose']).Transpose.FLIP_TOP_BOTTOM)
-            texid = int(glGenTextures(1))
-            glBindTexture(GL_TEXTURE_2D,texid)
-            glTexImage2D(GL_TEXTURE_2D,0,GL_RGB,sample.width,sample.height,0,
-                         GL_RGB,GL_UNSIGNED_BYTE,sample.tobytes())
-            for param in (GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER):
-                glTexParameteri(GL_TEXTURE_2D,param,GL_LINEAR)
-            for param in (GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T):
-                glTexParameteri(GL_TEXTURE_2D,param,GL_REPEAT)
-            self.textures.append(texid)
+        from PIL import Image as PILImage
+        sources = (('textures', self.materials.textures),
+                   ('normal_textures',getattr(self.materials,'normal_maps',())),
+                   ('specular_textures',getattr(self.materials,'specular_maps',())))
+        for target,images in sources:
+            uploads=[]
+            for index,im in enumerate(images):
+                if im is None:
+                    uploads.append(0)
+                    continue
+                rgba = 'A' in im.getbands()
+                if target == 'textures' and rgba and im.getchannel('A').getextrema()[0] < 255:
+                    self.translucent_slots.add(index)
+                mode = 'RGBA' if rgba else 'RGB'
+                sample = im.convert(mode).transpose(PILImage.Transpose.FLIP_TOP_BOTTOM)
+                format_id = GL_RGBA if rgba else GL_RGB
+                texid = int(glGenTextures(1))
+                glBindTexture(GL_TEXTURE_2D,texid)
+                glTexImage2D(GL_TEXTURE_2D,0,format_id,sample.width,sample.height,0,
+                             format_id,GL_UNSIGNED_BYTE,sample.tobytes())
+                for param in (GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER):
+                    glTexParameteri(GL_TEXTURE_2D,param,GL_LINEAR)
+                for param in (GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T):
+                    glTexParameteri(GL_TEXTURE_2D,param,GL_REPEAT)
+                uploads.append(texid)
+            setattr(self,target,uploads)
         glBindTexture(GL_TEXTURE_2D,0)
 
     def initializeGL(self):
@@ -227,6 +254,13 @@ class QtGLModelCanvas(QOpenGLWidget):
         glLightfv(GL_LIGHT0,GL_AMBIENT,[0.13,0.13,0.16,1.0])
         glLightModelfv(GL_LIGHT_MODEL_AMBIENT,[0.08,0.08,0.09,1.0])
         self._upload_textures()
+        try:
+            from renderer_3 import Renderer3
+            self._renderer3 = Renderer3()
+            self.gl_error = None
+        except Exception as exc:
+            self._renderer3 = None
+            self.gl_error = 'Enhanced material shader unavailable: '+str(exc)[:250]
 
     def resizeGL(self, width, height):
         from OpenGL.GL import glViewport
@@ -246,7 +280,9 @@ class QtGLModelCanvas(QOpenGLWidget):
             GL_FILL, GL_LINE, GL_FRONT, GL_BACK, GL_AMBIENT, GL_SPECULAR, GL_SHININESS,
         )
         background = (0.092,0.09,0.115,1.0) if self.background_mode=='Dark' else (0.26,0.27,0.29,1.0)
-        from OpenGL.GL import glClearColor, glLightfv, GL_LIGHT0, GL_DIFFUSE
+        from OpenGL.GL import (glClearColor, glLightfv, glActiveTexture,
+            glBlendFunc, glDepthMask, GL_LIGHT0, GL_DIFFUSE, GL_LIGHTING,
+            GL_TEXTURE0, GL_BLEND, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glClearColor(*background)
         strength=self.light_strength
         glLightfv(GL_LIGHT0,GL_DIFFUSE,
@@ -284,25 +320,61 @@ class QtGLModelCanvas(QOpenGLWidget):
             glEnable(GL_TEXTURE_2D)
             glEnableClientState(GL_TEXTURE_COORD_ARRAY)
             glTexCoordPointer(2,GL_FLOAT,0,arrays.uvs)
+        shader = self._renderer3 if self.enhanced_materials else None
+        if shader:
+            glDisable(GL_LIGHTING)
         try:
-            # Draw independent submaterial groups without duplicating geometry.
-            for first,count,slot in arrays.draws:
+            # Render translucent material groups after opaque ones. Geometry
+            # in a material group still uses source ordering (no invented triangles).
+            def is_translucent(slot):
+                values=getattr(self.materials,'opacity',()) if self.materials else ()
+                return slot in self.translucent_slots or (slot<len(values) and values[slot]<.999)
+            batches = sorted(arrays.draws,key=lambda d:is_translucent(d[2]))
+            for first,count,slot in batches:
                 if self.visible_material_slot is not None and slot != self.visible_material_slot:
                     continue
+                alpha = (self.materials.opacity[slot] if self.materials and
+                         slot<len(getattr(self.materials,'opacity',())) else 1.0)
+                transparent = is_translucent(slot)
+                if transparent:
+                    glEnable(GL_BLEND)
+                    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA)
+                    glDepthMask(False)
+                else:
+                    glDisable(GL_BLEND)
+                    glDepthMask(True)
                 tex = self.textures[slot] if use_uv and slot < len(self.textures) else 0
+                if shader:
+                    for unit,group in ((0,self.textures),(1,self.normal_textures),(2,self.specular_textures)):
+                        handle = group[slot] if use_uv and slot<len(group) else 0
+                        glActiveTexture(GL_TEXTURE0+unit)
+                        glBindTexture(GL_TEXTURE_2D,handle)
+                    glActiveTexture(GL_TEXTURE0)
+                    shader.bind(opacity=alpha,gloss=self.specular_intensity,
+                                illumination=strength,diffuse=bool(tex),
+                                normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
+                                specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]))
                 if tex:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D,tex)
                 else:
                     glDisable(GL_TEXTURE_2D)
                 glColor3f(0.84,0.82,0.82)
-                glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[0.81,0.8,0.82,1.0])
+                glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[0.81,0.8,0.82,alpha])
                 spec=self.specular_intensity
                 glMaterialfv(GL_FRONT_AND_BACK,GL_SPECULAR,[spec,spec,spec,1.0])
                 glMaterialf(GL_FRONT_AND_BACK,GL_SHININESS,38.0)
                 glDrawElements(GL_TRIANGLES,int(count),GL_UNSIGNED_INT,
                                arrays.indices[first:first+count])
         finally:
+            if shader:
+                shader.unbind()
+                for unit in (2,1,0):
+                    glActiveTexture(GL_TEXTURE0+unit)
+                    glBindTexture(GL_TEXTURE_2D,0)
+                glEnable(GL_LIGHTING)
+            glDepthMask(True)
+            glDisable(GL_BLEND)
             glDisableClientState(GL_VERTEX_ARRAY)
             glDisableClientState(GL_NORMAL_ARRAY)
             if use_uv:
@@ -348,6 +420,9 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.makeCurrent()
         try:
             self._release_textures()
+            if self._renderer3 is not None:
+                self._renderer3.close()
+                self._renderer3 = None
         finally:
             self.doneCurrent()
         super().closeEvent(event)
@@ -401,6 +476,12 @@ class QtGPUModelPanel(QWidget):
         options.setVisible(not compact)
         # Short, always-visible controls also work in the embedded viewer.
         studio = QHBoxLayout()
+        enhanced=QCheckBox('Renderer 3.0')
+        enhanced.setToolTip('Enhanced shader supports normal/specular maps and opacity. Legacy fallback remains available.')
+        enhanced.setChecked(True)
+        enhanced.toggled.connect(self.canvas.set_enhanced_materials)
+        self.enhanced_checkbox=enhanced
+        studio.addWidget(enhanced)
         studio.addWidget(QLabel('Camera'))
         self.camera_combo = QComboBox()
         self.camera_combo.addItems(('Isometric','Front','Back','Left','Right','Top','Bottom'))
@@ -450,7 +531,8 @@ class QtGPUModelPanel(QWidget):
         self.native_info = QLabel('Native game animations: not scanned')
         self.native_info.setWordWrap(True)
         layout.addWidget(self.native_info)
-        foot=QLabel('Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
+        foot=QLabel('Renderer 3.0 approximates CryEngine materials; check optional maps in the texture diagnostics. '
+                    'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
         foot.setVisible(not compact)
@@ -609,6 +691,31 @@ class QtGPUModelPanel(QWidget):
         self.timeline_markers.currentIndexChanged.connect(self.goto_timeline_marker)
         timeline.addWidget(self.timeline_markers,1)
         layout.addLayout(timeline)
+        navigation = QHBoxLayout()
+        for title, seconds in (('−1s', -1.), ('−0.1s', -.1), ('+0.1s', .1), ('+1s', 1.)):
+            item = QPushButton(title)
+            item.clicked.connect(lambda checked=False, delta=seconds: self.nudge_timeline(delta))
+            navigation.addWidget(item)
+        self.playlist_items = QComboBox()
+        self.playlist_items.setToolTip('Ordered decoded animation clips; no unconverted CAF data is inferred.')
+        navigation.addWidget(self.playlist_items, 1)
+        for title, callback in (('+ Clip', self.add_playlist_clip),
+                                ('− Clip', self.remove_playlist_clip),
+                                ('Prev', lambda: self.move_playlist(-1)),
+                                ('Next', lambda: self.move_playlist(1))):
+            btn=QPushButton(title)
+            btn.clicked.connect(lambda checked=False, fn=callback: fn())
+            navigation.addWidget(btn)
+        layout.addLayout(navigation)
+        presets = QHBoxLayout()
+        for title, callback in (('Save Playlist…', self.save_animation_playlist),
+                                ('Load Playlist…', self.load_animation_playlist),
+                                ('Compare Clips', self.compare_playlist_clips)):
+            btn=QPushButton(title)
+            btn.clicked.connect(lambda checked=False, fn=callback: fn())
+            presets.addWidget(btn)
+        presets.addStretch()
+        layout.addLayout(presets)
         self.anim_status = QLabel('Animation playback: load a rigged GLB containing clips, or '
                                   'use an optional CryEngine converter for CAF/DBA files.')
         self.anim_status.setWordWrap(True)
@@ -734,6 +841,8 @@ class QtGPUModelPanel(QWidget):
         self.clip_select.blockSignals(True)
         self.clip_select.clear()
         self.clip_select.addItems(tuple(imported.clips))
+        self.playlist_items.clear()
+        self.playlist_items.addItems(tuple(imported.clips))
         idle = next((name for name in imported.clips if
                      'idle' in name.casefold() and 'additive' not in name.casefold()), None)
         if idle:
@@ -743,6 +852,103 @@ class QtGPUModelPanel(QWidget):
         self._display_animation_frame()
         if auto_play and (idle or len(imported.clips)==1):
             self.toggle_play()
+
+    def nudge_timeline(self, seconds):
+        if self.animated is None or not self.clip_select.currentText():
+            return
+        duration = self.animated.clips[self.clip_select.currentText()][0]
+        self.anim_position = max(0., min(duration, self.anim_position + float(seconds)))
+        self._display_animation_frame()
+
+    def add_playlist_clip(self):
+        clip = self.clip_select.currentText()
+        if self.animated is not None and clip and self.playlist_items.findText(clip) < 0:
+            self.playlist_items.addItem(clip)
+            self.playlist_items.setCurrentText(clip)
+
+    def remove_playlist_clip(self):
+        index = self.playlist_items.currentIndex()
+        if index >= 0:
+            self.playlist_items.removeItem(index)
+
+    def move_playlist(self, step):
+        clips = [self.playlist_items.itemText(i) for i in range(self.playlist_items.count())]
+        if not clips or self.animated is None:
+            return
+        index = self.playlist_items.currentIndex()
+        index = (index + step) % len(clips)
+        self.playlist_items.setCurrentIndex(index)
+        self.clip_select.setCurrentText(clips[index])
+        self.anim_position = 0.
+        self._display_animation_frame()
+
+    def save_animation_playlist(self):
+        if self.animated is None:
+            QMessageBox.information(self,'Animation Workspace','Load a playable animation first.')
+            return
+        from quality_lab_116 import animation_playlist
+        names = [self.playlist_items.itemText(i) for i in range(self.playlist_items.count())]
+        if not names:
+            names = [self.clip_select.currentText()]
+        markers = [self.timeline_markers.itemData(i) for i in range(1,self.timeline_markers.count())
+                   if self.timeline_markers.itemData(i)]
+        try:
+            value = animation_playlist(names,markers,loop=self.loop_enabled.isChecked(),
+                      speed=self.playback_speed.currentData())
+            path,_=QFileDialog.getSaveFileName(self,'Save animation playlist',
+                      'Evolve-Animation-Playlist.json','JSON (*.json)')
+            if path:
+                Path(path).write_text(json.dumps(value,indent=2),encoding='utf-8')
+                self.anim_status.setText('Saved local animation playlist: '+Path(path).name)
+        except (OSError,ValueError) as exc:
+            QMessageBox.warning(self,'Invalid playlist',str(exc))
+
+    def load_animation_playlist(self):
+        if self.animated is None:
+            QMessageBox.information(self,'Animation Workspace','Load a playable GLB or CAF clip first.')
+            return
+        from quality_lab_116 import validate_animation_playlist
+        path,_=QFileDialog.getOpenFileName(self,'Load animation playlist','','JSON (*.json)')
+        if not path:
+            return
+        try:
+            file=Path(path)
+            if file.stat().st_size>512*1024:
+                raise ValueError('Playlist exceeds 512 KiB.')
+            data,matched,missing=validate_animation_playlist(
+                json.loads(file.read_text('utf-8')),self.animated.clips)
+            self.playlist_items.clear()
+            self.playlist_items.addItems(matched)
+            self.timeline_markers.clear()
+            self.timeline_markers.addItem('Markers',None)
+            for clip,seconds in data['markers']:
+                if clip in matched and seconds <= self.animated.clips[clip][0]:
+                    self.timeline_markers.addItem('%s at %.2fs'%(clip,seconds),(clip,seconds))
+            self.loop_enabled.setChecked(data['loop'])
+            best=min(range(self.playback_speed.count()),key=lambda i:
+                     abs(self.playback_speed.itemData(i)-data['speed']))
+            self.playback_speed.setCurrentIndex(best)
+            if matched:
+                self.clip_select.setCurrentText(matched[0])
+            self.anim_status.setText('%d clips loaded; %d unavailable in current model.'%
+                                     (len(matched),len(missing)))
+        except (OSError,ValueError,TypeError) as exc:
+            QMessageBox.warning(self,'Playlist load failed',str(exc))
+
+    def compare_playlist_clips(self):
+        if self.animated is None:
+            return
+        from quality_lab_116 import compare_animation_clips
+        clips = [self.playlist_items.itemText(i) for i in range(self.playlist_items.count())]
+        if len(clips)<2:
+            QMessageBox.information(self,'Compare clips','Add at least two playable clips to the playlist.')
+            return
+        try:
+            comparison=compare_animation_clips(self.animated.clips, clips[0], clips[1])
+            QMessageBox.information(self,'Clip Duration Comparison',
+                                    json.dumps(comparison,indent=2))
+        except ValueError as exc:
+            QMessageBox.warning(self,'Compare clips',str(exc))
 
     def step_frame(self, direction):
         if self.animated is None or not self.clip_select.currentText():
@@ -813,6 +1019,15 @@ class QtGPUModelPanel(QWidget):
             if self.loop_enabled.isChecked() and duration>0:
                 self.anim_position %= duration
             else:
+                clips = [self.playlist_items.itemText(i) for i in range(self.playlist_items.count())]
+                here = self.clip_select.currentText()
+                next_index = clips.index(here) + 1 if here in clips else len(clips)
+                if next_index < len(clips):
+                    self.playlist_items.setCurrentIndex(next_index)
+                    self.clip_select.setCurrentText(clips[next_index])
+                    self.anim_position = 0.
+                    self._display_animation_frame()
+                    return
                 self.anim_position = max(0.,duration)
                 self.anim_playing = False
                 self.anim_timer.stop()

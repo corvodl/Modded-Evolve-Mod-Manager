@@ -17,6 +17,7 @@ from workflow_lab import (workspace_summary,project_conflicts,
 from workspace_editor import save_text,digest
 from workspace_file_actions import checked_path
 from material_editor_v2 import reference_fields,material_adjust
+from quality_lab_116 import project_health, benchmark_workspace
 from studio_tools import numeric_fields
 
 
@@ -62,6 +63,8 @@ class ProjectDashboard(QDialog):
         actions.addWidget(button('Open Selected',self.open_selected))
         actions.addWidget(button('Compare Selected Projects',self.compare))
         actions.addWidget(button('Refresh Asset Cache',self.cache))
+        actions.addWidget(button('Project Health',self.health))
+        actions.addWidget(button('Benchmark',self.benchmark))
         actions.addStretch()
         lay.addLayout(actions)
         self.view=table(('Project','PAK','Files','Edited','Disk (MiB)','Last Activity'))
@@ -123,6 +126,48 @@ class ProjectDashboard(QDialog):
             preview(self,'File-level conflicts',text or 'No conflicting virtual file paths.')
         except (OSError,ValueError) as exc:
             QMessageBox.warning(self,'Conflict scan failed',str(exc))
+
+    def health(self):
+        selected=self.selected()
+        if not selected:
+            QMessageBox.information(self, 'Project Health', 'Select at least one project.')
+            return
+        reports=[]
+        for title,ws,_ in selected[:20]:
+            try:
+                reports.append({'title':title, **project_health(ws)})
+            except (OSError,ValueError) as exc:
+                reports.append({'title':title,'error':str(exc)})
+        preview(self,'Project Health Dashboard',json.dumps(reports,indent=2))
+
+    def benchmark(self):
+        selected=self.selected()
+        if not selected:
+            QMessageBox.information(self,'Regression Benchmarks', 'Select at least one project.')
+            return
+        reports=[]
+        for title,ws,_ in selected[:10]:
+            try:
+                stats={'title':title,**benchmark_workspace(ws)}
+                editor=next((e for e in getattr(self.manager,'editors',[])
+                             if getattr(e,'workspace',None)==ws and hasattr(e,'last_populate_ms')),
+                             None)
+                stats['editor_refresh_ms']=getattr(editor,'last_populate_ms',None)
+                stats['editor_refresh_note']=('Measured last populated editor tree' if editor else
+                                             'Open this project in Edit Files to measure editor refresh')
+                reports.append(stats)
+            except (OSError,ValueError) as exc:
+                reports.append({'title':title,'error':str(exc)})
+        output=QFileDialog.getSaveFileName(self,'Save benchmark results (optional)',
+                                           '', 'JSON (*.json)')[0]
+        text=json.dumps({'version':1,'benchmarks':reports,
+                         'last_real_signed_pak_extraction':self.manager.settings.get('last_extraction_benchmark')},indent=2)
+        if output:
+            try:
+                Path(output).write_text(text,encoding='utf-8')
+            except OSError as exc:
+                QMessageBox.warning(self,'Export failed',str(exc))
+        preview(self,'Read-only Regression Benchmarks',text)
 
     def cache(self):
         chosen=self.selected()
