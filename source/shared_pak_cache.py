@@ -94,21 +94,31 @@ class SharedCatalog:
         from universal_stage import allowed_paks
         from evolve_pak_rekey import extract_plain_cdr
         from evolve_pak_workspace import normalized_name
-        stage_paks = (self.stage / "paks").resolve()
-        allowed = allowed_paks(self.stage)
-        names = [p for p in allowed.values()
-                 if Path(p).name.casefold() in self.archive_names]
-        if not self.key.is_file() or not self.key.is_relative_to(self.stage):
-            raise FileNotFoundError("Shared asset index needs the staged public key.")
+        source_root = (self.installed_game or self.stage / "paks").resolve()
+        if not self.key.is_file() or (self.installed_game is None and
+                                      not self.key.is_relative_to(self.stage)):
+            raise FileNotFoundError("Shared archive public verification key is missing.")
         key_hash = hashlib.sha256(self.key.read_bytes()).hexdigest()
-        for rel in sorted(names):
-            path = (stage_paks / rel).resolve()
-            if (not path.is_relative_to(stage_paks) or path.is_symlink()
-                    or not path.is_file()):
+        for rel, original_path in sorted(self._candidate_files()):
+            if (original_path.is_symlink() or not original_path.is_file() or
+                    not original_path.resolve().is_relative_to(source_root)):
                 continue
+            path = original_path.resolve()
             before = path.stat()
             fingerprint = (before.st_size, before.st_mtime_ns)
-            info, _, _, _ = extract_plain_cdr(path, self.key)
+            try:
+                info, _, _, _ = extract_plain_cdr(path, self.key)
+            except (OSError, ValueError) as exc:
+                if self.installed_game is None:
+                    raise
+                self.warnings.append(rel + ': ' + str(exc)[:90])
+                continue
+            except Exception as exc:
+                from cryptography.exceptions import InvalidSignature
+                if not self.installed_game or not isinstance(exc, InvalidSignature):
+                    raise
+                self.warnings.append(rel + ': different signing key')
+                continue
             if (path.stat().st_size, path.stat().st_mtime_ns) != fingerprint:
                 raise ValueError("Shared archive changed during indexing: " + rel)
             names_by_key = {}
