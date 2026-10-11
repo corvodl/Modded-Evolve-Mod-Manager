@@ -39,7 +39,8 @@ jobs:
           function Capture-CompiledApp([string]$Mode,[string]$Destination) {
             $exe=(Resolve-Path '.build/app-dist/EvolveModManager/EvolveModManager.exe').Path
             $work=Split-Path -Path $exe -Parent
-            $process=Start-Process -FilePath $exe -ArgumentList @($Mode,$Destination) -WorkingDirectory $work -PassThru
+            $target=Join-Path (Get-Location) $Destination
+            $process=Start-Process -FilePath $exe -ArgumentList @($Mode,$target) -WorkingDirectory $work -PassThru
             if (-not $process.WaitForExit(60000)) {
               $process.Kill()
               $process.WaitForExit(10000) | Out-Null
