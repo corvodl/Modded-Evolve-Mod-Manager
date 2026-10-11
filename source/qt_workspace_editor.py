@@ -543,7 +543,7 @@ class QtWorkspaceEditor(QMainWindow):
             view.setCurrentWidget(self.model_panel)
             self.model_panel._info.setText(
                 mesh.source_name + '  •  ' + mesh.description +
-                '\\n' + self.texture_message[:260])
+                '\n' + self.texture_message[:260])
             self.model_gpu.update()
             QTimer.singleShot(450, self._check_gpu_preview)
         except Exception as exc:
