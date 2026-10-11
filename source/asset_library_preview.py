@@ -81,7 +81,7 @@ def export_file(identifier, relative, destination, *, root=None):
     return dst
 
 
-def export_archive_layout(identifier, destination_dir, *, root=None):
+def export_archive_layout(identifier, destination_dir, *, root=None, progress=None, cancelled=None):
     """Export exactly the CryEngine virtual folder layout as ordinary files.
 
     Creates a new named directory; existing exports are never overwritten.
@@ -104,13 +104,21 @@ def export_archive_layout(identifier, destination_dir, *, root=None):
         raise ValueError('The selected imported archive has no intact extracted files.')
     staging.mkdir()
     try:
-        for virtual, source in files.items():
+        count = len(files)
+        if progress:
+            progress('Exporting ' + str(manifest.get('name') or identifier), 0, count)
+        for position, (virtual, source) in enumerate(files.items(), 1):
+            if cancelled and cancelled():
+                raise InterruptedError('Asset Library export cancelled; incomplete copy removed.')
             rel = normalized_name(virtual)
             target = staging.joinpath(*rel.split('/'))
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.is_symlink() or not target.resolve().is_relative_to(staging.resolve()):
                 raise ValueError('Unsafe destination path in archive.')
             shutil.copyfile(source, target)
+            if progress and (position == 1 or position % 20 == 0 or position == count):
+                progress('Exporting ' + str(manifest.get('name') or identifier),
+                         position, count)
         os.replace(staging, output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
