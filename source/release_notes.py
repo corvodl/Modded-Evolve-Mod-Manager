@@ -5,10 +5,9 @@ never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
     ('1.1.18-beta.4', (
-        'Add clear vector icons to the View, Materials and Animation model tools.',
-        'Show separate six-shared and three-animation Asset Library coverage.',
-        'Refresh stale character texture and animation references after imports.',
-        'Improve GPU material and CAF availability diagnostics.',
+        'Import all installed game PAKs into the persistent, reusable Asset Library.',
+        'Create editable mod projects from verified signed PAKs and use Build Mod to pack and sign.',
+        'Improve shared asset diagnostics, model refresh, and GPU preview control icons.',
     )),
     ('1.1.18-beta.3', (
         'Simplify the Modding page with File, Edit, View, Tools and Help menus.',
