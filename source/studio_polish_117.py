@@ -50,7 +50,7 @@ def model_cache_key(workspace, relative, *, projects_root=None, stage_root=None,
     # An explicitly opened external animation index is not cached; it can
     # change without corresponding workspace/manifest updates.
     return (str(root),relative,stat.st_size,stat.st_mtime_ns,
-            manifest.st_size,manifest.st_mtime_ns,str(equipment),
+            manifest.st_size,manifest.st_mtime_ns,str(equipment),id(index) if index is not None else None,
             folder_marker(texture_folder),folder_marker(projects_root),
             folder_marker(stage_root),animation_index is None)
 
@@ -77,7 +77,7 @@ def prepare_model_cached(workspace,relative,*,force=False,**kwargs):
     from async_model_resolve import resolve_model
     start=time.perf_counter()
     key=model_cache_key(workspace,relative,**kwargs)
-    eligible=kwargs.get('animation_index') is None and kwargs.get('index') is None
+    eligible=kwargs.get('animation_index') is None
     # Caller-provided indexes may change without detectable file modification.
     if not force and eligible:
         with _cache_lock:
