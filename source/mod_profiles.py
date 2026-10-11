@@ -159,6 +159,113 @@ class ModProfiles:
         profile['mods'] = [m for m in profile['mods'] if m['id'] != mod_id]
         _atomic_json(self.catalog_path, data)
 
+    def move_mod(self, profile_id, mod_id, direction):
+        """Reorder display priority. PAK target collisions are still rejected."""
+        if direction not in (-1,1):
+            raise ValueError('Move a profile entry up or down.')
+        data=self._catalog()
+        profile=self._get(data,profile_id)
+        index=next((i for i,m in enumerate(profile['mods'])
+                    if m['id']==mod_id),None)
+        if index is None:
+            raise ValueError('Unknown mod entry.')
+        other=index+direction
+        if not 0 <= other < len(profile['mods']):
+            return
+        profile['mods'][index],profile['mods'][other]=(
+            profile['mods'][other],profile['mods'][index])
+        _atomic_json(self.catalog_path,data)
+
+    def duplicate_profile(self, profile_id, new_name):
+        data=self._catalog()
+        profile=self._get(data,profile_id)
+        new_name=_clean_name(new_name)
+        if len(data['profiles'])>=MAX_PROFILES:
+            raise ValueError('Profile limit reached.')
+        if any(p['name'].casefold()==new_name.casefold() for p in data['profiles']):
+            raise ValueError('A profile with that name already exists.')
+        copied={'id':_uuid(),'name':new_name,'mods':[
+            dict(m,id=_uuid()) for m in profile['mods']]}
+        data['profiles'].append(copied)
+        _atomic_json(self.catalog_path,data)
+        return copied['id']
+
+    def export_manifest(self, profile_id, destination):
+        """Shareable manifest contains no user folder paths or game data."""
+        profile=self._get(self._catalog(),profile_id)
+        path=Path(destination)
+        if path.suffix.casefold()!='.json' or path.exists():
+            raise ValueError('Choose a new JSON export filename.')
+        if not path.parent.is_dir():
+            raise FileNotFoundError('Create the destination directory first.')
+        items=[{'target':m['relative'],'filename':Path(m['source']).name,
+                'sha256':m['sha256'],'enabled':bool(m['enabled'])}
+               for m in profile['mods']]
+        data={'format':'evolve-mod-profile-v2','name':profile['name'],'mods':items}
+        if len(json.dumps(data))>256000:
+            raise ValueError('Profile export too large.')
+        # Exclusive write; never overwrite an unrelated file.
+        with path.open('x',encoding='utf-8') as out:
+            json.dump(data,out,indent=2)
+        return path
+
+    def import_manifest(self, source, directory, stage, *, name=None):
+        """Resolve exported mod hashes to a user-selected folder, atomically.
+
+        Never trust filesystem paths from manifest or automatically download files.
+        Every source and target must pass existing staged archive compatibility.
+        """
+        path=Path(source)
+        if not path.is_file() or path.stat().st_size>256000:
+            raise ValueError('Choose a small exported profile JSON file.')
+        data=json.loads(path.read_text('utf-8'))
+        if data.get('format')!='evolve-mod-profile-v2' or not isinstance(data.get('mods'),list):
+            raise ValueError('Unsupported mod profile manifest.')
+        records=data['mods']
+        if len(records)>MAX_MODS:
+            raise ValueError('Too many profile entries.')
+        label=_clean_name(name if name is not None else data.get('name'))
+        catalog=self._catalog()
+        if len(catalog['profiles'])>=MAX_PROFILES or any(
+                p['name'].casefold()==label.casefold() for p in catalog['profiles']):
+            raise ValueError('Choose a new, unique profile name.')
+        root=Path(directory).resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError('Choose a folder containing the signed mod PAK files.')
+        stage=Path(stage).resolve()
+        known=allowed_paks(stage)
+        mods=[]
+        for item in records:
+            if not isinstance(item,dict):
+                raise ValueError('Malformed profile entry.')
+            target=_clean_relative(item.get('target'))
+            real=known.get(target.casefold())
+            if real is None:
+                raise ValueError('Target PAK is not in your current signed stage: '+target)
+            filename=item.get('filename')
+            if (not isinstance(filename,str) or not filename or
+                    '/' in filename or '\\' in filename or ':' in filename or
+                    Path(filename).name!=filename or
+                    Path(filename).suffix.casefold()!='.pak' or
+                    filename.casefold()!=Path(real).name.casefold()):
+                raise ValueError('Invalid PAK filename in shared profile.')
+            sha=item.get('sha256')
+            if not isinstance(sha,str) or len(sha)!=64 or any(
+                    c not in '0123456789abcdef' for c in sha.lower()):
+                raise ValueError('Invalid shared SHA256.')
+            candidate=(root/filename).resolve()
+            if (not candidate.is_relative_to(root) or not candidate.is_file()
+                    or candidate.is_symlink() or digest(candidate).lower()!=sha.lower()):
+                raise ValueError('Missing or hash-mismatched signed PAK: '+filename)
+            if candidate==(stage/'paks'/Path(*real.split('/'))).resolve():
+                raise ValueError('Cannot import a staged PAK as a mod.')
+            mods.append({'id':_uuid(),'relative':real,'source':str(candidate),
+                         'sha256':sha.lower(),'enabled':item.get('enabled') is True})
+        profile={'id':_uuid(),'name':label,'mods':mods}
+        catalog['profiles'].append(profile)
+        _atomic_json(self.catalog_path,catalog)
+        return profile['id']
+
     def _mod(self, catalog, profile_id, mod_id):
         profile = self._get(catalog, profile_id)
         mod = next((m for m in profile['mods'] if m.get('id') == mod_id), None)
