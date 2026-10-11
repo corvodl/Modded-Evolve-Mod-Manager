@@ -8,11 +8,11 @@ from developer_event_catalog import (load_catalog, filter_catalog,
 class EventCatalogTests(unittest.TestCase):
     def test_all_developer_rows_are_present(self):
         events = load_catalog()
-        self.assertEqual(len(events), 357)
-        self.assertEqual(len({e.name for e in events}), 357)
-        self.assertEqual(len({e.category for e in events}), 14)
-        self.assertEqual(sum(e.uncertain_id for e in events), 47)
-        self.assertEqual(sum(e.networked for e in events), 29)
+        self.assertEqual(len(events), 534)
+        self.assertEqual(len({e.name for e in events}), 534)
+        self.assertEqual(len({e.category for e in events}), 15)
+        self.assertEqual(sum(e.uncertain_id for e in events), 72)
+        self.assertEqual(sum(e.networked for e in events), 44)
         self.assertEqual(sum(e.kept for e in events), 59)
 
     def test_representative_event_metadata(self):
