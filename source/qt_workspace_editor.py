@@ -1023,6 +1023,17 @@ class QtWorkspaceEditor(QMainWindow):
                                 ' | largest mip only' +
                                 (' | streaming fragments' if self.stream else ''))
 
+    def refresh_model_asset_references(self):
+        """Rebuild references after any newly completed Asset Library imports."""
+        if self.mode != 'models' or not self.current:
+            return
+        from studio_polish_117 import clear_model_cache
+        clear_model_cache(self.workspace)
+        self.preview_index = None
+        self._prepared_animation = None
+        self.status.setText('Refreshing current Asset Library references…')
+        self.load(self.current)
+
     def _load_model_background(self, rel):
         """Load heavy CryEngine files and textures away from the GUI thread."""
         self._model_prepared = False
@@ -1232,8 +1243,9 @@ class QtWorkspaceEditor(QMainWindow):
                 details['_animation_asset_origin'] = origin
                 return (imported, prepare_geometry(imported.preview_mesh)), details
 
-            self.model_panel.set_native_catalog(refs, idle, config,
-                                                loader=build_native_clip)
+            self.model_panel.set_native_catalog(
+                refs, idle, config, loader=build_native_clip,
+                refresh_library=self.refresh_model_asset_references)
             prefs=self.manager.settings.get('animation_playback_preferences',{})
             key=project_session_key(self.workspace)+'|'+self.current.casefold()
             if isinstance(prefs,dict) and isinstance(prefs.get(key),dict):
