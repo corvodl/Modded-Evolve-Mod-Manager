@@ -34,6 +34,11 @@ _current = None
 _worker = None
 _error = ""
 _status = "Not started"
+_scoped_catalogs = {}
+_scoped_workers = {}
+_scoped_status = {}
+_scoped_revision = 0
+MAX_CHARACTER_CATALOGS = 12
 
 
 @dataclass
@@ -47,10 +52,11 @@ class _Archive:
 
 
 class SharedCatalog:
-    def __init__(self, stage, cache_root, key):
+    def __init__(self, stage, cache_root, key, archive_names=None):
         self.stage = Path(stage).resolve()
         self.cache_root = Path(cache_root).resolve()
         self.key = Path(key).resolve()
+        self.archive_names = SHARED_NAMES if archive_names is None else frozenset(n.casefold() for n in archive_names)
         self.archives = []
         self.index = defaultdict(list)
         self._read_lock = threading.RLock()
@@ -63,7 +69,7 @@ class SharedCatalog:
         stage_paks = (self.stage / "paks").resolve()
         allowed = allowed_paks(self.stage)
         names = [p for p in allowed.values()
-                 if Path(p).name.casefold() in SHARED_NAMES]
+                 if Path(p).name.casefold() in self.archive_names]
         if not self.key.is_file() or not self.key.is_relative_to(self.stage):
             raise FileNotFoundError("Shared asset index needs the staged public key.")
         key_hash = hashlib.sha256(self.key.read_bytes()).hexdigest()
@@ -127,7 +133,7 @@ class SharedCatalog:
         try:
             from universal_stage import allowed_paks
             listed = sorted(rel for rel in allowed_paks(self.stage).values()
-                            if Path(rel).name.casefold() in SHARED_NAMES)
+                            if Path(rel).name.casefold() in self.archive_names)
             if listed != sorted(a.relative for a in self.archives):
                 return False
             return all((a.path.stat().st_size, a.path.stat().st_mtime_ns)
@@ -237,15 +243,108 @@ def start_shared_catalog(stage, cache_root=None):
 
 def shared_catalog_status():
     with _lock:
-        return _status
+        scoped = [key for key, state in _scoped_status.items()
+                  if state.startswith('Ready:')]
+        return _status + (' | Character catalogs: %d (rev %d)' %
+                           (len(scoped), _scoped_revision) if _scoped_revision else '')
+
+
+def _character_folder(relative):
+    """Return the character asset path segment, not a guessed animation name."""
+    from evolve_pak_workspace import normalized_name
+    parts = normalized_name(relative).casefold().split('/')
+    if len(parts) < 4 or parts[0] != 'characters' or parts[1] not in (
+            'hunters', 'monsters', 'creatures'):
+        return None
+    if parts[2] == 'shared':
+        return None
+    return parts[1], parts[2]
+
+
+def _archive_candidates(stage, character):
+    """Only archive basenames clearly referring to this character."""
+    from universal_stage import allowed_paks
+    aliases = {'merc_tech': ('merc_tech', 'kala')}
+    tokens = aliases.get(character[1], (character[1],))
+    names = []
+    for rel in allowed_paks(Path(stage).resolve()).values():
+        stem = Path(rel).stem.casefold().replace('-', '_')
+        if any(token in stem for token in tokens):
+            names.append(rel)
+    return names
+
+
+def warm_character_catalog(stage, character, selected_archives, cache_root=None):
+    """Worker: stage-signed metadata scan for a character's own archive(s)."""
+    global _scoped_revision
+    stage = Path(stage).resolve()
+    root = (Path(cache_root) if cache_root else _default_cache().parent /
+            'CharacterReferences').resolve()
+    # Each character uses its own cache root so scans cannot evict each other.
+    slug = hashlib.sha256((str(stage).casefold() + str(character)).encode()).hexdigest()[:20]
+    try:
+        candidate = SharedCatalog(
+            stage, root / slug, stage / 'mykeys' / 'public_key.bin',
+            archive_names={Path(name).name.casefold() for name in selected_archives}
+        ).scan()
+        with _lock:
+            _scoped_catalogs[(str(stage), character)] = candidate
+            _scoped_status[(str(stage), character)] = (
+                'Ready: %d character PAKs / %d paths' %
+                (len(candidate.archives), len(candidate.index)))
+            _scoped_revision += 1
+    except (OSError, ValueError, RuntimeError, KeyError) as exc:
+        with _lock:
+            _scoped_status[(str(stage), character)] = 'Unavailable: ' + str(exc)[:150]
+            _scoped_revision += 1
+
+
+def start_character_catalog(stage, selected):
+    """Nonblocking supplemental index for character-specific CAFs and textures."""
+    global _scoped_revision
+    character = _character_folder(selected)
+    if character is None:
+        return False
+    stage = Path(stage).resolve()
+    key = (str(stage), character)
+    with _lock:
+        live = _scoped_catalogs.get(key)
+        if live is not None and live.is_current():
+            return False
+        if _scoped_workers.get(key) is not None and _scoped_workers[key].is_alive():
+            return False
+        if key not in _scoped_catalogs and len(_scoped_catalogs) >= MAX_CHARACTER_CATALOGS:
+            _scoped_status[key] = 'Catalog limit reached; restart to index other characters.'
+            return False
+        archives = _archive_candidates(stage, character)
+        if not archives:
+            _scoped_status[key] = (
+                'No matching staged package for ' + '/'.join(character))
+            _scoped_revision += 1
+            return False
+        _scoped_status[key] = 'Scanning ' + '/'.join(character)
+        worker = threading.Thread(
+            target=warm_character_catalog,
+            args=(stage, character, tuple(archives)), daemon=True,
+            name='CharacterPAKAssetIndex')
+        _scoped_workers[key] = worker
+        worker.start()
+        return True
 
 
 def shared_asset_index(stage):
     """Snapshot shared metadata without waiting for an in-progress scan."""
     with _lock:
-        if _current is None or _current.stage != Path(stage).resolve():
-            return {}
-        return {key: list(records) for key, records in _current.index.items()}
+        stage = Path(stage).resolve()
+        combined = defaultdict(list)
+        if _current is not None and _current.stage == stage:
+            for key, records in _current.index.items():
+                combined[key].extend(records)
+        for (path, _character), catalog in _scoped_catalogs.items():
+            if path == str(stage):
+                for key, records in catalog.index.items():
+                    combined[key].extend(records)
+        return dict(combined)
 
 
 def materialize_shared_record(record):
@@ -254,6 +353,11 @@ def materialize_shared_record(record):
         return record
     with _lock:
         catalog = _current
-    if catalog is None or not any(item is archive for item in catalog.archives):
-        raise ValueError("Shared index expired; refresh shared assets.")
-    return catalog.materialize(record)
+    if catalog is not None and any(item is archive for item in catalog.archives):
+        return catalog.materialize(record)
+    with _lock:
+        owners = tuple(_scoped_catalogs.values())
+    for owner in owners:
+        if any(item is archive for item in owner.archives):
+            return owner.materialize(record)
+    raise ValueError("Signed asset index expired; refresh model assets.")
