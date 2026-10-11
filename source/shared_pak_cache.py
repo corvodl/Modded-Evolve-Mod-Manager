@@ -245,6 +245,22 @@ def _default_cache():
     return DATA_HOME / "Cache" / "SharedReferences"
 
 
+def _original_public_key(stage):
+    """Locate the original public verification key saved at setup."""
+    from app_runtime import DATA_HOME
+    stage = Path(stage).resolve()
+    candidates = (
+        stage.parent / 'RSAKeyData.bin',
+        stage.parent.parent / 'RSAKeyData.bin',
+        DATA_HOME / 'Setup' / 'RSAKeyData.bin',
+        Path(__file__).resolve().parent / 'reference' / 'RSAKeyData.bin',
+    )
+    for candidate in candidates:
+        if candidate.is_file() and candidate.stat().st_size == 140:
+            return candidate.resolve()
+    return None
+
+
 def warm_shared_catalog(stage, cache_root=None):
     """Background task. Errors are exposed through shared_catalog_status."""
     global _current, _error, _status
