@@ -1679,7 +1679,8 @@ class QtGPUModelPanel(QWidget):
             self.converter_process = QProcess(self)
             self.converter_process.setProgram(program)
             self.converter_process.setArguments(args)
-            self.converter_process.setWorkingDirectory(output)
+            # PySide6 QProcess requires QString/str, not WindowsPath.
+            self.converter_process.setWorkingDirectory(str(output))
             self._dba_conversion = is_dba
             self.converter_process.finished.connect(
                 lambda code, status: self._conversion_finished(code, status, output))
