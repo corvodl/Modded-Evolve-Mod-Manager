@@ -57,6 +57,42 @@ class CharacterPipelineTests(unittest.TestCase):
         self.assertEqual(native_clip_playability(standalone)[0], 'candidate')
         self.assertIs(prefer_idle((layered, standalone)), standalone)
 
+    def test_animation_catalog_uses_newly_imported_caf_without_reloading_model(self):
+        from animation_on_demand import _exact_loose
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            name = 'characters/hunters/merc_tech/tech_3p_skeleton.chrparams'
+            clip = ('characters/hunters/merc_tech/animations/3p/'
+                    'tech_idle_forward.caf')
+            params = root/'config.chrparams'
+            params.write_text(
+                '<Params><AnimationList>'
+                '<Animation name="#filepath" '
+                'path="characters/hunters/merc_tech/animations/3p"/>'
+                '<Animation name="stand_idle" path="tech_idle_forward.caf"/>'
+                '</AnimationList></Params>')
+            header = b'CrChF\\x07\\x00\\x00' + struct.pack('<II', 1, 16) + b'\\0' * 16
+            a, b = root/'animations1.caf', root/'animations2.caf'
+            a.write_bytes(header)
+            b.write_bytes(header)
+            stale_model_index = {
+                name: [{'workspace': root, 'file': params, 'relative': name}]}
+            imported = {
+                clip: [{'workspace': None, 'file': a, 'relative': clip,
+                        '_asset_library': 'first'},
+                       {'workspace': None, 'file': b, 'relative': clip,
+                        '_asset_library': 'second'}]}
+            with patch('asset_library.extracted_index', return_value=imported):
+                refs, idle, source = discover_animations(
+                    'characters/hunters/merc_tech/tech_3p.skinm',
+                    stale_model_index, preferred_workspace=root)
+            self.assertEqual(len(refs), 1)
+            self.assertTrue(refs[0].available)
+            self.assertEqual(refs[0].file, a)
+            self.assertEqual(idle.name, 'stand_idle')
+            b.write_bytes(header[:-1] + b'X')
+            self.assertIsNone(_exact_loose(imported, clip))
+
     def test_native_catalog_uses_character_specific_skeleton(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
