@@ -55,7 +55,6 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             return
         try:
             files = archive_entries(archive_id)
-            index = library_model_index(archive_id)
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, 'Asset Library', str(error))
             return
@@ -66,7 +65,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         self.name = name
         self.entries = files
         self.records = {rel: {'path': rel, 'format': 'raw'} for rel in files}
-        self.preview_index = index
+        self.preview_index = None
         self.current = None
         self.mode = None
         self.raw = b''
@@ -97,7 +96,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         self.entries = archive_entries(self.identifier)
         self.records = {rel: {'path': rel, 'format': 'raw'}
                         for rel in self.entries}
-        self.preview_index = library_model_index(self.identifier)
+        self.preview_index = None
         self.populate()
         if self.current and self.current in self.records:
             self.load(self.current)
