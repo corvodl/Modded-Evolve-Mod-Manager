@@ -57,7 +57,10 @@ def parse_animation_references(data, exists, can_extract=None):
         # CryEngine for packed motion. Expose the DBA itself as a selectable
         # conversion source, not as a fictitious standalone CAF.
         database = name.casefold() == '$tracksdatabase'
-        if not name or not ref or (name.startswith(('#', '
+        if (not name or not ref or '*' in name or '*' in ref
+                or name.startswith('#')
+                or (name.startswith(chr(36)) and not database)):
+            continue
         ext = Path(ref).suffix.casefold()
         if ext not in ('.caf', '.bspace', '.comb', '.dba'):
             continue
