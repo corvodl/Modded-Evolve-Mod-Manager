@@ -1400,7 +1400,7 @@ class QtManager(QMainWindow):
                   f'Description (filename-derived): {archive_description(rel)}\n'
                   f'Archive: {rel}\nStaged size: {size}\nStaged: {staged}\n'
                   f'Installed original: {original or "Unknown"}\n'
-                  f'Unpacked workspace: {self.current_workspace or "Not unpacked"}')
+                  f'Unpacked workspace: {self._workspace_for_selected_archive() or "Not unpacked"}')
 
     def reveal_pak(self, original=True):
         try:
@@ -1430,7 +1430,11 @@ class QtManager(QMainWindow):
             current = self._workspace_for_selected_archive()
         except (ValueError,OSError):
             current = None
-        target = current/'files' if current else Path('__no_matching_project__')
+        if current is None:
+            self.failure('This selected PAK has no matching unpacked project. '
+                         'Double-click it to unpack first.')
+            return
+        target = current/'files'
         if not target.is_dir():
             self.failure('Unpack the selected PAK first.')
         else:
