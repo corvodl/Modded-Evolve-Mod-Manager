@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.9', (
+        'Give Asset Library previews the same model grouping, native GPU viewport, menus and animation controls as Modding.',
+        'Keep Asset Library preview and export read-only, with file imports and modification controls disabled.',
+        'Add an Open Asset Library Folder button that opens extracted references in Windows Explorer.',
+    )),
     ('1.1.18-beta.8', (
         'Browse and preview extracted Asset Library PAKs in their own read-only tab.',
         'Export original PAK layouts, PNG textures and supported Blender models.',
