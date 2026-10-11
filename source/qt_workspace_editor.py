@@ -1165,9 +1165,11 @@ class QtWorkspaceEditor(QMainWindow):
             key=project_session_key(self.workspace)+'|'+self.current.casefold()
             if isinstance(prefs,dict) and isinstance(prefs.get(key),dict):
                 self.model_panel.restore_playback_preferences(prefs[key])
-            self.model_panel._info.setText(
-                mesh.source_name + '  •  ' + mesh.description +
-                '\n' + self.texture_message[:260])
+            # Keep the viewport readable; detailed mesh/texture diagnostics
+            # remain available on hover rather than taking up viewport rows.
+            self.model_panel._info.setText('User Perspective  •  ' + mesh.source_name)
+            self.model_panel._info.setToolTip(
+                mesh.description + '\n' + self.texture_message[:1000])
             self.model_gpu.update()
             QTimer.singleShot(450, self._check_gpu_preview)
         except Exception as exc:
