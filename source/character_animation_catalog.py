@@ -25,6 +25,7 @@ class AnimationReference:
     kind: str
     available: bool
     file: Path | None = None
+    in_archive: bool = False  # signed directory names known; bytes still unextracted
 
 
 def _xml(data):
@@ -33,7 +34,7 @@ def _xml(data):
     return ET.fromstring(data)
 
 
-def parse_animation_references(data, exists):
+def parse_animation_references(data, exists, can_extract=None):
     """Read CryEngine #filepath mappings without guessing cross-skeleton matches.
 
     exists(virtual_path) must return a safely resolved file path or None.
@@ -65,30 +66,35 @@ def parse_animation_references(data, exists):
         resolved = exists(virtual)
         if resolved is not None:
             resolved = Path(resolved)
-        out.append(AnimationReference(name, virtual, ext[1:], resolved is not None, resolved))
+        archived = bool(can_extract(virtual)) if can_extract else False
+        out.append(AnimationReference(name, virtual, ext[1:], resolved is not None,
+                                      resolved, archived))
     return tuple(out)
 
 
 def native_clip_playability(reference):
-    """UI-safe preview classification; not a promise of skeleton compatibility.
+    """Classify playback without attempting CAF decoding or I/O.
 
-    CryEngine aim-pose and additive files are layers for an animation graph.
-    They cannot play as independent GLB clips with the current converter.
+    Missing standalone CAFs can trigger exact-path extraction on Play.
+    Aimposes require a separate CryEngine base animation and are never
+    incorrectly claimed as standalone playable after extraction.
     """
-    if not reference.available:
-        return 'missing', 'Animation data has not been extracted.'
     if reference.kind != 'caf':
-        return 'metadata', 'Blendspaces / animation databases need the CryEngine animation graph.'
+        return 'metadata', 'Blendspaces / animation databases require the CryEngine animation graph.'
     name = reference.name.casefold()
     if ('aimpose' in name or 'additive' in name or
             re.search(r'(^|[_\\-])aim[_\\-]', name)):
         return 'layered', (
             'Layered/additive aim pose. Needs a compatible base animation and '
             'CryEngine blend weights; standalone playback is not supported.')
-    return 'candidate', (
-        'Standalone playback candidate. The native CAF decoder will verify '
-        'bone controllers and animation flags when opened.')
-
+    if not reference.available:
+        if reference.in_archive:
+            return 'extractable', ('Found in signed PAK metadata. Click Extract & Play '
+                                   'to decode only this CAF into the preview cache.')
+        return 'missing', ('Not extracted. Click Search PAK & Play to locate this '
+                           'exact animation in verified installed/staged PAKs.')
+    return 'candidate', ('Standalone playback candidate. The native CAF decoder '
+                          'will verify bone controllers and flags before playback.')
 
 
 def prefer_idle(references):
@@ -182,14 +188,22 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
     if config_file is None:
         return (), None, 'No matching skeleton .chrparams was found.'
     def resolve(virtual):
-        hits, status = _resolve(index, virtual, preferred_workspace=preferred_workspace)
-        if status == 'found':
-            return hits[0]['file']
-        if status == 'missing' and loose_index:
+        # A catalog listing never decrypts a CAF; only a Play request may
+        # materialize one from an encrypted game PAK.
+        from animation_on_demand import _exact_loose
+        known = _exact_loose(index, virtual, preferred_workspace)
+        if known is not None:
+            return known
+        if loose_index:
             return loose_index.get(virtual.casefold())
         return None
+
+    def can_extract(virtual):
+        return any('_shared_archive' in row for row in
+                   index.get(virtual.casefold(), ()))
     try:
-        refs = parse_animation_references(Path(config_file).read_bytes(), resolve)
+        refs = parse_animation_references(Path(config_file).read_bytes(), resolve,
+                                         can_extract=can_extract)
     except (OSError, ValueError, ET.ParseError) as exc:
         return (), None, 'Cannot read skeleton animation map: ' + str(exc)
     confirmed = []
@@ -220,9 +234,11 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
             paths = {}
             for key, entries in index.items():
                 if key.startswith(prefix) and key.endswith('.caf'):
-                    hits, found = _resolve(index, key, preferred_workspace=preferred_workspace)
-                    if found == 'found':
-                        paths[key] = hits[0]['file']
+                    # Skip encrypted-on-demand entries here; the name alone
+                    # does not establish a compatible skeleton/controller.
+                    file = resolve(key)
+                    if file:
+                        paths[key] = file
             if loose_index:
                 for key, file in loose_index.items():
                     if key.startswith(prefix) and key.endswith('.caf') and file and key not in paths:
