@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QSplitter, QPlainTextEdit, QMessageBox,
     QFileDialog, QDialog, QDialogButtonBox, QFormLayout, QProgressDialog,
     QCheckBox, QMenu, QAbstractItemView, QSizePolicy, QProgressBar, QTabWidget,
+    QToolButton, QStyle,
 )
 
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
@@ -88,6 +89,51 @@ def _button(text, callback, primary=False):
     # handler receives False and the drawer never opens for real users.
     b.clicked.connect(lambda _checked=False: callback())
     return b
+
+
+def _info_icon(message):
+    """Small hover / keyboard-focus help, with no effect on the action itself."""
+    info = QToolButton()
+    info.setObjectName('infoIcon')
+    info.setText('i')  # ASCII glyph avoids missing circled-i fonts on Windows.
+    info.setFixedSize(21, 21)
+    info.setToolTip(message)
+    info.setAccessibleName('Information: ' + message)
+    info.setCursor(Qt.WhatsThisCursor)
+    info.setFocusPolicy(Qt.StrongFocus)
+    return info
+
+
+def _action_with_info(title, callback, hint, primary=False):
+    widget = QWidget()
+    widget.setObjectName('actionWithInfo')
+    layout = QHBoxLayout(widget)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(4)
+    button = _button(title, callback, primary=primary)
+    button.setToolTip(hint)
+    layout.addWidget(button, 1)
+    layout.addWidget(_info_icon(hint), 0, Qt.AlignVCenter)
+    return widget
+
+
+ACTION_HINTS = {
+    'Unpack PAK': 'Extract a selected signed PAK into a separate editable project. The installed game is not changed.',
+    'Unpack Selected PAKs': 'Extract 2–30 selected signed archives into linked project workspaces. Uses extra disk space.',
+    'Edit Files': 'Open the native Qt editor for extracted XML, textures, models, or private project copies.',
+    'Review Changes': 'Compare the extracted workspace with its source PAK before building a mod.',
+    'Build Mod': 'Build and sign a modified PAK from the current project. This does not install it into the game.',
+    'Add Mod': 'Stage a built mod for a later offline launch; installed original files stay untouched until the swap.',
+    'Import Modified PAK': 'Stage an externally modified, compatible PAK after validation.',
+    'Undo Staged Mod': 'Restore an earlier staged PAK from a dated project backup; not the installed live game.',
+    'Play With Mods': 'Begin offline mod testing. Already-prepared files launch faster. Restore originals after your session.',
+    'Restore Game Files': 'Safely return original game PAKs and injector from lightweight rename backups; retain mod files for reuse.',
+    'Status Details': 'Show counts and recovery details from the real swap journal.',
+    'Set Up Launcher': 'Install missing trusted launcher helper scripts without overwriting existing journal or scripts.',
+    'Refresh Original PAKs': 'After client verification, rebuild signing from updated original game PAKs.',
+    'Prepare Mod Files Now': 'Perform the slow verified preparation ahead of time. Does not start Evolve or replace installed originals.',
+    'Check for Updates': 'Check stable updates and, when clicked manually, optionally offer separate experimental builds.',
+}
 
 
 def _row(*items):
@@ -178,6 +224,16 @@ def qt_style():
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
     QSplitter::handle { background:#35252c; height:5px; }
     QCheckBox { color:#d6d3db; spacing:8px; }
+    QToolButton#infoIcon { background:#201920; color:#fa586c;
+        border:1px solid #864052; border-radius:10px; font-weight:700;
+        padding:0px; font-size:10pt; }
+    QToolButton#infoIcon:hover, QToolButton#infoIcon:focus {
+        background:#55303c; border-color:#fa586c; }
+    QToolButton#refreshStatusIcon { background:#261e26;
+        border:1px solid #693647; border-radius:9px; }
+    QToolButton#refreshStatusIcon:hover { background:#55303c; }
+    QToolTip { background:#222026; color:#f7f4f7; border:1px solid #864052;
+        padding:6px; }
     QMenu { background:#1e1c23; color:#eee; border:1px solid #403943; padding:5px; }
     QMenu::item { padding:7px 18px; border-radius:7px; }
     QMenu::item:selected { background:#702c3c; }
@@ -293,7 +349,11 @@ class QtManager(QMainWindow):
         navlay.addWidget(_label('SECTIONS', muted=True))
         self.nav_buttons = []
         for index, title in enumerate(SECTIONS):
-            btn = _button(title, lambda _checked=False, idx=index: self.open_page(idx))
+            # Qt interprets & as a keyboard-mnemonic marker in QPushButton.
+            # Double it to render a literal "Play & Restore", not "Play _Restore".
+            btn = _button(title.replace('&', '&&'),
+                          lambda idx=index: self.open_page(idx))
+            btn.setAccessibleName(title)
             btn.setObjectName('navActive' if index == 0 else 'nav')
             navlay.addWidget(btn)
             self.nav_buttons.append(btn)
@@ -487,7 +547,8 @@ class QtManager(QMainWindow):
         ):
             bar = QHBoxLayout()
             for title, func, primary in group:
-                bar.addWidget(_button(title, func, primary=primary), 1)
+                bar.addWidget(_action_with_info(
+                    title, func, ACTION_HINTS[title], primary=primary), 1)
             root.addLayout(bar)
         self.stack.addWidget(page)
         self.pages['modding'] = page
@@ -501,16 +562,42 @@ class QtManager(QMainWindow):
         card, panel = _card('MOD LAUNCH STATUS', 'Launcher and restoration status are read from the real swap journal and original backups.')
         lay.addWidget(card)
         self.launch_status = _label('Checking current game state…')
-        panel.addWidget(self.launch_status)
+        status_line = QHBoxLayout()
+        self.launch_status_row = status_line
+        status_line.setContentsMargins(0, 0, 0, 0)
+        status_line.setSpacing(6)
+        status_line.addWidget(self.launch_status)
+        # Compact icon directly beside the launch message, not another
+        # full-size action in the command row. Qt supplies a native icon.
+        self.refresh_status_icon = QToolButton()
+        self.refresh_status_icon.setObjectName('refreshStatusIcon')
+        self.refresh_status_icon.setFixedSize(32, 32)
+        self.refresh_status_icon.setIcon(
+            self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.refresh_status_icon.setToolTip(
+            'Refresh mod launch readiness and recovery status from the swap journal.')
+        self.refresh_status_icon.setAccessibleName('Refresh Status')
+        self.refresh_status_icon.setCursor(Qt.PointingHandCursor)
+        self.refresh_status_icon.clicked.connect(
+            lambda _checked=False: self.refresh_swap_status())
+        status_line.addWidget(self.refresh_status_icon, 0, Qt.AlignVCenter)
+        status_line.addStretch()
+        panel.addLayout(status_line)
         box = QWidget()
-        box.setLayout(_row(_button('Play With Mods', self.launch, primary=True),
-                           _button('Restore Game Files', self.restore)))
+        box.setLayout(_row(
+            _action_with_info('Play With Mods', self.launch,
+                              ACTION_HINTS['Play With Mods'], primary=True),
+            _action_with_info('Restore Game Files', self.restore,
+                              ACTION_HINTS['Restore Game Files'])))
         panel.addWidget(box)
         other = QWidget()
-        other.setLayout(_row(_button('Refresh Status', self.refresh_swap_status),
-                             _button('Status Details', self.status_details),
-                             _button('Set Up Launcher', self.setup_launcher),
-                             _button('Refresh Original PAKs', self.refresh_originals)))
+        other.setLayout(_row(
+            _action_with_info('Status Details', self.status_details,
+                              ACTION_HINTS['Status Details']),
+            _action_with_info('Set Up Launcher', self.setup_launcher,
+                              ACTION_HINTS['Set Up Launcher']),
+            _action_with_info('Refresh Original PAKs', self.refresh_originals,
+                              ACTION_HINTS['Refresh Original PAKs'])))
         panel.addWidget(other)
         lay.addWidget(_button('How Play & Restore works', lambda: self.show_help(2)))
         lay.addStretch()
@@ -598,7 +685,9 @@ class QtManager(QMainWindow):
         lay.addWidget(launch_card)
         self.preparation_status = _label('Checking prepared file state…', muted=True)
         launch_row.addWidget(self.preparation_status)
-        launch_row.addWidget(_button('Prepare Mod Files Now', self.prepare_mods_now, primary=True))
+        launch_row.addWidget(_action_with_info('Prepare Mod Files Now',
+                             self.prepare_mods_now, ACTION_HINTS['Prepare Mod Files Now'],
+                             primary=True))
         self.activity_checkbox = QCheckBox('Open Activity automatically while processing tasks')
         self.activity_checkbox.setChecked(self.show_activity_on_tasks)
         self.activity_checkbox.toggled.connect(self._save_ui_preferences)
@@ -617,7 +706,9 @@ class QtManager(QMainWindow):
         self.update_status = _label('Updates: not checked', muted=True)
         update_row.addWidget(self.update_status)
         self.update_button = _button('Check for Updates', self.check_updates)
+        self.update_button.setToolTip(ACTION_HINTS['Check for Updates'])
         update_row.addWidget(self.update_button)
+        update_row.addWidget(_info_icon(ACTION_HINTS['Check for Updates']))
         advanced, advanced_row = _card('ADVANCED FILE OPTIONS',
                                        'Unpack filtering, current workspace, and output location.')
         lay.addWidget(advanced)

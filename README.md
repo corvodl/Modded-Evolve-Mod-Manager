@@ -8,6 +8,8 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## What's new in v1.1.2
 
+- **Contextual help on hover:** Small red-bordered `i` information controls beside major Modding, Play & Restore, and Settings actions explain exactly what the buttons do, including offline safety and storage implications.
+- **Less clutter in Play & Restore:** A compact native refresh icon sits directly beside the launch-status message, replacing the standalone Refresh Status action. The Menu shows **Play & Restore** correctly, with the ampersand escaped for Qt's mnemonic handling.
 - **Settings grouped inside its own page:** General, Game & Files, Backups & Recovery, Launch Preferences and Updates & Advanced appear as separated sections of the existing scrollable Settings page. The Menu still has only the original five main pages.
 - **Functional customization:** Switch between Comfortable and Compact UI density, reduce the sliding menu animation, and choose whether Activity opens automatically during operations. All settings persist in Data/Settings.
 - **Clearly labeled snapshot preference:** Keep or omit optional *permanent* original-file snapshots on new setups and refreshes. The manager still protects installed originals using lightweight same-volume `.customkey-original` renames during modded launches; those recovery files cannot be disabled by the Settings option.

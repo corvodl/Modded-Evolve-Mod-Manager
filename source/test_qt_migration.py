@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox
+from PySide6.QtWidgets import QApplication, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox, QToolButton
 
 from launch_integration import SwapStatus
 from qt_manager import QtManager, SECTIONS, qt_style
@@ -84,7 +84,7 @@ class QtMigrationTests(unittest.TestCase):
             'Go to Modding  →','Refresh','External PAK…',
             'Unpack PAK','Unpack Selected PAKs','Edit Files','Review Changes',
             'Build Mod','Add Mod','Import Modified PAK','Undo Staged Mod',
-            'Play With Mods','Restore Game Files','Refresh Status',
+            'Play With Mods','Restore Game Files',
             'Status Details','Set Up Launcher','Refresh Original PAKs',
             'Check Setup','Open Projects','Save Settings','Check for Updates',
             'Create Desktop Shortcut','Export Complete Manager ZIP',
@@ -93,6 +93,43 @@ class QtMigrationTests(unittest.TestCase):
         for name in required:
             with self.subTest(control=name):
                 self.assertIn(name,names)
+
+    def test_play_restore_menu_escapes_literal_ampersand(self):
+        # QPushButton interprets an unescaped & as a Windows mnemonic.
+        self.assertEqual(self.win.nav_buttons[2].text(), 'Play && Restore')
+        self.assertEqual(self.win.nav_buttons[2].accessibleName(), 'Play & Restore')
+        self.win.nav_buttons[2].click()
+        self.application.processEvents()
+        self.assertEqual(self.win.stack.currentIndex(), 2)
+
+    def test_play_refresh_icon_is_adjacent_and_replaces_full_button(self):
+        buttons = [b.text() for b in self.win.pages['play'].findChildren(QPushButton)]
+        self.assertNotIn('Refresh Status', buttons)
+        self.assertIn('Play With Mods', buttons)
+        icon = self.win.refresh_status_icon
+        self.assertIsInstance(icon, QToolButton)
+        self.assertEqual(icon.accessibleName(), 'Refresh Status')
+        self.assertTrue(bool(icon.toolTip()))
+        self.assertFalse(icon.icon().isNull())
+        self.assertEqual(self.win.launch_status_row.itemAt(0).widget(), self.win.launch_status)
+        self.assertEqual(self.win.launch_status_row.itemAt(1).widget(), icon)
+        with patch.object(self.win, 'refresh_swap_status') as refresh:
+            icon.click()
+            refresh.assert_called_once_with()
+
+    def test_hover_information_icons_explain_actions_without_extra_pages(self):
+        for section in ('modding', 'play', 'settings'):
+            icons = self.win.pages[section].findChildren(QToolButton, 'infoIcon')
+            self.assertGreaterEqual(len(icons), {'modding':8,'play':5,'settings':2}[section])
+            for widget in icons:
+                self.assertEqual(widget.text(), 'i')
+                self.assertGreater(len(widget.toolTip()), 35)
+                self.assertTrue(widget.accessibleName().startswith('Information: '))
+                self.assertLessEqual(widget.width(), 23)
+        build = next(b for b in self.win.pages['modding'].findChildren(QPushButton)
+                     if b.text() == 'Build Mod')
+        self.assertIn('sign', build.toolTip().lower())
+        self.assertEqual(len(self.win.nav_buttons), 5)
 
     def test_qpropertyanimation_is_an_overlay_and_does_not_resize(self):
         width = self.win.stack.width()
@@ -118,7 +155,7 @@ class QtMigrationTests(unittest.TestCase):
             'LAUNCH PREFERENCES', 'UPDATES & ADVANCED'))
         self.assertEqual(len(self.win.nav_buttons), 5)
         self.assertEqual(self.win.stack.count(), 5)
-        self.assertEqual([btn.text() for btn in self.win.nav_buttons], list(SECTIONS))
+        self.assertEqual([btn.text().replace('&&', '&') for btn in self.win.nav_buttons], list(SECTIONS))
         dividers = self.win.pages['settings'].findChildren(QFrame, 'settingsDivider')
         self.assertEqual(len(dividers), 5)
         section_headings = [

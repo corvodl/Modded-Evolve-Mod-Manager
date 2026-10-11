@@ -61,3 +61,13 @@ re-reading the entire file after its disk verification. Existing prepared
 files are checked against their signed sources, and the normal Restore command
 recycles verified modified files for later fast launches. Avoid deleting
 `.customkey-original` files during a live or interrupted session.
+
+## Contextual explanations and status refresh (v1.1.2)
+
+Important manager buttons have a small hoverable, keyboard-focusable `i`
+control with plain-language tooltips, plus native tooltips on the actions.
+The Play & Restore status message has an adjacent native Qt refresh icon,
+which reads the existing swap journal without modifying files. The former
+large Refresh Status button is removed. Qt mnemonic escaping ensures the
+Menu label displays **Play & Restore** rather than an underlined shortcut.
+No sections are added to the five-item Menu.
