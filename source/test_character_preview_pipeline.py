@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from character_animation_catalog import (
     AnimationReference, caf_header, discover_animations,
-    parse_animation_references, prefer_idle,
+    parse_animation_references, prefer_idle, native_clip_playability,
 )
 from character_assembly import assemble_character, combine_meshes
 from material_preview import PreviewMaterials
@@ -35,6 +35,27 @@ class CharacterPipelineTests(unittest.TestCase):
             self.assertFalse(refs[1].available)
             self.assertTrue(caf_header(file))
             self.assertEqual('nw_alert_stand_idle_forward', prefer_idle(refs).name)
+
+    def test_layered_aimposes_are_not_claimed_as_standalone_playback(self):
+        layered = AnimationReference(
+            'nw_alert_stand_aimposes_forward',
+            'characters/hunters/merc_tech/animations/3p/nw_alert_stand_aimposes_forward.caf',
+            'caf', True, Path('synthetic.caf'))
+        additive = AnimationReference('nw_stand_additive', 'foo.caf',
+                                      'caf', True, Path('synthetic.caf'))
+        standalone = AnimationReference(
+            'nw_alert_stand_idle_forward', 'idle.caf', 'caf', True,
+            Path('synthetic.caf'))
+        missing = AnimationReference('missing', 'missing.caf', 'caf', False)
+        blendspace = AnimationReference('look_blendspace', 'look.bspace',
+                                        'bspace', True, Path('look.bspace'))
+        self.assertEqual(native_clip_playability(layered)[0], 'layered')
+        self.assertEqual(native_clip_playability(additive)[0], 'layered')
+        self.assertIn('base animation', native_clip_playability(layered)[1])
+        self.assertEqual(native_clip_playability(missing)[0], 'missing')
+        self.assertEqual(native_clip_playability(blendspace)[0], 'metadata')
+        self.assertEqual(native_clip_playability(standalone)[0], 'candidate')
+        self.assertIs(prefer_idle((layered, standalone)), standalone)
 
     def test_native_catalog_uses_character_specific_skeleton(self):
         with tempfile.TemporaryDirectory() as temporary:
