@@ -168,7 +168,7 @@ class QtAssetPreviewWindow(QMainWindow):
                    and (kind == 0 or self._kind(path) == kind)]
         # A full game import can contain hundreds of thousands of entries.
         # Bound Qt objects while keeping search over the complete inventory.
-        visible = matches[:10000]
+        visible = matches[:2500]
         self.tree.blockSignals(True)
         self.tree.clear()
         folders = {}
@@ -374,7 +374,10 @@ class QtAssetPreviewWindow(QMainWindow):
     def closeEvent(self, event):
         self._serial += 1
         self._export_serial += 1
-        # QThreadPool is parented to this window. Wait until background
-        # readers complete so no signal targets a destroyed QWidget.
-        self._pool.waitForDone()
+        # Avoid freezing the main Qt thread waiting for a long model or
+        # export operation. The user can close the viewer after it completes.
+        if self._pool.activeThreadCount():
+            self.status.setText('Finish the active preview/export before closing.')
+            event.ignore()
+            return
         super().closeEvent(event)
