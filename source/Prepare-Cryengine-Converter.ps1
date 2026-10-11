@@ -28,6 +28,7 @@ if (!(Test-Path -LiteralPath $source) -or (Get-Item $source).Length -lt 1024) {
     try {
         Invoke-WebRequest -Uri $sourceUrl -OutFile $temporary -MaximumRedirection 8
         Add-Type -AssemblyName System.IO.Compression
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
         $zip = [IO.Compression.ZipFile]::OpenRead($temporary)
         try {
             if (!$zip.Entries.Where({ $_.FullName -match '/LICENSE$' }).Count) {
