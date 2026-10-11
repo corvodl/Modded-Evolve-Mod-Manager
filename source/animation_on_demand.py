@@ -189,6 +189,13 @@ def resolve_caf_for_play(reference, *, stage_root, game_root=None,
     candidate = _exact_loose(asset_index, virtual, preferred_workspace)
     if candidate is not None and caf_header(candidate):
         return replace(reference, available=True, file=candidate), False, "extracted project/cache"
+    # The persistent full-game library can finish importing after the viewer
+    # was opened. Re-read it at Play time before touching signed archives.
+    from asset_library import extracted_index
+    fresh_library = extracted_index()
+    candidate = _exact_loose(fresh_library, virtual, preferred_workspace)
+    if candidate is not None and caf_header(candidate):
+        return replace(reference, available=True, file=candidate), False, "Asset Library"
     # Source indexes may finish AFTER the model was opened. Refresh metadata
     # on demand; do not depend on whatever snapshot the editor first loaded.
     from shared_pak_cache import shared_asset_index
