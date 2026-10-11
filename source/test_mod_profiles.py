@@ -73,7 +73,7 @@ class ProfileTests(unittest.TestCase):
 
     def test_filename_and_stage_validation(self):
         pid = self.store.create('Test')
-        with self.assertRaises(ValueError):
+        with self.assertRaises(FileNotFoundError):
             self.make_mod(pid, self.root / 'missing.pak')
         wrong = self.root / 'another.pak'
         wrong.write_bytes(b'mod')
