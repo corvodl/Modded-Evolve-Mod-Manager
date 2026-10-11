@@ -11,6 +11,7 @@ from pathlib import Path
 import os
 import re
 import struct
+import zlib
 from xml.etree import ElementTree as ET
 
 from multi_pak_assets import normalized_name, _resolve
@@ -176,4 +177,52 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
                                                 item.kind, False))
         else:
             confirmed.append(item)
+    # Characters commonly have standalone CAF files omitted from their
+    # .chrparams (the latter points at packed DBA tracks and blendspaces).
+    # Permit such clips ONLY if their embedded controller CRC32 IDs match
+    # the selected compiled skeleton. Never match on filename alone.
+    candidates, status = _resolve(index, selected, preferred_workspace=preferred_workspace)
+    if status == 'found' and selected.casefold().endswith(('.chr','.skin')):
+        from model_rigging import parse_compiled_bones
+        try:
+            names, _, _, _ = parse_compiled_bones(candidates[0]['file'].read_bytes())
+        except (ValueError, OSError):
+            names = ()
+        if names:
+            valid_ids = {zlib.crc32(n.casefold().encode('utf-8')) for n in names}
+            parent = Path(selected).parent.as_posix().casefold()
+            base = Path(selected).stem.casefold()
+            direction = 'fp' if ('_fp' in base or base.endswith('fp')) else '3p'
+            prefix = parent + '/animations/' + direction + '/'
+            seen = {r.virtual_path.casefold() for r in confirmed}
+            paths = {}
+            for key, entries in index.items():
+                if key.startswith(prefix) and key.endswith('.caf'):
+                    hits, found = _resolve(index, key, preferred_workspace=preferred_workspace)
+                    if found == 'found':
+                        paths[key] = hits[0]['file']
+            if loose_index:
+                for key, file in loose_index.items():
+                    if key.startswith(prefix) and key.endswith('.caf') and file and key not in paths:
+                        paths[key] = file
+            for key, file in sorted(paths.items()):
+                if key in seen:
+                    continue
+                try:
+                    raw = Path(file).read_bytes()
+                    if len(raw) > 64*1024*1024 or not caf_header(file):
+                        continue
+                    count, offset = struct.unpack_from('<II',raw,8)
+                    ids = set()
+                    for i in range(count):
+                        kind, _cid, size, at = struct.unpack_from('<4I',raw,offset+16*i)
+                        if kind & 0xffff == 0x100d and size >= 16 and at+size<=len(raw):
+                            ids.add(struct.unpack_from('<I',raw,at)[0])
+                    if len(ids) < 3 or len(ids & valid_ids) < max(3,int(len(ids)*.8)):
+                        continue
+                except (ValueError, OSError, struct.error):
+                    continue
+                label = Path(key).stem
+                confirmed.append(AnimationReference(label,key,'caf',True,Path(file)))
+                seen.add(key)
     return tuple(confirmed), prefer_idle(confirmed), config_name
