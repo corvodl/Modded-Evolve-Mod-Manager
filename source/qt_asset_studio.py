@@ -167,6 +167,8 @@ class TextureAdjustDialog(QDialog):
         with Image.open(BytesIO(self.original)) as im:
             im.load()
             self.image=im.convert('RGBA')
+        self.preview_source=self.image.copy()
+        self.preview_source.thumbnail((720,450),Image.Resampling.LANCZOS)
         self.setWindowTitle('Texture Editor — '+Path(editor.current).name)
         self.resize(810,680)
         lay=QVBoxLayout(self)
@@ -196,8 +198,8 @@ class TextureAdjustDialog(QDialog):
         lay.addLayout(actions)
         self.update_preview()
 
-    def adjusted(self):
-        image=self.image
+    def adjusted(self, *, preview=False):
+        image=self.preview_source if preview else self.image
         for name,enhancer in [('brightness',ImageEnhance.Brightness),
                               ('contrast',ImageEnhance.Contrast),
                               ('saturation',ImageEnhance.Color),
@@ -209,8 +211,7 @@ class TextureAdjustDialog(QDialog):
 
     def update_preview(self, *_):
         from qt_workspace_editor import _image_pixmap
-        image=self.adjusted()
-        image.thumbnail((720,450),Image.Resampling.LANCZOS)
+        image=self.adjusted(preview=True)
         self.preview.setPixmap(_image_pixmap(image))
 
     def reset(self):
