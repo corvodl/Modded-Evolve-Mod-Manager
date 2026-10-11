@@ -8,7 +8,7 @@ import math
 import sys
 import numpy as np
 
-from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess
+from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess, QObject, Signal, QRunnable, QThreadPool
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
@@ -16,6 +16,26 @@ from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QMessageBox, QSlider)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
+
+
+class _NativeResult(QObject):
+    completed = Signal(object, object, object)
+
+
+class _NativeConversion(QRunnable):
+    """Work outside the Qt GUI thread for native CAF/GLB decoding."""
+
+    def __init__(self, resolver, reference, token, signals):
+        super().__init__()
+        self.resolver, self.reference, self.token = resolver, reference, token
+        self.signals = signals
+
+    def run(self):
+        try:
+            blob, details = self.resolver(self.reference)
+            self.signals.completed.emit(self.token, (blob, details), None)
+        except Exception as exc:
+            self.signals.completed.emit(self.token, None, str(exc))
 
 
 class QtGLModelCanvas(QOpenGLWidget):
@@ -339,6 +359,7 @@ class QtGPUModelPanel(QWidget):
         self.anim_time.setText('0.00 / 0.00 s')
         self.anim_status.setText(
             'Load an animated GLB or import original clips using an external converter.')
+        self._native_generation += 1
         self.native_clip_select.clear()
         self.native_info.setText('Native game animations: not scanned')
         self.canvas.set_mesh(mesh, materials)
@@ -377,6 +398,9 @@ class QtGPUModelPanel(QWidget):
             'CryEngine references are indexed here. Only converted GLB clips can be played.')
         self.native_clip_select.currentIndexChanged.connect(self._native_selection)
         native_row.addWidget(self.native_clip_select, 1)
+        self.play_native_button = QPushButton('Play Game Clip')
+        self.play_native_button.clicked.connect(self.load_native)
+        native_row.addWidget(self.play_native_button)
         layout.addLayout(native_row)
         line2 = QHBoxLayout()
         self.seek = QSlider(Qt.Horizontal)
@@ -399,34 +423,84 @@ class QtGPUModelPanel(QWidget):
         self.anim_timer.timeout.connect(self._animation_tick)
         self.anim_clock = QElapsedTimer()
         self.converter_process = None
+        self._native_generation = 0
+        self._native_references = ()
+        self._native_loader = None
+        self._native_pool = QThreadPool(self)
+        self._native_pool.setMaxThreadCount(2)
+        self._native_signals = _NativeResult(self)
+        self._native_signals.completed.connect(self._native_ready)
 
-    def set_native_catalog(self, references, idle=None, description=''):
-        """Show exact native references without misrepresenting CAF metadata as playback."""
+    def set_native_catalog(self, references, idle=None, description='', loader=None):
+        """Only submitted matching native clips are decoded, off the GUI thread."""
+        self._native_generation += 1
+        self._native_loader = loader
+        self._native_references = tuple(references)
         self.native_clip_select.blockSignals(True)
         self.native_clip_select.clear()
-        self.native_clip_select.addItem('Select referenced animation', None)
-        for ref in references:
+        self.native_clip_select.addItem('Select referenced animation', -1)
+        for i, ref in enumerate(references):
             label = ref.name + ('' if ref.available else ' (not extracted)')
-            self.native_clip_select.addItem(label, (ref.virtual_path, str(ref.file) if ref.available else None))
+            self.native_clip_select.addItem(label, i)
+        auto = -1
         if idle is not None:
-            pos = next((i for i, ref in enumerate(references, 1)
-                        if ref.name == idle.name and ref.virtual_path == idle.virtual_path), 0)
-            self.native_clip_select.setCurrentIndex(pos)
+            auto = next((i for i, ref in enumerate(references)
+                         if ref.name == idle.name and ref.virtual_path == idle.virtual_path), -1)
+            if auto >= 0:
+                self.native_clip_select.setCurrentIndex(auto+1)
         self.native_clip_select.blockSignals(False)
         count = sum(ref.kind == 'caf' and ref.available for ref in references)
         self.native_info.setText(
-            '%d/%d native CAF mappings available%s. Native CAF playback requires '
-            'decoding/conversion; compatible animated GLBs play in the timeline.' %
-            (count, len(references), ' • idle: ' + idle.name if idle else ''))
+            '%d available CAFs of %d mappings%s' %
+            (count, len(references), ' • Idle: ' + idle.name if idle else ''))
+        self.play_native_button.setEnabled(bool(loader and count))
+        if auto >= 0 and loader:
+            token = self._native_generation
+            QTimer.singleShot(80, lambda: self.load_native()
+                              if token == self._native_generation else None)
 
-    def _native_selection(self, position):
-        item = self.native_clip_select.itemData(position)
-        if item:
-            path, file = item
-            self.native_info.setText(
-                ('Extracted: ' if file else 'Missing: ') + path +
-                ' • Convert with a supported CryEngine tool to play. '
-                'A CAF reference is not a decoded GLB clip.')
+    def _native_selection(self, index):
+        i = self.native_clip_select.itemData(index)
+        if not isinstance(i, int) or i < 0 or i >= len(self._native_references):
+            return
+        ref = self._native_references[i]
+        self.native_info.setText(
+            ('Available: ' if ref.available else 'Missing: ') + ref.virtual_path)
+
+    def load_native(self):
+        i = self.native_clip_select.currentData()
+        if (self._native_loader is None or not isinstance(i,int)
+                or i < 0 or i >= len(self._native_references)):
+            return
+        ref = self._native_references[i]
+        if ref.kind != 'caf' or not ref.available:
+            self.native_info.setText('This native clip has not been extracted.')
+            return
+        self._native_generation += 1
+        token = self._native_generation
+        self.native_info.setText('Decoding native CAF and rigged model in background…')
+        self.play_native_button.setEnabled(False)
+        job = _NativeConversion(self._native_loader, ref, token, self._native_signals)
+        self._native_pool.start(job)
+
+    def _native_ready(self, token, result, error):
+        if token != self._native_generation:
+            return
+        self.play_native_button.setEnabled(True)
+        if error:
+            self.native_info.setText('Native CAF unavailable: ' + error[:230])
+            return
+        payload, details = result
+        try:
+            from model_animation import AnimatedGLB
+            imported = AnimatedGLB(payload, 'Native Evolve animation')
+            self._show_animated(imported, auto_play=True)
+        except (ValueError, OSError) as exc:
+            self.native_info.setText('CAF playback rejected: ' + str(exc)[:230])
+            return
+        self.native_info.setText(
+            'Native motion playing • %d bone channels • %s' %
+            (details.get('bone_channels',0), self.clip_select.currentText()))
 
     def load_animation(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -439,29 +513,31 @@ class QtGPUModelPanel(QWidget):
         try:
             from model_animation import AnimatedGLB
             imported = AnimatedGLB.from_file(path)
-            self.anim_timer.stop()
-            self.anim_playing = False
-            self.play_button.setText('Play')
-            self.animated = imported
-            self.canvas.set_mesh(imported.preview_mesh, imported.materials)
-            self.clip_select.blockSignals(True)
-            self.clip_select.clear()
-            self.clip_select.addItems(tuple(imported.clips))
-            self.clip_select.blockSignals(False)
-            self.anim_position = 0.
-            idle = next((name for name in imported.clips if
-                         'idle' in name.casefold() and 'additive' not in name.casefold()),
-                        None)
-            if idle:
-                self.clip_select.setCurrentText(idle)
-            self._display_animation_frame()
+            self._show_animated(imported, auto_play=True)
             self.anim_status.setText(
-                '%d playable clips imported from %s. Original game files unchanged.' %
+                '%d playable clips from %s. Original game files unchanged.' %
                 (len(imported.clips), path))
-            if idle:
-                self.toggle_play()
         except Exception as exc:
             QMessageBox.warning(self, 'Animation import failed', str(exc))
+
+    def _show_animated(self, imported, *, auto_play):
+        self.anim_timer.stop()
+        self.anim_playing = False
+        self.play_button.setText('Play')
+        self.animated = imported
+        self.canvas.set_mesh(imported.preview_mesh, imported.materials)
+        self.clip_select.blockSignals(True)
+        self.clip_select.clear()
+        self.clip_select.addItems(tuple(imported.clips))
+        idle = next((name for name in imported.clips if
+                     'idle' in name.casefold() and 'additive' not in name.casefold()), None)
+        if idle:
+            self.clip_select.setCurrentText(idle)
+        self.clip_select.blockSignals(False)
+        self.anim_position = 0.
+        self._display_animation_frame()
+        if auto_play and (idle or len(imported.clips)==1):
+            self.toggle_play()
 
     def select_clip(self, _name):
         self.anim_position = 0.
@@ -487,16 +563,10 @@ class QtGPUModelPanel(QWidget):
 
     def toggle_play(self):
         if self.animated is None:
-            selected = self.native_clip_select.currentData()
-            if selected is not None:
-                QMessageBox.information(
-                    self, 'Native animation',
-                    'This CAF is indexed but not decoded into bone motion. '
-                    'Use Animation > Import Original CAF/DBA with a compatible '
-                    'converter, then play the converted GLB. '
-                    'The manager will not substitute an unrelated pose.')
-                return
-            self.load_animation()
+            if self._native_loader and self.native_clip_select.currentIndex() > 0:
+                self.load_native()
+            else:
+                self.load_animation()
             return
         self.anim_playing = not self.anim_playing
         self.play_button.setText('Pause' if self.anim_playing else 'Play')
@@ -525,8 +595,10 @@ class QtGPUModelPanel(QWidget):
     def import_original(self):
         """Explicit optional local converter; never downloads or bundles GPL code."""
         from animation_converter_bridge import validate_conversion
-        chosen = self.native_clip_select.currentData()
-        source = chosen[1] if chosen is not None else None
+        selected = self.native_clip_select.currentData()
+        source = (str(self._native_references[selected].file)
+                  if isinstance(selected,int) and 0 <= selected < len(self._native_references)
+                  and self._native_references[selected].available else None)
         if not source:
             source, _ = QFileDialog.getOpenFileName(
                 self, 'Select native character or original animation source', '',
