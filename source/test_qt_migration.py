@@ -119,11 +119,11 @@ class QtMigrationTests(unittest.TestCase):
 
     def test_play_restore_menu_escapes_literal_ampersand(self):
         # QPushButton interprets an unescaped & as a Windows mnemonic.
-        self.assertEqual(self.win.nav_buttons[2].text(), 'Play && Restore')
-        self.assertEqual(self.win.nav_buttons[2].accessibleName(), 'Play & Restore')
-        self.win.nav_buttons[2].click()
+        self.assertEqual(self.win.nav_buttons[SECTIONS.index('Play & Restore')].text(), 'Play && Restore')
+        self.assertEqual(self.win.nav_buttons[SECTIONS.index('Play & Restore')].accessibleName(), 'Play & Restore')
+        self.win.nav_buttons[SECTIONS.index('Play & Restore')].click()
         self.application.processEvents()
-        self.assertEqual(self.win.stack.currentIndex(), 2)
+        self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index('Play & Restore'))
 
     def test_play_refresh_icon_is_adjacent_and_replaces_full_button(self):
         buttons = [b.text() for b in self.win.pages['play'].findChildren(QPushButton)]
@@ -152,7 +152,7 @@ class QtMigrationTests(unittest.TestCase):
         build = next(b for b in self.win.pages['modding'].findChildren(QPushButton)
                      if b.text() == 'Build Mod')
         self.assertIn('sign', build.toolTip().lower())
-        self.assertEqual(len(self.win.nav_buttons), 7)
+        self.assertEqual(len(self.win.nav_buttons), len(SECTIONS))
 
     def test_qpropertyanimation_is_an_overlay_and_does_not_resize(self):
         width = self.win.stack.width()
