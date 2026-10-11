@@ -34,6 +34,28 @@ class MeshPreviewTests(unittest.TestCase):
         self.assertEqual(mesh.triangles[0],(0,1,2))
         self.assertEqual(inspect_model(data).version,7)
 
+    def test_partial_material_subsets_keep_all_faces_and_known_slots(self):
+        source = test_mesh()
+        # Enlarge CrChF chunk table by one entry and add a valid but partial
+        # material subset: first half uses slot 3, remaining faces are unknown.
+        count, table_offset = struct.unpack_from('<II', source, 8)
+        self.assertEqual(count, 2)
+        original_chunks = source[48:]
+        entries = []
+        for i in range(count):
+            kind, cid, size, offset = struct.unpack_from('<4I', source, 16+16*i)
+            entries.append(struct.pack('<4I', kind, cid, size, offset+16))
+        subset = struct.pack('<4I', 1, 0, 0, 0) + struct.pack(
+            '<9I', 0, 6, 0, 4, 3, 0, 0, 0, 0)
+        subset_offset = 64 + len(original_chunks)
+        entries.append(struct.pack('<4I', 0x08001017, 3,
+                                   len(subset), subset_offset))
+        rebuilt = (source[:8] + struct.pack('<2I', 3, 16)
+                   + b''.join(entries) + original_chunks + subset)
+        parsed = read_preview_mesh(rebuilt)
+        self.assertEqual(len(parsed.triangles), 4)
+        self.assertEqual(parsed.subsets, ((0, 6, 3), (6, 6, 255)))
+
     def test_render_is_visible_and_rotatable(self):
         mesh=read_preview_mesh(test_mesh())
         image=render_mesh(mesh,400,300)
