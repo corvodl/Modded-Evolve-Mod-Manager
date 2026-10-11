@@ -1629,7 +1629,7 @@ class QtManager(QMainWindow):
     def _warm_shared_assets(self):
         from shared_pak_cache import start_shared_catalog
         try:
-            start_shared_catalog(self.stage_path)
+            start_shared_catalog(self.stage_path, game_root=self._find_game_root())
         except (OSError, ValueError) as exc:
             self._log('Shared asset indexing unavailable: ' + str(exc))
 
