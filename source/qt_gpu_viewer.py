@@ -58,6 +58,11 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
         self.materials = materials
         self.textures = []
+        self.normal_textures = []
+        self.specular_textures = []
+        self.translucent_slots = set()
+        self.enhanced_materials = True
+        self._renderer3 = None
         self.rotation = [-30.0, 14.0]
         self.zoom = 1.0
         self.pan = [0., 0.]
@@ -87,6 +92,10 @@ class QtGLModelCanvas(QOpenGLWidget):
                 self._upload_textures()
             finally:
                 self.doneCurrent()
+        self.update()
+
+    def set_enhanced_materials(self, enabled):
+        self.enhanced_materials = bool(enabled)
         self.update()
 
     def set_visible_material_slot(self, slot):
@@ -177,13 +186,16 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.update()
 
     def _release_textures(self):
-        if self.textures:
-            try:
-                from OpenGL.GL import glDeleteTextures
-                glDeleteTextures(list(self.textures))
-            except Exception:
-                pass
-            self.textures = []
+        from OpenGL.GL import glDeleteTextures
+        for name in ('textures','normal_textures','specular_textures'):
+            handles = getattr(self,name,[])
+            if handles:
+                try:
+                    glDeleteTextures([handle for handle in handles if handle])
+                except Exception:
+                    pass
+            setattr(self,name,[])
+        self.translucent_slots = set()
 
     def _upload_textures(self):
         from OpenGL.GL import (
@@ -195,21 +207,34 @@ class QtGLModelCanvas(QOpenGLWidget):
         )
         if not self.materials:
             return
+        from OpenGL.GL import GL_RGBA
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-        for im in self.materials.textures:
-            if im is None:
-                self.textures.append(0)
-                continue
-            sample = im.convert('RGB').transpose(__import__('PIL.Image',fromlist=['Transpose']).Transpose.FLIP_TOP_BOTTOM)
-            texid = int(glGenTextures(1))
-            glBindTexture(GL_TEXTURE_2D,texid)
-            glTexImage2D(GL_TEXTURE_2D,0,GL_RGB,sample.width,sample.height,0,
-                         GL_RGB,GL_UNSIGNED_BYTE,sample.tobytes())
-            for param in (GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER):
-                glTexParameteri(GL_TEXTURE_2D,param,GL_LINEAR)
-            for param in (GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T):
-                glTexParameteri(GL_TEXTURE_2D,param,GL_REPEAT)
-            self.textures.append(texid)
+        from PIL import Image as PILImage
+        sources = (('textures', self.materials.textures),
+                   ('normal_textures',getattr(self.materials,'normal_maps',())),
+                   ('specular_textures',getattr(self.materials,'specular_maps',())))
+        for target,images in sources:
+            uploads=[]
+            for index,im in enumerate(images):
+                if im is None:
+                    uploads.append(0)
+                    continue
+                rgba = 'A' in im.getbands()
+                if target == 'textures' and rgba and im.getchannel('A').getextrema()[0] < 255:
+                    self.translucent_slots.add(index)
+                mode = 'RGBA' if rgba else 'RGB'
+                sample = im.convert(mode).transpose(PILImage.Transpose.FLIP_TOP_BOTTOM)
+                format_id = GL_RGBA if rgba else GL_RGB
+                texid = int(glGenTextures(1))
+                glBindTexture(GL_TEXTURE_2D,texid)
+                glTexImage2D(GL_TEXTURE_2D,0,format_id,sample.width,sample.height,0,
+                             format_id,GL_UNSIGNED_BYTE,sample.tobytes())
+                for param in (GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER):
+                    glTexParameteri(GL_TEXTURE_2D,param,GL_LINEAR)
+                for param in (GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T):
+                    glTexParameteri(GL_TEXTURE_2D,param,GL_REPEAT)
+                uploads.append(texid)
+            setattr(self,target,uploads)
         glBindTexture(GL_TEXTURE_2D,0)
 
     def initializeGL(self):
@@ -229,6 +254,13 @@ class QtGLModelCanvas(QOpenGLWidget):
         glLightfv(GL_LIGHT0,GL_AMBIENT,[0.13,0.13,0.16,1.0])
         glLightModelfv(GL_LIGHT_MODEL_AMBIENT,[0.08,0.08,0.09,1.0])
         self._upload_textures()
+        try:
+            from renderer_3 import Renderer3
+            self._renderer3 = Renderer3()
+            self.gl_error = None
+        except Exception as exc:
+            self._renderer3 = None
+            self.gl_error = 'Enhanced material shader unavailable: '+str(exc)[:250]
 
     def resizeGL(self, width, height):
         from OpenGL.GL import glViewport
@@ -248,7 +280,9 @@ class QtGLModelCanvas(QOpenGLWidget):
             GL_FILL, GL_LINE, GL_FRONT, GL_BACK, GL_AMBIENT, GL_SPECULAR, GL_SHININESS,
         )
         background = (0.092,0.09,0.115,1.0) if self.background_mode=='Dark' else (0.26,0.27,0.29,1.0)
-        from OpenGL.GL import glClearColor, glLightfv, GL_LIGHT0, GL_DIFFUSE
+        from OpenGL.GL import (glClearColor, glLightfv, glActiveTexture,
+            glBlendFunc, glDepthMask, GL_LIGHT0, GL_DIFFUSE, GL_LIGHTING,
+            GL_TEXTURE0, GL_BLEND, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glClearColor(*background)
         strength=self.light_strength
         glLightfv(GL_LIGHT0,GL_DIFFUSE,
@@ -286,25 +320,61 @@ class QtGLModelCanvas(QOpenGLWidget):
             glEnable(GL_TEXTURE_2D)
             glEnableClientState(GL_TEXTURE_COORD_ARRAY)
             glTexCoordPointer(2,GL_FLOAT,0,arrays.uvs)
+        shader = self._renderer3 if self.enhanced_materials else None
+        if shader:
+            glDisable(GL_LIGHTING)
         try:
-            # Draw independent submaterial groups without duplicating geometry.
-            for first,count,slot in arrays.draws:
+            # Render translucent material groups after opaque ones. Geometry
+            # in a material group still uses source ordering (no invented triangles).
+            def is_translucent(slot):
+                values=getattr(self.materials,'opacity',()) if self.materials else ()
+                return slot in self.translucent_slots or (slot<len(values) and values[slot]<.999)
+            batches = sorted(arrays.draws,key=lambda d:is_translucent(d[2]))
+            for first,count,slot in batches:
                 if self.visible_material_slot is not None and slot != self.visible_material_slot:
                     continue
+                alpha = (self.materials.opacity[slot] if self.materials and
+                         slot<len(getattr(self.materials,'opacity',())) else 1.0)
+                transparent = is_translucent(slot)
+                if transparent:
+                    glEnable(GL_BLEND)
+                    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA)
+                    glDepthMask(False)
+                else:
+                    glDisable(GL_BLEND)
+                    glDepthMask(True)
                 tex = self.textures[slot] if use_uv and slot < len(self.textures) else 0
+                if shader:
+                    for unit,group in ((0,self.textures),(1,self.normal_textures),(2,self.specular_textures)):
+                        handle = group[slot] if use_uv and slot<len(group) else 0
+                        glActiveTexture(GL_TEXTURE0+unit)
+                        glBindTexture(GL_TEXTURE_2D,handle)
+                    glActiveTexture(GL_TEXTURE0)
+                    shader.bind(opacity=alpha,gloss=self.specular_intensity,
+                                illumination=strength,diffuse=bool(tex),
+                                normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
+                                specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]))
                 if tex:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D,tex)
                 else:
                     glDisable(GL_TEXTURE_2D)
                 glColor3f(0.84,0.82,0.82)
-                glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[0.81,0.8,0.82,1.0])
+                glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[0.81,0.8,0.82,alpha])
                 spec=self.specular_intensity
                 glMaterialfv(GL_FRONT_AND_BACK,GL_SPECULAR,[spec,spec,spec,1.0])
                 glMaterialf(GL_FRONT_AND_BACK,GL_SHININESS,38.0)
                 glDrawElements(GL_TRIANGLES,int(count),GL_UNSIGNED_INT,
                                arrays.indices[first:first+count])
         finally:
+            if shader:
+                shader.unbind()
+                for unit in (2,1,0):
+                    glActiveTexture(GL_TEXTURE0+unit)
+                    glBindTexture(GL_TEXTURE_2D,0)
+                glEnable(GL_LIGHTING)
+            glDepthMask(True)
+            glDisable(GL_BLEND)
             glDisableClientState(GL_VERTEX_ARRAY)
             glDisableClientState(GL_NORMAL_ARRAY)
             if use_uv:
@@ -382,6 +452,12 @@ class QtGPUModelPanel(QWidget):
         textured.setChecked(True)
         textured.toggled.connect(lambda value:(setattr(self.canvas,'textured',value),self.canvas.update()))
         line.addWidget(textured)
+        enhanced=QCheckBox('Renderer 3.0')
+        enhanced.setToolTip('Normal/specular maps and opacity with a GLSL shader; legacy fallback if unavailable.')
+        enhanced.setChecked(True)
+        enhanced.toggled.connect(self.canvas.set_enhanced_materials)
+        self.enhanced_checkbox=enhanced
+        line.addWidget(enhanced)
         line.addWidget(QLabel('Shading'))
         shading = QComboBox()
         self.shading_combo = shading
@@ -452,7 +528,8 @@ class QtGPUModelPanel(QWidget):
         self.native_info = QLabel('Native game animations: not scanned')
         self.native_info.setWordWrap(True)
         layout.addWidget(self.native_info)
-        foot=QLabel('Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
+        foot=QLabel('Renderer 3.0 approximates CryEngine materials; check optional maps in the texture diagnostics. '
+                    'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
         foot.setVisible(not compact)
