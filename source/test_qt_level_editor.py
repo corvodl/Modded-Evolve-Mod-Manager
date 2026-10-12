@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 from qt_level_editor import UnrealStyleLevelEditor
 from test_level_editor import LAYER_A, LAYER_B, OBJECTS_A, OBJECTS_B
 
@@ -65,6 +65,56 @@ class UnrealStyleLevelEditorSmoke(unittest.TestCase):
         self.assertEqual(e.project.get(LAYER_B,0).pos,(100.,200.,4.))
         e.undo()
         self.assertEqual(e.project.get(LAYER_B,0).pos,(5.,3.,0.))
+
+    def _another_project(self):
+        target=Path(self.temp.name)/'alternate'
+        for name,data in ((LAYER_A,OBJECTS_A),(LAYER_B,OBJECTS_B)):
+            output=target/'files'/name
+            output.parent.mkdir(parents=True,exist_ok=True)
+            output.write_bytes(data)
+        return target
+
+    def test_in_window_map_switch_resets_project_and_selection(self):
+        other=self._another_project()
+        self.editor.select_object(LAYER_A,0)
+        with patch.object(self.editor.viewport,'reload_scene') as reload_scene:
+            self.assertTrue(self.editor.switch_map(other))
+        self.assertEqual(self.editor.project.workspace,other.resolve())
+        self.assertIsNone(self.editor.selected)
+        self.assertIs(self.editor.viewport.project,self.editor.project)
+        reload_scene.assert_called_once()
+
+    def test_unsaved_cancel_preserves_current_edits_and_scene(self):
+        other=self._another_project()
+        self.editor.project.apply(LAYER_A,0,'Pos',(47,1,1))
+        with patch('qt_level_editor.QMessageBox.question',
+                   return_value=QMessageBox.Cancel):
+            self.assertFalse(self.editor.switch_map(other))
+        self.assertEqual(self.editor.project.workspace,self.ws.resolve())
+        self.assertEqual(self.editor.project.get(LAYER_A,0).pos[0],47.)
+        self.assertTrue(self.editor.project.dirty_layers())
+
+    def test_unsaved_save_failure_preserves_old_project(self):
+        other=self._another_project()
+        self.editor.project.apply(LAYER_A,0,'Pos',(47,1,1))
+        with (patch('qt_level_editor.QMessageBox.question',
+                    return_value=QMessageBox.Save),
+              patch.object(self.editor.project,'save',
+                           side_effect=OSError('read-only destination')),
+              patch('qt_level_editor.QMessageBox.critical')):
+            self.assertFalse(self.editor.switch_map(other))
+        self.assertEqual(self.editor.project.workspace,self.ws.resolve())
+        self.assertEqual(self.editor.project.get(LAYER_A,0).pos[0],47.)
+
+    def test_failed_new_map_load_keeps_old_map(self):
+        other=self._another_project()
+        with (patch('qt_level_editor.LevelProject',
+                    side_effect=ValueError('invalid map')),
+              patch('qt_level_editor.QMessageBox.warning')):
+            self.assertFalse(self.editor.switch_map(other))
+        self.assertEqual(self.editor.project.workspace,self.ws.resolve())
+        self.assertIs(self.editor.viewport.project,self.editor.project)
+
 
 
 if __name__=="__main__":
