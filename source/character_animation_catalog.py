@@ -28,6 +28,7 @@ class AnimationReference:
     in_archive: bool = False  # signed directory names known; bytes still unextracted
     dba_file: Path | None = None  # verified declared database, not a guessed CAF
     dba_virtual_path: str | None = None
+    annotation: str = ''
 
 
 def _xml(data):
@@ -63,6 +64,10 @@ def parse_animation_references(data, exists, can_extract=None):
                 or name.startswith('#')
                 or (name.startswith(chr(36)) and not database)):
             continue
+        annotation = ''
+        annotated = re.fullmatch(r'(.+\.caf)\s+\(([^()]*)\)', ref, re.I)
+        if annotated:
+            ref, annotation = annotated.groups()
         ext = Path(ref).suffix.casefold()
         if ext not in ('.caf', '.bspace', '.comb', '.dba'):
             continue
@@ -77,7 +82,7 @@ def parse_animation_references(data, exists, can_extract=None):
         archived = bool(can_extract(virtual)) if can_extract else False
         label = ('DBA: ' + Path(virtual).stem) if database else name
         out.append(AnimationReference(label, virtual, ext[1:], resolved is not None,
-                                      resolved, archived))
+                                      resolved, archived, annotation=annotation))
     return tuple(out)
 
 

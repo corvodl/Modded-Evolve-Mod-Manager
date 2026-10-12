@@ -99,6 +99,7 @@ def combine_meshes(items):
     vertices, triangles, uvs, subsets = [], [], [], []
     textures, names, issues = [], [], []
     normals, speculars, opacities, alpha_modes = [], [], [], []
+    transforms = []
     included = []
     for name, mesh, materials in items:
         if len(vertices) + len(mesh.vertices) > MAX_VERTICES or len(triangles) + len(mesh.triangles) > MAX_TRIANGLES:
@@ -119,6 +120,8 @@ def combine_meshes(items):
             label = (materials.names[slot] if materials and
                      slot < len(materials.names) else 'unresolved slot ' + str(slot))
             textures.append(tex)
+            from texture_transform import transform_for
+            transforms.append(transform_for(materials, slot))
             # Preserve per-part material settings when combining CDF skins.
             # Dropping alpha/material mode made opaque character body geometry
             # appear transparent when its diffuse DDS carried auxiliary alpha.
@@ -150,7 +153,7 @@ def combine_meshes(items):
     material = PreviewMaterials(tuple(textures), tuple(names),
                                 'CDF character assembly', tuple(issues),
                                 tuple(normals), tuple(speculars),
-                                tuple(opacities), tuple(alpha_modes))
+                                tuple(opacities), tuple(alpha_modes), tuple(transforms))
     return mesh, material
 
 
@@ -212,7 +215,7 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         try:
             materials = load_preview_materials(
                 workspace, render, texture_folder, projects_root=projects_root,
-                stage_root=stage_root, index=index)
+                stage_root=stage_root, index=index, cdf=cdf)
         except (ValueError, OSError) as exc:
             materials = None
             omitted.append(label + ' textures: ' + str(exc))

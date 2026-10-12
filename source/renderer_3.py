@@ -11,11 +11,13 @@ VERTEX = """
 varying vec3 eye_normal;
 varying vec3 eye_position;
 varying vec2 texcoord;
+varying vec2 diffuse_coord;
 void main() {
     vec4 eye = gl_ModelViewMatrix * gl_Vertex;
     eye_position = eye.xyz;
     eye_normal = normalize(gl_NormalMatrix * gl_Normal);
     texcoord = gl_MultiTexCoord0.st;
+    diffuse_coord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).st;
     gl_Position = gl_ProjectionMatrix * eye;
 }
 """
@@ -35,8 +37,9 @@ uniform float illumination;
 varying vec3 eye_normal;
 varying vec3 eye_position;
 varying vec2 texcoord;
+varying vec2 diffuse_coord;
 void main() {
-    vec4 surface = has_diffuse == 1 ? texture2D(diffuse_map, texcoord)
+    vec4 surface = has_diffuse == 1 ? texture2D(diffuse_map, diffuse_coord)
                                    : vec4(0.82, 0.80, 0.83, 1.0);
     // Alpha may contain non-opacity data in standard CryEngine diffuse DDS.
     float alpha = (use_alpha_texture == 1 ? surface.a : 1.0) * opacity;

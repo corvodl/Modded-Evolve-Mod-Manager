@@ -166,6 +166,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.model_fallback = None
         self.model_cpu = None
         self.texture_folder = None
+        self.model_texture_choices = {}
         self.animation_folder = None
         self.loose_animation_index = None
         self.preview_index = None
@@ -466,6 +467,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('Textures', 'Texture Preview Status…', self.texture_diagnostics)
         action('Textures', 'Resolve Missing Textures…', self.open_texture_resolver)
         action('Textures', 'Advanced Texture Adjustments…', self.open_texture_editor)
+        action('Textures', 'Choose Model Textures…', self.choose_model_textures)
         action('Textures', 'Choose Extracted Texture Folder…', self.choose_texture_folder)
         action('Textures', 'Use Automatic Cross-PAK Lookup', self.use_auto_textures)
         action('Textures', 'Reload Model Textures', self.refresh_model_textures)
@@ -1308,6 +1310,7 @@ class QtWorkspaceEditor(QMainWindow):
              '\n'.join(issues[:8]) or
              'No unresolved DDS references reported.'))
         self._update_equipment_menu()
+        self._apply_model_texture_choices()
         self._paint_model(view, self.mesh)
         self.status.setText(
             self.current + ' | ' + data['report'] + ' | ' + self.texture_message)
@@ -1364,6 +1367,8 @@ class QtWorkspaceEditor(QMainWindow):
             except (ValueError, OSError) as error:
                 self.texture_message = 'Untextured: ' + str(error)
             self.materials = materials
+            self._apply_model_texture_choices()
+            materials = self.materials
             if self.model_panel is None:
                 self.model_panel = QtGPUModelPanel(view, mesh, materials, compact=True,
                                                   prepared_geometry=self._prepared_geometry)
@@ -1401,6 +1406,7 @@ class QtWorkspaceEditor(QMainWindow):
             source_index = self.preview_index
             source_character = self.character_preview
             source_textures = self.texture_folder
+            source_materials = self.materials
             source_projects = self.manager.projects_path
             source_stage = self.manager.stage_path
             source_game = self.manager.game_root or self.manager._find_game_root()
@@ -1410,11 +1416,14 @@ class QtWorkspaceEditor(QMainWindow):
                 # QThreadPool worker: use the exact model skeleton for both
                 # clips. Layered aim poses must never run alone.
                 from animation_on_demand import resolve_caf_for_play
-                selected, extracted, origin = resolve_caf_for_play(
-                    ref, stage_root=source_stage, game_root=source_game,
-                    asset_index=source_index,
-                    preferred_workspace=source_workspace,
-                    loose_index=source_loose)
+                if ref.kind == 'dba' or (not ref.available and ref.dba_file is not None):
+                    selected, extracted, origin = ref, False, 'Verified DBA database'
+                else:
+                    selected, extracted, origin = resolve_caf_for_play(
+                        ref, stage_root=source_stage, game_root=source_game,
+                        asset_index=source_index,
+                        preferred_workspace=source_workspace,
+                        loose_index=source_loose)
                 base_selected = None
                 if base_ref is not None:
                     base_selected, _, _ = resolve_caf_for_play(
@@ -1425,6 +1434,7 @@ class QtWorkspaceEditor(QMainWindow):
                 blob, details = create_character_glb(
                     source_workspace, source_relative, source_index,
                     character=source_character, texture_folder=source_textures,
+                    materials=source_materials,
                     projects_root=source_projects, stage_root=source_stage,
                     clips=(base_selected, selected) if base_selected is not None else None,
                     clip=selected if base_selected is None else None,
@@ -1866,6 +1876,7 @@ class QtWorkspaceEditor(QMainWindow):
             self._export_native_signals.completed.connect(self._export_animated_ready)
         workspace, relative = self.workspace, self.current
         index, character = self.preview_index, self.character_preview
+        selected_materials = self.materials
         tex = self.texture_folder
         projects, stage = self.manager.projects_path, self.manager.stage_path
         self._export_native_target = target
@@ -1876,7 +1887,7 @@ class QtWorkspaceEditor(QMainWindow):
             payload, report = create_character_glb(
                 workspace, relative, index, character=character,
                 texture_folder=tex, projects_root=projects,
-                stage_root=stage, clips=clips)
+                stage_root=stage, clips=clips, materials=selected_materials)
             import os
             import tempfile
             # Atomic export: never leave a half-written GLB on failure.
@@ -1942,6 +1953,8 @@ class QtWorkspaceEditor(QMainWindow):
             self.manager.projects_path, self.manager.stage_path,
             self.texture_folder, self.preview_index)
 
+        selected_materials = self.materials
+
         def work(progress, cancelled):
             progress('Resolving character geometry and textures', 0, 1)
             if source_character is not None:
@@ -1956,7 +1969,8 @@ class QtWorkspaceEditor(QMainWindow):
                 payload, report = textured_model_from_workspace(
                     export_mesh, workspace, virtual,
                     texture_folder=textures,
-                    projects_root=projects, stage_root=stage, index=asset_index)
+                    projects_root=projects, stage_root=stage, index=asset_index,
+                    materials=selected_materials)
             if cancelled():
                 raise InterruptedError('Export cancelled before writing the GLB.')
             temporary = None
@@ -2219,6 +2233,32 @@ class QtWorkspaceEditor(QMainWindow):
         else:
             self.status.setText('Extracted animation directory indexed: ' + folder)
 
+    def _texture_choice_key(self):
+        return (str(self.workspace), self.current, self.character_skin_choice,
+                bool(self.full_character_active))
+
+    def _apply_model_texture_choices(self):
+        choices = self.model_texture_choices.get(self._texture_choice_key(), {})
+        if not choices or self.mesh is None:
+            return
+        from texture_selection import apply_texture_choices
+        from dataclasses import replace
+        self.materials = apply_texture_choices(self.materials, self.mesh, choices)
+        if self.character_preview is not None:
+            self.character_preview = replace(self.character_preview, materials=self.materials)
+
+    def choose_model_textures(self):
+        if self.mode != 'models' or self.mesh is None or not self.current:
+            QMessageBox.information(self, 'Choose Model Textures', 'Open a model first.')
+            return
+        from qt_texture_selection import TextureSelectionDialog
+        key = self._texture_choice_key()
+        dialog = TextureSelectionDialog(self, self.mesh, self.materials,
+            self.preview_index, self.model_texture_choices.get(key, {}), self.texture_folder)
+        if dialog.exec():
+            self.model_texture_choices[key] = dict(dialog.choices)
+            self.load(self.current, full_character=self.full_character_active)
+
     def choose_texture_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self, 'Choose unpacked TS texture folder (recursive lookup)')
@@ -2302,12 +2342,14 @@ class QtWorkspaceEditor(QMainWindow):
                 source_index = self.preview_index
                 source_character = self.character_preview
                 source_textures = self.texture_folder
+                source_materials = self.materials
                 source_projects = self.manager.projects_path
                 source_stage = self.manager.stage_path
                 def popout_loader(ref):
                     blob, details = create_character_glb(
                         source_workspace, source_relative, source_index,
                         character=source_character, texture_folder=source_textures,
+                        materials=source_materials,
                         projects_root=source_projects, stage_root=source_stage, clip=ref)
                     from model_animation import AnimatedGLB
                     from gpu_model_preview import prepare_geometry

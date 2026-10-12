@@ -19,7 +19,7 @@ from multi_pak_assets import _resolve
 
 def create_character_glb(workspace, relative, index, *, character=None,
                          texture_folder=None, projects_root=None, stage_root=None,
-                         clip=None, clips=None, allow_layered=False):
+                         clip=None, clips=None, allow_layered=False, materials=None):
     """Return (GLB bytes, details), optionally containing an original CAF clip.
 
     The preview and rigged export use the same character assembly selection.
@@ -32,7 +32,7 @@ def create_character_glb(workspace, relative, index, *, character=None,
         blob, details = textured_model_from_workspace(
             mesh, workspace, mesh.source_name or relative,
             texture_folder=texture_folder, projects_root=projects_root,
-            stage_root=stage_root)
+            stage_root=stage_root, index=index, materials=materials)
         if 'Rigged:' not in details.get('rig_status',''):
             raise ValueError(details.get('rig_status','No compatible native skeleton found'))
     else:
@@ -51,6 +51,16 @@ def create_character_glb(workspace, relative, index, *, character=None,
         blob, rig = skin_glb_composite(blob,parts,skeleton)
         details = {'texture_count':textures,'rig_status':'Rigged CDF assembly',
                    'bone_count':rig['bone_count'],'part_count':rig['part_count']}
+    if clip is not None and (clip.kind == 'dba' or
+                             (not clip.available and clip.dba_file is not None)):
+        from database_animation import convert_database_motion
+        blob = convert_database_motion(blob, clip, index, character,
+                                       preferred_workspace=workspace)
+        details['animation_source'] = 'Verified DBA converted with selected character rig'
+        motion_doc, _ = _unpack_glb(blob)
+        details['bone_channels'] = sum(len(a['channels']) for a in motion_doc['animations'])
+        details['clips'] = len(motion_doc['animations'])
+        return blob, details
     selected_clips = (tuple(clips) if clips is not None
                       else (clip,) if clip is not None else ())
     if selected_clips:

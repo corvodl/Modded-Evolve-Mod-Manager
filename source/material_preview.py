@@ -35,6 +35,8 @@ class PreviewMaterials:
     opacity: tuple = ()
     alpha_modes: tuple = ()  # True only where material explicitly uses texture alpha
 
+    uv_transforms: tuple = ()
+
     @property
     def count(self):
         return sum(tex is not None for tex in self.textures)
@@ -181,7 +183,13 @@ def _decode_texture(item, *, index=None):
                 raise ValueError('Missing DDS .0 header.')
             first = path.read_bytes()
             info = parse_dds(first)
-            if info.mipmaps == 1 and len(parts) == 1:
+            if len(parts) == 1:
+                # Validate complete mip chains, including .0 files with >1 mip.
+                from dds_streaming import _mip_sizes
+                if info.mipmaps > 1:
+                    expected = info.data_offset + sum(_mip_sizes(info, first))
+                    if len(first) != expected:
+                        raise ValueError('Incomplete standalone DDS mip chain.')
                 raw = first
             else:
                 if len(parts) < 2 or set(parts) != set(range(len(parts))):
@@ -213,12 +221,12 @@ def _decode_texture(item, *, index=None):
     return tex
 
 
-def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None):
+def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None):
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
     from model_material_resolve import find_model_material
     material, reason, attempted = find_model_material(
-        index, model_relative, preferred_workspace=workspace)
+        index, model_relative, preferred_workspace=workspace, cdf=cdf)
     if material is None:
         raise ValueError('No verified model .mtl association for ' +
                          model_relative + '; searched: ' +
@@ -317,9 +325,21 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         return _decode_texture(hit, index=index)
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]
+    transforms = []
     for item in subs:
         name = item.get('Name') or 'unnamed'
         names.append(name)
+        from texture_transform import parse_transform, IDENTITY
+        diffuse_node = next((t for t in item.findall('./Textures/Texture')
+                             if t.get('Map', '').casefold() == 'diffuse'), None)
+        try:
+            transform, dynamic = parse_transform(diffuse_node)
+            if dynamic:
+                issues.append(name + ': animated texture modifiers shown at their static transform')
+        except ValueError as error:
+            transform = IDENTITY
+            issues.append(name + ': ' + str(error))
+        transforms.append(transform)
         try:
             opacity = max(0.,min(1.,float(item.get('Opacity','1'))))
         except ValueError:
@@ -361,7 +381,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
-                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes))
+                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),tuple(transforms))
 
 
 def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevation=.24, zoom=1., *, pan=(0.,0.), cancel=None):
@@ -433,6 +453,8 @@ def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevat
         localuv=uv[face]
         u=a*localuv[0,0]+b*localuv[1,0]+c*localuv[2,0]
         v=a*localuv[0,1]+b*localuv[1,1]+c*localuv[2,1]
+        from texture_transform import transform_for, transform_uv
+        u, v = transform_uv(u, v, transform_for(materials, texno))
         # Wrap UVs; DDS image data uses top-left row origin.
         tx=np.mod((u*(tex.shape[1]-1)).astype(np.int64),tex.shape[1])
         ty=np.mod((v*(tex.shape[0]-1)).astype(np.int64),tex.shape[0])

@@ -47,13 +47,11 @@ def _found(index, candidate, preferred_workspace):
     return None
 
 
-def _cdf_hints(index, model, preferred_workspace):
-    parent = PurePosixPath(model).parent.as_posix().casefold()
+def _cdf_hints(index, model, preferred_workspace, cdf):
     selected_skin = model.casefold().removesuffix('m') if model.casefold().endswith('.skinm') else model.casefold()
-    candidates = sorted(
-        key for key in index if key.endswith('.cdf')
-        and PurePosixPath(key).parent.as_posix().casefold() == parent)
-    for path in candidates[:24]:
+    # Overrides belong only to the selected character definition.
+    candidates = [normalized_name(cdf).casefold()] if cdf else []
+    for path in candidates:
         file = _found(index, path, preferred_workspace)
         if file is None:
             continue
@@ -110,7 +108,7 @@ def _embedded_hints(index, model, preferred_workspace):
         yield hint, 'compiled model material reference'
 
 
-def find_model_material(index, model_relative, *, preferred_workspace=None):
+def find_model_material(index, model_relative, *, preferred_workspace=None, cdf=None):
     """Return (record, explanation, searched_paths) for a verified exact match."""
     model = normalized_name(model_relative)
     parent = PurePosixPath(model).parent.as_posix()
@@ -144,10 +142,15 @@ def find_model_material(index, model_relative, *, preferred_workspace=None):
     # Explicit CDF material overrides are authoritative. A same-named .mtl
     # may exist for another LOD or skin variant and must not silently replace
     # an explicit attachment material (which would map the wrong DDS slots).
-    for hint, reason in _cdf_hints(index, model, preferred_workspace):
+    explicit = list(_cdf_hints(index, model, preferred_workspace, cdf))
+    if len({hint.casefold() for hint, _ in explicit}) > 1:
+        raise AmbiguousMaterialError('Conflicting attachment materials in ' + str(cdf))
+    for hint, reason in explicit:
         result = check(hint, reason)
         if result:
             return result
+    if explicit:
+        return None, 'Selected CDF material is missing', tuple(attempts)
     for hint, reason in _embedded_hints(index, model, preferred_workspace):
         result = check(hint, reason)
         if result:
@@ -157,6 +160,20 @@ def find_model_material(index, model_relative, *, preferred_workspace=None):
                        'same-name material')
         if result:
             return result
+
+    # A mesh with no embedded/default material may still have one unambiguous
+    # equipment association. Never allow that fallback to replace a default.
+    if cdf is None:
+        hints = {}
+        for definition in sorted(key for key in index if key.endswith('.cdf')
+                and PurePosixPath(key).parent.as_posix().casefold() == parent.casefold()):
+            for hint, reason in _cdf_hints(index, model, preferred_workspace, definition):
+                hints[hint.casefold()] = (hint, reason)
+        if len(hints) == 1:
+            hint, reason = next(iter(hints.values()))
+            result = check(hint, reason)
+            if result:
+                return result
 
     # Equipment *world meshes may use a shortened material filename.
     # Only accept a unique, strong prefix within the same model folder.
