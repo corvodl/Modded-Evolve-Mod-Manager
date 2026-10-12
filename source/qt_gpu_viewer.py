@@ -15,7 +15,7 @@ from PySide6.QtGui import QSurfaceFormat, QIcon, QPixmap, QPainter, QPen, QColor
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
-    QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup, QLineEdit)
+    QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup, QLineEdit, QLayout)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
 
@@ -623,6 +623,8 @@ class QtGPUModelPanel(QWidget):
         self._overlay.setObjectName('modelOverlayControls')
         self._overlay.setWidgetResizable(True)
         self._overlay.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._overlay.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._overlay.setToolTip('Scroll inside the popover to reach more tools.')
         self._overlay.setStyleSheet(
             '#modelOverlayControls { background: #1b1b21; border: 1px solid #45414a; '
             'border-radius: 9px; }'
@@ -630,13 +632,17 @@ class QtGPUModelPanel(QWidget):
         self._overlay_content = QWidget()
         self._overlay_content.setObjectName('modelOverlayContent')
         self._overlay_body = QVBoxLayout(self._overlay_content)
-        self._overlay_body.setContentsMargins(12, 10, 12, 10)
+        # Qt must recompute scrollable content height after expanding a
+        # disclosure. Otherwise QScrollArea compresses or clips lower rows.
+        self._overlay_body.setSizeConstraint(QLayout.SetMinAndMaxSize)
+        self._overlay_body.setContentsMargins(9, 8, 9, 8)
         self._overlay.setWidget(self._overlay_content)
         self._overlay_sections = {}
         self._active_overlay = None
         for section in ('View', 'Materials', 'Animation'):
             page = QWidget(self._overlay_content)
             part = QVBoxLayout(page)
+            part.setSizeConstraint(QLayout.SetMinAndMaxSize)
             part.setContentsMargins(0, 0, 0, 0)
             part.setSpacing(7)
             self._overlay_body.addWidget(page)
@@ -864,7 +870,17 @@ class QtGPUModelPanel(QWidget):
         self._overlay.setVisible(show)
         if show:
             self._position_overlay()
+            self._overlay.verticalScrollBar().setValue(0)
             self._overlay.raise_()
+            QTimer.singleShot(0, self._update_animation_scrolling)
+
+    def _update_animation_scrolling(self):
+        if not hasattr(self, '_overlay') or self._overlay is None:
+            return
+        self._overlay_content.layout().invalidate()
+        self._overlay_content.updateGeometry()
+        self._overlay_content.adjustSize()
+        self._position_overlay()
 
     def _position_overlay(self):
         if not hasattr(self, '_overlay') or self._overlay is None:
@@ -992,6 +1008,7 @@ class QtGPUModelPanel(QWidget):
             heading.setToolButtonStyle(Qt.ToolButtonTextOnly)
             body = QWidget(self)
             inner = QVBoxLayout(body)
+            inner.setSizeConstraint(QLayout.SetMinAndMaxSize)
             inner.setContentsMargins(3, 3, 3, 6)
             inner.setSpacing(4)
             layout.addWidget(heading)
@@ -1000,19 +1017,22 @@ class QtGPUModelPanel(QWidget):
             def toggle(active):
                 body.setVisible(active)
                 heading.setText(('▾  ' if active else '▸  ') + title)
+                QTimer.singleShot(0, self._update_animation_scrolling)
             heading.toggled.connect(toggle)
             self.animation_sections[title] = (heading, body)
             return inner
         catalog_layout = disclosure('Game Animation Browser', True)
         playback_layout = disclosure('Playback Controls', False)
         playlist_layout = disclosure('Clips & Playlists', False)
-        line = QHBoxLayout()
+        import_row = QHBoxLayout()
         import_button = QPushButton('Load Animation GLB…')
         import_button.clicked.connect(self.load_animation)
-        line.addWidget(import_button)
+        import_row.addWidget(import_button)
         original = QPushButton('Import Original CAF/DBA…')
         original.clicked.connect(self.import_original)
-        line.addWidget(original)
+        import_row.addWidget(original)
+        playback_layout.addLayout(import_row)
+        line = QHBoxLayout()
         self.clip_select = QComboBox()
         self.clip_select.setMinimumWidth(130)
         self.clip_select.currentTextChanged.connect(self.select_clip)
@@ -1021,7 +1041,7 @@ class QtGPUModelPanel(QWidget):
         self.play_button.clicked.connect(self.toggle_play)
         line.addWidget(self.play_button)
         playback_layout.addLayout(line)
-        native_header = QHBoxLayout()
+        native_header = QVBoxLayout()
         native_header.addWidget(QLabel('Game animations'))
         self.native_search = QLineEdit()
         self.native_search.setObjectName('nativeAnimationSearch')
@@ -1037,7 +1057,7 @@ class QtGPUModelPanel(QWidget):
         native_header.addWidget(self.native_refresh_button)
         catalog_layout.addLayout(native_header)
 
-        native_filters = QHBoxLayout()
+        native_filters = QVBoxLayout()
         self.native_state_filter = QComboBox()
         self.native_state_filter.setObjectName('nativeAnimationStateFilter')
         self.native_state_filter.addItems((
@@ -1068,28 +1088,34 @@ class QtGPUModelPanel(QWidget):
         native_row.addWidget(self.native_clip_select, 1)
         self.play_native_button = QPushButton('Play Game Clip')
         self.play_native_button.clicked.connect(self.load_native)
-        native_row.addWidget(self.play_native_button)
         catalog_layout.addLayout(native_row)
+        # Keep the action reachable at small widths instead of letting the
+        # clip selector consume all remaining horizontal space.
+        catalog_layout.addWidget(self.play_native_button)
         self.layer_row_widget = QWidget(self)
-        layer_row = QHBoxLayout(self.layer_row_widget)
+        layer_row = QVBoxLayout(self.layer_row_widget)
         layer_row.setContentsMargins(0, 1, 0, 1)
-        layer_row.addWidget(QLabel('Base clip'))
+        base_row = QHBoxLayout()
+        base_row.addWidget(QLabel('Base clip'))
         self.layer_base_select = QComboBox()
         self.layer_base_select.setObjectName('layeredBaseAnimation')
         self.layer_base_select.setToolTip(
             'Choose a real neutral/movement CAF from the same skeleton. '
             'The overlay affects only its animated joints.')
-        layer_row.addWidget(self.layer_base_select, 1)
-        layer_row.addWidget(QLabel('Layer'))
+        base_row.addWidget(self.layer_base_select, 1)
+        layer_row.addLayout(base_row)
+        weight_row = QHBoxLayout()
+        weight_row.addWidget(QLabel('Layer weight'))
         self.layer_weight = QSlider(Qt.Horizontal)
         self.layer_weight.setObjectName('layeredAnimationWeight')
         self.layer_weight.setRange(0, 100)
         self.layer_weight.setValue(65)
-        self.layer_weight.setFixedWidth(95)
+        self.layer_weight.setMinimumWidth(60)
         self.layer_weight.valueChanged.connect(self._layer_weight_changed)
-        layer_row.addWidget(self.layer_weight)
+        weight_row.addWidget(self.layer_weight, 1)
         self.layer_weight_label = QLabel('65%')
-        layer_row.addWidget(self.layer_weight_label)
+        weight_row.addWidget(self.layer_weight_label)
+        layer_row.addLayout(weight_row)
         catalog_layout.addWidget(self.layer_row_widget)
         self.layer_row_widget.hide()
         self._layered_pair = None
