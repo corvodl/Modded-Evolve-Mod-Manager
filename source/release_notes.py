@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.28', (
+        'Discover map PAK dependencies and prepare editable copies for testing.',
+        'Preview supported map terrain and report missing scene assets.',
+        'Export independently rigged Blender character assembly parts.',
+    )),
     ('1.1.18-beta.27', (
         'Correct GPU character texture orientation in model previews.',
         'Switch between extracted map projects in the Level Editor.',
