@@ -258,8 +258,10 @@ def ensure_map_archives(project, game, stage, cache_root, *,
     groups = material_dependency_candidates(project, index)
     needs = set(x for group in groups for x in group if x not in index)
     stream_roots = {x[:-2] for group in groups for x in group
-                    if x.endswith('.dds.0') and x in index}
-    if needs or stream_roots:
+                    if x.endswith('.dds.0') and x[:-2] not in index}
+    existing_streams = {x[:-2] for group in groups for x in group
+                        if x.endswith('.dds.0') and x in index}
+    if needs or existing_streams:
         remaining = [p for p in scan.files if str(p) not in prior
                      and level_from_source(p) is None]
         try:
@@ -272,7 +274,7 @@ def ensure_map_archives(project, game, stage, cache_root, *,
         if next_providers is None:
             return result
         extra = set()
-        selected_streams = set(stream_roots)
+        selected_streams = set(existing_streams)
         for alternatives in groups:
             if any(name in index for name in alternatives):
                 continue
