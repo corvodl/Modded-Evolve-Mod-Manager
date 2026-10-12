@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 import re
+import struct
 from xml.etree import ElementTree as ET
 
 from evolve_pak_workspace import normalized_name
@@ -91,6 +92,24 @@ def _embedded_hints(index, model, preferred_workspace):
     except OSError:
         return
     hints = set()
+    # MtlName 0x802 stores a 128-byte name without a .mtl suffix.
+    # Monster stages and many hunter weapons share this explicit material.
+    from model_asset import inspect_model
+    try:
+        info = inspect_model(raw)
+        if info.format_name == 'CrChF' and info.version == 7:
+            for i in range(info.chunks):
+                kind, _cid, size, offset = struct.unpack_from('<4I', info.chunk_table, i * 16)
+                if kind != 0x08021014 or size < 132:
+                    continue
+                field = raw[offset:offset + 128]
+                if b'\0' not in field:
+                    continue
+                name = field.split(b'\0', 1)[0].decode('utf-8')
+                if name and _material_path(name, ''):
+                    hints.add(name if name.casefold().endswith('.mtl') else name + '.mtl')
+    except (ValueError, UnicodeError, struct.error):
+        pass
     for m in _MTL_TOKEN.finditer(raw):
         value = m.group(1).decode('ascii', 'ignore')
         # Binary buffers can contain a string prefix before the actual path.

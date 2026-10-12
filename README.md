@@ -1,25 +1,25 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.20
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.21
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.20 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.21 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
 
 ## Latest Stable — v1.1.17.1
 
 - Add a Windows installer with optional Desktop and Start Menu shortcuts.
 - Compare Stable and Beta releases and offer only the newest version.
 
-## Latest Beta — v1.1.18-beta.20
+## Latest Beta — v1.1.18-beta.21
 
-- Preview supported level meshes in a depth-tested 3D viewport with camera controls and object selection.
-- Match model assets to their source maps and edit materials safely in copied level projects.
-- Inspect terrain and vegetation metadata while unsupported world geometry remains explicitly unrendered.
+- Assemble complete character models with distinct monster stage names and corrected textures.
+- Improve Goliath and other character animations with native skin binding and eight-weight support.
+- Keep character body attachments and selected textures consistent in previews and GLB exports.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 
-Versioned release: [v1.1.18-beta.20](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.20).
+Versioned release: [v1.1.18-beta.21](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.21).
 
 ## Download and install
 

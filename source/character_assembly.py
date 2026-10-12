@@ -1,7 +1,8 @@
 """Assemble a whole character preview from its CryEngine .cdf skin bindings.
 
-Render-only, never changes the source archive.  Body + one selected equipment
-skin is intentional: drawing every CDF equipment attachment at the same time
+Render-only, never changes the source archive. Monster/creature skin parts and
+hunter body accessories stay assembled, with one selected equipment skin.
+Drawing every equipment attachment at the same time
 would superimpose mutually exclusive weapons.  Bone-attached rigid geometry
 requires its socket transforms and is not guessed by this path.
 """
@@ -40,7 +41,7 @@ def _parse_cdf(raw):
     skeleton = normalized_name(model.get('File'))
     refs = []
     for row in root.findall('./AttachmentList/Attachment'):
-        if row.get('Type', '').casefold() != 'ca_skin' or not row.get('Binding'):
+        if row.get('Type', '').casefold() not in ('ca_skin', 'ca_skin_unique') or not row.get('Binding'):
             continue
         try:
             binding = normalized_name(row.get('Binding'))
@@ -159,7 +160,7 @@ def combine_meshes(items):
 
 def assemble_character(workspace, selected, index, *, texture_folder=None,
                        projects_root=None, stage_root=None, equipment=None):
-    """Return None when no owning CDF exists or fewer than two skins resolve.
+    """Return None when no owning CDF or no renderable bound skin exists.
 
     Only select the character body and explicitly selected weapon/skin. Extra
     equipment can be added through a future attachment choice UI.
@@ -175,6 +176,16 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
                if label.casefold() in ('body', 'hands', 'character', 'base', 'main')]
     if not primary and skins:
         primary = [skins[0]]
+    # Monster/creature attachments are body parts, not mutually exclusive guns.
+    if normalized_name(selected).split('/')[1].casefold() in ('monsters', 'creatures'):
+        primary = sorted(skins, key=lambda item: item[0].casefold() not in ('body', 'character', 'base', 'main'))
+    else:
+        # Hunter body accessories (mask, scarf, flashlight, etc.) stay visible
+        # when a weapon changes; only separate equipment is selectable.
+        body_stems = [Path(rel).stem.casefold() + '_' for _, rel in primary]
+        primary.extend((label, rel) for label, rel in skins
+                       if (label, rel) not in primary and
+                       any(Path(rel).stem.casefold().startswith(stem) for stem in body_stems))
     options = [(label, rel) for label, rel in skins if (label, rel) not in primary]
     if equipment == 'body':
         chosen = []

@@ -1,7 +1,7 @@
 """Discover explicit, separate full-character models without inventing meshes.
 
 A Full Character item is a virtual UI selection backed by the character's own
-CDF and unnumbered third-person skin mesh. Original CryEngine paths stay
+CDF and stage-specific or third-person skin mesh. Original CryEngine paths stay
 unchanged; equipment and skeleton binding are resolved by CDF assembly.
 """
 from __future__ import annotations
@@ -44,7 +44,8 @@ def discover_full_characters(paths):
             continue
         # Preserve the game's presentation names while keeping original paths.
         from character_aliases import character_alias
-        name = character_alias(mesh) or stem.replace('_', ' ').title()
+        name = (stem[:1].upper() + stem[1:] if segments[1].casefold() == 'monsters'
+                else character_alias(mesh) or stem.replace('_', ' ').title())
         title = name + ' • Full Character'
         result[mesh] = FullCharacter(mesh, original, title)
     return result

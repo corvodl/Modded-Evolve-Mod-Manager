@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [beta, main]
   push:
-    branches: [fix/viewer-materials-animation-texture-selection]
+    branches: [fix/viewer-materials-animation-texture-selection, fix/character-stage-assemblies]
   workflow_dispatch:
 permissions:
   contents: read
@@ -32,7 +32,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: >-
           python ci_test_runner.py --timeout-seconds 90
-          test_viewer_material_fixes test_beta10_library_model_material
+          test_character_stages test_model_preview test_viewer_material_fixes test_beta10_library_model_material
           test_beta17_character_library test_beta18_flat_character_models
           test_beta13_layered_aliases test_beta16_wraith_shared_textures
           test_character_preview_pipeline test_material_preview test_textured_export

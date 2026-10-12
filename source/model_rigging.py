@@ -98,12 +98,16 @@ def remap_skin_weights(mesh_raw, vertex_count, bone_count):
     if 9 not in streams or 5 not in streams:
         raise ValueError('Mesh has no compatible bone map and index stream.')
     bone_raw, count, stride = streams[9]
-    if (stride != 8 or count != vertex_count or
+    if (stride != 8 or count not in (vertex_count, vertex_count * 2) or
             len(bone_raw) != 24 + count * stride):
         raise ValueError('Vertex count differs from the bone mapping stream.')
     packed = np.frombuffer(bone_raw, dtype=np.uint8, offset=24).reshape(
         count, 8)
-    if np.any(packed[:, 4:].astype(np.uint16).sum(axis=1) != 255):
+    # Emet stores a second block of four influences after the first block.
+    blocks = packed.reshape(-1, vertex_count, 8)
+    local_ids = np.concatenate([block[:, :4] for block in blocks], axis=1)
+    local_weights = np.concatenate([block[:, 4:] for block in blocks], axis=1)
+    if np.any(local_weights.astype(np.uint16).sum(axis=1) != 255):
         raise ValueError('Skin weights do not sum to 255.')
     index_raw, index_count, index_stride = streams[5]
     if (index_stride not in (2, 4) or len(index_raw) != 24 +
@@ -119,7 +123,7 @@ def remap_skin_weights(mesh_raw, vertex_count, bone_count):
     _material_groups, subsets = struct.unpack_from('<II', table)
     if not 1 <= subsets <= 128 or len(table) < 16 + subsets*(36+260):
         raise ValueError('Unsupported mesh subset or bone palette layout.')
-    mapped = np.zeros((vertex_count, 4), dtype=np.uint16)
+    mapped = np.zeros(local_ids.shape, dtype=np.uint16)
     covered = np.zeros(vertex_count, dtype=bool)
     for i in range(subsets):
         first, number, first_vertex, vertices, _material = struct.unpack_from(
@@ -140,11 +144,11 @@ def remap_skin_weights(mesh_raw, vertex_count, bone_count):
                 used_vertices.min() < first_vertex or
                 used_vertices.max() >= first_vertex + vertices):
             raise ValueError('Subset indices disagree with declared vertex range.')
-        bones = packed[used_vertices, :4]
-        active = packed[used_vertices, 4:] > 0
+        bones = local_ids[used_vertices]
+        active = local_weights[used_vertices] > 0
         if np.any(bones[active] >= palette_count):
             raise ValueError('Weighted vertex exceeds its local bone palette.')
-        converted = np.where(active, palette[bones], 0).astype(np.uint16)
+        converted = np.where(active, palette[np.where(active, bones, 0)], 0).astype(np.uint16)
         shared = covered[used_vertices]
         if shared.any() and not np.array_equal(
                 mapped[used_vertices[shared]], converted[shared]):
@@ -153,7 +157,7 @@ def remap_skin_weights(mesh_raw, vertex_count, bone_count):
         covered[used_vertices] = True
     if not covered.all():
         raise ValueError('Mesh contains vertices without any validated palette.')
-    return mapped, packed[:, 4:].copy(), subsets
+    return mapped, local_weights.copy(), subsets
 
 
 def skin_glb(glb, mesh_raw, skeleton_raw):
@@ -205,8 +209,8 @@ def skin_glb(glb, mesh_raw, skeleton_raw):
         document['bufferViews'].append(view)
         return len(document['bufferViews']) - 1
 
-    joints_view = add_view(bone_ids.astype('<u2').tobytes(), 34962)
-    weights_view = add_view(weights.tobytes(), 34962)
+    joints_view = add_view(bone_ids[:, :4].astype('<u2').tobytes(), 34962)
+    weights_view = add_view(weights[:, :4].tobytes(), 34962)
     inverse_matrices = [BASIS @ matrix @ INVERSE_BASIS for matrix in inverse]
     inverse_data = np.array(
         [matrix.reshape(-1, order='F') for matrix in inverse_matrices],
@@ -227,6 +231,7 @@ def skin_glb(glb, mesh_raw, skeleton_raw):
     for primitive in primitives:
         primitive['attributes']['JOINTS_0'] = joints_acc
         primitive['attributes']['WEIGHTS_0'] = weight_acc
+    _extra_influences(document, add_view, primitives, bone_ids, weights)
     document['skins'] = [{
         'name': 'CryEngine ' + names[root],
         'joints': [first+i for i in range(len(names))],
@@ -269,22 +274,46 @@ def skin_glb_composite(glb, rig_parts, skeleton_raw):
     names, parents, world, inverse = parse_compiled_bones(skeleton_raw)
     name_to_id = {n.casefold():i for i,n in enumerate(names)}
     arrays, weights = [], []
+    # The CDF supplies the hierarchy; each skin supplies its actual bind pose.
+    # Stage-specific skins can legitimately differ from the animation CHR.
+    skin_rest = {}
     for render_raw, skin_raw, count in rig_parts:
-        part_names, _parents, part_world, _inverse = parse_compiled_bones(skin_raw)
+        part_names, part_parents, part_world, part_inverse = parse_compiled_bones(skin_raw)
+        ids, influence, _subsets = remap_skin_weights(render_raw, count, len(part_names))
+        active = set(np.unique(ids[influence > 0]).tolist())
         mapped_names = []
         for i, name in enumerate(part_names):
             master = name_to_id.get(name.casefold())
-            if master is None or np.max(np.abs(world[master] - part_world[i])) > .005:
-                raise ValueError('CDF skin bone is absent or has incompatible rest pose: '+name)
+            if master is None:
+                raise ValueError('CDF skin bone is absent: ' + name)
+            expected_parent = names[parents[master]].casefold() if parents[master] >= 0 else None
+            actual_parent = part_names[part_parents[i]].casefold() if part_parents[i] >= 0 else None
+            # Accessory skin hierarchies may be flattened (e.g. Lennox's ammo belt);
+            # attachment skinning maps world bind matrices by joint name.
+            # The primary rig must still match the CDF hierarchy.
+            if not arrays and expected_parent != actual_parent:
+                raise ValueError('CDF skin bone hierarchy differs: ' + name)
+            if i in active and master in skin_rest and not np.allclose(
+                    skin_rest[master][0], part_world[i], atol=.001, rtol=0):
+                raise ValueError('CDF skins have conflicting bind poses: ' + name)
+            # Unweighted accessory bones often contain stale rest poses.
+            # The primary skin establishes the animation rest hierarchy;
+            # only weighted accessory joints can override an unused joint.
+            if not arrays or (i in active and master not in skin_rest):
+                world[master], inverse[master] = part_world[i], part_inverse[i]
+            if i in active:
+                skin_rest[master] = (part_world[i], part_inverse[i])
             mapped_names.append(master)
-        ids, influence, _subsets = remap_skin_weights(render_raw, count, len(part_names))
         ids = np.take(np.asarray(mapped_names, dtype='<u2'), ids)
         arrays.append(ids.astype('<u2'))
         weights.append(influence.astype('u1'))
     if not arrays:
         raise ValueError('No compatible skinned render parts')
-    bone_ids = np.concatenate(arrays)
-    packed_weights = np.concatenate(weights)
+    for master, (rest, bind) in skin_rest.items():
+        world[master], inverse[master] = rest, bind
+    width = max(a.shape[1] for a in arrays)
+    bone_ids = np.concatenate([np.pad(a, ((0,0),(0,width-a.shape[1]))) for a in arrays])
+    packed_weights = np.concatenate([np.pad(a, ((0,0),(0,width-a.shape[1]))) for a in weights])
     primitives = doc['meshes'][0].get('primitives', [])
     positions = {p.get('attributes',{}).get('POSITION') for p in primitives}
     if len(positions) != 1 or None in positions:
@@ -314,8 +343,8 @@ def skin_glb_composite(glb, rig_parts, skeleton_raw):
         if target is not None: obj['target']=target
         doc['bufferViews'].append(obj)
         return len(doc['bufferViews'])-1
-    joint_view = add_view(bone_ids.tobytes(),34962)
-    weight_view = add_view(packed_weights.tobytes(),34962)
+    joint_view = add_view(bone_ids[:, :4].tobytes(),34962)
+    weight_view = add_view(packed_weights[:, :4].tobytes(),34962)
     inv = np.asarray([(BASIS@m@INVERSE_BASIS).reshape(-1,order='F')
                       for m in inverse],dtype='<f4')
     inv_view = add_view(inv.tobytes())
@@ -331,6 +360,7 @@ def skin_glb_composite(glb, rig_parts, skeleton_raw):
     for primitive in primitives:
         primitive['attributes']['JOINTS_0'] = ji
         primitive['attributes']['WEIGHTS_0'] = wi
+    _extra_influences(doc, add_view, primitives, bone_ids, packed_weights)
     doc['skins']=[{'name':'CryEngine CDF '+names[root],
                    'joints':[first+i for i in range(len(names))],
                    'inverseBindMatrices':mi,'skeleton':first+root}]
@@ -341,3 +371,20 @@ def skin_glb_composite(glb, rig_parts, skeleton_raw):
     return _pack_glb(doc,binary), {
         'bone_count':len(names), 'vertex_count':count,
         'part_count':len(rig_parts)}
+
+
+def _extra_influences(doc, add_view, primitives, ids, weights):
+    """Preserve all eight source influences in standard glTF attributes."""
+    if ids.shape[1] <= 4:
+        return
+    for name, values, component in (('JOINTS_1', ids[:, 4:].astype('<u2'), 5123),
+                                    ('WEIGHTS_1', weights[:, 4:], 5121)):
+        view = add_view(values.tobytes(), 34962)
+        acc = {'bufferView': view, 'componentType': component,
+               'count': len(values), 'type': 'VEC4'}
+        if name == 'WEIGHTS_1':
+            acc['normalized'] = True
+        position = len(doc['accessors'])
+        doc['accessors'].append(acc)
+        for primitive in primitives:
+            primitive['attributes'][name] = position

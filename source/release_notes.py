@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.21', (
+        'Assemble complete character models with distinct monster stage names and corrected textures.',
+        'Improve Goliath and other character animations with native skin binding and eight-weight support.',
+        'Keep character body attachments and selected textures consistent in previews and GLB exports.',
+    )),
     ('1.1.18-beta.20', (
         'Preview supported level meshes in a depth-tested 3D viewport with camera controls and object selection.',
         'Match model assets to their source maps and edit materials safely in copied level projects.',
@@ -80,9 +85,8 @@ RELEASE_NOTES = (
         'Show indexed blendspace/combination metadata; native graph playback is not yet supported.',
     )),
     ('1.1.18-beta.5', (
-        'Show newly imported CAF animations from the persistent Asset Library.',
+        'Show newly imported CAF animations and refresh library references without reopening the model editor.',
         'Add searchable Game Animations with availability and motion filters.',
-        'Refresh library references without reopening the model editor.',
         'Avoid re-extracting PAK companions already complete in the Asset Library.',
     )),
     ('1.1.18-beta.4', (
@@ -93,8 +97,7 @@ RELEASE_NOTES = (
     ('1.1.18-beta.3', (
         'Simplify the Modding page with File, Edit, View, Tools and Help menus.',
         'Group related PAKs and extract recognized companion archives together.',
-        'Open level archives directly in the Level Editor, including Evolve mission XML levels.',
-        'Display map layer names and group placed entities in the World Outliner.',
+        'Open level and mission XML archives in the Level Editor with map layers and grouped entities in the World Outliner.',
     )),
     ('1.1.18-beta.2', (
         'Add a permanent extracted PAK Asset Library with custom archive imports.',
