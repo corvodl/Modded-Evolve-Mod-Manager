@@ -380,6 +380,9 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.geometry_label=QLabel("Model reference: —")
         self.geometry_label.setWordWrap(True)
         details_lay.addWidget(self.geometry_label)
+        self.scene_info = QLabel("Scene hierarchy: unavailable")
+        self.scene_info.setWordWrap(True)
+        details_lay.addWidget(self.scene_info)
         details_lay.addStretch()
         right.addWidget(details)
         right.setSizes([470,320])
@@ -494,7 +497,8 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.path_label.setText(
             f"Extracted workspace / {self.project.level_name} • "
             f"{len(filenames):,} files • {len(self.project.layers)} layers • "
-            f"{len(self.project.objects):,} objects")
+            f"{len(self.project.objects):,} objects • "
+            f"{sum(bool(x.model) for x in self.project.scene):,} model references")
 
     def _open_browser_asset(self,item,column=0):
         relative=item.data(0,Qt.UserRole)
@@ -523,6 +527,17 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.details_kind.setText(
             "Type: "+obj.kind+"  •  Layer: "+(node.get("Layer") or Path(layer).stem))
         self.geometry_label.setText("Model reference: "+(obj.geometry or "Not specified"))
+        guid = (node.get("Id") or node.get("EntityId") or f"{layer}#{index}").casefold()
+        scene = next((n for n in self.project.scene if n.id == guid), None)
+        if scene:
+            pos = ", ".join(f"{v:.3f}" for v in scene.world.pos)
+            self.scene_info.setText(
+                "Hierarchy: " + (scene.parent_id or "root") +
+                "\\nWorld position: " + pos +
+                "\\nMaterial override: " + (scene.material or "(source default)") +
+                "\\nRender status: " + scene.status)
+        else:
+            self.scene_info.setText("Scene hierarchy data unavailable")
         self._refreshing=True
         for key,values in (("Pos",obj.pos),("Rotate",obj.rotate or (0,0,0,1)),
                            ("Scale",obj.scale or (1,1,1))):
