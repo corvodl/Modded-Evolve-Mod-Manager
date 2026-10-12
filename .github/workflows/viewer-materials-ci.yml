@@ -36,6 +36,6 @@ jobs:
           test_beta17_character_library test_beta18_flat_character_models
           test_beta13_layered_aliases test_beta16_wraith_shared_textures
           test_character_preview_pipeline test_material_preview test_textured_export
-          test_native_caf test_model_animation test_model_rigging test_gpu_preview
+          test_animation_menu_modern test_native_caf test_model_animation test_model_rigging test_gpu_preview
           test_dds0_selection test_asset_streaming_models test_multi_pak_assets
           test_asset_library_preview
