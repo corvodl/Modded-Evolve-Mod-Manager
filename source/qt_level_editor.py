@@ -520,7 +520,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.map_selector.setCompleter(completer)
 
     def _apply_map_catalog(self,token,status):
-        if token != self._map_catalog_generation or not self.isVisible():
+        if token != self._map_catalog_generation:
             return
         if "_error" in status:
             self.statusBar().showMessage("Map catalog: "+status["_error"],8000)
