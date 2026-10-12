@@ -34,6 +34,20 @@ jobs:
               'EvolveBridge_CopyToken')) {
             if ($exports -notmatch [regex]::Escape($name)) { throw "Missing native export: $name" }
           }
+      - name: Compile simulated Evolve.exe smoke-test host
+        shell: pwsh
+        run: |
+          dotnet publish native/tests/FakeEvolve/Evolve.csproj -c Release -r win-x64 -o dist/fake-evolve
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path dist/fake-evolve/Evolve.exe)) {
+            throw 'Synthetic Evolve fixture host did not compile'
+          }
+      - name: Exercise authenticated bridge and game-thread callback with synthetic host
+        shell: pwsh
+        run: |
+          python native/tests/native_bridge_smoke.py dist/fake-evolve/Evolve.exe dist/native-bridge/EvolveEventBridge.dll
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Bridge transport / simulated game-thread smoke test failed'
+          }
       - name: Validate existing Python bridge protocol tests
         shell: pwsh
         run: |
