@@ -1066,13 +1066,13 @@ class QtGPUModelPanel(QWidget):
             ref = (materials.diffuse_references[selected]
                    if selected < len(materials.diffuse_references) else '')
             if source:
-                message += ('\\nActual source: ' + source[0] +
+                message += ('\nActual source: ' + source[0] +
                             '  ·  PAK: ' + source[1])
             elif ref:
-                message += ('\\nMissing cooked DDS for ' + ref +
+                message += ('\nMissing cooked DDS for ' + ref +
                             '. Check the owning texture PAK in Asset Library.')
             else:
-                message += '\\nNo Diffuse map declared in the MTL for this slot.'
+                message += '\nNo Diffuse map declared in the MTL for this slot.'
         self.diffuse_source_info.setText(message)
 
     def _populate_material_slots(self,mesh,materials):
@@ -1095,9 +1095,9 @@ class QtGPUModelPanel(QWidget):
                    ('Decoded DDS mean brightness %.0f/255; '
                     '%d%% near-black source pixels' % data))
             if source:
-                tip += '\\nLoaded: %s\\nPAK: %s' % source
+                tip += '\nLoaded: %s\nPAK: %s' % source
             elif expected:
-                tip += '\\nMTL wants ' + expected
+                tip += '\nMTL wants ' + expected
             self.part_select.setItemData(self.part_select.count()-1,tip,Qt.ToolTipRole)
         self.part_select.blockSignals(False)
         self.canvas.set_visible_material_slot(None)
