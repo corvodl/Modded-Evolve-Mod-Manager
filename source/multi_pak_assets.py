@@ -7,7 +7,7 @@ import argparse
 import hashlib
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 import json
 import re
 from types import SimpleNamespace
@@ -144,6 +144,12 @@ def _asset_index(batch, data):
 
 def _candidates(ref):
     """CryEngine .tif material references generally point to cooked DDS assets."""
+    # Companions created by skin_companion_path are pathlib objects, not
+    # strings. Preserve their virtual path semantics on Windows.
+    if isinstance(ref, PurePath):
+        ref = ref.as_posix()
+    if not isinstance(ref, str):
+        raise ValueError('Expected a virtual asset path.')
     rel = normalized_name(ref.strip().replace('\\', '/'))
     opts=[rel]
     if rel.casefold().endswith('.tif'):
@@ -328,7 +334,7 @@ def locate_related_asset(workspace, virtual_path, projects_root=None, stage_root
         return None
     hits, status = _resolve(index, virtual_path, preferred_workspace=workspace)
     if status == 'ambiguous':
-        raise ValueError('Companion asset is ambiguous across extracted PAKs: ' + virtual_path)
+        raise ValueError('Companion asset is ambiguous across extracted PAKs: ' + str(virtual_path))
     return hits[0]['file'] if status == 'found' else None
 
 
