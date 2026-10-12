@@ -132,6 +132,20 @@ class ScopedCharacterMaterialTests(unittest.TestCase):
         self.assertEqual(materials.count, 1)
         self.assertEqual(materials.textures[0].getpixel((0, 0)), (50, 100, 150))
 
+    def test_category_shared_texture_resolves_after_character_local(self):
+        shared = 'characters/monsters/shared/textures/eye_shared.dds.0'
+        self._add(shared, self._dds((45, 75, 135)))
+        hits, status = resolve_material_texture(
+            self.index, 'shared/textures/eye_shared.tif',
+            self.material, preferred_workspace=self.workspace)
+        self.assertEqual(status, 'found')
+        self.assertEqual(hits[0]['relative'], shared)
+        hits, status = resolve_material_texture(
+            self.index, 'eye_shared.tif',
+            self.material, preferred_workspace=self.workspace)
+        self.assertEqual(status, 'found')
+        self.assertEqual(hits[0]['relative'], shared)
+
     def test_unrelated_actor_is_never_guessed_for_missing_dds(self):
         self.index.pop(self.dds.casefold())
         with self.assertRaisesRegex(ValueError, 'No diffuse DDS'):
