@@ -34,7 +34,7 @@ internal sealed class DispatchRequest
     public TaskCompletionSource<int> Result = new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
-public static unsafe class EvolveBridge
+public static class EvolveBridge
 {
     private const string Protocol = "evolve-dev-event-bridge-v1";
     private const string Source = "EVENTS_FOR_PARITY_V3";
@@ -155,7 +155,7 @@ public static unsafe class EvolveBridge
     // NEVER invokes native callbacks on a socket/background thread.
     [UnmanagedCallersOnly(EntryPoint = "EvolveBridge_Pump",
         CallConvs = new[] { typeof(CallConvCdecl) })]
-    public static int Pump()
+    public static unsafe int Pump()
     {
         if (GameThread == 0 || GetCurrentThreadId() != GameThread) return 0;
         int processed = 0;
@@ -378,16 +378,26 @@ public static unsafe class EvolveBridge
     private static void Send(NetworkStream stream, string token,
                              Dictionary<string, object> fields)
     {
-        using JsonDocument doc = JsonDocument.Parse(JsonSerializer.Serialize(fields));
-        string body = Canonical(doc.RootElement);
+        // NativeAOT does not have reflection-driven JSON metadata for
+        // Dictionary<string, object>. Our response wire schema has only
+        // strings, integer PID and string arrays: serialize it explicitly.
+        string body = CanonicalFields(fields);
         string mac = Convert.ToHexString(HMACSHA256.HashData(
             Encoding.UTF8.GetBytes(token), Encoding.ASCII.GetBytes(body))).ToLowerInvariant();
         fields["mac"] = mac;
-        using JsonDocument signed = JsonDocument.Parse(JsonSerializer.Serialize(fields));
-        byte[] payload = Encoding.ASCII.GetBytes(Canonical(signed.RootElement) + "\n");
+        byte[] payload = Encoding.ASCII.GetBytes(CanonicalFields(fields) + "\n");
         if (payload.Length > MaximumMessage) throw new IOException("Response is too large.");
         stream.Write(payload, 0, payload.Length);
     }
+
+    private static string CanonicalFields(Dictionary<string, object> fields) =>
+        "{" + string.Join(",", fields.OrderBy(x => x.Key, StringComparer.Ordinal)
+            .Select(x => Quote(x.Key) + ":" + (x.Value switch {
+                string value => Quote(value),
+                int number => number.ToString(CultureInfo.InvariantCulture),
+                string[] strings => "[" + string.Join(",", strings.Select(Quote)) + "]",
+                _ => throw new InvalidDataException("Unsupported response JSON type."),
+            }))) + "}";
 
     // Match Python's json.dumps(sort_keys=True, ensure_ascii=True,
     // separators=(',', ':'), allow_nan=False) for the restricted ASCII
