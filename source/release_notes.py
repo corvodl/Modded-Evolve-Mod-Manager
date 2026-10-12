@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.20', (
+        'Preview supported level meshes in a depth-tested 3D viewport with camera controls and object selection.',
+        'Match model assets to their source maps and edit materials safely in copied level projects.',
+        'Inspect terrain and vegetation metadata while unsupported world geometry remains explicitly unrendered.',
+    )),
     ('1.1.18-beta.19', (
         'Choose character textures per material and retain matching textures in supported exports.',
         'Improve original DBA animation previews and character material mapping.',
