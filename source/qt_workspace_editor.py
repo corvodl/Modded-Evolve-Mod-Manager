@@ -1473,9 +1473,25 @@ class QtWorkspaceEditor(QMainWindow):
             self.archive_select.setCurrentText(old)
             self.archive_select.blockSignals(False)
             return
-        self._save_project_session()
+        if not self.read_only_library:
+            self._save_project_session()
         target = self.archive_map[name]
-        new_records = self._read_records(target)
+        if self.read_only_library:
+            from asset_library import imported_archives, _archive_identifier
+            from asset_library_preview import archive_entries
+            identifier = _archive_identifier(target)
+            selected = next(
+                (entry for entry in imported_archives()
+                 if entry['id'] == identifier), None)
+            if selected is None:
+                raise ValueError('Selected imported PAK is no longer available.')
+            new_records = {
+                rel: {'path': rel, 'format': 'raw'}
+                for rel in archive_entries(identifier)
+            }
+            self.library_archive = selected
+        else:
+            new_records = self._read_records(target)
         self.dependency_button.setEnabled(False)
         self.workspace, self.records = target, new_records
         self.favorites_only.setChecked(False)
@@ -1483,16 +1499,22 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.character_skin_choice = None
         self.current, self.loaded_text, self.raw = None, '', b''
-        self.manager.current_workspace = str(target)
-        self.manager.archive_label = name
-        self.manager.output_pak = ''
-        self.manager.persist()
+        if not self.read_only_library:
+            self.manager.current_workspace = str(target)
+            self.manager.archive_label = name
+            self.manager.output_pak = ''
+            self.manager.persist()
         self.populate()
         self.current_file_label.setText('Select a file from ' + name)
         self.tabs.setCurrentIndex(0)
         self.views['files'].clear()
-        QTimer.singleShot(0,self._restore_project_session)
-        self.status.setText('Browsing ' + name + ' | Build Mod applies only to this PAK.')
+        if not self.read_only_library:
+            QTimer.singleShot(0,self._restore_project_session)
+        self.status.setText(
+            'Browsing ' + name + (
+                ' | Asset Library preview/export only (read-only).'
+                if self.read_only_library else
+                ' | Build Mod applies only to this PAK.'))
 
     def change_tab(self, index):
         if self._dirty():
