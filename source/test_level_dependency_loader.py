@@ -96,6 +96,32 @@ class LevelDependencyTests(unittest.TestCase):
             self.assertEqual(copy_editable_map_from_library(
                 'tutorial',target,library_roots=(root/'library',)),target)
 
+    @patch('level_dependency_loader.material_dependency_candidates')
+    @patch('level_dependency_loader.providers_for_missing')
+    @patch('level_asset_mount.mount_map_index')
+    @patch('level_dependency_loader.import_pak')
+    @patch('level_dependency_loader.imported_archives')
+    @patch('level_dependency_loader.discover_game_paks')
+    def test_existing_mesh_still_traces_missing_material_texture(
+            self, scan, imported, importer, mounted, providers, materials):
+        mesh = Path('/game/levels/Tutorial/level.pak')
+        shared = Path('/game/objects_basic_props.pak')
+        scan.return_value=SimpleNamespace(files=(mesh,shared))
+        imported.side_effect=lambda root: (
+            ({'source':str(mesh)},) if str(root)=='/library' else ())
+        mounted.return_value=({'objects/tree/tree.cgf':[{'file':'imported'}]}, {})
+        materials.return_value=(('objects/tree/diff.dds.0',),)
+        providers.return_value={'objects/tree/diff.dds.0':[shared]}
+        importer.return_value={'status':'imported','name':shared.name}
+        project=SimpleNamespace(level_name='Tutorial',workspace=Path('/project'),
+                                scene=(SimpleNamespace(model='objects/tree/tree.cgf',
+                                                      material=''),))
+        result=ensure_map_archives(
+            project,'/game','/stage','/cache',imported_root='/library')
+        self.assertEqual(result['imported'],[shared.name])
+        self.assertEqual(importer.call_count,1)
+        self.assertFalse(result['missing'])
+
     @patch('level_dependency_loader._keys', return_value=('key',))
     @patch('level_dependency_loader._verify_pak')
     def test_verified_provider_matching_and_other_map_fencing(self, verified, keys):
