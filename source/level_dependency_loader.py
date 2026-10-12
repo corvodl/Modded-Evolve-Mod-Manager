@@ -81,6 +81,99 @@ def providers_for_missing(sources, missing, *, stage, cancel=None, progress=None
     return dict(indexed)
 
 
+
+def texture_provider_candidates(reference, material_path):
+    """Candidate *virtual paths* for a CryEngine material texture reference.
+
+    Never search by basename; source-directory and cooked DDS variants are
+    explicit, ordered alternatives. An unresolved alternative remains missing.
+    """
+    from multi_pak_assets import _candidates
+    text = str(reference or "").strip().replace("\\", "/")
+    if not text or text.startswith("/") or ":" in text or ".." in text.split("/"):
+        return ()
+    parent = Path(material_path.replace("\\", "/")).parent.as_posix()
+    prefix = []
+    rooted = text.casefold().startswith((
+        "characters/", "objects/", "materials/", "levels/", "libs/"))
+    if rooted:
+        prefix = [text]
+    else:
+        parts = parent.split("/") if parent != "." else []
+        minimum = (3 if len(parts) >= 3 and parts[0].casefold() == "characters"
+                   else 1)
+        for length in range(len(parts),minimum-1,-1):
+            folder = "/".join(parts[:length])
+            prefix.append(folder + "/" + text)
+            if "/" not in text:
+                prefix.append(folder + "/textures/" + text)
+        if text.casefold().startswith("textures/"):
+            prefix.append(text)
+    seen = set()
+    result = []
+    for name in prefix:
+        try:
+            for virtual in _candidates(name):
+                key = _virtual(virtual)
+                if key not in seen:
+                    seen.add(key)
+                    result.append(key)
+        except ValueError:
+            continue
+    return tuple(result)
+
+
+def material_dependency_candidates(project, index):
+    """Inspect verified model MTL records and enumerate referenced textures.
+
+    This reads only already-imported materials; does not decode every DDS.
+    Returns ordered alternative groups, not permission to guess an asset.
+    """
+    from model_material_resolve import find_model_material
+    from xml.etree import ElementTree as ET
+    output = []
+    for item in project.scene:
+        if not getattr(item, "model", ""):
+            continue
+        try:
+            model = _virtual(item.model)
+        except ValueError:
+            continue
+        if model not in index:
+            continue
+        try:
+            material, _, attempted = find_model_material(
+                index, model, preferred_workspace=project.workspace)
+        except (OSError, ValueError):
+            continue
+        if material is None:
+            if attempted:
+                output.append(tuple(_virtual(x) for x in attempted[:24]))
+            continue
+        source = Path(material["file"])
+        try:
+            if source.stat().st_size > 12*1024*1024:
+                continue
+            raw = source.read_bytes()
+            if b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper():
+                continue
+            root = ET.fromstring(raw)
+        except (OSError, ET.ParseError, ValueError):
+            continue
+        for texture in root.iter():
+            if texture.tag.split("}")[-1].casefold() != "texture":
+                continue
+            reference = texture.get("File") or texture.get("file")
+            if not reference:
+                continue
+            variants = texture_provider_candidates(
+                reference, str(material.get("relative", "")))
+            if variants:
+                output.append(variants)
+            if len(output) >= 20000:
+                return tuple(output)
+    return tuple(output)
+
 def ensure_map_archives(project, game, stage, cache_root, *,
                         imported_root=None, cancel=None, progress=None):
     """Import selected-map PAKs and *required* shared providers, on a worker.
@@ -152,4 +245,42 @@ def ensure_map_archives(project, game, stage, cache_root, *,
         if cancel is not None and cancel.is_set():
             break
         imported(source)
+    if cancel is not None and cancel.is_set():
+        return result
+    # Follow already-resolved model links into material XML and cooked DDS
+    # candidates, without decoding textures or importing the whole game.
+    index, _ = mount_map_index(project.workspace, project.level_name,
+                               library_root=imported_root, cache_root=cache_root)
+    groups = material_dependency_candidates(project, index)
+    needs = set(x for group in groups for x in group if x not in index)
+    if needs:
+        remaining = [p for p in scan.files if str(p) not in prior
+                     and level_from_source(p) is None]
+        try:
+            next_providers = providers_for_missing(
+                remaining, needs, stage=stage, cancel=cancel, progress=progress)
+        except (OSError, ValueError) as exc:
+            result["errors"].append("Material inventory: " + str(exc)[:180])
+            return result
+        if next_providers is None:
+            return result
+        extra = set()
+        for alternatives in groups:
+            if any(name in index for name in alternatives):
+                continue
+            for key in alternatives:
+                providers = next_providers.get(key, [])
+                if len(providers) == 1:
+                    extra.add(providers[0])
+                    break
+                if len(providers) > 1:
+                    result["ambiguous"].append(
+                        key + " from " + ", ".join(str(p) for p in providers[:8]))
+                    break
+            else:
+                result["missing"].append("material/texture: " + alternatives[0])
+        for source in sorted(extra, key=lambda p:p.as_posix().casefold()):
+            if cancel is not None and cancel.is_set():
+                break
+            imported(source)
     return result
