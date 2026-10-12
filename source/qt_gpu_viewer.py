@@ -1063,7 +1063,7 @@ class QtGPUModelPanel(QWidget):
         if selected is not None and materials:
             if (selected < len(materials.uv_available) and
                     not materials.uv_available[selected]):
-                message += ('\\nThis CDF part has no decoded UV coordinates; '
+                message += ('\nThis CDF part has no decoded UV coordinates; '
                             'the texture cannot be mapped. Untextured shading is used.')
             source = (materials.diffuse_sources[selected]
                       if selected < len(materials.diffuse_sources) else None)
