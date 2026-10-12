@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QFrame, QLabel, QVBoxLayout,
     QHBoxLayout, QSplitter, QPushButton, QToolButton, QTreeWidget,
     QTreeWidgetItem, QLineEdit, QDoubleSpinBox, QComboBox, QFormLayout,
-    QGroupBox, QMessageBox, QScrollArea, QSizePolicy, QFileDialog)
+    QGroupBox, QMessageBox, QScrollArea, QSizePolicy, QFileDialog,
+    QCompleter, QInputDialog)
 
 from level_editor_core import LevelProject, PlacedObject
 from qt_level_scene_render import LevelGLViewport
@@ -265,6 +266,8 @@ class UnrealStyleLevelEditor(QMainWindow):
         file=menu.addMenu("File")
         file.addAction(self._action("Save Level Layers",self.save,"Ctrl+S"))
         file.addAction(self._action("Open Extracted Project…",self.open_project))
+        maps=menu.addMenu("Maps")
+        maps.addAction(self._action("Choose Extracted Map Project…", self.open_map_picker))
         edit=menu.addMenu("Edit")
         edit.addAction(self._action("Undo",self.undo))
         edit.addAction(self._action("Redo",self.redo))
@@ -337,6 +340,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.viewport.selected.connect(self.select_object)
         self.viewport.moved.connect(self._viewport_moved)
         self.viewport.statusChanged.connect(self._scene_status)
+        self.viewport.materialsReady.connect(self._materials_ready)
         horizontal.addWidget(self.viewport)
 
         right=QSplitter(Qt.Vertical)
@@ -389,6 +393,9 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.material_override=QLineEdit()
         self.material_override.setPlaceholderText("objects/…/material  (optional .mtl)")
         details_lay.addWidget(self.material_override)
+        self.material_hint=QLabel("Choose a verified .mtl from imported map/shared assets; type to filter.")
+        self.material_hint.setWordWrap(True)
+        details_lay.addWidget(self.material_hint)
         change_material=QPushButton("Apply Material Override")
         change_material.clicked.connect(self.apply_material_override)
         details_lay.addWidget(change_material)
@@ -420,6 +427,49 @@ class UnrealStyleLevelEditor(QMainWindow):
 
     def _scene_status(self, status):
         self.statusBar().showMessage(status, 0)
+
+    def _materials_ready(self, paths):
+        completer=QCompleter(list(paths), self.material_override)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setCompletionMode(QCompleter.PopupCompletion)
+        self.material_override.setCompleter(completer)
+        self.material_hint.setText(
+            f"{len(paths):,} unique MTL paths indexed. "
+            "Type to choose an exact game-relative material; blank resets to source.")
+
+    def open_map_picker(self):
+        """Choose another already-extracted editable map, without touching live PAKs."""
+        folder=self.project.workspace.parent
+        choices={}
+        try:
+            for item in list(folder.iterdir())[:256]:
+                if item.is_dir() and not item.is_symlink() and LevelProject.contains_levels(item):
+                    choices[f"{item.name}"] = item
+        except (OSError,ValueError):
+            pass
+        if not choices:
+            self.open_project()
+            return
+        names=sorted(choices,key=str.casefold)
+        current=next((i for i,name in enumerate(names)
+                      if choices[name] == self.project.workspace),0)
+        selected,okay=QInputDialog.getItem(
+            self,"Open map project","Select an extracted editable map project",
+            names,current,False)
+        if not okay:
+            return
+        other=choices[selected]
+        if other == self.project.workspace:
+            self.frame_all()
+            return
+        try:
+            editor=UnrealStyleLevelEditor(self.parent(),other)
+            editor.show()
+            editor.raise_()
+        except (OSError,ValueError) as error:
+            QMessageBox.warning(self,"Map project failed",str(error))
+
 
     def _projection(self, mode):
         self.viewport.projection_mode = mode
