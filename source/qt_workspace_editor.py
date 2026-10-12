@@ -884,6 +884,25 @@ class QtWorkspaceEditor(QMainWindow):
         loaded = (self.materials.count if self.materials is not None else 0)
         slots = len(self.materials.textures) if self.materials is not None else 0
         problems = '\n'.join(self.materials.issues[:12]) if self.materials else ''
+        used_slots = sorted({slot for _, _, slot in self.mesh.subsets}) if self.mesh.subsets else [0]
+        links = []
+        for slot in used_slots[:28]:
+            source = (self.materials.diffuse_sources[slot]
+                      if self.materials and slot < len(self.materials.diffuse_sources)
+                      else None)
+            source_ref = (self.materials.diffuse_references[slot]
+                          if self.materials and slot < len(self.materials.diffuse_references)
+                          else '')
+            slot_name = (self.materials.names[slot]
+                         if self.materials and slot < len(self.materials.names)
+                         else 'unassigned')
+            label = '%s: %s' % (slot, slot_name)
+            if source is not None:
+                links.append(label + ' → ' + source[0] + '  [PAK: ' + source[1] + ']')
+            else:
+                links.append(label + ' → NOT LOADED' +
+                             ('; MTL expects ' + source_ref if source_ref else
+                              '; no diffuse map declared'))
         QMessageBox.information(
             self, 'Texture preview diagnostics',
             'Model: ' + str(self.mesh.source_name or self.current) +
@@ -891,7 +910,10 @@ class QtWorkspaceEditor(QMainWindow):
             '\nResolved: %d / %d submaterial diffuse textures' % (loaded, slots) +
             '\nStatus: ' + self.texture_message +
             ('\nProblems:\n' + problems if problems else '') +
-            '\n\nFor precise source paths, choose Textures > Diagnose Texture Links.'
+            ('\n\nUsed geometry slots and exact DDS sources:\n' + '\n'.join(links)
+             if links else '') +
+            '\n\nMissing DDS must be imported from the owning game texture PAK; '
+            'a model-only ZIP does not contain its cooked textures.'
         )
 
     def refresh_model_textures(self):
