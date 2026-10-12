@@ -98,7 +98,13 @@ class _CompactAnimationList(QListWidget):
         return self.currentRow()
 
     def setCurrentIndex(self, index):
-        self.setCurrentRow(index)
+        # QListWidget inherits QAbstractItemView.setCurrentIndex(QModelIndex).
+        # Qt may invoke that native slot while the mouse moves selection;
+        # retain its QModelIndex contract as well as the old combo int API.
+        from PySide6.QtCore import QModelIndex
+        if isinstance(index, QModelIndex):
+            return super().setCurrentIndex(index)
+        self.setCurrentRow(int(index))
 
 
 class _CompactDiagnosticText(QPlainTextEdit):
