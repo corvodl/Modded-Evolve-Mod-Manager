@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.15', (
+        'Keep animation selection compact and scrollable inside the GPU viewer instead of opening a screen-sized menu.',
+        'Show live converter activity, errors and a stop button directly in the animation browser.',
+        'Run model-folder exports off the UI thread with responsive progress and safe cancellation.',
+    )),
     ('1.1.18-beta.14', (
         'Export Model Folder automatically uses the selected File Explorer folder or current model directory.',
         'The Asset Library and Modding viewers ask only for an export destination.',
