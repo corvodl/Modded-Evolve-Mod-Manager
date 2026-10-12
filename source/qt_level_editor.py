@@ -262,7 +262,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         self._populate()
         self.refresh_maps()
         self.statusBar().showMessage(
-            "3D static mesh preview loading • terrain/vegetation and collision not reconstructed")
+            "Loading source terrain and static meshes • tile textures and vegetation remain unsupported")
 
     def _action(self,label,callback,tip=None,checkable=False):
         action=QAction(label,self)
@@ -670,28 +670,46 @@ class UnrealStyleLevelEditor(QMainWindow):
             message=json.dumps(sections,ensure_ascii=False,indent=2)[:13000]
         QMessageBox.information(
             self, "Level terrain / vegetation source metadata",
-            message + "\\n\\nThese are SOURCE DESCRIPTORS only. Elevation, vegetation "
-            "instance placement and cooked terrain tiles are not decoded or "
-            "paintable in the current editor.")
+            message + "\\n\\nVerified source height samples can now be previewed "
+            "as read-only terrain. Vegetation instances, cooked terrain tiles "
+            "and terrain painting remain unsupported.")
 
     def scene_diagnostics(self):
         decoded = len(self.viewport.assets)
         coverage = sum(1 for item in self.project.scene
                        if (item.model.casefold(), item.material.casefold())
                        in self.viewport.assets)
-        missing = "\\n".join(f"• {reason}: {count}" for reason,count
-                              in sorted(self.viewport._issues.items(), key=lambda x:-x[1])[:25])
+        missing = "\n".join(f"• {reason}: {count}" for reason,count
+                            in sorted(self.viewport._issues.items(),
+                                      key=lambda x:-x[1])[:25])
+        terrain=getattr(self.viewport,"terrain",None)
+        terrain_status=(f"{terrain.width}×{terrain.height} source elevations; "
+                        f"{len(terrain.indices)//3:,} triangles (stride {terrain.stride}); "
+                        f"source: {terrain.source}"
+                        if terrain is not None else "no supported decoded source terrain")
+        dep=getattr(self.viewport,"_dependency_report",{})
+        archive_status=(f"{len(dep.get('imported',()))} imported; "
+                        f"{len(dep.get('reused',()))} reused; "
+                        f"{len(dep.get('ambiguous',()))} ambiguous; "
+                        f"{len(dep.get('missing',()))} missing"
+                        if dep else "not checked")
+        dep_missing=("\n".join("• "+v for v in (
+                     dep.get('missing',())[:12] + dep.get('ambiguous',())[:8] +
+                     dep.get('errors',())[:8])) if dep else "")
         QMessageBox.information(
             self, "Rendered scene diagnostics",
-            f"Map: {self.project.level_name}\\n"
-            f"Placed scene nodes: {len(self.project.scene):,}\\n"
-            f"Rendered instances: {coverage:,}\\n"
-            f"Decoded material variants: {decoded:,}\\n"
-            f"Hierarchy warnings: {len(self.project.scene_diagnostics):,}\\n"
-            f"Render/lookup problems:\\n{missing or '(none reported)'}\\n\\n"
-            "Only verified static CryEngine mesh streams are rendered. "
-            "Terrain, vegetation, roads, prefabs and unsupported CDF actors "
-            "are not silently replaced with fake terrain or meshes.")
+            f"Map: {self.project.level_name}\n"
+            f"Placed scene nodes: {len(self.project.scene):,}\n"
+            f"Rendered instances: {coverage:,}\n"
+            f"Decoded material variants: {decoded:,}\n"
+            f"Hierarchy warnings: {len(self.project.scene_diagnostics):,}\n"
+            f"Terrain: {terrain_status}\n"
+            f"PAK dependencies: {archive_status}\n"
+            f"Render/lookup problems:\n{missing or '(none reported)'}\n\n"
+            f"Missing/conflicting providers:\n{dep_missing or '(none reported)'}\n\n"
+            "Source terrain is rendered read-only without authored terrain tile "
+            "textures. Unsupported vegetation, roads, prefabs and compiled "
+            "terrain are not replaced by fabricated geometry.")
 
     def apply_material_override(self):
         if self.selected is None:
@@ -953,7 +971,7 @@ class UnrealStyleLevelEditor(QMainWindow):
             "Unresolved/unsupported content is listed in Scene Diagnostics.\\n\\n"
             "Edit source-layer transforms and explicit material overrides in a copied workspace; "
             "undo/redo and safe atomic layer saves retain original backups.\\n\\n"
-            "Not yet implemented: terrain elevation/tiles, vegetation instances, procedural roads, "
+            "Not yet implemented: terrain tiles/painting, vegetation instances, procedural roads, "
             "animated CDF characters, source-designer remeshing, game runtime collision, "
             "lighting/navigation rebuilds or engine-ready export. The editor must not be treated "
             "as a CryEngine map compiler.")
