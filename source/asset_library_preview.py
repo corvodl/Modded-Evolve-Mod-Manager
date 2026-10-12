@@ -10,7 +10,8 @@ import os
 import re
 import shutil
 
-from asset_library import LIBRARY_HOME, MANIFEST, _load_manifest, extracted_index
+from asset_library import (LIBRARY_HOME, MANIFEST, _load_manifest,
+                           extracted_index, _folder_for_identifier)
 from evolve_pak_workspace import normalized_name
 
 _ARCHIVE_ID = re.compile(r'^[0-9a-f]{20}$')
@@ -21,7 +22,7 @@ def archive_folder(identifier, root=None):
     if not isinstance(identifier, str) or not _ARCHIVE_ID.fullmatch(identifier):
         raise ValueError('Choose an imported Asset Library PAK.')
     home = Path(root if root is not None else LIBRARY_HOME).resolve()
-    folder = home / identifier
+    folder = _folder_for_identifier(identifier, home)
     if (folder.is_symlink() or not folder.is_dir()
             or not folder.resolve().is_relative_to(home)
             or not (folder / MANIFEST).is_file()):
@@ -158,11 +159,13 @@ def library_model_index(identifier, root=None):
     root_folder = archive_folder(identifier, root)
     for relative, path in own.items():
         key = relative.casefold()
-        record = {'archive': root_folder.name, 'workspace': None,
+        record = {'archive': _load_manifest(root_folder)['name'],
+                  'workspace': root_folder,
                   'file': path, 'relative': relative, '_asset_library': identifier}
         records = index.setdefault(key, [])
-        if not any(str(r.get('file')) == str(path) for r in records):
-            records.insert(0, record)
+        # The selected PAK has verified material and texture ownership.
+        records[:] = [r for r in records if str(r.get('file')) != str(path)]
+        records.insert(0, record)
     return index
 
 
