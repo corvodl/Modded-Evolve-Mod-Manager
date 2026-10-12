@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.27', (
+        'Correct GPU character texture orientation in model previews.',
+        'Switch between extracted map projects in the Level Editor.',
+        'Recognize map-specific source PAKs more reliably.',
+    )),
     ('1.1.18-beta.26', (
         'Preserve character texture colors and transparent details in previews and GLB exports.',
         'Correct Goliath and Behemoth mesh alignment with their skeletons during animation.',
