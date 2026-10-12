@@ -1,0 +1,32 @@
+name: Verify rendered level scene
+
+on:
+  pull_request:
+    branches: [beta]
+    paths:
+      - "source/level_*"
+      - "source/qt_level_*"
+      - "source/material_preview.py"
+      - "Build-Windows-EXE.cmd"
+      - ".github/workflows/rendered-level-scene.yml"
+  workflow_dispatch:
+
+jobs:
+  scene-regressions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check Python syntax
+        run: |
+          python -m py_compile source/level_asset_mount.py source/qt_level_scene_render.py source/qt_level_editor.py source/level_editor_core.py source/material_preview.py
+      - name: Install read-only editor smoke dependencies
+        run: python -m pip install PySide6 numpy Pillow PyOpenGL
+      - name: Run synthetic level asset/hierarchy regressions
+        env:
+          PYTHONPATH: source
+        run: |
+          python -m unittest -v test_level_asset_mount test_level_editor test_qt_level_editor
+          python -m unittest discover -s tests -p 'test_level_scene_core.py' -v
