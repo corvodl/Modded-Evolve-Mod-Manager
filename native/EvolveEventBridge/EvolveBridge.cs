@@ -39,6 +39,11 @@ public static class EvolveBridge
     private const string Protocol = "evolve-dev-event-bridge-v1";
     private const string Source = "EVENTS_FOR_PARITY_V3";
     private const string Build = "870227EC";
+    // Exact user-supplied Evolve Stage 2 executable (PE x64, 3.6.1.2538).
+    // Production companions MUST reject other game builds, even when the
+    // caller supplies a matching digest for a different Evolve.exe file.
+    private const string VerifiedExeSha256 =
+        "870227ec5ef4c2f020e6c825d13a137cc03c7a23ea55362782dc29a96127737d";
     private const int MaximumMessage = 65536;
     private static readonly object Sync = new();
     private static readonly Dictionary<string, VerifiedHandler> Handlers =
@@ -67,6 +72,10 @@ public static class EvolveBridge
             string? digest = Marshal.PtrToStringUTF8(digestPointer);
             if (!IsHex(digest, 64) || port is < 1024 or > 65535)
                 return 0;
+#if !EVOLVE_BRIDGE_SYNTHETIC_TEST
+            if (!digest.Equals(VerifiedExeSha256, StringComparison.OrdinalIgnoreCase))
+                return 0;
+#endif
             lock (Sync)
             {
                 if (Listener != null) return 0;
