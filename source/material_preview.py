@@ -399,6 +399,31 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),tuple(transforms))
 
 
+
+def diffuse_source_stats(materials, slot):
+    """Character texture source brightness, independent of any 3D lighting.
+
+    Decoded DDS success does not establish correct UV mapping or that a
+    submaterial is visually bright. Sample a bounded thumbnail, not the
+    potentially enormous original. Returns None if this slot has no DDS.
+    """
+    if materials is None or not (0 <= slot < len(materials.textures)):
+        return None
+    image = materials.textures[slot]
+    if image is None:
+        return None
+    from PIL import Image
+    sample = image.convert('RGB')
+    sample.thumbnail((32, 32), Image.Resampling.BILINEAR)
+    pixels = list(sample.getdata())
+    if not pixels:
+        return None
+    average = sum((.2126*r+.7152*g+.0722*b) for r,g,b in pixels)/len(pixels)
+    near_black = sum(max(r,g,b) < 32 for r,g,b in pixels) / len(pixels)
+    return round(average, 1), round(near_black*100)
+
+
+
 def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevation=.24, zoom=1., *, pan=(0.,0.), cancel=None):
     """Depth-tested diffuse/UV CPU rasterizer. This is NOT CryEngine shader parity."""
     import math

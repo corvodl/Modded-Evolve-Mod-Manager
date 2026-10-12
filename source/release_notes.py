@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.23', (
+        'Redesign the animation browser with compact controls and a consistent Play action.',
+        'Auto-play verified character-specific third-person DBAs when available, with safer rig compatibility checks.',
+        'Improve dark material previews with studio fill and source-texture brightness diagnostics.',
+    )),
     ('1.1.18-beta.22', (
         'Export every verified character CDF assembly as its own Blender-compatible GLB.',
         'Improve dark character material lighting and add an unlit diffuse inspection mode.',
