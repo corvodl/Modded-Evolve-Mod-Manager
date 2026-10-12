@@ -197,6 +197,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.gl_error = None
         self.gpu_upload_ms = None
         self.light_strength = 1.0
+        self.studio_fill = 0.35
         self.background_mode = 'Studio Grey'
         self.visible_material_slot = None
         self.projection_mode = 'Orthographic'
@@ -547,7 +548,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
                                 specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
                                 alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
-                                unlit=self.unlit_diffuse)
+                                unlit=self.unlit_diffuse,fill=self.studio_fill)
                 if tex:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D,tex)
@@ -869,6 +870,19 @@ class QtGPUModelPanel(QWidget):
             lambda checked:(setattr(self.canvas,'unlit_diffuse',checked),
                             self.canvas.update()))
         self._overlay_sections['Materials'][1].addWidget(self.unlit_diffuse_checkbox)
+        ambient_row = QHBoxLayout()
+        ambient_row.addWidget(QLabel('Studio fill'))
+        self.studio_fill_slider = QSlider(Qt.Horizontal)
+        self.studio_fill_slider.setObjectName('modelStudioFillLighting')
+        self.studio_fill_slider.setRange(0, 100)
+        self.studio_fill_slider.setValue(35)
+        self.studio_fill_slider.setToolTip(
+            'Add a soft secondary light for dark materials. Does not alter source textures.')
+        self.studio_fill_slider.valueChanged.connect(
+            lambda value: (setattr(self.canvas, 'studio_fill', value/100.),
+                           self.canvas.update()))
+        ambient_row.addWidget(self.studio_fill_slider, 1)
+        self._overlay_sections['Materials'][1].addLayout(ambient_row)
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = _CompactDiagnosticText(self)
@@ -1210,13 +1224,11 @@ class QtGPUModelPanel(QWidget):
         self.native_result_count.setWordWrap(True)
         catalog_layout.addWidget(self.native_result_count)
 
-        native_row = QHBoxLayout()
         self.native_clip_select = _CompactAnimationList(self)
         self.native_clip_select.setToolTip(
             'Search or filter the animation index above. Only a manageable '
             'subset is listed; no unrelated CAF is substituted.')
         self.native_clip_select.currentIndexChanged.connect(self._native_selection)
-        native_row.addWidget(self.native_clip_select, 1)
         self.play_native_button = QPushButton('▶  Play')
         self.play_native_button.setObjectName('playSelectedNativeAnimation')
         self.play_native_button.setMinimumHeight(34)
