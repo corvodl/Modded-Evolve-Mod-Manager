@@ -149,19 +149,41 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             Path(self.current).stem + '.glb', 'Blender glTF (.glb)')
         if not output:
             return
+        from asset_library_preview import _outside_library
+        from qt_background_exports import begin_file_operation, exports_busy
+        if exports_busy(self):
+            QMessageBox.information(
+                self, 'Export already running', 'Finish the current export first.')
+            return
         try:
             target = Path(output)
             if target.suffix.casefold() != '.glb':
                 target = target.with_suffix('.glb')
-            from qt_operation_progress import run_busy
-            target, details = run_busy(
-                self, 'Export Blender GLB', 'Preparing geometry, textures and rig…',
-                lambda: export_glb(self.identifier, self.current, target))
+            target = _outside_library(target)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, 'Blender export', str(exc))
+            return
+        archive_id, virtual = self.identifier, self.current
+
+        def work(progress, cancelled):
+            progress('Converting model geometry and materials', 0, 1)
+            if cancelled():
+                raise InterruptedError('Export cancelled.')
+            result = export_glb(archive_id, virtual, target)
+            progress('Blender model exported', 1, 1)
+            return result
+
+        def finish(result):
+            saved, details = result
             self.status.setText(
                 'Blender GLB exported: %d textures; rig: %s | %s' %
-                (details['textures'], details['rig'], target))
-        except (OSError, ValueError) as error:
-            QMessageBox.warning(self, 'Blender export', str(error))
+                (details['textures'], details['rig'], saved))
+
+        begin_file_operation(
+            self, 'Export Blender model', 'Converting ' + virtual, work,
+            on_success=finish,
+            on_error=lambda err: QMessageBox.warning(
+                self, 'Blender export stopped', err))
 
     def export_blender_folder(self):
         """Export only the current virtual folder, without blocking the GUI."""
