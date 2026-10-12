@@ -37,5 +37,6 @@ jobs:
           test_beta13_layered_aliases test_beta16_wraith_shared_textures
           test_character_preview_pipeline test_material_preview test_textured_export
           test_native_caf test_model_animation test_model_rigging test_gpu_preview
+          test_beta23_animation_autoplay test_beta13_overlay_layout test_native_animation_browser
           test_dds0_selection test_asset_streaming_models test_multi_pak_assets
           test_asset_library_preview
