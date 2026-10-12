@@ -1,1 +1,1 @@
-1.1.18-beta.26 - Experimental Release Channel
+1.1.18-beta.27 - Experimental Release Channel
