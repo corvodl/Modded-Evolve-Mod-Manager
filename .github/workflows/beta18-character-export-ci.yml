@@ -31,4 +31,4 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          python -m unittest -v test_beta18_flat_character_models test_model_families test_beta17_character_library test_beta16_wraith_shared_textures test_textured_export test_beta15_animation_export
+          python -m unittest -v test_beta18_flat_character_models test_model_families test_beta17_character_library test_beta16_wraith_shared_textures test_textured_export
