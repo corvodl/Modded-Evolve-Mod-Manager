@@ -429,7 +429,11 @@ def copy_editable_map_from_library(map_name, destination, *, library_roots=(),
             target = output.joinpath(*rel.split("/"))
             target.parent.mkdir(parents=True,exist_ok=True)
             shutil.copyfile(source,target)
-            digest=hashlib.sha256(target.read_bytes()).hexdigest()
+            hash_obj = hashlib.sha256()
+            with target.open('rb') as stream:
+                for block in iter(lambda: stream.read(1024*1024), b''):
+                    hash_obj.update(block)
+            digest=hash_obj.hexdigest()
             if size != entry["bytes"] or digest != entry["sha256"]:
                 raise ValueError("Imported map file differs from verified manifest: " + rel)
             copied.append({
