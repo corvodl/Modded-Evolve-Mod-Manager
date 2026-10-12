@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from level_dependency_loader import (
     ensure_map_archives, map_archive_catalog, needed_virtual_paths,
-    providers_for_missing, texture_provider_candidates, material_dependency_candidates)
+    providers_for_missing, texture_provider_candidates, material_dependency_candidates,
+    copy_editable_map_from_library, discover_map_status)
 
 
 class LevelDependencyTests(unittest.TestCase):
@@ -58,6 +59,42 @@ class LevelDependencyTests(unittest.TestCase):
             self.assertEqual(len(groups),2)
             self.assertIn('objects/stone/stone_d.dds.0',groups[0])
             self.assertIn('objects/stone/stone_n.dds',groups[1])
+
+    def test_atomic_editable_copy_is_independent_of_asset_library(self):
+        from tempfile import TemporaryDirectory
+        import hashlib
+        import json
+        with TemporaryDirectory() as home:
+            root = Path(home)
+            folder = root/'library'/('level.pak__' + 'f'*20)
+            original = folder/'files'/'mission_mission0.xml'
+            original.parent.mkdir(parents=True)
+            raw = (b'<Mission><Objects><Entity Name="Tree" Id="1" '
+                   b'Pos="0,0,0" /></Objects></Mission>')
+            original.write_bytes(raw)
+            info = folder/'files'/'levelinfo.xml'
+            info.write_bytes(b'<LevelInfo Name="Tutorial" />')
+            entries=[]
+            for path in (original,info):
+                value=path.read_bytes()
+                entries.append({
+                    'path':path.name,'bytes':len(value),
+                    'sha256':hashlib.sha256(value).hexdigest()})
+            (folder/'asset-library.json').write_text(json.dumps({
+                'version':1,'name':'level.pak',
+                'source':str(root/'Game'/'levels'/'Tutorial'/'level.pak'),
+                'entries':entries}),encoding='utf-8')
+            target=root/'projects'/'Level-tutorial'
+            copy_editable_map_from_library(
+                'tutorial',target,library_roots=(root/'library',))
+            modified=target/'files'/'mission_mission0.xml'
+            modified.write_bytes(b'<Mission/>')
+            self.assertEqual(original.read_bytes(),raw)
+            with self.assertRaises(ValueError):
+                from evolve_pak_workspace import cmd_build
+                cmd_build(SimpleNamespace(workspace=target))
+            self.assertEqual(copy_editable_map_from_library(
+                'tutorial',target,library_roots=(root/'library',)),target)
 
     @patch('level_dependency_loader._keys', return_value=('key',))
     @patch('level_dependency_loader._verify_pak')
