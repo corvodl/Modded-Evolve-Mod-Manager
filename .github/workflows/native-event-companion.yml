@@ -45,10 +45,19 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or !(Test-Path dist/fake-evolve/Evolve.exe)) {
             throw 'Synthetic Evolve fixture host did not compile'
           }
+      - name: Build deliberately isolated synthetic-test companion
+        shell: pwsh
+        run: |
+          # Production DLL validates the pinned exact Evolve.exe hash.
+          # The fixture variant cannot be mistaken for the release artifact.
+          dotnet publish native/EvolveEventBridge/EvolveEventBridge.csproj -c Release -r win-x64 -p:DefineConstants=EVOLVE_BRIDGE_SYNTHETIC_TEST -o dist/native-bridge-test
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path dist/native-bridge-test/EvolveEventBridge.dll)) {
+            throw 'Synthetic-test bridge DLL missing'
+          }
       - name: Exercise authenticated bridge and game-thread callback with synthetic host
         shell: pwsh
         run: |
-          python native/tests/native_bridge_smoke.py dist/fake-evolve/Evolve.exe dist/native-bridge/EvolveEventBridge.dll
+          python native/tests/native_bridge_smoke.py dist/fake-evolve/Evolve.exe dist/native-bridge-test/EvolveEventBridge.dll
           if ($LASTEXITCODE -ne 0) {
             throw 'Bridge transport / simulated game-thread smoke test failed'
           }
