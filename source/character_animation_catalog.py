@@ -158,7 +158,7 @@ def preferred_third_person_dba(references, character=None):
     if not ready:
         return None
     if character:
-        selected = PurePosixPath(str(character).replace('\\\\', '/').casefold())
+        selected = PurePosixPath(str(character).replace('\\', '/').casefold())
         stem = selected.stem
         for suffix in ('_skeleton', '_3p', '_fp'):
             if stem.endswith(suffix):
