@@ -64,6 +64,31 @@ class LevelCoreTest(unittest.TestCase):
         self.assertEqual((self.files/LAYER_B).read_bytes(),OBJECTS_B)
         self.assertFalse(scene.dirty_layers())
 
+    def test_material_override_save_reopen_and_undo(self):
+        scene=LevelProject(self.workspace)
+        original=(self.files/LAYER_A).read_bytes()
+        changed=scene.apply_material(
+            LAYER_A,0,"objects/man_made/props/lights/spotlight01/spotlight01_cine.mtl")
+        self.assertTrue(changed)
+        self.assertIn(LAYER_A,scene.dirty_layers())
+        self.assertEqual(
+            scene._node(LAYER_A,0).get("Material"),
+            "objects/man_made/props/lights/spotlight01/spotlight01_cine")
+        self.assertTrue(scene.undo())
+        self.assertNotIn(LAYER_A,scene.dirty_layers())
+        self.assertEqual((self.files/LAYER_A).read_bytes(),original)
+        self.assertTrue(scene.redo())
+        scene.save()
+        reopened=LevelProject(self.workspace)
+        self.assertEqual(
+            reopened._node(LAYER_A,0).get("Material"),
+            "objects/man_made/props/lights/spotlight01/spotlight01_cine")
+        self.assertEqual(
+            (self.workspace/".level-editor-backups"/LAYER_A).read_bytes(),
+            original)
+        with self.assertRaises(ValueError):
+            reopened.apply_material(LAYER_A,0,"../../wrong.mtl")
+
     def test_undo_to_original_does_not_rewrite_xml(self):
         scene=LevelProject(self.workspace)
         scene.apply(LAYER_A,0,"Scale",(2,3,4))
