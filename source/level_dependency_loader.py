@@ -318,3 +318,141 @@ def ensure_map_archives(project, game, stage, cache_root, *,
                 break
             imported(source)
     return result
+
+
+
+def discover_map_status(game=None, *, library_roots=(), projects=()):
+    """Catalog map IDs from installed PAKs, imported manifests and projects."""
+    result = {}
+    if game is not None:
+        try:
+            for name, files in map_archive_catalog(discover_game_paks(
+                    game, library_root=library_roots[0] if library_roots else None
+                    ).files).items():
+                result.setdefault(name, {
+                    "map":name,"sources":[],"imported":0,"workspace":None})[
+                        "sources"].extend(str(p) for p in files)
+        except (OSError, ValueError):
+            pass
+    for root in library_roots:
+        for record in imported_archives(root):
+            name = level_from_source(record["source"])
+            if name:
+                result.setdefault(name,{
+                    "map":name,"sources":[],"imported":0,"workspace":None})[
+                        "imported"] += 1
+    from level_editor_core import LevelProject
+    for workspace in projects:
+        candidate = Path(workspace)
+        if (candidate.is_dir() and not candidate.is_symlink() and
+                LevelProject.contains_levels(candidate)):
+            try:
+                project = LevelProject(candidate)
+                key = str(project.level_name).casefold()
+                result.setdefault(key,{
+                    "map":key,"sources":[],"imported":0,"workspace":None})[
+                        "workspace"] = str(candidate.resolve())
+            except (OSError, ValueError):
+                continue
+    for value in result.values():
+        value["status"] = ("ready" if value["workspace"] else
+                           "needs import" if value["imported"] else
+                           "incomplete" if value["sources"] else "unavailable")
+    return result
+
+
+def copy_editable_map_from_library(map_name, destination, *, library_roots=(),
+                                   cancel=None):
+    """Atomically copy a selected map's extracted *placement* PAK for editing.
+
+    The copy is a read-only source-derived workspace, NOT automatically
+    rebuilt/signed and NOT a replacement for the source Asset Library.
+    """
+    import hashlib
+    import json
+    import os
+    import shutil
+    import tempfile
+    from asset_library import _home, _manifest_dirs, _load_manifest
+    from evolve_pak_workspace import MANIFEST, VERSION, normalized_name
+    from level_editor_core import LevelProject
+
+    selected = str(map_name).casefold()
+    dest = Path(destination).resolve()
+    if dest.exists():
+        if dest.is_dir() and LevelProject.contains_levels(dest):
+            return dest
+        raise FileExistsError("An unrelated destination already exists: " + str(dest))
+    candidates = []
+    for root in library_roots:
+        for folder in _manifest_dirs(_home(root)):
+            try:
+                manifest = _load_manifest(folder)
+            except (OSError,ValueError,KeyError):
+                continue
+            if level_from_source(manifest.get("source")) != selected:
+                continue
+            paths = tuple(str(e.get("path","")).casefold()
+                          for e in manifest["entries"])
+            source_layers = any(p.endswith(".lyr") for p in paths)
+            mission = any("mission_" in p and p.endswith(".xml") for p in paths)
+            if not (source_layers or mission):
+                continue
+            filename = Path(manifest.get("source","")).name.casefold()
+            priority = (2 if source_layers else 1, filename == "level.pak")
+            candidates.append((priority,folder,manifest))
+    if not candidates:
+        raise FileNotFoundError(
+            "No imported placement/source layer archive for " + selected)
+    _priority,folder,manifest = max(candidates,key=lambda x:x[0])
+    if len(manifest["entries"]) > 250000:
+        raise ValueError("Map copy entry limit exceeded.")
+    dest.parent.mkdir(parents=True,exist_ok=True)
+    temp = Path(tempfile.mkdtemp(prefix=".level-copy-",dir=dest.parent))
+    copied = []
+    try:
+        root = (folder/"files").resolve(strict=True)
+        output = temp/"files"
+        total = 0
+        for entry in manifest["entries"]:
+            if cancel is not None and cancel.is_set():
+                raise InterruptedError("Map copy cancelled.")
+            rel = normalized_name(entry["path"])
+            source = root.joinpath(*rel.split("/"))
+            if (source.is_symlink() or not source.is_file() or
+                    not source.resolve().is_relative_to(root)):
+                raise ValueError("Unsafe or missing imported map file: " + rel)
+            size = source.stat().st_size
+            total += size
+            if total > 4 * 1024 ** 3:
+                raise ValueError("Map project copy exceeds 4 GiB safety budget.")
+            target = output.joinpath(*rel.split("/"))
+            target.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(source,target)
+            digest=hashlib.sha256(target.read_bytes()).hexdigest()
+            if size != entry["bytes"] or digest != entry["sha256"]:
+                raise ValueError("Imported map file differs from verified manifest: " + rel)
+            copied.append({
+                "path":rel,"archive_name":rel,
+                "format":"cryxml" if entry.get("cryxml") else "raw",
+                "sha256":digest, "original_sha256":digest,
+                "method":13})
+        source_info = {
+            "version":VERSION,"source_pak":manifest.get("source"),
+            "source_sha256":manifest.get("source_sha256"),
+            "signed_basename":manifest.get("signed_name"),
+            "public_key_sha256":manifest.get("public_key_sha256"),
+            "archive_entry_count":len(copied),"entries":copied,
+            "reference_only":True,
+        }
+        (temp/MANIFEST).write_text(json.dumps(source_info,indent=2),"utf-8")
+        (temp/".LEVEL-EDITOR-COPY.txt").write_text(
+            "Editable copy of extracted game map data. Not a verified "
+            "engine-ready or signed replacement PAK.\n",encoding="utf-8")
+        if not LevelProject.contains_levels(temp):
+            raise ValueError("Copied map has no compatible placements.")
+        os.replace(temp,dest)
+        return dest
+    except BaseException:
+        shutil.rmtree(temp,ignore_errors=True)
+        raise
