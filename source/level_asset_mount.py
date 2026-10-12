@@ -18,6 +18,9 @@ MAX_IMPORTED = 4096
 def level_from_source(source):
     """Return the map identifier from the original archive path, not its filename."""
     parts = str(source or "").replace("\\", "/").lower().split("/")
+    match = re.fullmatch(r"levels_([a-z0-9_-]{1,80})\\.pak", parts[-1])
+    if match:
+        return match.group(1)
     for i, part in enumerate(parts[:-1]):
         if part == "levels" and i + 1 < len(parts) - 1:
             name = parts[i + 1].strip()
