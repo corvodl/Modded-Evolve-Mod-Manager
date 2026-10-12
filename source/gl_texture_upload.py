@@ -1,8 +1,11 @@
-"""Match OpenGL texture memory to decoded CryEngine/Pillow UV coordinates.
+"""Serialize decoded material images for OpenGL with source UV orientation.
 
-The CPU material preview treats v=0 as the first/top row of a decoded DDS.
-OpenGL glTexImage2D interprets the first supplied row as v=0/bottom.
-Reverse only the upload memory, never the original DDS or the material UVs.
+CryEngine mesh UVs, the CPU renderer, and GLB export all sample decoded
+image row zero at v=0. OpenGL likewise assigns the first uploaded byte row
+to v=0, so uploading source rows verbatim preserves texture landmarks.
+
+Pillow's top/bottom terminology describes image display coordinates, not
+the engine's UV convention. Do not introduce a compensating flip here.
 """
 from __future__ import annotations
 
@@ -15,4 +18,4 @@ def gl_upload_pixels(source, mode='RGB'):
     sample = source.convert(mode)
     if sample.width < 1 or sample.height < 1:
         raise ValueError('Invalid source image dimensions.')
-    return sample.transpose(Image.Transpose.FLIP_TOP_BOTTOM).tobytes()
+    return sample.tobytes()

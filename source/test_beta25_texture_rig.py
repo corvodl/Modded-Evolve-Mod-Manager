@@ -22,26 +22,26 @@ from test_model_rigging import tiny_mesh, tiny_skeleton
 
 
 class GPUTextureOrientationTests(unittest.TestCase):
-    def test_open_gl_row_zero_matches_bottom_of_pillow_source(self):
-        # A CryEngine UV v=0 samples top DDS row in the existing CPU renderer.
-        # glTexImage2D treats its FIRST byte row as the bottom texture row.
+    def test_open_gl_row_zero_matches_source_uv_origin(self):
+        # CryEngine v=0, the CPU renderer and OpenGL's first upload row
+        # must all resolve the same source image pixels.
         source=Image.new('RGB',(2,2))
         source.putpixel((0,0),(255,0,0))
         source.putpixel((1,0),(0,255,0))
         source.putpixel((0,1),(0,0,255))
         source.putpixel((1,1),(255,255,0))
         gl_bytes=gl_upload_pixels(source,'RGB')
-        self.assertEqual(list(gl_bytes[:6]),[0,0,255,255,255,0])
-        self.assertEqual(list(gl_bytes[6:]),[255,0,0,0,255,0])
+        self.assertEqual(list(gl_bytes[:6]),[255,0,0,0,255,0])
+        self.assertEqual(list(gl_bytes[6:]),[0,0,255,255,255,0])
         # Neither the model's source DDS pixels nor its UVs are mutated.
         self.assertEqual(source.getpixel((0,0)),(255,0,0))
 
-    def test_alpha_channel_is_retained_when_flipping(self):
+    def test_alpha_channel_is_retained_without_row_reversal(self):
         im=Image.new('RGBA',(1,2))
         im.putpixel((0,0),(10,20,30,40))
         im.putpixel((0,1),(50,60,70,80))
         self.assertEqual(gl_upload_pixels(im,'RGBA'),
-                         bytes((50,60,70,80,10,20,30,40)))
+                         bytes((10,20,30,40,50,60,70,80)))
         with self.assertRaises(ValueError):
             gl_upload_pixels(im,'L')
 

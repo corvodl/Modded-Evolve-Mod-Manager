@@ -251,6 +251,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         self._build_toolbar()
         self._build_workspace()
         self._populate()
+        self.refresh_maps()
         self.statusBar().showMessage(
             "3D static mesh preview loading • terrain/vegetation and collision not reconstructed")
 
@@ -298,6 +299,16 @@ class UnrealStyleLevelEditor(QMainWindow):
         toolbar.addSeparator()
         info=toolbar.addWidget(QLabel("  Perspective  ▾     Lit  ▾    Show  ▾"))
         self.tool_label=info
+        toolbar.addSeparator()
+        toolbar.addWidget(QLabel(" Map: "))
+        self.map_selector=QComboBox(self)
+        self.map_selector.setObjectName("levelMapSelector")
+        self.map_selector.setEditable(True)
+        self.map_selector.setInsertPolicy(QComboBox.NoInsert)
+        self.map_selector.setMinimumWidth(210)
+        self.map_selector.activated.connect(self._map_selected)
+        toolbar.addWidget(self.map_selector)
+        toolbar.addAction("Refresh Maps",self.refresh_maps)
         toolbar.addSeparator()
         toolbar.addWidget(QLabel("   RENDER  •  Source-size depth-tested mesh instances   "))
 
@@ -439,38 +450,86 @@ class UnrealStyleLevelEditor(QMainWindow):
             f"{len(paths):,} unique MTL paths indexed. "
             "Type to choose an exact game-relative material; blank resets to source.")
 
-    def open_map_picker(self):
-        """Choose another already-extracted editable map, without touching live PAKs."""
-        folder=self.project.workspace.parent
-        choices={}
+    def _available_projects(self):
+        """Discover extracted editable maps, without following symlinks."""
+        parent=self.project.workspace.parent
+        projects={self.project.workspace.name:self.project.workspace}
         try:
-            for item in list(folder.iterdir())[:256]:
+            for item in sorted(parent.iterdir(),key=lambda p:p.name.casefold()):
                 if item.is_dir() and not item.is_symlink() and LevelProject.contains_levels(item):
-                    choices[f"{item.name}"] = item
-        except (OSError,ValueError):
+                    projects[item.name]=item
+        except OSError:
             pass
-        if not choices:
-            self.open_project()
-            return
-        names=sorted(choices,key=str.casefold)
-        current=next((i for i,name in enumerate(names)
-                      if choices[name] == self.project.workspace),0)
-        selected,okay=QInputDialog.getItem(
-            self,"Open map project","Select an extracted editable map project",
-            names,current,False)
-        if not okay:
-            return
-        other=choices[selected]
-        if other == self.project.workspace:
-            self.frame_all()
-            return
-        try:
-            editor=UnrealStyleLevelEditor(self.parent(),other)
-            editor.show()
-            editor.raise_()
-        except (OSError,ValueError) as error:
-            QMessageBox.warning(self,"Map project failed",str(error))
+        return projects
 
+    def refresh_maps(self):
+        self._map_projects=self._available_projects()
+        self.map_selector.blockSignals(True)
+        self.map_selector.clear()
+        for name,path in sorted(self._map_projects.items(),key=lambda pair:pair[0].casefold()):
+            self.map_selector.addItem(name+"  ·  Ready",str(path))
+        self.map_selector.setCurrentIndex(self.map_selector.findData(str(self.project.workspace)))
+        self.map_selector.blockSignals(False)
+        completer=QCompleter([self.map_selector.itemText(i) for i in range(self.map_selector.count())],self.map_selector)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        self.map_selector.setCompleter(completer)
+
+    def _map_selected(self,index):
+        path=self.map_selector.itemData(index)
+        if path:
+            self.switch_map(Path(path))
+
+    def switch_map(self,workspace):
+        """Swap projects in place with saved-edit and loader-generation protection."""
+        try:
+            target=Path(workspace).resolve(strict=True)
+            if target==self.project.workspace:
+                return True
+            next_project=LevelProject(target)
+        except (OSError,ValueError) as exc:
+            QMessageBox.warning(self,"Map load failed",str(exc))
+            self.refresh_maps()
+            return False
+        if self.project.dirty_layers():
+            choice=QMessageBox.question(
+                self,"Unsaved level edits",
+                "Save changed layers before switching maps?",
+                QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel,
+                QMessageBox.Cancel)
+            if choice==QMessageBox.Cancel:
+                self.refresh_maps()
+                return False
+            if choice==QMessageBox.Save:
+                try:
+                    self.project.save()
+                except (OSError,ValueError) as exc:
+                    QMessageBox.critical(self,"Map save failed",str(exc))
+                    self.refresh_maps()
+                    return False
+        self.project=next_project
+        self.selected=None
+        self.viewport.active=None
+        self.viewport.project=next_project
+        self.viewport.reload_scene()
+        self.viewport.frame_all()
+        self.filter.clear()
+        self.material_override.clear()
+        self.material_override.setCompleter(None)
+        self.details_name.setText("No object selected")
+        self.details_kind.clear()
+        self.geometry_label.setText("Model reference: —")
+        self.scene_info.setText("Scene hierarchy data unavailable")
+        self.material_hint.setText("Indexing selected map materials…")
+        self._populate()
+        self._dirty_state()
+        self.refresh_maps()
+        return True
+
+    def open_map_picker(self):
+        self.refresh_maps()
+        self.map_selector.setFocus()
+        self.map_selector.showPopup()
 
     def _projection(self, mode):
         self.viewport.projection_mode = mode
