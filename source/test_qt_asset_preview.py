@@ -121,6 +121,51 @@ class ReadOnlyAssetPreviewUITests(TestCase):
             self.assertIs(found[lod].parent(), primary)
         self.assertTrue(primary.text(0).casefold().find('model') >= 0)
 
+    def test_export_folder_uses_current_selected_directory(self):
+        folder_item = None
+        iterator = QTreeWidgetItemIterator(self.window.file_tree)
+        while iterator.value():
+            item = iterator.value()
+            if item.data(0, Qt.UserRole + 1) == 'characters/scrap':
+                folder_item = item
+                break
+            iterator += 1
+        self.assertIsNotNone(folder_item)
+        self.window.file_tree.setCurrentItem(folder_item)
+        self.assertEqual(
+            self.window._current_model_folder_relative(), 'characters/scrap')
+        self.assertEqual(
+            self.window._current_model_source_folder(),
+            self.folder / 'files' / 'characters' / 'scrap')
+        output = Path(self.temp.name) / 'BlenderExports'
+        output.mkdir()
+        with patch('qt_asset_preview.QFileDialog.getExistingDirectory',
+                   return_value=str(output)) as choose_destination, \
+             patch('qt_asset_preview.export_glb',
+                   side_effect=lambda archive, rel, target: (target, {})) as exported:
+            self.window.export_blender_folder()
+        choose_destination.assert_called_once()
+        self.assertEqual(exported.call_count, 3)
+        self.assertEqual(
+            {call.args[1] for call in exported.call_args_list}, set(self.models))
+
+    def test_export_folder_uses_selected_model_parent_without_source_dialog(self):
+        iterator = QTreeWidgetItemIterator(self.window.file_tree)
+        model_item = None
+        while iterator.value():
+            item = iterator.value()
+            if item.data(0, Qt.UserRole) == self.models[0]:
+                model_item = item
+                break
+            iterator += 1
+        self.assertIsNotNone(model_item)
+        self.window.file_tree.setCurrentItem(model_item)
+        self.assertEqual(
+            self.window._current_model_folder_relative(), 'characters/scrap')
+        self.assertEqual(
+            self.window._current_model_source_folder(),
+            self.folder / 'files' / 'characters' / 'scrap')
+
     def test_same_modding_editor_model_tools_but_no_import_or_save(self):
         from qt_workspace_editor import QtWorkspaceEditor
         self.assertIsInstance(self.window, QtWorkspaceEditor)
