@@ -70,6 +70,12 @@ class WraithSharedTextureResolutionTests(unittest.TestCase):
         self.assertEqual(materials.count, 1)
         self.assertEqual(materials.textures[0].size, (16, 16))
         self.assertEqual(materials.textures[0].convert("RGB").getpixel((0, 0)), self.color)
+        from multi_pak_assets import model_material_links
+        with patch("asset_library.LIBRARY_HOME", self.root):
+            links = model_material_links(self.root / self.model_id, self.model)
+        self.assertEqual(links["status"], "found")
+        self.assertEqual(links["textures"][0]["status"], "found")
+        self.assertEqual(links["textures"][0]["paths"], [self.texture])
 
     def test_windows_native_companion_path_is_a_valid_lookup_argument(self):
         # Prevent reintroducing WindowsPath.strip() errors during GLB skin export.
@@ -79,16 +85,18 @@ class WraithSharedTextureResolutionTests(unittest.TestCase):
                 "characters/monsters/teleporter/teleporter_body.skin")),
             ["characters/monsters/teleporter/teleporter_body.skin"])
 
-    def test_texture_cannot_resolve_from_a_different_character_directory(self):
+    def test_similarly_named_other_character_texture_is_not_used(self):
+        other = "characters/monsters/other/textures/teleporter_diff.dds.0"
         source = self.root / self.ts_id / "files" / self.texture
-        misplaced = source.parent.parent.parent / "other" / "textures" / source.name
-        misplaced.parent.mkdir(parents=True, exist_ok=True)
-        misplaced.write_bytes(source.read_bytes())
-        # For a valid native material link, the character-local copy wins
-        # without a globally guessed basename.
+        buf = BytesIO()
+        Image.new("RGB", (16, 16), (10, 200, 90)).save(buf, format="DDS")
+        self._archive("c" * 20, "characters_monsters_other_ts.pak",
+                      {other: buf.getvalue()})
+        _invalidate()
         with patch("asset_library.LIBRARY_HOME", self.root):
             materials = load_preview_materials(self.root / self.model_id, self.model)
         self.assertEqual(materials.count, 1)
+        self.assertEqual(materials.textures[0].convert("RGB").getpixel((0, 0)), self.color)
 
 
 if __name__ == "__main__":
