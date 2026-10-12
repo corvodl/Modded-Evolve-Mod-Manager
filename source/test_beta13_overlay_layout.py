@@ -46,7 +46,7 @@ class AnimationPopoverLayoutTests(unittest.TestCase):
         bar.setValue(bar.maximum())
         self.app.processEvents()
         self.assertEqual(bar.value(), bar.maximum())
-        self.assertTrue(self.panel.animation_sections['Clips & Playlists'][1].isVisible())
+        self.assertTrue(self.panel.animation_sections['Playlists & markers'][1].isVisible())
 
     def test_collapsible_panels_update_scroll_range(self):
         self.panel.resize(450, 440)
@@ -60,13 +60,13 @@ class AnimationPopoverLayoutTests(unittest.TestCase):
         self.app.processEvents()
         fully_open = self.panel._overlay.verticalScrollBar().maximum()
         self.assertGreater(fully_open, 0)
-        for title in ('Playback Controls', 'Clips & Playlists'):
+        for title in ('Playback', 'Playlists & markers'):
             self.panel.animation_sections[title][0].setChecked(False)
         self.panel._update_animation_scrolling()
         self.app.processEvents()
         collapsed = self.panel._overlay.verticalScrollBar().maximum()
         self.assertLess(collapsed, fully_open)
-        self.assertTrue(self.panel.animation_sections['Game Animation Browser'][1].isVisible())
+        self.assertTrue(self.panel.animation_sections['Animations'][1].isVisible())
 
 
 if __name__ == '__main__':
