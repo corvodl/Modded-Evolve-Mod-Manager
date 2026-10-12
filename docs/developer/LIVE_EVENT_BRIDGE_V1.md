@@ -1,6 +1,6 @@
 # Live Game Event Activation - Companion Bridge V1 (beta)
 
-The Developer > Game Events panel supports sending activation requests to a verified game-side module running INSIDE the selected offline Evolve.exe. This repository does NOT yet contain the native game-side dispatcher.
+The Developer > Game Events panel supports sending activation requests to a verified game-side module running INSIDE the selected offline Evolve.exe. Experimental Windows NativeAOT **transport and token implementation** is now available at [native/EvolveEventBridge](../../native/EvolveEventBridge/README.md). This repository still does **not** contain verified native Evolve event-dispatch handlers or a loader integrated with the game. No real-game event activation has been demonstrated.
 
 ## Important limitation
 
@@ -36,4 +36,4 @@ Identify the correct dispatcher ABI and live object/handle lifetimes in the matc
 
 From source directory run: python -m unittest -v test_developer_event_catalog test_developer_event_live.
 
-These tests cover catalog consistency, offline isolation requirements, typed payload validation, HMAC and a mock local bridge. They cannot prove effects can be activated in the real game. In-game testing still requires the native companion module.
+These tests cover catalog consistency, offline isolation requirements, typed payload validation, HMAC and a mock local bridge. They cannot prove effects can be activated in the real game. The native companion's separate Windows build/test checks use a synthetic executable and simulated callback; real in-game handlers and game-thread integration remain to be verified.
