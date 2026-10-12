@@ -38,6 +38,33 @@ def _asset_key(item):
     return item.model.casefold(), item.material.casefold()
 
 
+def look_at_matrix(eye, center):
+    """OpenGL column-major camera transform without a system GLU dependency."""
+    import numpy as np
+    a=np.asarray(eye,dtype=np.float64)
+    c=np.asarray(center,dtype=np.float64)
+    forward=c-a
+    length=np.linalg.norm(forward)
+    if length<1e-8:
+        raise ValueError("Camera eye and target overlap.")
+    forward/=length
+    side=np.cross(forward,(0.,0.,1.))
+    norm=np.linalg.norm(side)
+    if norm<1e-8:
+        side=np.asarray((1.,0.,0.),dtype=np.float64)
+    else:
+        side/=norm
+    up=np.cross(side,forward)
+    matrix=np.eye(4,dtype=np.float64)
+    matrix[0,:3]=side
+    matrix[1,:3]=up
+    matrix[2,:3]=-forward
+    matrix[0,3]=-np.dot(side,a)
+    matrix[1,3]=-np.dot(up,a)
+    matrix[2,3]=np.dot(forward,a)
+    return np.ascontiguousarray(matrix.T,dtype=np.float32)
+
+
 def prepare_scene(project, cancel, progress=None):
     """CPU-only preparation. Return shared geometry and explicit diagnostics."""
     from level_asset_mount import mount_map_index, resolve_scoped
@@ -314,7 +341,6 @@ class LevelGLViewport(QOpenGLWidget):
             GL_TEXTURE_COORD_ARRAY,GL_TEXTURE_2D,GL_FLOAT,
             GL_TRIANGLES,GL_UNSIGNED_INT
         )
-        from OpenGL.GLU import gluLookAt
         import numpy as np
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
         ratio = self.width()/max(1,self.height())
@@ -331,7 +357,7 @@ class LevelGLViewport(QOpenGLWidget):
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
         eye=self._eye()
-        gluLookAt(*eye,*self.camera,0.,0.,1.)
+        glLoadMatrixf(look_at_matrix(eye,self.camera))
         forward=tuple((self.camera[i]-eye[i])/max(1e-8,self.distance) for i in range(3))
         right=(-forward[1],forward[0],0.)
         right_len=max(1e-8,math.hypot(right[0],right[1]))
