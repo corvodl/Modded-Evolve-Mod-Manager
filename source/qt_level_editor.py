@@ -277,6 +277,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         view.addAction(self._action("Perspective 3D", lambda: self._projection("Perspective")))
         view.addAction(self._action("Orthographic 3D", lambda: self._projection("Orthographic")))
         view.addAction(self._action("Scene Coverage / Diagnostics", self.scene_diagnostics))
+        view.addAction(self._action("Terrain / Vegetation Source Metadata", self.inspect_level_sources))
         help_menu=menu.addMenu("Help")
         help_menu.addAction(self._action("Level Editor Limitations",self.limitations))
         toolbar=self.addToolBar("Main")
@@ -475,6 +476,28 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.viewport.projection_mode = mode
         self.viewport.update()
         self.statusBar().showMessage("3D projection: " + mode, 4000)
+
+    def inspect_level_sources(self):
+        """Inspect metadata-only map sources in this editable project."""
+        from level_source_metadata import inspect_workspace_sources
+        import json
+        try:
+            sections=inspect_workspace_sources(self.project.workspace)
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self,"Source inspection failed",str(exc))
+            return
+        if not sections:
+            message=("This extracted workspace does not contain Heightmap.dat, "
+                     "VegetationMap.dat or a .cry editor archive. They may live "
+                     "in its complementary map PAK. Import it into the Asset Library "
+                     "or open the appropriate copied map project.")
+        else:
+            message=json.dumps(sections,ensure_ascii=False,indent=2)[:13000]
+        QMessageBox.information(
+            self, "Level terrain / vegetation source metadata",
+            message + "\\n\\nThese are SOURCE DESCRIPTORS only. Elevation, vegetation "
+            "instance placement and cooked terrain tiles are not decoded or "
+            "paintable in the current editor.")
 
     def scene_diagnostics(self):
         decoded = len(self.viewport.assets)
