@@ -227,6 +227,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             from asset_library_preview import library_model_index
             import json
             converted, failed = 0, []
+            export_root = root / Path(folder).name
             progress('Preparing Blender export', 0, len(models))
             for number, rel in enumerate(models, 1):
                 if cancelled():
@@ -234,7 +235,8 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
                         'Cancelled after %d of %d models.' %
                         (number - 1, len(models)))
                 progress('Converting ' + rel, number - 1, len(models))
-                destination = root / Path(rel).with_suffix('.glb')
+                local = rel[len(folder.rstrip('/') + '/'):]
+                destination = export_root / Path(local).with_suffix('.glb')
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     export_glb(archive_id, rel, destination)
@@ -246,7 +248,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             assemblies, unresolved = build_cdf_folder_glbs(
                 workspace, folder, index,
                 progress=progress, cancelled=cancelled)
-            assembly_dest = root / Path(folder).name
+            assembly_dest = export_root
             if assemblies or unresolved:
                 for rel, (blob, details) in assemblies.items():
                     if cancelled():
