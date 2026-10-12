@@ -22,6 +22,7 @@ datas += [(str(root/'launcher_support'), 'launcher_support'),
           (str(root/'VERSION.txt'), '.')]
 binaries = []
 hidden = [
+    'database_animation', 'texture_selection', 'texture_transform', 'qt_texture_selection',
     'evolve_pak_workspace', 'evolve_pak_rekey', 'evolve_gameplay_editor',
     'evolve_video_pak_tool_fixed', 'dds_texture', 'dds_png_import',
     'dds_streaming', 'model_asset', 'model_preview', 'gpu_model_preview',

@@ -105,7 +105,7 @@ def inspect_stream(workspace, relative):
 
 
 def inspect_whole_part0(workspace, relative):
-    """Recognize a complete single-mip DDS stored with a .dds.0 filename.
+    """Recognize a complete mip-chain DDS stored with a .dds.0 filename.
 
     Some Evolve textures have a .dds.0 suffix but no streaming siblings.
     True multi-part textures must still go through inspect_stream.
@@ -122,15 +122,19 @@ def inspect_whole_part0(workspace, relative):
             raise ValueError('This texture has other streaming fragments; use the complete split DDS set.')
     data = selected.read_bytes()
     info = parse_dds(data)
-    if info.mipmaps != 1 or info.depth != 1 or info.array_size != 1 or info.caps2:
-        raise ValueError('This .dds.0 is not a complete single-mip texture; other streaming parts may be required.')
+    if (info.depth != 1 or info.array_size != 1 or info.caps2
+            or info.mipmaps > max(info.width, info.height).bit_length()):
+        raise ValueError('This .dds.0 uses an unsupported surface layout; other streaming parts may be required.')
     if data[84:88] == b'DX10':
         block = DXGI_BLOCK_BYTES.get(int.from_bytes(data[128:132], 'little'))
     else:
         block = BLOCK_BYTES.get(data[84:88])
     if block is None:
         raise ValueError('This .dds.0 uses an unsupported compression format.')
-    expected = ((info.width + 3) // 4) * ((info.height + 3) // 4) * block
+    expected = sum(
+        max(1, (max(1, info.width >> level) + 3) // 4) *
+        max(1, (max(1, info.height >> level) + 3) // 4) * block
+        for level in range(info.mipmaps))
     if len(data) != info.data_offset + expected:
         raise ValueError('This .dds.0 is missing texture payload data or contains an unsupported layout.')
     preview_dds(data)

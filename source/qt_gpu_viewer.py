@@ -332,7 +332,6 @@ class QtGLModelCanvas(QOpenGLWidget):
             return
         from OpenGL.GL import GL_RGBA
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-        from PIL import Image as PILImage
         sources = (('textures', self.materials.textures),
                    ('normal_textures',getattr(self.materials,'normal_maps',())),
                    ('specular_textures',getattr(self.materials,'specular_maps',())))
@@ -351,7 +350,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                         im.getchannel('A').getextrema()[0] < 255):
                     self.translucent_slots.add(index)
                 mode = 'RGBA' if rgba else 'RGB'
-                sample = im.convert(mode).transpose(PILImage.Transpose.FLIP_TOP_BOTTOM)
+                sample = im.convert(mode)  # Same DDS row/UV convention as CPU and GLB export.
                 format_id = GL_RGBA if rgba else GL_RGB
                 texid = int(glGenTextures(1))
                 glBindTexture(GL_TEXTURE_2D,texid)
@@ -520,6 +519,12 @@ class QtGLModelCanvas(QOpenGLWidget):
                 else:
                     glDisable(GL_BLEND)
                     glDepthMask(True)
+                from texture_transform import transform_for, gl_matrix
+                from OpenGL.GL import glLoadMatrixf, GL_TEXTURE
+                glActiveTexture(GL_TEXTURE0)
+                glMatrixMode(GL_TEXTURE)
+                glLoadMatrixf(gl_matrix(transform_for(self.materials, slot)))
+                glMatrixMode(GL_MODELVIEW)
                 tex = self.textures[slot] if use_uv and slot < len(self.textures) else 0
                 if shader:
                     for unit,group in ((0,self.textures),(1,self.normal_textures),(2,self.specular_textures)):
@@ -545,6 +550,11 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glDrawElements(GL_TRIANGLES,int(count),GL_UNSIGNED_INT,
                                arrays.indices[first:first+count])
         finally:
+            from OpenGL.GL import GL_TEXTURE
+            glActiveTexture(GL_TEXTURE0)
+            glMatrixMode(GL_TEXTURE)
+            glLoadIdentity()
+            glMatrixMode(GL_MODELVIEW)
             if shader:
                 shader.unbind()
                 for unit in (2,1,0):
@@ -1441,6 +1451,8 @@ class QtGPUModelPanel(QWidget):
             return
         ref = self._native_references[ref_index]
         state, detail = native_clip_playability(ref)
+        if ref.annotation:
+            detail += '\nSource annotation: ' + ref.annotation + ' (base motion preview)'
         self.layer_row_widget.setVisible(state == 'layered')
         layered_ready = (
             state == 'layered' and self._native_loader is not None
@@ -1483,7 +1495,7 @@ class QtGPUModelPanel(QWidget):
             return
         ref = self._native_references[i]
         state, reason = native_clip_playability(ref)
-        if state == 'converter':
+        if state == 'converter' and self._native_loader is None:
             self.import_original()
             return
         if self._native_loader is None:
@@ -1509,14 +1521,15 @@ class QtGPUModelPanel(QWidget):
                 lambda unused: self._native_loader(ref, base_ref=base),
                 ref, token, self._native_signals))
             return
-        if state not in ('candidate', 'extractable', 'missing'):
+        if state not in ('candidate', 'extractable', 'missing', 'converter'):
             self.native_info.setText(reason + '\n' + ref.virtual_path)
             self.play_native_button.setEnabled(False)
             return
         self._native_generation += 1
         token = self._native_generation
         self.native_info.setText(
-            ('Locating and extracting exact CAF from verified game PAK…'
+            ('Converting DBA with the selected character rig…' if state == 'converter' else
+             'Locating and extracting exact CAF from verified game PAK…'
              if state != 'candidate' else 'Decoding standalone CAF and rigged model…'))
         self.play_native_button.setEnabled(False)
         job = _NativeConversion(self._native_loader, ref, token, self._native_signals)
@@ -1527,7 +1540,7 @@ class QtGPUModelPanel(QWidget):
             return
         self.play_native_button.setEnabled(True)
         if error:
-            self.native_info.setText('Native CAF unavailable: ' + error[:230])
+            self.native_info.setText('Native animation unavailable: ' + error[:230])
             return
         payload, details = result
         try:
@@ -1550,7 +1563,7 @@ class QtGPUModelPanel(QWidget):
                 if not self.anim_playing:
                     self.toggle_play()
         except (ValueError, OSError) as exc:
-            self.native_info.setText('CAF playback rejected: ' + str(exc)[:230])
+            self.native_info.setText('Animation playback rejected: ' + str(exc)[:230])
             return
         resolved = details.get('_resolved_caf_reference')
         if resolved is not None:
@@ -1898,8 +1911,12 @@ class QtGPUModelPanel(QWidget):
         ref = (self._native_references[selected]
                if isinstance(selected,int) and
                0 <= selected < len(self._native_references) else None)
+        if (self._native_loader is not None and ref is not None and
+                (ref.kind == 'dba' or (not ref.available and ref.dba_file is not None))):
+            self.play_native()
+            return
         self._pending_dba_clip = (
-            ref.name if ref is not None and ref.kind == 'caf'
+            ref.virtual_path if ref is not None and ref.kind == 'caf'
             and not ref.available and ref.dba_file is not None else None)
         source = (
             str(ref.dba_file) if self._pending_dba_clip else

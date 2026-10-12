@@ -257,7 +257,10 @@ class AnimatedGLB:
         embedded = self.doc.get('images', [])
         textures = self.doc.get('textures', [])
         used = []
+        transforms = []
         for material in materials[:64]:
+            transform = material.get('pbrMetallicRoughness', {}).get('baseColorTexture', {}).get('extensions', {}).get('KHR_texture_transform', {})
+            transforms.append((*transform.get('scale', [1., 1.]), *transform.get('offset', [0., 0.]), transform.get('rotation', 0.)))
             index = material.get('pbrMetallicRoughness',{}).get(
                 'baseColorTexture',{}).get('index', -1)
             image = None
@@ -280,7 +283,7 @@ class AnimatedGLB:
             used.append(image)
         return PreviewMaterials(tuple(used),
             tuple(m.get('name','Material %d'%i) for i,m in enumerate(materials[:64])),
-            'Embedded GLB textures')
+            'Embedded GLB textures', uv_transforms=tuple(transforms))
 
     @classmethod
     def from_file(cls,path):

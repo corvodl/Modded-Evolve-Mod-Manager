@@ -1,0 +1,41 @@
+name: Verify model materials, texture choices and animation transfer
+on:
+  pull_request:
+    branches: [beta, main]
+  push:
+    branches: [fix/viewer-materials-animation-texture-selection]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: viewer-materials-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libegl1 libopengl0 libgcrypt20
+          python -m pip install 'cryptography>=41,<48' 'Pillow>=12.3,<13' 'numpy>=1.26,<3' 'PySide6>=6.8,<6.11' 'PyOpenGL>=3.1.7,<4'
+      - name: Compile source
+        run: python -m compileall -q source
+      - name: Run viewer and export regressions
+        working-directory: source
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          python ci_test_runner.py --timeout-seconds 90
+          test_viewer_material_fixes test_beta10_library_model_material
+          test_beta17_character_library test_beta18_flat_character_models
+          test_beta13_layered_aliases test_beta16_wraith_shared_textures
+          test_character_preview_pipeline test_material_preview test_textured_export
+          test_native_caf test_model_animation test_model_rigging test_gpu_preview
+          test_dds0_selection test_asset_streaming_models test_multi_pak_assets
+          test_asset_library_preview

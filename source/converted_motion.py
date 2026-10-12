@@ -11,7 +11,7 @@ import re
 
 def clip_key(name):
     # A filename extension is not part of the CryEngine motion label.
-    return re.sub(r'\.(?:caf|glb)$', '', str(name), flags=re.I).casefold()
+    return re.sub(r'\.(?:caf|glb)$', '', str(name).replace('\\', '/'), flags=re.I).casefold()
 
 
 def converted_motion(folder, requested, *, parser=None):
@@ -36,7 +36,10 @@ def converted_motion(folder, requested, *, parser=None):
         except (OSError, ValueError, KeyError, TypeError):
             continue
         for clip in converted.clips:
-            if clip_key(clip) == goal:
+            key = clip_key(clip)
+            # Exporters may retain the virtual path or only the asset basename.
+            # Duplicate basenames still fail the unique-match check below.
+            if key == goal or key.rsplit('/', 1)[-1] == goal.rsplit('/', 1)[-1]:
                 matches.append((file, clip))
     if len(matches) != 1:
         raise ValueError(

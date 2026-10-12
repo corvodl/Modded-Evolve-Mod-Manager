@@ -88,6 +88,15 @@ def embed_diffuse_textures(blob, materials):
         material['pbrMetallicRoughness']['baseColorFactor'] = [1, 1, 1, 1]
         material['pbrMetallicRoughness']['baseColorTexture'] = {
             'index': len(textures)-1}
+        from texture_transform import transform_for, IDENTITY
+        transform = transform_for(materials, slot)
+        if transform != IDENTITY:
+            su, sv, ou, ov, angle = transform
+            material['pbrMetallicRoughness']['baseColorTexture']['extensions'] = {
+                'KHR_texture_transform': {'scale': [su, sv], 'offset': [ou, ov], 'rotation': angle}}
+            extensions = doc.setdefault('extensionsUsed', [])
+            if 'KHR_texture_transform' not in extensions:
+                extensions.append('KHR_texture_transform')
         count += 1
     if not count:
         doc.pop('images', None)
@@ -140,7 +149,7 @@ def _workspace_for_file(source, projects_root):
 
 def textured_model_from_workspace(mesh, workspace, relative,
                                   *, texture_folder=None, projects_root=None,
-                                  stage_root=None, index=None):
+                                  stage_root=None, index=None, materials=None):
     """Return GLB plus texturing/rig readiness information, no on-disk writes."""
     from material_preview import load_preview_materials, _workspace_index
     if index is None:
@@ -156,7 +165,7 @@ def textured_model_from_workspace(mesh, workspace, relative,
               'rig_status': 'Unrigged: no compatible skin source found',
               'bone_count': 0}
     try:
-        mats = load_preview_materials(
+        mats = materials if materials is not None else load_preview_materials(
             workspace, relative, texture_folder,
             projects_root=projects_root, stage_root=stage_root, index=index)
     except (ValueError, OSError) as exc:
