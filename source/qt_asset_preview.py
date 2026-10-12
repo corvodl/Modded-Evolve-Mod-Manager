@@ -164,11 +164,10 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             QMessageBox.warning(self, 'Blender export', str(error))
 
     def export_blender_folder(self):
-        # Share Modding's source-folder selection: active folder node, selected
-        # model parent, then the currently opened model's parent.
+        """Export only the current virtual folder, without blocking the GUI."""
         try:
             folder = self._current_model_folder_relative()
-            source = self._current_model_source_folder()
+            self._current_model_source_folder()
         except (OSError, ValueError) as error:
             QMessageBox.information(self, 'Blender export', str(error))
             return
@@ -182,37 +181,61 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
                   and rel.casefold().endswith(('.skinm', '.chrm', '.cgfm', '.cgam'))]
         if len(models) > 100:
             QMessageBox.information(
-                self, 'Blender export', 'Narrow the file selection to 100 models or fewer.')
+                self, 'Blender export', 'Narrow selection to 100 models or fewer.')
             return
         from asset_library_preview import _outside_library
+        from qt_background_exports import begin_file_operation, exports_busy
+        if exports_busy(self):
+            QMessageBox.information(
+                self, 'Export already running',
+                'Finish or cancel the current export first.')
+            return
         try:
             root = _outside_library(output)
-            from qt_operation_progress import progress_dialog
-            meter = progress_dialog(
-                self, 'Export Blender model files', 'Preparing Blender exports…',
-                max(1, len(models)))
-            converted = 0
-            failed = []
-            for position, rel in enumerate(models, 1):
-                if meter.wasCanceled():
-                    failed.append('Cancelled after %d models' % (position - 1))
-                    break
-                meter.setLabelText('Exporting ' + rel)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, 'Blender folder export', str(error))
+            return
+        archive_id = self.identifier
+        models = tuple(models)
+
+        def work(progress, cancelled):
+            converted, failed = 0, []
+            progress('Preparing Blender export', 0, len(models))
+            for index, rel in enumerate(models, 1):
+                if cancelled():
+                    raise InterruptedError(
+                        'Cancelled after %d of %d models.' %
+                        (index - 1, len(models)))
+                progress('Converting ' + rel, index - 1, len(models))
                 destination = root / Path(rel).with_suffix('.glb')
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 try:
-                    export_glb(self.identifier, rel, destination)
+                    export_glb(archive_id, rel, destination)
                     converted += 1
                 except (OSError, ValueError) as error:
                     failed.append(rel + ': ' + str(error)[:70])
-                meter.setValue(position)
-                QApplication.processEvents()
-            meter.close()
+                progress('Exporting Blender models', index, len(models))
+            return converted, failed
+
+        def finish(result):
+            converted, failed = result
             self.status.setText(
                 'Exported %d Blender model(s); %d unsupported | %s' %
                 (converted, len(failed), output))
-        except (OSError, ValueError) as error:
-            QMessageBox.warning(self, 'Blender folder export', str(error))
+            if failed:
+                QMessageBox.information(
+                    self, 'Blender export',
+                    'Exported %d models; %d skipped. First issue: %s' %
+                    (converted, len(failed), failed[0]))
+
+        def fail(error):
+            self.status.setText('Blender export stopped: ' + error[:180])
+            QMessageBox.warning(self, 'Blender export stopped', error)
+
+        begin_file_operation(
+            self, 'Export Asset Library models',
+            'Exporting ' + str(len(models)) + ' models from ' + folder,
+            work, on_success=finish, on_error=fail)
 
     def export_model(self):
         self.export_raw()
