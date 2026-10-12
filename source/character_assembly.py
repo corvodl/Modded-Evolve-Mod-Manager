@@ -176,9 +176,24 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
                if label.casefold() in ('body', 'hands', 'character', 'base', 'main')]
     if not primary and skins:
         primary = [skins[0]]
-    # Monster/creature attachments are body parts, not mutually exclusive guns.
-    if normalized_name(selected).split('/')[1].casefold() in ('monsters', 'creatures'):
-        primary = sorted(skins, key=lambda item: item[0].casefold() not in ('body', 'character', 'base', 'main'))
+    monster = normalized_name(selected).split('/')[1].casefold() in ('monsters', 'creatures')
+    # Most monster attachments are simultaneous limbs (head, tail, claws).
+    # Some CDFs also contain multiple mutually exclusive visual STATES:
+    # rendering all of Normal/Evil/Healing/Broken at once stacks skins and
+    # creates black z-fighting and false-looking deformation. Treat only
+    # a verified state-named group as alternatives; keep all normal limbs.
+    states = {'normal', 'evil', 'healing', 'broken', 'healingtotem', 'oh'}
+    declared_states = [(label, rel) for label, rel in skins
+                       if re.sub(r'[^a-z0-9]', '', label.casefold()) in states]
+    state_group = monster and len(declared_states) > 1 and any(
+        label.casefold() == 'normal' for label, _ in declared_states)
+    if monster:
+        if state_group:
+            primary = [(label, rel) for label, rel in skins
+                       if (label, rel) not in declared_states]
+        else:
+            primary = sorted(skins, key=lambda item: item[0].casefold()
+                             not in ('body', 'character', 'base', 'main'))
     else:
         # Hunter body accessories (mask, scarf, flashlight, etc.) stay visible
         # when a weapon changes; only separate equipment is selectable.
@@ -196,7 +211,12 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
                             if rel.casefold() == selected_skin]
         # The first CDF skin after the body is the character's default
         # equipped appearance. Draw exactly ONE, never every overlapping gun.
-        chosen = selected_matches or options[:1]
+        if state_group:
+            normal = [(label, rel) for label, rel in options
+                      if label.casefold() == 'normal']
+            chosen = selected_matches or normal[:1]
+        else:
+            chosen = selected_matches or options[:1]
     requested = primary + chosen
     # Respect CDF SkinSets. Kala's Rift Device and its arm are a set,
     # while other weapon skins should be hidden.
