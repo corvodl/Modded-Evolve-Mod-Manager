@@ -45,7 +45,8 @@ def needed_virtual_paths(project):
     return frozenset(result)
 
 
-def providers_for_missing(sources, missing, *, stage, cancel=None, progress=None):
+def providers_for_missing(sources, missing, *, stage, cancel=None, progress=None,
+                          stream_roots=()):
     """Return verified candidate PAKs for exact virtual names.
 
     Other maps are completely excluded (including their root-relative files).
@@ -57,6 +58,7 @@ def providers_for_missing(sources, missing, *, stage, cancel=None, progress=None
     if len(candidates) > MAX_PROVIDER_ARCHIVES:
         raise ValueError("Too many archives for bounded dependency discovery.")
     target = set(missing)
+    stream_roots = tuple(str(root).casefold() + '.' for root in stream_roots)
     for offset, source in enumerate(candidates):
         if cancel is not None and cancel.is_set():
             return None
@@ -72,7 +74,9 @@ def providers_for_missing(sources, missing, *, stage, cancel=None, progress=None
                     key = _virtual(name)
                 except (ValueError, TypeError):
                     continue
-                if key in target:
+                if key in target or any(key.startswith(root) and
+                    key[len(root):].isdigit() and int(key[len(root):]) <= 9999
+                    for root in stream_roots):
                     present.add(key)
             for name in sorted(present):
                 indexed[name].append(Path(source))
@@ -253,18 +257,22 @@ def ensure_map_archives(project, game, stage, cache_root, *,
                                library_root=imported_root, cache_root=cache_root)
     groups = material_dependency_candidates(project, index)
     needs = set(x for group in groups for x in group if x not in index)
-    if needs:
+    stream_roots = {x[:-2] for group in groups for x in group
+                    if x.endswith('.dds.0') and x in index}
+    if needs or stream_roots:
         remaining = [p for p in scan.files if str(p) not in prior
                      and level_from_source(p) is None]
         try:
             next_providers = providers_for_missing(
-                remaining, needs, stage=stage, cancel=cancel, progress=progress)
+                remaining, needs, stage=stage, cancel=cancel, progress=progress,
+                stream_roots=stream_roots)
         except (OSError, ValueError) as exc:
             result["errors"].append("Material inventory: " + str(exc)[:180])
             return result
         if next_providers is None:
             return result
         extra = set()
+        selected_streams = set(stream_roots)
         for alternatives in groups:
             if any(name in index for name in alternatives):
                 continue
@@ -272,6 +280,8 @@ def ensure_map_archives(project, game, stage, cache_root, *,
                 providers = next_providers.get(key, [])
                 if len(providers) == 1:
                     extra.add(providers[0])
+                    if key.endswith('.dds.0'):
+                        selected_streams.add(key[:-2])
                     break
                 if len(providers) > 1:
                     result["ambiguous"].append(
@@ -279,6 +289,28 @@ def ensure_map_archives(project, game, stage, cache_root, *,
                     break
             else:
                 result["missing"].append("material/texture: " + alternatives[0])
+        # Streaming DDS fragments may be in different verified PAKs from
+        # part zero. Import their exact providers, never a similarly named
+        # fragment from a different texture or another map.
+        for root in sorted(selected_streams):
+            found_numbers = set()
+            for key,providers in next_providers.items():
+                if not key.startswith(root + '.'):
+                    continue
+                suffix = key[len(root)+1:]
+                if not suffix.isdigit():
+                    continue
+                found_numbers.add(int(suffix))
+                if len(providers) == 1:
+                    extra.add(providers[0])
+                elif len(providers) > 1:
+                    result['ambiguous'].append(key + ' from ' +
+                        ', '.join(str(p) for p in providers[:8]))
+            if found_numbers:
+                for number in range(min(max(found_numbers),9999) + 1):
+                    key = root + '.' + str(number)
+                    if number not in found_numbers and key not in index:
+                        result['missing'].append('DDS fragment: ' + key)
         for source in sorted(extra, key=lambda p:p.as_posix().casefold()):
             if cancel is not None and cancel.is_set():
                 break
