@@ -73,6 +73,26 @@ class AutoDbTests(unittest.TestCase):
         self.assertEqual(minimum_matching_controllers(10),8)
 
 
+class DarkMaterialDiagnostics(unittest.TestCase):
+    def test_actual_dds_brightness_is_measured_without_preview_shading(self):
+        from PIL import Image
+        from material_preview import PreviewMaterials, diffuse_source_stats
+        black=Image.new('RGB',(8,8),(7,10,8))
+        bright=Image.new('RGB',(8,8),(195,170,142))
+        mats=PreviewMaterials((black,bright,None),
+                              ('dark source','bright source','missing'),
+                              'test.mtl')
+        self.assertEqual(diffuse_source_stats(mats,0)[1],100)
+        self.assertEqual(diffuse_source_stats(mats,1)[1],0)
+        self.assertIsNone(diffuse_source_stats(mats,2))
+
+    def test_backface_and_fill_lighting_are_explicit(self):
+        from renderer_3 import FRAGMENT
+        self.assertIn('if (!gl_FrontFacing) n = -n;',FRAGMENT)
+        self.assertIn('uniform float studio_fill;',FRAGMENT)
+        self.assertIn('vec3 albedoLinear = pow(surface.rgb, vec3(2.2))',FRAGMENT)
+
+
 class PanelDbTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -88,6 +108,7 @@ class PanelDbTests(unittest.TestCase):
         self.assertEqual(self.panel.play_native_button.text(),'▶  Play')
         self.assertLessEqual(self.panel.native_clip_select.maximumHeight(),160)
         self.assertIsNotNone(self.panel.studio_fill_slider)
+        self.assertIsNotNone(self.panel.diffuse_source_info)
 
     def test_verified_dba_auto_play_on_model_open(self):
         with tempfile.TemporaryDirectory() as folder:
