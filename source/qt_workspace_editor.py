@@ -1879,8 +1879,9 @@ class QtWorkspaceEditor(QMainWindow):
         model, raw, workspace, virtual = (
             self.mesh, self.raw, self.workspace, self.current)
         character_assembly = bool(self.character_preview)
-        projects, stage, textures = (
-            self.manager.projects_path, self.manager.stage_path, self.texture_folder)
+        projects, stage, textures, asset_index = (
+            self.manager.projects_path, self.manager.stage_path,
+            self.texture_folder, self.preview_index)
 
         def work(progress, cancelled):
             progress('Resolving character geometry and textures', 0, 1)
@@ -1892,7 +1893,7 @@ class QtWorkspaceEditor(QMainWindow):
             payload, report = textured_model_from_workspace(
                 export_mesh, workspace, virtual,
                 texture_folder=textures,
-                projects_root=projects, stage_root=stage)
+                projects_root=projects, stage_root=stage, index=asset_index)
             if cancelled():
                 raise InterruptedError('Export cancelled before writing the GLB.')
             temporary = None
@@ -1917,6 +1918,9 @@ class QtWorkspaceEditor(QMainWindow):
                 (vertices, triangles, report['texture_count'], report['rig_status']))
             if not report['texture_count']:
                 message += ' Missing: ' + report['texture_status'][:180]
+            elif report.get('texture_warnings'):
+                message += ' Texture warnings: ' + '; '.join(
+                    report['texture_warnings'][:3])[:240]
             self.status.setText(message)
 
         begin_file_operation(
