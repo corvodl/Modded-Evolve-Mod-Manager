@@ -98,8 +98,13 @@ def create_character_glb(workspace, relative, index, *, character=None,
                     raise ValueError('CAF flagged additive; requires base-pose blending')
                 if motion.additive and entry is selected_clips[0]:
                     raise ValueError('Base animation cannot be an additive controller.')
-                if matched < min(3, max(1, len(motion.tracks)//4)):
-                    raise ValueError('controller IDs do not match this character skeleton')
+                from native_caf import minimum_matching_controllers
+                needed = minimum_matching_controllers(len(motion.tracks))
+                if matched < needed:
+                    raise ValueError(
+                        'Only %d/%d CAF controllers match this character rig (need %d); '
+                        'check the monster stage/skeleton' %
+                        (matched, len(motion.tracks), needed))
                 if not any(t.rotation_times or t.position_times for t in motion.tracks):
                     raise ValueError('no keyframe tracks')
                 playable.append((entry.name, data))
