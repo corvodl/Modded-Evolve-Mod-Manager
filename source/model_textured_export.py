@@ -142,7 +142,15 @@ def textured_model_from_workspace(mesh, workspace, relative,
                                   *, texture_folder=None, projects_root=None,
                                   stage_root=None, index=None):
     """Return GLB plus texturing/rig readiness information, no on-disk writes."""
-    from material_preview import load_preview_materials
+    from material_preview import load_preview_materials, _workspace_index
+    if index is None:
+        # Use the same cross-PAK index for textures AND the native rig companion.
+        # In particular, an Asset Library model's .skin may be in a different
+        # imported game archive, and extracted folders need the shared TS PAK.
+        try:
+            index = _workspace_index(workspace, projects_root, stage_root)
+        except (OSError, ValueError, KeyError):
+            index = None
     payload = glb_bytes(mesh, name=Path(relative).stem)
     report = {'texture_count': 0, 'texture_status': 'No material resources found',
               'rig_status': 'Unrigged: no compatible skin source found',
