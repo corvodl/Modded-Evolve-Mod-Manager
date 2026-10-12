@@ -121,6 +121,10 @@ def prepare_scene(project, cancel, progress=None):
             if materials:
                 cost += sum(im.width * im.height * 4 for im in materials.textures if im is not None)
             if size + cost > MAX_SCENE_MEMORY:
+                # A rejected mesh must not remain pinned in the per-load
+                # decode cache merely because decoding was attempted.
+                if not any(a.model_file == cache_key for a in assets.values()):
+                    models.pop(cache_key,None)
                 issues["bounded memory budget (not rendered)"] += 1
                 continue
             size += cost
