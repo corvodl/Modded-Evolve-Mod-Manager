@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.19', (
+        'Choose character textures per material and retain matching textures in supported exports.',
+        'Improve original DBA animation previews and character material mapping.',
+        'Improve Level Editor model references, hierarchy diagnostics and supported static mesh decoding.',
+    )),
     ('1.1.18-beta.18', (
         'Export character folders directly with matching assets from imported PAKs.',
         'Browse CDF-based Full Character models separately from individual meshes.',

@@ -26,7 +26,13 @@ class VersionManifestTests(unittest.TestCase):
             self.assertTrue(1 <= len(notes) <= 3, version)
             self.assertTrue(all(len(note) <= 120 for note in notes), version)
         root = Path(__file__).resolve().parent.parent
-        self.assertIn(markdown().strip(), (root/'README.md').read_text('utf-8'))
+        readme = (root/'README.md').read_text('utf-8')
+        version, notes = RELEASE_NOTES[0]
+        self.assertIn('## Latest Beta — v' + version, readme)
+        section = readme.split('## Latest Beta — v' + version, 1)[1].split('## Download and install', 1)[0]
+        for note in notes:
+            self.assertIn('- ' + note, section)
+        self.assertNotIn('## Latest Beta — v1.1.18-beta.18', readme)
         public = markdown() + (root/'source'/'VERSION.txt').read_text('utf-8')
         self.assertNotIn('developer', public.lower())
         self.assertNotIn('access code', public.lower())
