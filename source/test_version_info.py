@@ -36,6 +36,7 @@ class VersionManifestTests(unittest.TestCase):
             self.assertIn('- ' + note, section)
         self.assertNotIn('## Latest Beta — v1.1.18-beta.18', readme)
         self.assertNotIn('## Latest Beta — v1.1.18-beta.19', readme)
+        self.assertNotIn('## Latest Beta — v1.1.18-beta.21', readme)
         public = markdown() + (root/'source'/'VERSION.txt').read_text('utf-8')
         self.assertNotIn('developer', public.lower())
         self.assertNotIn('access code', public.lower())
