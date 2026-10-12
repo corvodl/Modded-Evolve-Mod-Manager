@@ -257,11 +257,25 @@ def resolve_material_texture(index, reference, material_relative, *, preferred_w
                                    preferred_workspace=preferred_workspace)
             if state != 'missing':
                 return hits, state
-    # Fallback only for references that are explicitly non-character scoped.
-    # Bare names are never allowed to select another character's DDS.
-    if not character_scope:
-        return _resolve(index, virtual, preferred_workspace=preferred_workspace)
-    return [], 'missing'
+    if character_scope:
+        # Many Evolve hunter/monster materials refer to textures cooked into
+        # their category-wide SHARED TS PAK. Use only the correct category's
+        # exact virtual path, never a basename from another playable actor.
+        category = '/'.join(parent_parts[:2])
+        shared = None
+        if virtual.casefold().startswith('shared/'):
+            shared = category + '/' + virtual
+        elif virtual.casefold().startswith('textures/'):
+            shared = category + '/shared/' + virtual
+        elif '/' not in virtual:
+            shared = category + '/shared/textures/' + virtual
+        if shared:
+            hits, state = _resolve(index, shared,
+                                   preferred_workspace=preferred_workspace)
+            if state != 'missing':
+                return hits, state
+        return [], 'missing'
+    return _resolve(index, virtual, preferred_workspace=preferred_workspace)
 
 
 MAX_DISCOVERY_PROJECTS = 200
