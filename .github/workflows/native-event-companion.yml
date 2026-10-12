@@ -1,0 +1,51 @@
+name: Validate native game-side event companion (non-publishing)
+
+on:
+  push:
+    branches: [feature/beta17-native-game-bridge]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-aot:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build native Windows x64 companion
+        shell: pwsh
+        run: |
+          dotnet publish native/EvolveEventBridge/EvolveEventBridge.csproj -c Release -r win-x64 -o dist/native-bridge
+          if ($LASTEXITCODE -ne 0) { throw 'NativeAOT companion compilation failed' }
+          if (!(Test-Path dist/native-bridge/EvolveEventBridge.dll)) { throw 'Native bridge DLL missing' }
+      - name: Verify DLL C exports (no Evolve binaries bundled)
+        shell: pwsh
+        run: |
+          $exports = (& dumpbin /exports dist/native-bridge/EvolveEventBridge.dll) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect companion exports' }
+          foreach ($name in @('EvolveBridge_Start','EvolveBridge_Stop',
+              'EvolveBridge_RegisterVerifiedEvent','EvolveBridge_Pump',
+              'EvolveBridge_CopyToken')) {
+            if ($exports -notmatch [regex]::Escape($name)) { throw "Missing native export: $name" }
+          }
+      - name: Validate existing Python bridge protocol tests
+        shell: pwsh
+        run: |
+          python -m pip install -q -r source/requirements.txt
+          Push-Location source
+          try {
+            python -m unittest -v test_developer_event_catalog test_developer_event_live
+            if ($LASTEXITCODE -ne 0) { throw 'Bridge client tests failed' }
+          } finally { Pop-Location }
+      - name: Upload native DLL as TEST artifact only
+        uses: actions/upload-artifact@v4
+        with:
+          name: EvolveNativeEventBridge-transport-only-not-game-ready
+          path: dist/native-bridge/EvolveEventBridge.dll
+          if-no-files-found: error
