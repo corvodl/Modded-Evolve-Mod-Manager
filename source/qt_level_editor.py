@@ -7,10 +7,12 @@ navigation/collision/lighting recompilation is implied.
 from __future__ import annotations
 
 from collections import defaultdict
+from threading import Event, Thread
+from types import SimpleNamespace
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QPointF
+from PySide6.QtCore import Qt, Signal, QPointF, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QAction
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QFrame, QLabel, QVBoxLayout,
@@ -225,6 +227,8 @@ class LevelSceneViewport(QWidget):
 
 class UnrealStyleLevelEditor(QMainWindow):
     """UE4/5-like placement workspace for extracted Evolve Stage 2 levels."""
+    mapCatalogReady = Signal(int,object)
+    mapCopyReady = Signal(int,object,object)
 
     def __init__(self,parent,workspace):
         super().__init__(parent)
@@ -248,6 +252,11 @@ class UnrealStyleLevelEditor(QMainWindow):
         """)
         self.selected=None
         self._refreshing=False
+        self._map_catalog_generation=0
+        self._map_copy_generation=0
+        self._map_copy_cancel=Event()
+        self.mapCatalogReady.connect(self._apply_map_catalog)
+        self.mapCopyReady.connect(self._complete_map_copy)
         self._build_toolbar()
         self._build_workspace()
         self._populate()
@@ -470,30 +479,132 @@ class UnrealStyleLevelEditor(QMainWindow):
         return projects
 
     def refresh_maps(self):
+        """Show extracted projects immediately; discover game/library maps off-thread."""
         self._map_projects=self._available_projects()
         self.map_selector.blockSignals(True)
         self.map_selector.clear()
         for name,path in sorted(self._map_projects.items(),key=lambda pair:pair[0].casefold()):
             self.map_selector.addItem(name+"  ·  Ready",str(path))
-        self.map_selector.setCurrentIndex(self.map_selector.findData(str(self.project.workspace)))
+        self.map_selector.setCurrentIndex(
+            self.map_selector.findData(str(self.project.workspace)))
         self.map_selector.blockSignals(False)
-        completer=QCompleter([self.map_selector.itemText(i) for i in range(self.map_selector.count())],self.map_selector)
+        self._set_map_completer()
+        self._map_catalog_generation += 1
+        token = self._map_catalog_generation
+        game = getattr(self.viewport,"game_root",None)
+        if game is None:
+            return
+        workspaces = tuple(self._map_projects.values())
+        def scan():
+            try:
+                from app_runtime import DATA_HOME
+                from asset_library import LIBRARY_HOME
+                from level_dependency_loader import discover_map_status
+                status = discover_map_status(
+                    game,library_roots=(LIBRARY_HOME,DATA_HOME/"LevelDependencyCache"),
+                    projects=workspaces)
+            except (OSError, ValueError) as exc:
+                status = {"_error":str(exc)[:180]}
+            try:
+                self.mapCatalogReady.emit(token,status)
+            except RuntimeError:
+                pass
+        Thread(target=scan,name="Evolve-Map-Catalog",daemon=True).start()
+
+    def _set_map_completer(self):
+        completer=QCompleter(
+            [self.map_selector.itemText(i) for i in range(self.map_selector.count())],
+            self.map_selector)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         completer.setFilterMode(Qt.MatchContains)
         self.map_selector.setCompleter(completer)
 
-    def _map_selected(self,index):
-        path=self.map_selector.itemData(index)
-        if path:
-            self.switch_map(Path(path))
+    def _apply_map_catalog(self,token,status):
+        if token != self._map_catalog_generation or not self.isVisible():
+            return
+        if "_error" in status:
+            self.statusBar().showMessage("Map catalog: "+status["_error"],8000)
+            return
+        known = {self.map_selector.itemData(i) for i in range(self.map_selector.count())}
+        current = str(self.project.workspace)
+        self.map_selector.blockSignals(True)
+        for map_id,entry in status.items():
+            label = map_id.replace("_"," ").title()
+            workspace = entry.get("workspace")
+            target = workspace or "map:"+map_id
+            if target in known:
+                continue
+            state = entry.get("status","unavailable").title()
+            self.map_selector.addItem(label+"  ·  "+state,target)
+            known.add(target)
+        self.map_selector.setCurrentIndex(self.map_selector.findData(current))
+        self.map_selector.blockSignals(False)
+        self._set_map_completer()
 
-    def switch_map(self,workspace):
+    def _map_selected(self,index):
+        target=self.map_selector.itemData(index)
+        if not target:
+            return
+        if target.startswith("map:"):
+            self._load_library_map(target[4:])
+        else:
+            self._map_copy_cancel.set()
+            self._map_copy_generation += 1
+            self.switch_map(Path(target))
+
+    def _load_library_map(self,map_id):
+        """Import/make an editable copy on a worker; retain previous map on failure."""
+        from app_runtime import DATA_HOME
+        from asset_library import LIBRARY_HOME
+        from level_dependency_loader import ensure_map_archives,copy_editable_map_from_library
+        self._map_copy_cancel.set()
+        self._map_copy_cancel=Event()
+        self._map_copy_generation += 1
+        token, cancel = self._map_copy_generation,self._map_copy_cancel
+        game,stage=self.viewport.game_root,self.viewport.stage_root
+        destination=self.project.workspace.parent/("Level-"+map_id)
+        self.statusBar().showMessage("Preparing editable map "+map_id+" in background…")
+        self.map_selector.setEnabled(False)
+        def job():
+            try:
+                if game is not None and stage is not None:
+                    context=SimpleNamespace(
+                        level_name=map_id,workspace=self.project.workspace,scene=())
+                    ensure_map_archives(context,game,stage,
+                                        DATA_HOME/"LevelDependencyCache",
+                                        imported_root=LIBRARY_HOME,cancel=cancel)
+                if cancel.is_set():
+                    return
+                folder=copy_editable_map_from_library(
+                    map_id,destination,
+                    library_roots=(LIBRARY_HOME,DATA_HOME/"LevelDependencyCache"),
+                    cancel=cancel)
+                prepared=LevelProject(folder)
+                self.mapCopyReady.emit(token,prepared,None)
+            except (OSError,ValueError,RuntimeError,InterruptedError) as exc:
+                try:
+                    self.mapCopyReady.emit(token,None,str(exc)[:250])
+                except RuntimeError:
+                    pass
+        Thread(target=job,name="Evolve-Map-Project-Prep",daemon=True).start()
+
+    def _complete_map_copy(self,token,project,error):
+        if token != self._map_copy_generation:
+            return
+        self.map_selector.setEnabled(True)
+        if error:
+            QMessageBox.warning(self,"Cannot load discovered map",error)
+            self.refresh_maps()
+            return
+        self.switch_map(project.workspace,prepared=project)
+
+    def switch_map(self,workspace,*,prepared=None):
         """Swap projects in place with saved-edit and loader-generation protection."""
         try:
             target=Path(workspace).resolve(strict=True)
             if target==self.project.workspace:
                 return True
-            next_project=LevelProject(target)
+            next_project=prepared if prepared is not None else LevelProject(target)
         except (OSError,ValueError) as exc:
             QMessageBox.warning(self,"Map load failed",str(exc))
             self.refresh_maps()
@@ -858,4 +969,6 @@ class UnrealStyleLevelEditor(QMainWindow):
             if answer!=QMessageBox.Yes:
                 event.ignore()
                 return
+        self._map_copy_cancel.set()
+        self._map_catalog_generation += 1
         event.accept()
