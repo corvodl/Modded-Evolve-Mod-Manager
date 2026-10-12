@@ -1,0 +1,33 @@
+name: Offline Profile and Level Scene Regression
+
+on:
+  pull_request:
+    branches: [beta]
+    paths:
+      - "source/account_profile_snapshot.py"
+      - "source/qt_account_profile.py"
+      - "source/level_scene_core.py"
+      - "source/level_editor_core.py"
+      - "source/model_preview.py"
+      - "source/qt_level_editor.py"
+      - "source/qt_manager.py"
+      - "tests/test_account_profile_snapshot.py"
+      - "tests/test_level_scene_core.py"
+      - ".github/workflows/offline-profile-level-scene.yml"
+  workflow_dispatch:
+
+jobs:
+  core-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile changed source modules
+        run: |
+          python -m py_compile source/account_profile_snapshot.py source/qt_account_profile.py source/level_scene_core.py source/level_editor_core.py source/model_preview.py source/qt_level_editor.py source/qt_manager.py
+      - name: Offline profile and scene unit tests
+        run: |
+          python -m unittest discover -s tests -p 'test_account_profile_snapshot.py' -v
+          python -m unittest discover -s tests -p 'test_level_scene_core.py' -v
