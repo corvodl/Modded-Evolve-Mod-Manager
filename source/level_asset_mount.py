@@ -42,7 +42,7 @@ def _manifest_source(manifest):
             or manifest.get("archive_source") or "")
 
 
-def mount_map_index(workspace, map_name, *, library_root=None):
+def mount_map_index(workspace, map_name, *, library_root=None, cache_root=None):
     """Return a normal full-path lookup index with map-local collision fencing.
 
     The editable project is first, then only archives whose *original PAK
@@ -55,7 +55,10 @@ def mount_map_index(workspace, map_name, *, library_root=None):
     root = (base / "files").resolve(strict=True)
     selected = str(map_name).casefold()
     imported = defaultdict(list)
-    folders = _manifest_dirs(_home(library_root))
+    roots = [_home(library_root)]
+    if cache_root is not None and _home(cache_root) not in roots:
+        roots.append(_home(cache_root))
+    folders = [folder for library in roots for folder in _manifest_dirs(library)]
     if len(folders) > MAX_IMPORTED:
         raise ValueError("Imported archive limit exceeded.")
     matching_archives = set()
@@ -70,27 +73,28 @@ def mount_map_index(workspace, map_name, *, library_root=None):
                 matching_archives.add(str(folder.resolve()))
         except (ValueError, OSError, KeyError, TypeError):
             continue
-    original_index = extracted_index(library_root)
-    for key, records in original_index.items():
-        is_scoped = map_relative_asset(key)
-        for entry in records:
-            try:
-                source_dir = str(Path(entry["file"]).resolve().parent)
-                # Indexed records live under <archive>/files/<virtual>.
-                archive_dir = Path(entry["file"]).resolve()
-                relative = str(entry.get("relative", "")).replace("\\", "/")
-                for _ in PurePosixPath(relative).parts:
-                    archive_dir = archive_dir.parent
-                archive_dir = archive_dir.parent
-                mount = str(archive_dir)
-                owner = sources.get(mount)
-                if is_scoped:
-                    if owner == selected:
-                        imported[key].append(entry)
-                elif owner is None or owner == selected:
-                    imported[key].append(entry)
-            except (OSError, KeyError, TypeError, ValueError):
-                continue
+    indexes = [extracted_index(library) for library in roots]
+    for original_index in indexes:
+      for key, records in original_index.items():
+          is_scoped = map_relative_asset(key)
+          for entry in records:
+              try:
+                  source_dir = str(Path(entry["file"]).resolve().parent)
+                  # Indexed records live under <archive>/files/<virtual>.
+                  archive_dir = Path(entry["file"]).resolve()
+                  relative = str(entry.get("relative", "")).replace("\\", "/")
+                  for _ in PurePosixPath(relative).parts:
+                      archive_dir = archive_dir.parent
+                  archive_dir = archive_dir.parent
+                  mount = str(archive_dir)
+                  owner = sources.get(mount)
+                  if is_scoped:
+                      if owner == selected:
+                          imported[key].append(entry)
+                  elif owner is None or owner == selected:
+                      imported[key].append(entry)
+              except (OSError, KeyError, TypeError, ValueError):
+                  continue
     for entry in load_workspace(base)["entries"]:
         virtual = normalized_name(entry["path"])
         file = root.joinpath(*virtual.split("/"))
