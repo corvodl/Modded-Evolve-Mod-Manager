@@ -45,6 +45,10 @@ def prepare_scene(project, cancel, progress=None):
     from material_preview import load_preview_materials
 
     index, details = mount_map_index(project.workspace, project.level_name)
+    material_names = sorted(
+        (name for name in index if name.endswith(".mtl")), key=str.casefold)
+    details["materials"] = tuple(material_names[:20000])
+    details["material_catalog_truncated"] = len(material_names) > 20000
     assets, issues, models = {}, Counter(), {}
     candidates = {_asset_key(o): o for o in project.scene if o.model}
     total = len(candidates)
@@ -105,6 +109,7 @@ class LevelGLViewport(QOpenGLWidget):
     selected = Signal(str, int)
     moved = Signal(str, int, object)
     statusChanged = Signal(str)
+    materialsReady = Signal(object)
 
     def __init__(self, project, parent=None):
         super().__init__(parent)
@@ -192,6 +197,8 @@ class LevelGLViewport(QOpenGLWidget):
             return
         assets, issues, details = result
         self._issues = issues
+        if details.get("materials"):
+            self.materialsReady.emit(details["materials"])
         if self._textures and self.isValid():
             self.makeCurrent()
             try:
