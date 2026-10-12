@@ -44,7 +44,7 @@ def discover_full_characters(paths):
             continue
         # Preserve the game's presentation names while keeping original paths.
         from character_aliases import character_alias
-        name = character_alias(mesh) or parent.name.replace('_', ' ').title()
+        name = character_alias(mesh) or stem.replace('_', ' ').title()
         title = name + ' • Full Character'
         result[mesh] = FullCharacter(mesh, original, title)
     return result
