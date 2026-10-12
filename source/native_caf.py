@@ -226,6 +226,32 @@ def _matrix_quaternion(m):
     return (q/np.linalg.norm(q)).astype(np.float32)
 
 
+def minimum_matching_controllers(total):
+    """A shared root or few spine bones cannot validate a large foreign rig.
+
+    Clips containing just one or two deliberate controllers remain supported.
+    For larger clips, require a majority of the declared controller names to
+    match the selected skinned model before applying any tracks.
+    """
+    total = int(total)
+    return total if total < 6 else max(3, math.ceil(total * 0.60))
+
+
+def _clip_time_origin(motion, tracks):
+    """One clock for ALL controllers (not one origin per joint/channel)."""
+    starts = [float(times[0]) for track in tracks
+              for times in (track.rotation_times, track.position_times)
+              if times]
+    if not starts:
+        raise ValueError('CAF has no valid timeline')
+    first = min(starts)
+    # The source motion header may provide an earlier common clip start.
+    header = float(motion.start_frame)
+    if math.isfinite(header) and 0 <= header <= first:
+        return header
+    return first
+
+
 def append_caf_animations(glb, clips, *, allow_layered=False):
     """Add native CAF tracks to a *rigged* manager GLB.
 
@@ -256,8 +282,13 @@ def append_caf_animations(glb, clips, *, allow_layered=False):
             # an explicit verified base clip and opt into layered export.
             continue
         matched = [t for t in motion.tracks if t.controller_id in crc_nodes]
-        if len(matched) < min(3, max(1, len(motion.tracks)//4)):
-            raise ValueError('CAF %s does not match this model skeleton' % name)
+        needed = minimum_matching_controllers(len(motion.tracks))
+        if len(matched) < needed:
+            raise ValueError(
+                'CAF %s matches only %d of %d bone controllers (need %d); '
+                'verify the model stage and original skeleton' %
+                (name, len(matched), len(motion.tracks), needed))
+        origin = _clip_time_origin(motion, matched)
         channels, samplers = [], []
         for track in matched:
             node = crc_nodes[track.controller_id]
@@ -277,7 +308,7 @@ def append_caf_animations(glb, clips, *, allow_layered=False):
                 if not values:
                     continue
                 time = np.asarray(times, dtype=np.float32)
-                time = (time - time[0])/motion.fps
+                time = (time - origin)/motion.fps
                 # glTF accessors require increasing keys.
                 if len(time) > 1 and np.any(np.diff(time) <= 0):
                     unique = np.concatenate(([True], np.diff(time) > 0))
