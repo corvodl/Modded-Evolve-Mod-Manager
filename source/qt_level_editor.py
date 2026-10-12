@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QMessageBox, QScrollArea, QSizePolicy, QFileDialog)
 
 from level_editor_core import LevelProject, PlacedObject
+from qt_level_scene_render import LevelGLViewport
 
 
 class LevelSceneViewport(QWidget):
@@ -228,7 +229,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         super().__init__(parent)
         self.project=LevelProject(workspace)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.setWindowTitle("Level Editor 1.0 — "+self.project.level_name+" — Evolve")
+        self.setWindowTitle("Level Editor 3D Preview — "+self.project.level_name+" — Evolve")
         self.resize(1510,900)
         self.setMinimumSize(880,540)
         self.setObjectName("evolveLevelEditor")
@@ -250,7 +251,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         self._build_workspace()
         self._populate()
         self.statusBar().showMessage(
-            "Level Editor 1.0  |  .lyr transforms only  |  Terrain, collision and navigation not compiled")
+            "3D static mesh preview loading • terrain/vegetation and collision not reconstructed")
 
     def _action(self,label,callback,tip=None,checkable=False):
         action=QAction(label,self)
@@ -270,6 +271,9 @@ class UnrealStyleLevelEditor(QMainWindow):
         view=menu.addMenu("View")
         view.addAction(self._action("Frame All Objects",self.frame_all))
         view.addAction(self._action("Frame Selected",self.frame_selected))
+        view.addAction(self._action("Perspective 3D", lambda: self._projection("Perspective")))
+        view.addAction(self._action("Orthographic 3D", lambda: self._projection("Orthographic")))
+        view.addAction(self._action("Scene Coverage / Diagnostics", self.scene_diagnostics))
         help_menu=menu.addMenu("Help")
         help_menu.addAction(self._action("Level Editor Limitations",self.limitations))
         toolbar=self.addToolBar("Main")
@@ -291,7 +295,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         info=toolbar.addWidget(QLabel("  Perspective  ▾     Lit  ▾    Show  ▾"))
         self.tool_label=info
         toolbar.addSeparator()
-        toolbar.addWidget(QLabel("   PREVIEW  •  Object placement proxies   "))
+        toolbar.addWidget(QLabel("   RENDER  •  Source-size depth-tested mesh instances   "))
 
     def _panel(self,title):
         wrapper=QFrame()
@@ -324,14 +328,15 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.layers_list.setHeaderHidden(True)
         self.layers_list.itemClicked.connect(self._choose_layer)
         lay.addWidget(self.layers_list,1)
-        tip=QLabel("Right-drag: orbit\nMiddle-drag: pan\nWheel: zoom\n\nMove tool: drag an object's marker on XY.\nRotation and scale: Details.")
+        tip=QLabel("Right-drag: orbit\nMiddle-drag: pan\nWheel: dolly\nLeft-click: pick mesh\nMove: XY drag (local root objects only)\nRotation, scale and material: Details.")
         tip.setWordWrap(True)
         lay.addWidget(tip)
         horizontal.addWidget(left)
 
-        self.viewport=LevelSceneViewport(self.project)
+        self.viewport=LevelGLViewport(self.project)
         self.viewport.selected.connect(self.select_object)
         self.viewport.moved.connect(self._viewport_moved)
+        self.viewport.statusChanged.connect(self._scene_status)
         horizontal.addWidget(self.viewport)
 
         right=QSplitter(Qt.Vertical)
@@ -380,6 +385,13 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.geometry_label=QLabel("Model reference: —")
         self.geometry_label.setWordWrap(True)
         details_lay.addWidget(self.geometry_label)
+        details_lay.addWidget(QLabel("MATERIAL  •  exact game-relative path"))
+        self.material_override=QLineEdit()
+        self.material_override.setPlaceholderText("objects/…/material  (optional .mtl)")
+        details_lay.addWidget(self.material_override)
+        change_material=QPushButton("Apply Material Override")
+        change_material.clicked.connect(self.apply_material_override)
+        details_lay.addWidget(change_material)
         self.scene_info = QLabel("Scene hierarchy: unavailable")
         self.scene_info.setWordWrap(True)
         details_lay.addWidget(self.scene_info)
@@ -405,6 +417,46 @@ class UnrealStyleLevelEditor(QMainWindow):
         browser_layout.addWidget(self.content,1)
         vertical.addWidget(browser)
         vertical.setSizes([680,175])
+
+    def _scene_status(self, status):
+        self.statusBar().showMessage(status, 0)
+
+    def _projection(self, mode):
+        self.viewport.projection_mode = mode
+        self.viewport.update()
+        self.statusBar().showMessage("3D projection: " + mode, 4000)
+
+    def scene_diagnostics(self):
+        decoded = len(self.viewport.assets)
+        coverage = sum(1 for item in self.project.scene
+                       if (item.model.casefold(), item.material.casefold())
+                       in self.viewport.assets)
+        missing = "\\n".join(f"• {reason}: {count}" for reason,count
+                              in sorted(self.viewport._issues.items(), key=lambda x:-x[1])[:25])
+        QMessageBox.information(
+            self, "Rendered scene diagnostics",
+            f"Map: {self.project.level_name}\\n"
+            f"Placed scene nodes: {len(self.project.scene):,}\\n"
+            f"Rendered instances: {coverage:,}\\n"
+            f"Decoded material variants: {decoded:,}\\n"
+            f"Hierarchy warnings: {len(self.project.scene_diagnostics):,}\\n"
+            f"Render/lookup problems:\\n{missing or '(none reported)'}\\n\\n"
+            "Only verified static CryEngine mesh streams are rendered. "
+            "Terrain, vegetation, roads, prefabs and unsupported CDF actors "
+            "are not silently replaced with fake terrain or meshes.")
+
+    def apply_material_override(self):
+        if self.selected is None:
+            return
+        layer,index = self.selected
+        try:
+            self.project.apply_material(
+                layer, index, self.material_override.text())
+            self.viewport.reload_scene()
+            self.select_object(layer,index)
+            self._dirty_state()
+        except (ValueError,OSError) as exc:
+            QMessageBox.warning(self, "Material override invalid", str(exc))
 
     def _set_mode(self,mode):
         self.viewport.mode=mode
@@ -433,7 +485,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         needle=self.filter.text().casefold()
         group={}
         count=0
-        max_items=7000
+        max_items=25000
         for obj in self.project.objects:
             if count>=max_items:
                 break
@@ -527,6 +579,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.details_kind.setText(
             "Type: "+obj.kind+"  •  Layer: "+(node.get("Layer") or Path(layer).stem))
         self.geometry_label.setText("Model reference: "+(obj.geometry or "Not specified"))
+        self.material_override.setText(node.get("Material") or "")
         guid = (node.get("Id") or node.get("EntityId") or f"{layer}#{index}").casefold()
         scene = next((n for n in self.project.scene if n.id == guid), None)
         if scene:
@@ -548,6 +601,9 @@ class UnrealStyleLevelEditor(QMainWindow):
 
     def _viewport_moved(self,layer,index,position):
         try:
+            node = self.project._node(layer,index)
+            if node.get("Parent") or node.get("Group"):
+                raise ValueError("Parented objects have local transforms; edit position in the Details panel.")
             self.project.apply(layer,index,"Pos",position)
             self.select_object(layer,index)
             self._dirty_state()
@@ -579,11 +635,13 @@ class UnrealStyleLevelEditor(QMainWindow):
 
     def undo(self):
         if self.project.undo():
+            self.viewport.reload_scene()
             self._refresh_selected()
             self._dirty_state()
 
     def redo(self):
         if self.project.redo():
+            self.viewport.reload_scene()
             self._refresh_selected()
             self._dirty_state()
 
@@ -641,16 +699,16 @@ class UnrealStyleLevelEditor(QMainWindow):
 
     def limitations(self):
         QMessageBox.information(
-            self,"Level Editor 1.0",
-            "Unreal-style layout for CryEngine level placement edits.\n\n"
-            "Supported: browse .lyr layers, select placed objects, inspect object "
-            "attributes, move XY position markers, change XYZ position, "
-            "quaternion rotation and XYZ scale, undo/redo, and safely save "
-            "changed layers to an extracted PAK workspace.\n\n"
-            "Not yet supported: terrain rendering/sculpting, model placement "
-            "gizmos with collision-aware snapping, compiled physics, "
-            "navigation meshes, or lighting builds. The viewport shows "
-            "object-location proxies, not fully reconstructed geometry.")
+            self, "Level Editor • supported scope",
+            "Real depth-tested geometry from verified static CryEngine .cgf/.skinm/.chrm streams "
+            "is shown with world transforms and decoded diffuse materials when available. "
+            "Unresolved/unsupported content is listed in Scene Diagnostics.\\n\\n"
+            "Edit source-layer transforms and explicit material overrides in a copied workspace; "
+            "undo/redo and safe atomic layer saves retain original backups.\\n\\n"
+            "Not yet implemented: terrain elevation/tiles, vegetation instances, procedural roads, "
+            "animated CDF characters, source-designer remeshing, game runtime collision, "
+            "lighting/navigation rebuilds or engine-ready export. The editor must not be treated "
+            "as a CryEngine map compiler.")
 
     def closeEvent(self,event):
         if self.project.dirty_layers():
