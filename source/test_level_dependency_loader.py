@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from level_dependency_loader import (
     ensure_map_archives, map_archive_catalog, needed_virtual_paths,
-    providers_for_missing)
+    providers_for_missing, texture_provider_candidates, material_dependency_candidates)
 
 
 class LevelDependencyTests(unittest.TestCase):
@@ -29,6 +29,35 @@ class LevelDependencyTests(unittest.TestCase):
                  SimpleNamespace(model='Objects/Tree/Tree.cgf', material='')]
         actual = needed_virtual_paths(SimpleNamespace(scene=scene))
         self.assertEqual(actual, {'objects/tree/tree.cgf','objects/tree/bark.mtl'})
+
+    def test_cooked_texture_candidates_keep_material_directory(self):
+        candidates = texture_provider_candidates(
+            'rock_diff.tif','objects/natural/rocks/rock.mtl')
+        self.assertEqual(candidates[:3], (
+            'objects/natural/rocks/rock_diff.tif',
+            'objects/natural/rocks/rock_diff.dds',
+            'objects/natural/rocks/rock_diff.dds.0'))
+        self.assertNotIn('rock_diff.dds', candidates)
+
+    @patch('model_material_resolve.find_model_material')
+    def test_mtl_texture_dependencies_are_exact_and_lazy(self, find_mtl):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as temp:
+            material = Path(temp)/'stone.mtl'
+            material.write_text(
+                '<Material><Textures><Texture Map="Diffuse" '
+                'File="stone_d.tif"/><Texture Map="Bumpmap" '
+                'File="stone_n.tif"/></Textures></Material>',encoding='utf-8')
+            find_mtl.return_value = ({
+                'file':material,'relative':'objects/stone/stone.mtl'},'mesh hint',())
+            project = SimpleNamespace(
+                workspace=Path(temp),
+                scene=(SimpleNamespace(model='objects/stone/stone.cgf',material=''),))
+            groups = material_dependency_candidates(project,{
+                'objects/stone/stone.cgf':[{'file':Path(temp)/'stone.cgf'}]})
+            self.assertEqual(len(groups),2)
+            self.assertIn('objects/stone/stone_d.dds.0',groups[0])
+            self.assertIn('objects/stone/stone_n.dds',groups[1])
 
     @patch('level_dependency_loader._keys', return_value=('key',))
     @patch('level_dependency_loader._verify_pak')
