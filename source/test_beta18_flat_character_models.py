@@ -44,6 +44,36 @@ class FullCharacterDiscoveryTests(unittest.TestCase):
             'characters/hunters/merc_other/other_3p.skinm']))
 
 
+class CompositeBlenderExportTests(unittest.TestCase):
+    def test_missing_rig_still_exports_both_assembled_mesh_parts(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from model_preview import read_preview_mesh
+        from material_preview import PreviewMaterials
+        from character_assembly import combine_meshes
+        from character_asset_export import assembled_character_glb
+        from model_textured_export import _unpack_glb
+        from test_model_preview import test_mesh
+
+        raw = read_preview_mesh(test_mesh(), 'body.skinm')
+        mats = PreviewMaterials((None,), ('body',), 'test.mtl', ())
+        mesh, materials = combine_meshes([
+            ('Body', raw, mats), ('Equipped item', raw, mats)])
+        character = SimpleNamespace(
+            mesh=mesh, materials=materials,
+            cdf='characters/hunters/merc_parnelltank/parnelltank_3p.cdf',
+            included=('Body', 'Equipped item'))
+        with patch('native_character_glb.create_character_glb',
+                   side_effect=ValueError('No verified skeleton available')):
+            blob, report = assembled_character_glb(
+                character, Path('.'), character.cdf, {})
+        document, _ = _unpack_glb(blob)
+        self.assertEqual(document['accessors'][0]['count'], len(raw.vertices) * 2)
+        self.assertEqual(report['part_count'], 2)
+        self.assertEqual(report['bone_count'], 0)
+        self.assertIn('Unrigged assembled mesh', report['rig_status'])
+
+
 class FlatCharacterFolderTests(unittest.TestCase):
     def setUp(self):
         self.tmp = TemporaryDirectory()
