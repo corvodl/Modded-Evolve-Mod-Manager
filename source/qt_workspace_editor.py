@@ -975,14 +975,16 @@ class QtWorkspaceEditor(QMainWindow):
                 for i, part in enumerate(parts[:-1]):
                     key = '/'.join(parts[:i + 1])
                     if key not in folders:
-                        from character_aliases import pretty_folder
+                        from character_aliases import (
+                            pretty_folder, character_asset_description)
                         display = pretty_folder(part, '/'.join(parts[:i]))
                         folder = QTreeWidgetItem([display, ''])
                         # Store the original virtual directory independent of
                         # friendly display aliases (e.g. Gorgon/mon_lurker).
                         folder.setData(0, Qt.UserRole + 1, key)
+                        description = character_asset_description(key)
                         folder.setToolTip(0, key + (
-                            '\\nCharacter: ' + display if display != part else ''))
+                            '\\n' + description if description else ''))
                         if parent is not None:
                             parent.addChild(folder)
                         else:
@@ -1002,7 +1004,10 @@ class QtWorkspaceEditor(QMainWindow):
                 category = self._category(rel)
                 item = QTreeWidgetItem([symbol + parts[-1], size])
                 item.setData(0, Qt.UserRole, rel)
-                item.setToolTip(0, category.title() + ' • ' + rel)
+                from character_aliases import character_asset_description
+                char_description = character_asset_description(rel)
+                item.setToolTip(0, category.title() + ' • ' + rel +
+                                ('\\n' + char_description if char_description else ''))
                 if rel in member_to_parent:
                     # The parent may appear later alphabetically, so defer
                     # these children until every primary model is registered.
@@ -1013,7 +1018,8 @@ class QtWorkspaceEditor(QMainWindow):
                 group = family_by_parent.get(rel)
                 if group is not None:
                     item.setText(0, symbol + group.title)
-                    item.setToolTip(0, 'Open complete game character; expand for individual LODs, skins and dependencies.')
+                    item.setToolTip(0, 'Open complete game character; expand for individual LODs, skins and dependencies.\\n'
+                                       + rel + ('\\n' + char_description if char_description else ''))
                     item.setText(1, str(len(group.members)) + ' assets')
                     grouped_nodes.setdefault(rel, [])
                     # Register this primary as a model family header.
@@ -1086,7 +1092,10 @@ class QtWorkspaceEditor(QMainWindow):
         target_mode = self._category(rel)
         self.tabs.setCurrentIndex(self.TABS.index(target_mode))
         self.current_file_label.setText(rel)
-        self.current_file_label.setToolTip(rel)
+        from character_aliases import character_asset_description
+        description = character_asset_description(rel)
+        self.current_file_label.setToolTip(
+            rel + ('\\n' + description if description else ''))
         if rel != self.current:
             self._capture_playback_preferences()
         if rel != self.current:
