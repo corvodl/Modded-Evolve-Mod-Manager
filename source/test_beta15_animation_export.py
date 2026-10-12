@@ -59,6 +59,9 @@ class CompactAnimationUITests(unittest.TestCase):
             'combat_idle', 'characters/hunters/merc_val/' +
             'very_long_subdirectory/' * 12 + 'combat_idle.caf', 'caf', False)
         p.set_native_catalog([item])
+        p.resize(465, 390)
+        p.show()
+        self.app.processEvents()
         p.toggle_overlay('Animation')
         p.native_clip_select.setCurrentIndex(1)
         self.app.processEvents()
