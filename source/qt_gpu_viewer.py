@@ -1840,9 +1840,35 @@ class QtGPUModelPanel(QWidget):
             self.anim_position = duration * value/1000.
             self._display_animation_frame()
 
+    def _converter_output(self):
+        """Stream real converter stdout/stderr into the always-visible browser."""
+        process = self.converter_process
+        if process is None:
+            return
+        chunk = bytes(process.readAllStandardOutput()).decode('utf-8', 'replace')
+        if not chunk:
+            return
+        self._converter_log = (getattr(self, '_converter_log', '') + chunk)[-8000:]
+        tail = self._converter_log.strip()[-1400:]
+        self.conversion_status.setText(tail)
+        self.conversion_status.verticalScrollBar().setValue(
+            self.conversion_status.verticalScrollBar().maximum())
+
+    def _converter_error(self, error):
+        process = self.converter_process
+        detail = process.errorString() if process is not None else str(error)
+        self.conversion_progress.hide()
+        self.conversion_status.setText('Converter process error: ' + detail)
+        self.anim_status.setText('Animation conversion failed: ' + detail)
+        self.play_native_button.setEnabled(True)
+
     def import_original(self):
-        """Explicit optional local converter; never downloads or bundles GPL code."""
+        """Convert selected CAF/DBA with the bundled independent executable."""
         from animation_converter_bridge import validate_conversion
+        if self.converter_process is not None and self.converter_process.state() != QProcess.NotRunning:
+            self.conversion_status.setText(
+                'A conversion is already running. Wait for it to finish before starting another.')
+            return
         selected = self.native_clip_select.currentData()
         ref = (self._native_references[selected]
                if isinstance(selected,int) and
@@ -1883,23 +1909,39 @@ class QtGPUModelPanel(QWidget):
             self.converter_process.setArguments(args)
             # PySide6 QProcess requires QString/str, not WindowsPath.
             self.converter_process.setWorkingDirectory(str(output))
+            self.converter_process.setProcessChannelMode(QProcess.MergedChannels)
             self._dba_conversion = is_dba
+            self._converter_log = ''
+            self._converter_output_folder = str(output)
+            self.converter_process.readyReadStandardOutput.connect(self._converter_output)
             self.converter_process.finished.connect(
                 lambda code, status: self._conversion_finished(code, status, output))
-            self.converter_process.errorOccurred.connect(
-                lambda _err: self.anim_status.setText(
-                    'Converter failed to start. Check its installation and permissions.'))
+            self.converter_process.errorOccurred.connect(self._converter_error)
+            self.play_native_button.setEnabled(False)
+            self.conversion_progress.show()
+            self.conversion_status.setText(
+                'Starting bundled converter…\\nSource: ' + str(source) +
+                '\\nOutput: ' + str(output))
             self.converter_process.start()
-            self.anim_status.setText(
-            'Converting packed animation with bundled Cryengine-Converter…')
+            self.anim_status.setText('Converting animation…')
+            QTimer.singleShot(0, self._update_animation_scrolling)
         except Exception as exc:
+            self.conversion_progress.hide()
+            self.play_native_button.setEnabled(True)
+            self.conversion_status.setText('Conversion setup failed: ' + str(exc))
             QMessageBox.warning(self, 'Animation conversion', str(exc))
 
     def _conversion_finished(self, code, status, folder):
+        self._converter_output()
+        self.conversion_progress.hide()
+        self.play_native_button.setEnabled(True)
         if code != 0 or status != QProcess.NormalExit:
-            self.anim_status.setText(
-                'External conversion failed (exit %d). Verify that CAF/DBA '
-                'tracks and matching skeleton are unpacked.' % code)
+            message = (
+                'Converter exited with code %d. The animation/skeleton may be '
+                'unsupported or dependencies may be in other imported PAKs.' % code)
+            self.anim_status.setText(message)
+            self.conversion_status.setText(
+                message + '\\n' + getattr(self, '_converter_log', '')[-2400:])
             return
         # A missing CAF may live inside a DBA. Never play the wrong packed
         # motion just because it was the first converted output.
@@ -1915,7 +1957,10 @@ class QtGPUModelPanel(QWidget):
                     self.select_clip(clip)
                     self.toggle_play() if not self.anim_playing else None
             except (OSError, ValueError) as exc:
-                self.anim_status.setText(str(exc)[:300])
+                self.anim_status.setText('Exact DBA clip unavailable: ' + str(exc)[:220])
+                self.conversion_status.setText(
+                    'Conversion finished but the selected motion was not found.\\n' +
+                    str(exc) + '\\n' + getattr(self, '_converter_log', '')[-900:])
             return
         paths = [path for path in Path(folder).rglob('*.glb')
                  if path.is_file() and not path.is_symlink()]
@@ -1923,7 +1968,12 @@ class QtGPUModelPanel(QWidget):
             self._load_animation_file(str(paths[0]))
             return
         self.anim_status.setText(
-            'Converted %d animated GLBs. Select the corresponding motion.' % len(paths))
+            'Converter produced %d GLB(s). Select the corresponding animation.' % len(paths))
+        if not paths:
+            self.conversion_status.setText(
+                'Conversion completed without any .glb output.\\n' +
+                getattr(self, '_converter_log', '')[-2000:])
+            return
         file, _ = QFileDialog.getOpenFileName(
             self, 'Select converted animation GLB', folder, 'Animated GLB (*.glb)')
         if file:
