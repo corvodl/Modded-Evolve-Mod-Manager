@@ -1926,7 +1926,7 @@ class QtWorkspaceEditor(QMainWindow):
         return source
 
     def export_blender_folder(self):
-        """Export the currently selected model folder (no source chooser)."""
+        """Export the currently selected model folder without freezing Qt."""
         try:
             source = self._current_model_source_folder()
         except (OSError, ValueError) as exc:
@@ -1937,36 +1937,45 @@ class QtWorkspaceEditor(QMainWindow):
             str(Path(self.manager.projects_path)))
         if not destination:
             return
-        try:
-            from qt_operation_progress import progress_dialog
-            meter = progress_dialog(
-                self, 'Export Blender folder', 'Scanning model exports…', 0)
-            try:
-                def progress(label, done, total):
-                    meter.setRange(0, max(1, total))
-                    meter.setValue(done)
-                    meter.setLabelText(label + ' • %d / %d' % (done, total))
-                    QApplication.processEvents()
-                results, skipped = export_extracted_folder(
-                    source, destination, projects_root=self.manager.projects_path,
-                    stage_root=self.manager.stage_path,
-                    texture_folder=self.texture_folder,
-                    progress=progress, cancelled=meter.wasCanceled)
-            finally:
-                meter.close()
-            textured = sum(bool(details['texture_count']) for _, _, _, details in results)
-            rigged = sum(bool(details.get('bone_count')) for _, _, _, details in results)
+        from qt_background_exports import begin_file_operation, exports_busy
+        if exports_busy(self):
+            QMessageBox.information(
+                self, 'Export in progress',
+                'Wait for the current export to finish, or cancel it.')
+            return
+        source, destination = Path(source), Path(destination)
+        projects, stage, textures = (
+            self.manager.projects_path, self.manager.stage_path,
+            self.texture_folder)
+
+        def worker(progress, cancelled):
+            return export_extracted_folder(
+                source, destination, projects_root=projects,
+                stage_root=stage, texture_folder=textures,
+                progress=progress, cancelled=cancelled)
+
+        def completed(result):
+            results, skipped = result
+            textured = sum(bool(d['texture_count']) for _, _, _, d in results)
+            rigged = sum(bool(d.get('bone_count')) for _, _, _, d in results)
             note = ('%d GLB exports (%d textured, %d rigged); %d skipped. '
-                    'CAF/DBA animation tracks are not exported.' %
+                    'CAF/DBA tracks not exported.' %
                     (len(results), textured, rigged, len(skipped)))
             if skipped:
-                (Path(destination) / 'Blender_export_report.txt').write_text(
+                (destination / 'Blender_export_report.txt').write_text(
                     '\n'.join(name + ': ' + reason for name, reason in skipped),
                     encoding='utf-8')
             self.status.setText(note)
             QMessageBox.information(self, 'Blender export', note)
-        except Exception as exc:
-            QMessageBox.critical(self, 'Folder export failed', str(exc))
+
+        def failed(error):
+            self.status.setText('Model folder export stopped: ' + error[:200])
+            QMessageBox.warning(self, 'Folder export stopped', error)
+
+        begin_file_operation(
+            self, 'Export Blender folder',
+            'Converting models from ' + source.name,
+            worker, on_success=completed, on_error=failed)
 
     def export_model(self):
         if self.mode != 'models' or not self.current:
@@ -2224,6 +2233,13 @@ class QtWorkspaceEditor(QMainWindow):
             'CryEngine converter, then imported as animated GLB files.')
 
     def closeEvent(self, event):
+        from qt_background_exports import exports_busy
+        if exports_busy(self):
+            QMessageBox.information(
+                self, 'Export in progress',
+                'Wait for the model export to finish or cancel it before closing.')
+            event.ignore()
+            return
         if not self._confirm_buffer():
             event.ignore()
             return
