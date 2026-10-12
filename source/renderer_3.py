@@ -76,9 +76,14 @@ void main() {
     float specular = has_specular == 1 ?
                      dot(texture2D(specular_map,texcoord).rgb,vec3(0.333333))
                      : 0.4;
-    vec3 lit = surface.rgb*(0.24+diffuse*0.76*illumination)
-              + vec3(specular*specular_intensity*gloss*illumination);
-    gl_FragColor = vec4(clamp(lit,0.0,1.0),alpha);
+    // Diffuse DDS colors are sRGB. Applying linear-space light directly to
+    // encoded RGB makes dark outfits artificially black. Decode/encode around
+    // diffuse lighting; unlit mode above still shows the untouched source DDS.
+    vec3 albedoLinear = pow(surface.rgb, vec3(2.2));
+    vec3 litLinear = albedoLinear*(0.24+diffuse*0.76*illumination)
+                   + vec3(specular*specular_intensity*gloss*illumination);
+    vec3 lit = pow(clamp(litLinear,0.0,1.0),vec3(1.0/2.2));
+    gl_FragColor = vec4(lit,alpha);
 }
 """
 
