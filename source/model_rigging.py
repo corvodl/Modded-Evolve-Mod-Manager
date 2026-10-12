@@ -266,30 +266,8 @@ def validate_skin_rest_pose(glb, tolerance=0.02):
     doc, binary = _unpack_glb(glb)
     instances = [(i, node) for i, node in enumerate(doc.get('nodes', ()))
                  if 'mesh' in node and 'skin' in node]
-    if len(instances) != 1:
-        raise ValueError('Skin rest validation needs one skinned mesh instance.')
-    mesh_node_id, instance = instances[0]
-    skin = doc['skins'][instance['skin']]
-    joints = [int(i) for i in skin['joints']]
-    matrices = _accessor(doc, binary, skin['inverseBindMatrices'])
-    if len(matrices) != len(joints):
-        raise ValueError('Bone inverse-bind count does not match the skin.')
-    inverse = matrices.reshape(-1,4,4).transpose(0,2,1)
-    active = set()
-    primitives = doc['meshes'][instance['mesh']]['primitives']
-    for primitive in primitives:
-        attrs = primitive['attributes']
-        for suffix in ('0','1'):
-            key, weight_key = 'JOINTS_'+suffix, 'WEIGHTS_'+suffix
-            if key not in attrs or weight_key not in attrs:
-                continue
-            ids = _accessor(doc,binary,attrs[key]).astype(np.int32)
-            weights = _accessor(doc,binary,attrs[weight_key]).astype(np.float64)
-            if ids.shape != weights.shape:
-                raise ValueError('Skin joint and weight accessor shapes differ.')
-            active.update(int(i) for i in ids[weights > 0.0001])
-    if not active or min(active) < 0 or max(active) >= len(joints):
-        raise ValueError('Rig has no valid weighted joints.')
+    if not instances:
+        raise ValueError('Skin rest validation needs a skinned mesh instance.')
     parents = {}
     for i,node in enumerate(doc['nodes']):
         for child in node.get('children',()):
@@ -310,17 +288,41 @@ def validate_skin_rest_pose(glb, tolerance=0.02):
         visiting.remove(i)
         world[i] = value
         return value
-    mesh_inverse = np.linalg.inv(matrix(mesh_node_id))
-    for local_joint in sorted(active):
-        node_id = joints[local_joint]
-        rest = mesh_inverse @ matrix(node_id) @ inverse[local_joint]
-        if not np.all(np.isfinite(rest)) or np.max(np.abs(rest-np.eye(4))) > tolerance:
-            name = doc['nodes'][node_id].get('name','joint '+str(local_joint))
-            raise ValueError(
-                'Incompatible character bind/rest pose for ' + name +
-                '; try the correct stage CDF, skin, and skeleton.')
-    return len(active)
 
+    weighted_total = 0
+    for mesh_node_id, instance in instances:
+        skin = doc['skins'][instance['skin']]
+        joints = [int(i) for i in skin['joints']]
+        matrices = _accessor(doc, binary, skin['inverseBindMatrices'])
+        if len(matrices) != len(joints):
+            raise ValueError('Bone inverse-bind count does not match the skin.')
+        inverse = matrices.reshape(-1,4,4).transpose(0,2,1)
+        active = set()
+        primitives = doc['meshes'][instance['mesh']]['primitives']
+        for primitive in primitives:
+            attrs = primitive['attributes']
+            for suffix in ('0','1'):
+                key, weight_key = 'JOINTS_'+suffix, 'WEIGHTS_'+suffix
+                if key not in attrs or weight_key not in attrs:
+                    continue
+                ids = _accessor(doc,binary,attrs[key]).astype(np.int32)
+                weights = _accessor(doc,binary,attrs[weight_key]).astype(np.float64)
+                if ids.shape != weights.shape:
+                    raise ValueError('Skin joint and weight accessor shapes differ.')
+                active.update(int(i) for i in ids[weights > 0.0001])
+        if not active or min(active) < 0 or max(active) >= len(joints):
+            raise ValueError('Rig has no valid weighted joints.')
+        mesh_inverse = np.linalg.inv(matrix(mesh_node_id))
+        for local_joint in sorted(active):
+            node_id = joints[local_joint]
+            rest = mesh_inverse @ matrix(node_id) @ inverse[local_joint]
+            if not np.all(np.isfinite(rest)) or np.max(np.abs(rest-np.eye(4))) > tolerance:
+                name = doc['nodes'][node_id].get('name','joint '+str(local_joint))
+                raise ValueError(
+                    'Incompatible character bind/rest pose for ' + name +
+                    '; try the correct stage CDF, skin, and skeleton.')
+        weighted_total += len(active)
+    return weighted_total
 
 def skin_companion_path(source):
     """Use the corresponding native .skin file; never guess alternate skeletons."""
@@ -462,3 +464,161 @@ def _extra_influences(doc, add_view, primitives, ids, weights):
         doc['accessors'].append(acc)
         for primitive in primitives:
             primitive['attributes'][name] = position
+
+
+
+def skin_glb_composite_separate(glb, rig_parts, *, part_names=None):
+    """Export incompatible CDF skin bind poses as *independent* Blender armatures.
+
+    Each source skin has its own verified rest hierarchy and inverse bindings.
+    glTF allows one skin per mesh *node*, not per mesh primitive, so the
+    composite is split into contiguous source parts. The original material
+    indices, UVs and texture payloads are retained. This is deliberately not
+    presented as one retargetable skeleton or as a synchronized CAF animation.
+    """
+    from model_textured_export import _unpack_glb, _pack_glb
+    from model_animation import _accessor
+    doc, binary = _unpack_glb(glb)
+    if doc.get('skins') or len(doc.get('meshes', [])) != 1:
+        raise ValueError('Expected one unskinned composite GLB.')
+    source_primitives = doc['meshes'][0].get('primitives', ())
+    if not source_primitives or not rig_parts or len(rig_parts) > 32:
+        raise ValueError('Missing or excessive native render parts.')
+    vertex_attrs = source_primitives[0]['attributes']
+    if any(p['attributes'] != vertex_attrs for p in source_primitives):
+        raise ValueError('Composite attributes differ between material subsets.')
+    if 'POSITION' not in vertex_attrs:
+        raise ValueError('Composite lacks vertex positions.')
+    position = _accessor(doc, binary, vertex_attrs['POSITION']).astype('<f4')
+    if position.shape[1] != 3:
+        raise ValueError('Composite POSITION must be a float3 accessor.')
+    uvs = (_accessor(doc, binary, vertex_attrs['TEXCOORD_0']).astype('<f4')
+           if 'TEXCOORD_0' in vertex_attrs else None)
+    if uvs is not None and (uvs.shape != (len(position),2)):
+        raise ValueError('Composite UV count differs from vertex count.')
+    if len(position) != sum(int(part[2]) for part in rig_parts):
+        raise ValueError('Source parts do not match composite vertex count.')
+    label_names = tuple(part_names or ())
+    if label_names and len(label_names) != len(rig_parts):
+        raise ValueError('Part name count must match source skins.')
+    original_node = [node for node in doc.get('nodes', ()) if node.get('mesh') == 0]
+    if len(original_node) != 1 or 'skin' in original_node[0]:
+        raise ValueError('Expected one originally unskinned mesh node.')
+    if any(key in original_node[0] for key in ('matrix','translation','rotation','scale')):
+        raise ValueError('Cannot split transformed composite without baking its node transform.')
+    original_node[0].pop('mesh')
+    doc['meshes'] = []
+    doc['skins'] = []
+    first = 0
+    attributed = set()
+
+    def add_view(payload, target=None):
+        binary.extend(b'\x00' * (-len(binary) % 4))
+        offset = len(binary)
+        binary.extend(payload)
+        view = {'buffer':0,'byteOffset':offset,'byteLength':len(payload)}
+        if target is not None:
+            view['target'] = target
+        doc['bufferViews'].append(view)
+        return len(doc['bufferViews'])-1
+
+    def add_accessor(view, kind, count, component, **kwargs):
+        accession = {'bufferView':view,'componentType':component,
+                     'count':int(count),'type':kind}
+        accession.update(kwargs)
+        doc['accessors'].append(accession)
+        return len(doc['accessors'])-1
+
+    scene = doc['scenes'][doc.get('scene',0)]['nodes']
+    for part_index,(render_raw,skin_raw,count) in enumerate(rig_parts):
+        count = int(count)
+        if count <= 0 or first+count > len(position):
+            raise ValueError('Invalid CDF part vertex interval.')
+        part_label = (str(label_names[part_index]) if label_names else
+                      'Part_%d' % (part_index+1))
+        names, parents, world, inverse = parse_compiled_bones(skin_raw)
+        ids, weights, subsets = remap_skin_weights(render_raw,count,len(names))
+        local_positions = np.ascontiguousarray(position[first:first+count],dtype='<f4')
+        pos_view = add_view(local_positions.tobytes(),34962)
+        bounds_lo = [float(x) for x in local_positions.min(axis=0)]
+        bounds_hi = [float(x) for x in local_positions.max(axis=0)]
+        attributes = {'POSITION':add_accessor(
+            pos_view,'VEC3',count,5126,min=bounds_lo,max=bounds_hi)}
+        if uvs is not None:
+            uv_view = add_view(np.ascontiguousarray(
+                uvs[first:first+count],dtype='<f4').tobytes(),34962)
+            attributes['TEXCOORD_0'] = add_accessor(uv_view,'VEC2',count,5126)
+        j0 = add_view(ids[:,:4].astype('<u2').tobytes(),34962)
+        w0 = add_view(weights[:,:4].tobytes(),34962)
+        attributes['JOINTS_0'] = add_accessor(j0,'VEC4',count,5123)
+        attributes['WEIGHTS_0'] = add_accessor(w0,'VEC4',count,5121,normalized=True)
+        if ids.shape[1] > 4:
+            j1 = add_view(ids[:,4:8].astype('<u2').tobytes(),34962)
+            w1 = add_view(weights[:,4:8].tobytes(),34962)
+            attributes['JOINTS_1'] = add_accessor(j1,'VEC4',count,5123)
+            attributes['WEIGHTS_1'] = add_accessor(
+                w1,'VEC4',count,5121,normalized=True)
+
+        primitives = []
+        for primitive_id,primitive in enumerate(source_primitives):
+            indices = _accessor(doc,binary,primitive['indices']).reshape(-1)
+            if len(indices) == 0:
+                continue
+            min_idx, max_idx = int(indices.min()),int(indices.max())
+            if min_idx < first or max_idx >= first+count:
+                continue
+            if primitive_id in attributed:
+                raise ValueError('Composite primitive assigned to multiple parts.')
+            attributed.add(primitive_id)
+            local_idx = np.ascontiguousarray(indices.astype('<u4')-first)
+            view = add_view(local_idx.tobytes(),34963)
+            idx_acc = add_accessor(view,'SCALAR',len(local_idx),5125,
+                                   min=[int(local_idx.min())],
+                                   max=[int(local_idx.max())])
+            primitives.append({'attributes':dict(attributes),
+                               'indices':idx_acc,
+                               'material':primitive['material'],
+                               'mode':primitive.get('mode',4)})
+        if not primitives:
+            raise ValueError('CDF part has no material subset triangles.')
+        mesh_id = len(doc['meshes'])
+        doc['meshes'].append({'name':part_label, 'primitives':primitives})
+        node_id = len(doc['nodes'])
+        doc['nodes'].append({'name':part_label+'_Mesh',
+                             'mesh':mesh_id,'skin':len(doc['skins'])})
+        scene.append(node_id)
+        first_joint = len(doc['nodes'])
+        bones = [{'name':part_label+' :: '+name,'children':[]} for name in names]
+        for index,parent in enumerate(parents):
+            local = world[index] if parent < 0 else np.linalg.inv(world[parent]) @ world[index]
+            matrix = BASIS @ local @ INVERSE_BASIS
+            bones[index]['matrix'] = [float(x) for x in matrix.reshape(-1,order='F')]
+            if parent >= 0:
+                bones[parent]['children'].append(first_joint+index)
+        for bone in bones:
+            if not bone['children']:
+                bone.pop('children')
+        doc['nodes'].extend(bones)
+        root = first_joint+parents.index(-1)
+        scene.append(root)
+        bind = np.array(
+            [(BASIS@m@INVERSE_BASIS).reshape(-1,order='F') for m in inverse],
+            dtype='<f4')
+        view = add_view(bind.tobytes())
+        mat_acc = add_accessor(view,'MAT4',len(names),5126)
+        doc['skins'].append({
+            'name':part_label+'_Armature',
+            'joints':[first_joint+i for i in range(len(names))],
+            'inverseBindMatrices':mat_acc,'skeleton':root})
+        first += count
+    if len(attributed) != len(source_primitives):
+        raise ValueError('Some composite material primitives span multiple native skins.')
+    doc.setdefault('extras',{})['rigging'] = (
+        'Independent verified native armatures per CDF part; '
+        'pose each in Blender. Shared CAF retargeting is not included.')
+    output = _pack_glb(doc,binary)
+    weighted = validate_skin_rest_pose(output)
+    return output, {'bone_count':sum(len(s['joints']) for s in doc['skins']),
+                    'part_count':len(rig_parts),
+                    'armatures':len(doc['skins']),
+                    'verified_weighted_bones':weighted}
