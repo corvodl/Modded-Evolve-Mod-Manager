@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: native-event-companion-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   native-aot:
     runs-on: windows-2022
