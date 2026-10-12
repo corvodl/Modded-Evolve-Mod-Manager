@@ -65,14 +65,28 @@ def look_at_matrix(eye, center):
     return np.ascontiguousarray(matrix.T,dtype=np.float32)
 
 
-def prepare_scene(project, cancel, progress=None):
+def prepare_scene(project, cancel, progress=None, *, game=None, stage=None, cache_root=None):
     """CPU-only preparation. Return shared geometry and explicit diagnostics."""
     from level_asset_mount import mount_map_index, resolve_scoped
     from model_preview import read_preview_mesh
     from gpu_model_preview import prepare_geometry
     from material_preview import load_preview_materials
 
-    index, details = mount_map_index(project.workspace, project.level_name)
+    dependency = {}
+    if game is not None and stage is not None and cache_root is not None:
+        from level_dependency_loader import ensure_map_archives
+        try:
+            dependency = ensure_map_archives(
+                project, game, stage, cache_root, cancel=cancel,
+                progress=(lambda label, current, total:
+                          progress(label, current, total)) if progress else None)
+        except (OSError, ValueError, RuntimeError) as exc:
+            dependency = {"errors": ["Dependency import: " + str(exc)[:200]]}
+    if cancel.is_set():
+        return None
+    index, details = mount_map_index(project.workspace, project.level_name,
+                                     cache_root=cache_root)
+    details["dependencies"] = dependency
     material_names = sorted(
         (name for name in index if name.endswith(".mtl")), key=str.casefold)
     details["materials"] = tuple(material_names[:20000])
@@ -88,11 +102,11 @@ def prepare_scene(project, cancel, progress=None):
             progress(i, total)
         extension = PurePosixPath(obj.model).suffix.casefold()
         if extension not in SUPPORTED_STATIC:
-            issues["unsupported geometry format " + extension] += 1
+            issues["unsupported geometry: " + obj.model + " (" + extension + ")"] += 1
             continue
         record, status = resolve_scoped(index, obj.model, project.workspace)
         if record is None:
-            issues["asset " + status] += 1
+            issues["model " + status + ": " + obj.model] += 1
             continue
         try:
             path = Path(record["file"])
@@ -125,7 +139,7 @@ def prepare_scene(project, cancel, progress=None):
                 # decode cache merely because decoding was attempted.
                 if not any(a.model_file == cache_key for a in assets.values()):
                     models.pop(cache_key,None)
-                issues["bounded memory budget (not rendered)"] += 1
+                issues["deferred by memory budget: " + obj.model] += 1
                 continue
             size += cost
             lower = tuple(float(v) for v in geometry.vertices.min(axis=0))
@@ -133,7 +147,7 @@ def prepare_scene(project, cancel, progress=None):
             assets[key] = RenderAsset(mesh, geometry, materials, cost, cache_key,
                                       (lower, upper))
         except (OSError, ValueError, TypeError) as exc:
-            issues[str(exc)[:130]] += 1
+            issues[obj.model + ": " + str(exc)[:130]] += 1
     if progress:
         progress(total, total)
     return assets, dict(issues), details
@@ -146,7 +160,7 @@ class LevelGLViewport(QOpenGLWidget):
     statusChanged = Signal(str)
     materialsReady = Signal(object)
 
-    def __init__(self, project, parent=None):
+    def __init__(self, project, parent=None, *, game=None, stage=None, cache_root=None):
         super().__init__(parent)
         fmt = QSurfaceFormat()
         fmt.setRenderableType(QSurfaceFormat.OpenGL)
@@ -157,6 +171,9 @@ class LevelGLViewport(QOpenGLWidget):
         self.setMinimumSize(300, 260)
         self.setFocusPolicy(Qt.StrongFocus)
         self.project = project
+        self.game_root = game
+        self.stage_root = stage
+        self.cache_root = cache_root
         self.mode = "select"
         self.active = None
         self.yaw = .6
@@ -180,6 +197,7 @@ class LevelGLViewport(QOpenGLWidget):
             self._lookup.setdefault(guid, (item.layer, item.index))
         self._visible = ()
         self._issues = {}
+        self._dependency_report = {}
         self.frame_all()
         self._poll = QTimer(self)
         self._poll.timeout.connect(self._receive)
@@ -188,7 +206,8 @@ class LevelGLViewport(QOpenGLWidget):
 
         def job():
             try:
-                value = prepare_scene(project, self._cancel)
+                value = prepare_scene(project, self._cancel, game=self.game_root,
+                                      stage=self.stage_root, cache_root=self.cache_root)
             except Exception as exc:
                 value = (None, {"scene initialization: " + str(exc)[:160]: 1}, {})
             if not self._cancel.is_set():
@@ -213,7 +232,8 @@ class LevelGLViewport(QOpenGLWidget):
         project = self.project
         def job():
             try:
-                result = prepare_scene(project, cancel)
+                result = prepare_scene(project, cancel, game=self.game_root,
+                                       stage=self.stage_root, cache_root=self.cache_root)
             except Exception as exc:
                 result = ({}, {"scene initialization: " + str(exc)[:160]: 1}, {})
             if not cancel.is_set():
@@ -232,6 +252,7 @@ class LevelGLViewport(QOpenGLWidget):
             return
         assets, issues, details = result
         self._issues = issues
+        self._dependency_report = details.get('dependencies', {})
         if details.get("materials"):
             self.materialsReady.emit(details["materials"])
         if self._textures and self.isValid():
