@@ -274,6 +274,12 @@ def resolve_material_texture(index, reference, material_relative, *, preferred_w
                                    preferred_workspace=preferred_workspace)
             if state != 'missing':
                 return hits, state
+        # CryEngine materials can also explicitly address a genuine global
+        # virtual textures/ path. It is safe to honor that exact path AFTER
+        # character-local and category-shared candidates have been checked.
+        if virtual.casefold().startswith('textures/'):
+            return _resolve(index, virtual,
+                            preferred_workspace=preferred_workspace)
         return [], 'missing'
     return _resolve(index, virtual, preferred_workspace=preferred_workspace)
 
