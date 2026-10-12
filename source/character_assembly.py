@@ -100,7 +100,7 @@ def combine_meshes(items):
     vertices, triangles, uvs, subsets = [], [], [], []
     textures, names, issues = [], [], []
     normals, speculars, opacities, alpha_modes = [], [], [], []
-    transforms, sources, references = [], [], []
+    transforms, sources, references, uv_available = [], [], [], []
     included = []
     for name, mesh, materials in items:
         if len(vertices) + len(mesh.vertices) > MAX_VERTICES or len(triangles) + len(mesh.triangles) > MAX_TRIANGLES:
@@ -113,11 +113,17 @@ def combine_meshes(items):
         slots = sorted({slot for _, _, slot in source_subsets})
         if len(textures) + len(slots) > 256:
             raise ValueError('Combined character exceeds 256 GPU material slots.')
+        has_uv = len(mesh.uvs) == len(mesh.vertices)
+        if not has_uv:
+            issues.append(
+                name + ': render mesh has no decoded UV stream; source textures '
+                'cannot be mapped, using untextured shading for this part')
         remap = {}
         for slot in slots:
             remap[slot] = len(textures)
-            tex = (materials.textures[slot] if materials and
+            tex = (materials.textures[slot] if has_uv and materials and
                    slot < len(materials.textures) else None)
+            uv_available.append(has_uv)
             label = (materials.names[slot] if materials and
                      slot < len(materials.names) else 'unresolved slot ' + str(slot))
             textures.append(tex)
@@ -132,13 +138,13 @@ def combine_meshes(items):
             # Preserve per-part material settings when combining CDF skins.
             # Dropping alpha/material mode made opaque character body geometry
             # appear transparent when its diffuse DDS carried auxiliary alpha.
-            normals.append(materials.normal_maps[slot] if materials and
+            normals.append(materials.normal_maps[slot] if has_uv and materials and
                            slot < len(materials.normal_maps) else None)
-            speculars.append(materials.specular_maps[slot] if materials and
+            speculars.append(materials.specular_maps[slot] if has_uv and materials and
                              slot < len(materials.specular_maps) else None)
             opacities.append(materials.opacity[slot] if materials and
                              slot < len(materials.opacity) else 1.0)
-            alpha_modes.append(materials.alpha_modes[slot] if materials and
+            alpha_modes.append(materials.alpha_modes[slot] if has_uv and materials and
                                slot < len(materials.alpha_modes) else False)
             names.append(name + ': ' + label)
         vertices.extend(mesh.vertices)
@@ -161,7 +167,7 @@ def combine_meshes(items):
                                 'CDF character assembly', tuple(issues),
                                 tuple(normals), tuple(speculars),
                                 tuple(opacities), tuple(alpha_modes), tuple(transforms),
-                                tuple(sources), tuple(references))
+                                tuple(sources), tuple(references), tuple(uv_available))
     return mesh, material
 
 
