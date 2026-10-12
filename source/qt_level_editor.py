@@ -349,9 +349,10 @@ class UnrealStyleLevelEditor(QMainWindow):
         horizontal.addWidget(left)
 
         from app_runtime import DATA_HOME
-        manager_game = getattr(parent, "_find_game_root", None)
+        manager = self.parent()
+        manager_game = getattr(manager, "_find_game_root", None)
         game_root = manager_game() if callable(manager_game) else None
-        stage_root = getattr(parent, "stage_path", None)
+        stage_root = getattr(manager, "stage_path", None)
         self.viewport=LevelGLViewport(
             self.project, game=game_root, stage=stage_root,
             cache_root=DATA_HOME / "LevelDependencyCache")
