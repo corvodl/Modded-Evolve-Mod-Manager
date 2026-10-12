@@ -36,6 +36,9 @@ class PreviewMaterials:
     alpha_modes: tuple = ()  # True only where material explicitly uses texture alpha
 
     uv_transforms: tuple = ()
+    diffuse_sources: tuple = ()  # exact resolved (virtual path, PAK), per material slot
+    diffuse_references: tuple = ()  # original MTL File attr, even if missing
+    uv_available: tuple = ()  # source render mesh has decoded UVs for this slot
     alpha_cutoffs: tuple = ()  # Explicit CryEngine AlphaTest thresholds
 
     @property
@@ -351,7 +354,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         return _decode_texture(hit, index=index)
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
-    transforms = []
+    transforms = []; sources = []; references = []
     for item in subs:
         name = item.get('Name') or 'unnamed'
         names.append(name)
@@ -390,25 +393,67 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 issues.append(name+': optional material map not loaded: '+str(error))
         diffuse = next((child.get('File') or child.get('file') for child in item.findall('./Textures/Texture')
                         if (child.get('Map') or child.get('map') or '').casefold() == 'diffuse'), None)
+        references.append(diffuse or '')
         if not diffuse or item.get('Shader','').casefold()=='nodraw':
+            if not diffuse and item.get('Shader','').casefold() != 'nodraw':
+                issues.append(name + ': material has no diffuse map; '
+                              'rendering this slot without a texture')
             result.append(None)
+            sources.append(None)
             continue
         try:
             found = find_texture(diffuse)
             if found is None:
-                issues.append(name + ': DDS missing for ' + diffuse)
+                from multi_pak_assets import _candidates
+                cooked = tuple(p for p in _candidates(diffuse)
+                               if p.casefold().endswith(('.dds', '.dds.0')))
+                issues.append(
+                    name + ': DDS missing for ' + diffuse
+                    + ('; expected cooked ' + ', '.join(cooked[:2]) if cooked else ''))
                 result.append(None)
+                sources.append(None)
                 continue
-            result.append(_decode_texture(found, index=index))
+            image = _decode_texture(found, index=index)
+            result.append(image)
+            sources.append((
+                str(found.get('relative') or diffuse),
+                str(found.get('archive') or 'extracted workspace')))
         except (ValueError, OSError) as error:
             issues.append(name + ': ' + str(error))
             result.append(None)
+            sources.append(None)
     if not any(x is not None for x in result):
         detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
-                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),tuple(transforms),tuple(cutoffs))
+                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
+                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs))
+
+
+
+def diffuse_source_stats(materials, slot):
+    """Character texture source brightness, independent of any 3D lighting.
+
+    Decoded DDS success does not establish correct UV mapping or that a
+    submaterial is visually bright. Sample a bounded thumbnail, not the
+    potentially enormous original. Returns None if this slot has no DDS.
+    """
+    if materials is None or not (0 <= slot < len(materials.textures)):
+        return None
+    image = materials.textures[slot]
+    if image is None:
+        return None
+    from PIL import Image
+    sample = image.convert('RGB')
+    sample.thumbnail((32, 32), Image.Resampling.BILINEAR)
+    pixels = list(sample.getdata())
+    if not pixels:
+        return None
+    average = sum((.2126*r+.7152*g+.0722*b) for r,g,b in pixels)/len(pixels)
+    near_black = sum(max(r,g,b) < 32 for r,g,b in pixels) / len(pixels)
+    return round(average, 1), round(near_black*100)
+
 
 
 def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevation=.24, zoom=1., *, pan=(0.,0.), cancel=None):

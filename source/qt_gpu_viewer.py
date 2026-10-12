@@ -68,6 +68,15 @@ class _CompactAnimationList(QListWidget):
         self.setMaximumHeight(152)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setSpacing(2)
+        self.setStyleSheet(
+            'QListWidget#referencedNativeAnimations {background:#22242b;'
+            'border:1px solid #3b3e4b;border-radius:8px;padding:4px;}'
+            'QListWidget#referencedNativeAnimations::item {color:#e5e6ed;'
+            'padding:6px 8px;border-radius:5px;}'
+            'QListWidget#referencedNativeAnimations::item:selected {'
+            'background:#433b64;color:#fff;}'
+            'QListWidget#referencedNativeAnimations::item:hover {background:#343340;}')
         self.setTextElideMode(Qt.ElideMiddle)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
         self.currentRowChanged.connect(self.currentIndexChanged.emit)
@@ -174,6 +183,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.translucent_slots = set()
         self._batch_sort_cache = None
         self.enhanced_materials = True
+        self.unlit_diffuse = False
         self._renderer3 = None
         self.rotation = [-30.0, 14.0]
         self.zoom = 1.0
@@ -187,6 +197,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.gl_error = None
         self.gpu_upload_ms = None
         self.light_strength = 1.0
+        self.studio_fill = 0.35
         self.background_mode = 'Studio Grey'
         self.visible_material_slot = None
         self.projection_mode = 'Orthographic'
@@ -350,12 +361,16 @@ class QtGLModelCanvas(QOpenGLWidget):
                         im.getchannel('A').getextrema()[0] < 255):
                     self.translucent_slots.add(index)
                 mode = 'RGBA' if rgba else 'RGB'
-                sample = im.convert(mode)  # Same DDS row/UV convention as CPU and GLB export.
+                # Pillow's first DDS row is top-left while OpenGL expects
+                # its first upload row at v=0 (bottom-left). The CPU UV preview
+                # already indexes the top row at v=0; reverse only GPU bytes.
+                from gl_texture_upload import gl_upload_pixels
+                pixels = gl_upload_pixels(im, mode)
                 format_id = GL_RGBA if rgba else GL_RGB
                 texid = int(glGenTextures(1))
                 glBindTexture(GL_TEXTURE_2D,texid)
-                glTexImage2D(GL_TEXTURE_2D,0,format_id,sample.width,sample.height,0,
-                             format_id,GL_UNSIGNED_BYTE,sample.tobytes())
+                glTexImage2D(GL_TEXTURE_2D,0,format_id,im.width,im.height,0,
+                             format_id,GL_UNSIGNED_BYTE,pixels)
                 for param in (GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER):
                     glTexParameteri(GL_TEXTURE_2D,param,GL_LINEAR)
                 for param in (GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T):
@@ -546,14 +561,21 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 illumination=strength,diffuse=bool(tex),
                                 normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
                                 specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
-                                alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])))
+                                alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
+                                unlit=self.unlit_diffuse,fill=self.studio_fill)
                 if tex:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D,tex)
                 else:
                     glDisable(GL_TEXTURE_2D)
-                glColor3f(0.84,0.82,0.82)
-                glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[0.81,0.8,0.82,alpha])
+                # For the legacy GL fallback an unlit view shows the actual
+                # diffuse DDS rather than applying two darkening multipliers.
+                if not shader and self.unlit_diffuse:
+                    glDisable(GL_LIGHTING)
+                elif not shader:
+                    glEnable(GL_LIGHTING)
+                glColor3f(1.0,1.0,1.0)
+                glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[1.0,1.0,1.0,alpha])
                 spec=self.specular_intensity
                 glMaterialfv(GL_FRONT_AND_BACK,GL_SPECULAR,[spec,spec,spec,1.0])
                 glMaterialf(GL_FRONT_AND_BACK,GL_SHININESS,38.0)
@@ -566,6 +588,8 @@ class QtGLModelCanvas(QOpenGLWidget):
             glMatrixMode(GL_TEXTURE)
             glLoadIdentity()
             glMatrixMode(GL_MODELVIEW)
+            if self.unlit_diffuse and not shader:
+                glEnable(GL_LIGHTING)
             if shader:
                 shader.unbind()
                 for unit in (2,1,0):
@@ -851,6 +875,38 @@ class QtGPUModelPanel(QWidget):
         self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
         self.solid_geometry.toggled.connect(lambda checked: (setattr(self.canvas, 'force_opaque_preview', checked), self.canvas.update()))
         self._overlay_sections['Materials'][1].addWidget(self.solid_geometry)
+        self.unlit_diffuse_checkbox=QCheckBox('Unlit diffuse (inspect dark textures)')
+        self.unlit_diffuse_checkbox.setObjectName('modelUnlitDiffuseDiagnostic')
+        self.unlit_diffuse_checkbox.setToolTip(
+            'Show the original diffuse texture pixels without lighting, normal maps, '
+            'or specular shading. A black surface here may have a genuinely dark '
+            'DDS or an unresolved material slot.')
+        self.unlit_diffuse_checkbox.toggled.connect(
+            lambda checked:(setattr(self.canvas,'unlit_diffuse',checked),
+                            self.canvas.update()))
+        self._overlay_sections['Materials'][1].addWidget(self.unlit_diffuse_checkbox)
+        ambient_row = QHBoxLayout()
+        ambient_row.addWidget(QLabel('Studio fill'))
+        self.studio_fill_slider = QSlider(Qt.Horizontal)
+        self.studio_fill_slider.setObjectName('modelStudioFillLighting')
+        self.studio_fill_slider.setRange(0, 100)
+        self.studio_fill_slider.setValue(35)
+        self.studio_fill_slider.setToolTip(
+            'Add a soft secondary light for dark materials. Does not alter source textures.')
+        self.studio_fill_slider.valueChanged.connect(
+            lambda value: (setattr(self.canvas, 'studio_fill', value/100.),
+                           self.canvas.update()))
+        ambient_row.addWidget(self.studio_fill_slider, 1)
+        self._overlay_sections['Materials'][1].addLayout(ambient_row)
+        self.diffuse_source_info = QLabel('Diffuse DDS diagnostics will appear here.')
+        self.diffuse_source_info.setObjectName('modelDiffuseSourceInfo')
+        self.diffuse_source_info.setWordWrap(True)
+        self.diffuse_source_info.setStyleSheet(
+            'QLabel#modelDiffuseSourceInfo {color:#bbb9c9;'
+            'background:#24252e;border-radius:6px;padding:8px;}')
+        self._overlay_sections['Materials'][1].addWidget(self.diffuse_source_info)
+        self.part_select.currentIndexChanged.connect(
+            lambda _index: self._update_source_brightness())
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = _CompactDiagnosticText(self)
@@ -858,7 +914,8 @@ class QtGPUModelPanel(QWidget):
         self._overlay_sections['Animation'][1].addWidget(self.native_info)
         # Keep the selected clip's status immediately under its browser.
         self._overlay_sections['Animation'][1].removeWidget(self.native_info)
-        self.animation_sections['Game Animation Browser'][1].layout().addWidget(self.native_info)
+        self.native_info.setMaximumHeight(84)
+        self.animation_sections['Animations'][1].layout().addWidget(self.native_info)
         foot=QLabel('Renderer 3.0 approximates CryEngine materials; check optional maps in the texture diagnostics. '
                     'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
@@ -980,7 +1037,8 @@ class QtGPUModelPanel(QWidget):
     def _position_overlay(self):
         if not hasattr(self, '_overlay') or self._overlay is None:
             return
-        width = max(180, min(470, self.canvas.width() - 70))
+        width = max(190, min(420 if self._active_overlay == 'Animation' else 470,
+                             self.canvas.width() - 70))
         page = self._overlay_sections.get(self._active_overlay)
         wanted = (page[0].sizeHint().height() + 35) if page else 200
         height = max(80, min(wanted, 415 if self._active_overlay == 'Animation' else 500, self.canvas.height() - 55))
@@ -992,7 +1050,52 @@ class QtGPUModelPanel(QWidget):
             self._position_overlay()
         return super().eventFilter(obj, event)
 
+    def _update_source_brightness(self):
+        from material_preview import diffuse_source_stats
+        materials = self.canvas.materials
+        slots = (sorted({part[2] for part in self.canvas.mesh.subsets})
+                 if self.canvas.mesh.subsets else [0])
+        selected = self.part_select.currentData()
+        if selected is not None:
+            slots = [selected]
+        rows = [(slot, diffuse_source_stats(materials, slot)) for slot in slots]
+        found = [(slot, data) for slot, data in rows if data is not None]
+        if not found:
+            message = 'No decoded diffuse DDS for the selected material slot(s).'
+        elif selected is not None:
+            average, black = found[0][1]
+            message = ('DDS source brightness: %.0f/255 average; '
+                       '%d%% of sampled pixels near black.' % (average, black))
+            if black > 65:
+                message += ' The source texture itself is dark; try Unlit diffuse.'
+            else:
+                message += ' Dark shading may come from normals, UVs or lighting.'
+        else:
+            dark = sum(data[1] > 65 for _,data in found)
+            message = ('%d/%d used slots have decoded diffuse DDS; %d are '
+                       'mostly dark in the source image.' %
+                       (len(found),len(slots),dark))
+        if selected is not None and materials:
+            if (selected < len(materials.uv_available) and
+                    not materials.uv_available[selected]):
+                message += ('\nThis CDF part has no decoded UV coordinates; '
+                            'the texture cannot be mapped. Untextured shading is used.')
+            source = (materials.diffuse_sources[selected]
+                      if selected < len(materials.diffuse_sources) else None)
+            ref = (materials.diffuse_references[selected]
+                   if selected < len(materials.diffuse_references) else '')
+            if source:
+                message += ('\nActual source: ' + source[0] +
+                            '  ·  PAK: ' + source[1])
+            elif ref:
+                message += ('\nMissing cooked DDS for ' + ref +
+                            '. Check the owning texture PAK in Asset Library.')
+            else:
+                message += '\nNo Diffuse map declared in the MTL for this slot.'
+        self.diffuse_source_info.setText(message)
+
     def _populate_material_slots(self,mesh,materials):
+        from material_preview import diffuse_source_stats
         slots=sorted({part[2] for part in mesh.subsets}) if mesh.subsets else [0]
         self.part_select.blockSignals(True)
         self.part_select.clear()
@@ -1001,8 +1104,27 @@ class QtGPUModelPanel(QWidget):
             title=(materials.names[slot] if materials and slot<len(materials.names)
                    else 'Material slot %d'%slot)
             self.part_select.addItem('%d — %s'%(slot,title[:75]),slot)
+            data = diffuse_source_stats(materials,slot)
+            source = (materials.diffuse_sources[slot] if materials and
+                      slot < len(materials.diffuse_sources) else None)
+            expected = (materials.diffuse_references[slot] if materials and
+                        slot < len(materials.diffuse_references) else '')
+            tip = ('No decoded diffuse DDS for this slot.'
+                   if data is None else
+                   ('Decoded DDS mean brightness %.0f/255; '
+                    '%d%% near-black source pixels' % data))
+            if source:
+                tip += '\nLoaded: %s\nPAK: %s' % source
+            elif expected:
+                tip += '\nMTL wants ' + expected
+            if (materials and slot < len(materials.uv_available) and
+                    not materials.uv_available[slot]):
+                tip += '\nNO UV STREAM — original DDS cannot map to this part'
+            self.part_select.setItemData(self.part_select.count()-1,tip,Qt.ToolTipRole)
         self.part_select.blockSignals(False)
         self.canvas.set_visible_material_slot(None)
+        if hasattr(self,'diffuse_source_info'):
+            self._update_source_brightness()
 
     def show_uv_layout(self):
         from io import BytesIO
@@ -1101,6 +1223,14 @@ class QtGPUModelPanel(QWidget):
             heading.setCheckable(True)
             heading.setChecked(opened)
             heading.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            heading.setMinimumHeight(31)
+            heading.setStyleSheet(
+                'QToolButton {text-align:left; padding:7px 10px;'
+                'background:#272932;color:#f0edf5;border:1px solid #3a3c48;'
+                'border-radius:7px;font-weight:600;}'
+                'QToolButton:checked {background:#302d43;'
+                'border:1px solid #635678;}'
+                'QToolButton:hover {background:#393543;}')
             body = QWidget(self)
             inner = QVBoxLayout(body)
             inner.setSizeConstraint(QLayout.SetMinAndMaxSize)
@@ -1116,9 +1246,9 @@ class QtGPUModelPanel(QWidget):
             heading.toggled.connect(toggle)
             self.animation_sections[title] = (heading, body)
             return inner
-        catalog_layout = disclosure('Game Animation Browser', True)
-        playback_layout = disclosure('Playback Controls', False)
-        playlist_layout = disclosure('Clips & Playlists', False)
+        catalog_layout = disclosure('Animations', True)
+        playback_layout = disclosure('Playback', False)
+        playlist_layout = disclosure('Playlists & markers', False)
         import_row = QVBoxLayout()
         import_button = QPushButton('Load Animation GLB…')
         import_button.clicked.connect(self.load_animation)
@@ -1137,10 +1267,10 @@ class QtGPUModelPanel(QWidget):
         line.addWidget(self.play_button)
         playback_layout.addLayout(line)
         native_header = QVBoxLayout()
-        native_header.addWidget(QLabel('Game animations'))
+        native_header.setSpacing(5)
         self.native_search = QLineEdit()
         self.native_search.setObjectName('nativeAnimationSearch')
-        self.native_search.setPlaceholderText('Find an animation by name or file path…')
+        self.native_search.setPlaceholderText('Search game animations…')
         self.native_search.setClearButtonEnabled(True)
         self.native_search.textChanged.connect(self._filter_native_catalog)
         native_header.addWidget(self.native_search, 1)
@@ -1149,10 +1279,19 @@ class QtGPUModelPanel(QWidget):
         self.native_refresh_button.setToolTip(
             'Re-read the current Asset Library and update this model\'s animation references.')
         self.native_refresh_button.clicked.connect(self.refresh_native_catalog)
-        native_header.addWidget(self.native_refresh_button)
+        self.native_refresh_button.setText('↻')
+        self.native_refresh_button.setFixedWidth(35)
+        self.native_refresh_button.setToolTip('Refresh animations from the Asset Library')
+        search_row=QHBoxLayout()
+        search_row.setSpacing(5)
+        native_header.removeWidget(self.native_search)
+        search_row.addWidget(self.native_search,1)
+        search_row.addWidget(self.native_refresh_button)
+        native_header.addLayout(search_row)
         catalog_layout.addLayout(native_header)
 
-        native_filters = QVBoxLayout()
+        native_filters = QHBoxLayout()
+        native_filters.setSpacing(5)
         self.native_state_filter = QComboBox()
         self.native_state_filter.setObjectName('nativeAnimationStateFilter')
         self.native_state_filter.addItems((
@@ -1169,22 +1308,28 @@ class QtGPUModelPanel(QWidget):
         native_filters.addWidget(self.native_motion_filter)
         catalog_layout.addLayout(native_filters)
         self.native_result_count = QLabel('No animation references loaded')
+        self.native_result_count.setStyleSheet('color:#aeb1c1;font-size:11px;')
         self.native_result_count.setWordWrap(True)
         catalog_layout.addWidget(self.native_result_count)
 
-        native_row = QHBoxLayout()
         self.native_clip_select = _CompactAnimationList(self)
         self.native_clip_select.setToolTip(
             'Search or filter the animation index above. Only a manageable '
             'subset is listed; no unrelated CAF is substituted.')
         self.native_clip_select.currentIndexChanged.connect(self._native_selection)
-        native_row.addWidget(self.native_clip_select, 1)
-        self.play_native_button = QPushButton('Play Game Clip')
+        self.play_native_button = QPushButton('▶  Play')
+        self.play_native_button.setObjectName('playSelectedNativeAnimation')
+        self.play_native_button.setMinimumHeight(34)
+        self.play_native_button.setStyleSheet(
+            'QPushButton#playSelectedNativeAnimation {background:#4e3f73;'
+            'color:#fff;font-weight:600;border-radius:7px;padding:6px 14px;}'
+            'QPushButton#playSelectedNativeAnimation:hover {background:#665394;}'
+            'QPushButton#playSelectedNativeAnimation:disabled {'
+            'background:#33333d;color:#888995;}')
         self.play_native_button.clicked.connect(self.load_native)
-        catalog_layout.addLayout(native_row)
-        # Keep the action reachable at small widths instead of letting the
-        # clip selector consume all remaining horizontal space.
+        catalog_layout.addWidget(self.native_clip_select, 1)
         catalog_layout.addWidget(self.play_native_button)
+        self.native_clip_select.itemDoubleClicked.connect(lambda _item: self.load_native())
         self.layer_row_widget = QWidget(self)
         layer_row = QVBoxLayout(self.layer_row_widget)
         layer_row.setContentsMargins(0, 1, 0, 1)
@@ -1310,6 +1455,7 @@ class QtGPUModelPanel(QWidget):
         self.converter_process = None
         self._native_generation = 0
         self._native_references = ()
+        self._auto_dba_loading = False
         self._native_loader = None
         self._pending_playback_preferences = None
         self._native_pool = QThreadPool(self)
@@ -1318,12 +1464,33 @@ class QtGPUModelPanel(QWidget):
         self._native_signals.completed.connect(self._native_ready)
 
     def set_native_catalog(self, references, idle=None, description='',
-                           loader=None, refresh_library=None):
+                           loader=None, refresh_library=None, character=None):
         """Filter a potentially huge native animation catalog on the GUI thread."""
-        from character_animation_catalog import native_clip_playability
+        from character_animation_catalog import (
+            native_clip_playability, preferred_third_person_dba)
         self._native_generation += 1
+        self._auto_dba_loading = False
+        # A new character should never inherit the old character's filter,
+        # which could conceal the exact 3P DBA and prevent default playback.
+        identity = str(character or description).casefold()
+        if identity != getattr(self, '_catalog_character', None):
+            self.native_search.blockSignals(True)
+            self.native_state_filter.blockSignals(True)
+            self.native_motion_filter.blockSignals(True)
+            self.native_search.clear()
+            self.native_state_filter.setCurrentIndex(0)
+            self.native_motion_filter.setCurrentIndex(0)
+            self.native_search.blockSignals(False)
+            self.native_state_filter.blockSignals(False)
+            self.native_motion_filter.blockSignals(False)
+        self._catalog_character = identity
         self._native_loader = loader
         self._native_references = tuple(references)
+        # The selected row from another character must not carry over:
+        # the numeric catalog index may now name a completely different clip.
+        self.native_clip_select.blockSignals(True)
+        self.native_clip_select.clear()
+        self.native_clip_select.blockSignals(False)
         previous_base = self.layer_base_select.currentData()
         self.layer_base_select.clear()
         for idx, ref in enumerate(references):
@@ -1344,9 +1511,15 @@ class QtGPUModelPanel(QWidget):
         self.native_refresh_button.setEnabled(refresh_library is not None)
         available = [(i, ref) for i, ref in enumerate(references)
                      if native_clip_playability(ref)[0] == 'candidate']
-        auto = next((i for i, ref in available
-                     if idle is not None and ref.virtual_path == idle.virtual_path
-                     and ref.name == idle.name), -1)
+        preferred_db = preferred_third_person_dba(references, character)
+        auto = next((i for i, ref in enumerate(references)
+                     if preferred_db is not None and
+                     ref.virtual_path == preferred_db.virtual_path
+                     and ref.kind == 'dba'), -1)
+        if auto < 0:
+            auto = next((i for i, ref in available
+                         if idle is not None and ref.virtual_path == idle.virtual_path
+                         and ref.name == idle.name), -1)
         if auto < 0 and available:
             auto = min(available, key=lambda pair: (
                 not any(x in pair[1].name.casefold()
@@ -1367,11 +1540,16 @@ class QtGPUModelPanel(QWidget):
         if description:
             self._native_catalog_summary += ' • Map: ' + description[:75]
         self._filter_native_catalog()
-        if auto >= 0 and loader and idle is not None:
+        if auto >= 0 and loader:
             generation = self._native_generation
-            QTimer.singleShot(
-                80, lambda: self.load_native()
-                if generation == self._native_generation else None)
+            def start_default():
+                if (generation != self._native_generation or
+                        self.native_clip_select.currentData() != auto):
+                    return
+                self._auto_dba_loading = (
+                    preferred_db is not None and references[auto].kind == 'dba')
+                self.load_native()
+            QTimer.singleShot(120, start_default)
 
     @staticmethod
     def _animation_motion(name):
@@ -1417,10 +1595,10 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.clear()
         self.native_clip_select.addItem('Select an animation…', -1)
         suffixes = {
-            'candidate': ' [Library]', 'extractable': ' [Packed]',
-            'missing': ' [CAF not indexed]', 'layered': ' [Layered]',
-            'metadata': ' [Graph / DBA unavailable]',
-            'converter': ' [DBA converter]'}
+            'candidate': '  • Ready', 'extractable': '  • Packed',
+            'missing': '  • Missing', 'layered': '  • Layered',
+            'metadata': '  • Graph',
+            'converter': '  • DBA'}
         preferred = 0
         for position, (i, ref, state) in enumerate(shown, 1):
             self.native_clip_select.addItem(ref.name + suffixes[state], i)
@@ -1438,7 +1616,7 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.setCurrentIndex(preferred)
         self.native_clip_select.blockSignals(False)
         self.native_result_count.setText(
-            'Showing %d of %d matching / %d total' %
+            '%d shown  ·  %d matching  ·  %d total' %
             (len(shown), len(matching), len(self._native_references)))
         self._native_selection(self.native_clip_select.currentIndex())
 
@@ -1451,6 +1629,7 @@ class QtGPUModelPanel(QWidget):
 
     def _native_selection(self, index):
         from character_animation_catalog import native_clip_playability
+        self._auto_dba_loading = False
         # A pending asynchronous conversion belongs to the previous choice.
         # Do not let it replace the currently selected animation after a click.
         self._native_generation += 1
@@ -1472,13 +1651,10 @@ class QtGPUModelPanel(QWidget):
         self.play_native_button.setEnabled(
             bool(layered_ready or state == 'converter') or bool(
                 self._native_loader and state in ('candidate', 'extractable', 'missing')))
-        self.play_native_button.setText(
-            ('Find in DBA & Play' if ref.kind == 'caf' else 'Convert DBA & Play')
-            if state == 'converter'
-            else 'Play Layered Pose' if state == 'layered'
-            else 'Extract & Play' if state == 'extractable'
-            else 'Search PAK & Play' if state == 'missing'
-            else 'Play Game Clip')
+        self.play_native_button.setText('▶  Play')
+        self.play_native_button.setToolTip(
+            detail + '\\nThe matching file will be extracted or converted '
+            'when necessary. Animation and rig compatibility are validated.')
         if state == 'layered':
             available_note = (
                 'Select a compatible base and adjust the layer weight, then play.'
@@ -1550,6 +1726,8 @@ class QtGPUModelPanel(QWidget):
         if token != self._native_generation:
             return
         self.play_native_button.setEnabled(True)
+        was_default_dba = self._auto_dba_loading
+        self._auto_dba_loading = False
         if error:
             self.native_info.setText('Native animation unavailable: ' + error[:230])
             return
@@ -1562,8 +1740,9 @@ class QtGPUModelPanel(QWidget):
                 imported = AnimatedGLB(payload, 'Native Evolve animation')
                 geometry = None
             pair = details.get('_layered_pair')
-            self._show_animated(imported, auto_play=not bool(pair),
-                                prepared_geometry=geometry)
+            self._show_animated(
+                imported, auto_play=not bool(pair),
+                prepared_geometry=geometry, choose_dba_fallback=was_default_dba)
             self._layered_pair = pair
             if pair:
                 base_name, overlay_name = pair
@@ -1585,7 +1764,7 @@ class QtGPUModelPanel(QWidget):
                 updated[i] = resolved
                 self._native_references = tuple(updated)
                 self._filter_native_catalog()
-                self.play_native_button.setText('Play Game Clip')
+                self.play_native_button.setText('▶  Play')
         origin = details.get('_animation_asset_origin', '')
         fetched = 'Extracted on demand from ' + origin + ' • ' if details.get('_extracted_on_play') else ''
         self.native_info.setText(
@@ -1610,7 +1789,8 @@ class QtGPUModelPanel(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, 'Animation import failed', str(exc))
 
-    def _show_animated(self, imported, *, auto_play, prepared_geometry=None):
+    def _show_animated(self, imported, *, auto_play, prepared_geometry=None,
+                       choose_dba_fallback=False):
         self.anim_timer.stop()
         self.anim_playing = False
         self.play_button.setText('Play')
@@ -1625,6 +1805,15 @@ class QtGPUModelPanel(QWidget):
         self.playlist_items.addItems(tuple(imported.clips))
         idle = next((name for name in imported.clips if
                      'idle' in name.casefold() and 'additive' not in name.casefold()), None)
+        if idle is None and choose_dba_fallback:
+            idle = next((name for name in imported.clips if
+                         'stand' in name.casefold() and
+                         'additive' not in name.casefold()), None)
+            if idle is None and imported.clips:
+                idle = next(iter(imported.clips))
+                self.anim_status.setText(
+                    'No named idle in this DBA; playing the first verified '
+                    'clip. Choose another motion from Playback if needed.')
         if idle:
             self.clip_select.setCurrentText(idle)
         self.clip_select.blockSignals(False)

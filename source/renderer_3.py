@@ -35,6 +35,8 @@ uniform float alpha_cutoff;
 uniform int use_alpha_texture;
 uniform float specular_intensity;
 uniform float illumination;
+uniform float studio_fill;
+uniform int unlit_diffuse;
 varying vec3 eye_normal;
 varying vec3 eye_position;
 varying vec2 texcoord;
@@ -45,7 +47,17 @@ void main() {
     // Alpha may contain non-opacity data in standard CryEngine diffuse DDS.
     float alpha = (use_alpha_texture == 1 ? surface.a : 1.0) * opacity;
     if (alpha < alpha_cutoff) discard;
+    // Diagnostic: compare actual diffuse DDS pixels without shader lighting,
+    // normal-mapping or specular darkening. Intentionally dark source maps
+    // should remain dark here; an unbound slot remains neutral gray.
+    if (unlit_diffuse == 1) {
+        gl_FragColor = vec4(surface.rgb,alpha);
+        return;
+    }
+    // glTF/CryEngine double-sided materials must flip their backface normal.
+    // Otherwise visible inside-facing parts of characters shade almost black.
     vec3 n = normalize(eye_normal);
+    if (!gl_FrontFacing) n = -n;
     if (has_normal == 1) {
         vec3 p_dx = dFdx(eye_position);
         vec3 p_dy = dFdy(eye_position);
@@ -69,9 +81,22 @@ void main() {
     float specular = has_specular == 1 ?
                      dot(texture2D(specular_map,texcoord).rgb,vec3(0.333333))
                      : 0.4;
-    vec3 lit = surface.rgb*(0.24+diffuse*0.76*illumination)
-              + vec3(specular*specular_intensity*gloss*illumination);
-    gl_FragColor = vec4(clamp(lit,0.0,1.0),alpha);
+    // Diffuse DDS colors are sRGB. Applying linear-space light directly to
+    // encoded RGB makes dark outfits artificially black. Decode/encode around
+    // diffuse lighting; unlit mode above still shows the untouched source DDS.
+    vec3 albedoLinear = pow(surface.rgb, vec3(2.2));
+    // A soft studio fill keeps back-facing dark armor legible without
+    // replacing the original texture or lifting black pixels to invented colors.
+    // The additional fill is strictly nonnegative and can be disabled.
+    float fill = clamp(studio_fill,0.0,1.0);
+    vec3 fillDirection = normalize(vec3(-0.65,-0.35,0.70));
+    float bounce = max(0.0,dot(n,fillDirection));
+    float diffuseLight = clamp(0.24+diffuse*0.76*illumination
+                              + fill*(0.34+0.30*bounce),0.0,2.5);
+    vec3 litLinear = albedoLinear*diffuseLight
+                   + vec3(specular*specular_intensity*gloss*illumination);
+    vec3 lit = pow(clamp(litLinear,0.0,1.0),vec3(1.0/2.2));
+    gl_FragColor = vec4(lit,alpha);
 }
 """
 
@@ -86,20 +111,21 @@ class Renderer3:
         glUseProgram(self.program)
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
             'diffuse_map','normal_map','specular_map','has_diffuse','has_normal',
-            'has_specular','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination')}
+            'has_specular','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
         for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
-             alpha_texture=False, alpha_cutoff=.02):
+             alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f
         glUseProgram(self.program)
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
-                           ('has_specular',specular), ('use_alpha_texture',alpha_texture)):
+                           ('has_specular',specular), ('use_alpha_texture',alpha_texture),
+                           ('unlit_diffuse',unlit)):
             glUniform1i(self.uniforms[name],int(bool(value)))
         for name,value in (('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),
-                           ('illumination',illumination)):
+                           ('illumination',illumination), ('studio_fill',fill)):
             glUniform1f(self.uniforms[name],float(value))
 
     def unbind(self):

@@ -179,6 +179,40 @@ def prefer_idle(references):
     return min(available, key=rank)
 
 
+
+def preferred_third_person_dba(references, character=None):
+    """Prefer one *verified* <character>_3p DBA from this skeleton's catalog.
+
+    A DBA's filename is not proof that its tracks can animate the model.
+    The bundled converter and bind-pose checks remain mandatory on Play.
+    In particular, never choose an unrelated wildcard/other character DBA.
+    """
+    from pathlib import PurePosixPath
+    ready = [ref for ref in references
+             if ref.kind == 'dba' and ref.available and ref.file is not None
+             and native_clip_playability(ref)[0] == 'converter'
+             and PurePosixPath(ref.virtual_path).stem.casefold().endswith('_3p')]
+    if not ready:
+        return None
+    if character:
+        selected = PurePosixPath(str(character).replace('\\', '/').casefold())
+        stem = selected.stem
+        for suffix in ('_skeleton', '_3p', '_fp'):
+            if stem.endswith(suffix):
+                stem = stem[:-len(suffix)]
+        parent = selected.parent.name.casefold()
+        names = {stem, parent, parent.removeprefix('merc_')}
+        direct = [ref for ref in ready
+                  if PurePosixPath(ref.virtual_path).stem.casefold()[:-3] in names
+                  and (ref.virtual_path.casefold().startswith(
+                       selected.parent.as_posix().casefold().rstrip('/') + '/'))]
+        if len(direct) == 1:
+            return direct[0]
+    # The catalog is already parsed from this exact skeleton chrparams.
+    # A sole 3P database is unambiguous; multiple different choices aren't.
+    return ready[0] if len(ready) == 1 else None
+
+
 def caf_header(path):
     """Only confirm a safe chunk header. Never mistake headers for keyframes."""
     path = Path(path)

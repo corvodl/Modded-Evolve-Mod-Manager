@@ -4,6 +4,26 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.25', (
+        'Correct character texture UV orientation between software and GPU model previews.',
+        'Keep monster CAF bone controllers synchronized on a shared animation timeline.',
+        'Validate monster and character bind poses before playing incompatible rigs.',
+    )),
+    ('1.1.18-beta.24', (
+        "Keep Lennox's cockpit mesh with the body when switching character equipment.",
+        'Identify exact DDS source PAKs and missing material links for visible character parts.',
+        'Improve texture diagnostics when assets are spread across different game PAKs.',
+    )),
+    ('1.1.18-beta.23', (
+        'Redesign the animation browser with compact controls and a consistent Play action.',
+        'Auto-play verified character-specific third-person DBAs when available, with safer rig compatibility checks.',
+        'Improve dark material previews with studio fill and source-texture brightness diagnostics.',
+    )),
+    ('1.1.18-beta.22', (
+        'Export every verified character CDF assembly as its own Blender-compatible GLB.',
+        'Improve dark character material lighting and add an unlit diffuse inspection mode.',
+        'Keep exported character models, original assets and skipped-assembly reports together.',
+    )),
     ('1.1.18-beta.21', (
         'Assemble complete character models with distinct monster stage names and corrected textures.',
         'Improve Goliath and other character animations with native skin binding and eight-weight support.',

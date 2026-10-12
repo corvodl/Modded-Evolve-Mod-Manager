@@ -23,6 +23,38 @@ from database_animation import attach_converted_motion
 
 
 class ViewerMaterialFixTests(unittest.TestCase):
+    def test_unlit_diffuse_diagnostic_bypasses_shading_not_original_pixels(self):
+        from renderer_3 import FRAGMENT
+        import inspect
+        from qt_gpu_viewer import QtGLModelCanvas
+        self.assertIn('uniform int unlit_diffuse;', FRAGMENT)
+        self.assertIn('gl_FragColor = vec4(surface.rgb,alpha);', FRAGMENT)
+        self.assertIn('unlit=self.unlit_diffuse', inspect.getsource(QtGLModelCanvas.paintGL))
+
+    def test_missing_diffuse_slot_is_diagnosed_not_resolved_to_other_character(self):
+        with TemporaryDirectory() as folder:
+            workspace = Path(folder)
+            root=workspace/'files'/'characters'/'test'
+            root.mkdir(parents=True)
+            (root/'body.mtl').write_text(
+                '<Material><SubMaterials>'
+                '<Material Name="Body" Shader="Illum"><Textures>'
+                '<Texture Map="Diffuse" File="characters/test/body_diff.dds" />'
+                '</Textures></Material>'
+                '<Material Name="Trim" Shader="Illum"><Textures/></Material>'
+                '</SubMaterials></Material>',encoding='utf-8')
+            Image.new('RGB',(8,8),(130,100,70)).save(root/'body_diff.dds',format='DDS')
+            relative='characters/test/body.mtl'
+            tex='characters/test/body_diff.dds'
+            index={name:[{'file':file,'workspace':workspace,
+                          'relative':name,'archive':'test.pak'}]
+                   for name,file in ((relative,root/'body.mtl'),(tex,root/'body_diff.dds'))}
+            result=__import__('material_preview').load_preview_materials(
+                workspace,'characters/test/body.skinm',index=index)
+            self.assertIsNotNone(result.textures[0])
+            self.assertIsNone(result.textures[1])
+            self.assertTrue(any('Trim:' in row and 'no diffuse' in row for row in result.issues))
+
     def test_cdf_override_is_scoped_to_selected_variant(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary);index = {}
