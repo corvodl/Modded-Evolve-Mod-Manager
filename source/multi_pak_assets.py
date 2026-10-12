@@ -217,42 +217,50 @@ def _resolve(index, ref, *, preferred_workspace=None):
     return [], 'missing'
 
 def resolve_material_texture(index, reference, material_relative, *, preferred_workspace=None):
-    """Resolve a CryEngine material map relative to its owning character.
+    """Resolve the material's real game path before considering global assets.
 
-    Short names such as teleporter_diff.tif are allowed to point at the
-    character's sibling textures/ directory even when the material lives in
-    materials/.  Every candidate is still verified against the exact imported
-    virtual path; a similarly named map belonging to a different character
-    cannot satisfy this resolver.
+    Relative texture filenames are interpreted within their owning character,
+    not resolved against an unrelated global texture with the same basename.
+    Fully qualified virtual paths (including explicitly shared textures) are
+    authoritative and retain collision checks. Never guess a different actor.
     """
-    hits, state = _resolve(index, reference, preferred_workspace=preferred_workspace)
-    if state != 'missing':
-        return hits, state
-    if not isinstance(reference, (str, PurePath)):
+    if isinstance(reference, PurePath):
+        reference = reference.as_posix()
+    if not isinstance(reference, str):
         return [], 'unsafe-path'
-    virtual = (reference.as_posix() if isinstance(reference, PurePath)
-               else reference).strip().replace('\\', '/')
+    virtual = reference.strip().replace('\\', '/')
     if (not virtual or virtual.startswith('/') or ':' in virtual or
             any(part in ('', '.', '..') for part in virtual.split('/'))):
         return [], 'unsafe-path'
-    if virtual.casefold().startswith(
-            ('characters/', 'objects/', 'materials/', 'levels/')):
-        return [], 'missing'
+    rooted = virtual.casefold().startswith(
+        ('characters/', 'objects/', 'materials/', 'textures/', 'levels/', 'libs/'))
+    if rooted and not virtual.casefold().startswith('textures/'):
+        return _resolve(index, virtual, preferred_workspace=preferred_workspace)
+
     parent_parts = Path(material_relative).parent.parts
-    minimum = (3 if len(parent_parts) >= 3
-               and parent_parts[0].casefold() == 'characters'
-               and parent_parts[1].casefold() in ('hunters', 'monsters', 'creatures')
-               else 1)
+    character_scope = (len(parent_parts) >= 3
+                       and parent_parts[0].casefold() == 'characters'
+                       and parent_parts[1].casefold() in
+                       ('hunters', 'monsters', 'creatures'))
+    minimum = 3 if character_scope else 1
     for count in range(len(parent_parts), minimum - 1, -1):
         parent = '/'.join(parent_parts[:count])
-        choices = [parent + '/' + virtual]
-        if '/' not in virtual:
-            choices.append(parent + '/textures/' + virtual)
-        for candidate in choices:
-            hits, state = _resolve(
-                index, candidate, preferred_workspace=preferred_workspace)
+        candidates = [parent + '/' + virtual]
+        # A typical material lives inside the character's materials/
+        # directory while its .dds.0 is in its sibling textures/ directory.
+        if virtual.casefold().startswith('textures/'):
+            candidates.append(parent + '/' + virtual)
+        elif '/' not in virtual:
+            candidates.append(parent + '/textures/' + virtual)
+        for candidate in dict.fromkeys(candidates):
+            hits, state = _resolve(index, candidate,
+                                   preferred_workspace=preferred_workspace)
             if state != 'missing':
                 return hits, state
+    # Fallback only for references that are explicitly non-character scoped.
+    # Bare names are never allowed to select another character's DDS.
+    if not character_scope:
+        return _resolve(index, virtual, preferred_workspace=preferred_workspace)
     return [], 'missing'
 
 
