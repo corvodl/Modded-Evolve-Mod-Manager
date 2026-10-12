@@ -53,6 +53,30 @@ class CharacterStageTests(unittest.TestCase):
             self.assertEqual(image.size,(8,8))
             self.assertEqual(image.getpixel((4,4)),(160,90,40,0))
 
+    def test_skin_render_node_transform_aligns_vertices_before_skinning(self):
+        chunks=[(kind,bytes(raw)) for (kind,_),raw in _chunks(tiny_mesh()).items()]
+        mesh_id=len(chunks)+1
+        node=bytearray(204)
+        struct.pack_into('<2i',node,64,mesh_id,-1)
+        # Row-vector 90-degree Z rotation and an authored 2m X offset.
+        struct.pack_into('<16f',node,84,0,1,0,0,-1,0,0,0,0,0,1,0,200,0,0,0)
+        raw=crchf(chunks+[(0x08001000,bytes(260)),(0x0823100B,bytes(node))])
+        original=read_preview_mesh(tiny_mesh());transformed=read_preview_mesh(raw)
+        expected=tuple((2-y,x,z) for x,y,z in original.vertices)
+        np.testing.assert_allclose(transformed.vertices,expected,atol=1e-6)
+        blob,_=skin_glb(glb_bytes(transformed),raw,tiny_skeleton())
+        doc,binary=_unpack_glb(blob)
+        positions=_accessor(doc,binary,doc['meshes'][0]['primitives'][0]['attributes']['POSITION'])
+        np.testing.assert_allclose(positions,[(x,z,-y) for x,y,z in expected],atol=1e-6)
+        # Playback must retain the authored offset, including after root motion.
+        from native_caf import append_caf_animations
+        from test_native_caf import synthetic_caf
+        from model_animation import AnimatedGLB
+        animated,_=append_caf_animations(blob,[('move',synthetic_caf())])
+        player=AnimatedGLB(animated)
+        np.testing.assert_allclose(player.sample('move',0),expected,atol=1e-6)
+        np.testing.assert_allclose(player.sample('move',.5),np.array(expected)+[.2,0,0],atol=1e-6)
+
     def test_stage_labels_are_distinct(self):
         base='characters/monsters/teleporter/teleporter'
         paths=[base+str(i)+ext for i in (1,2,3) for ext in ('.cdf','.skinm')]

@@ -19,6 +19,12 @@ Against the extracted Asset Library on 2026-10-12:
 
 ## Regressions
 
-113 tests across 16 local modules passed, including 12 synthetic character-stage tests. The viewer-materials CI workflow includes the new tests and executes additional archive suites on Linux. Synthetic fixtures cover distinct stage labels, unique skins, packed vertices/UVs, subset flags/counts, extensionless material lookup, monster body parts, persistent hunter accessories, differing CHR/skin rest poses, rejected weighted conflicts eight-influence playback/export, additive CAF flag classification and transparency-cutoff round trips.
+136 tests across 19 local modules passed, including 13 synthetic character-stage tests. Release/version/updater checks also passed. The viewer-materials CI workflow includes the new tests and executes additional archive suites on Linux. Synthetic fixtures cover distinct stage labels, unique skins, packed vertices/UVs, subset flags/counts, extensionless material lookup, monster body parts, persistent hunter accessories, differing CHR/skin rest poses, rejected weighted conflicts eight-influence playback/export, additive CAF flag classification and transparency-cutoff round trips.
 
 No original game, installed application or Asset Library files were modified. No game model/texture/animation bytes are included in the repository. Procedural attachment physics and rigid CA_BONE socket geometry remain outside this skin-assembly path. Existing equipment selection does not claim to simulate gameplay loadouts.
+
+## Beta.26 mesh-to-skeleton alignment
+
+The reported Rocky1 idle was reproduced at 5.89 seconds. The skin render NODE 0x823 contains translation (approximately 0, 0.7552, 2.2691) meters. Goliath1 contains (0.2232, 0.4975, -0.0447) meters. The viewer previously ignored these transforms, leaving geometry in object space while inverse binds and animation joints were in character space. Identity bind checks alone cannot reveal this mismatch.
+
+Skinned render vertices now receive their authored row-vector affine node transform before assembly/export. Node translation is converted from centimeters to meters. Static unskinned level geometry remains on its existing path. Ambiguous, parented and malformed skinned nodes are rejected instead of guessed. Synthetic validation covers rotation, translation and animated vertex output; actual asset validation reproduces both reported idle poses. All 123 CDF-backed definitions still assemble and export successfully after this correction.

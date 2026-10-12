@@ -35,6 +35,44 @@ class PreviewMesh:
         return f'{len(self.vertices):,} vertices | {len(self.triangles):,} triangles'
 
 
+def _skinned_node_transform(data, info):
+    """Return the single render node's native affine transform for skin vertices.
+
+    CrChF 0x823/0x824 NODE stores row-vector axes and centimeter translation.
+    Compiled bone binds are already in character space (meters). Baking this
+    transform puts render vertices in that same space before skinning.
+    """
+    chunks = [struct.unpack_from('<4I', info.chunk_table, i * 16)
+              for i in range(info.chunks)]
+    skinned = any(kind == DATA_STREAM_CHUNK and size >= 24 and
+                  struct.unpack_from('<I', data, offset + 4)[0] == 9
+                  for kind, _, size, offset in chunks)
+    if not skinned:
+        return None
+    meshes = {cid for kind, cid, _, _ in chunks if kind == 0x08001000}
+    nodes = []
+    for kind, _, size, offset in chunks:
+        if kind not in (0x0823100B, 0x0824100B):
+            continue
+        if size < 204:
+            raise ValueError('Truncated skinned render node.')
+        mesh, parent = struct.unpack_from('<2i', data, offset + 64)
+        if mesh not in meshes:
+            continue
+        if parent != -1:
+            raise ValueError('Parented skinned render nodes are not yet supported.')
+        values = struct.unpack_from('<16f', data, offset + 84)
+        if not all(math.isfinite(v) for v in values):
+            raise ValueError('Non-finite skinned render node transform.')
+        # The unused fourth column is commonly all zero in cooked NODE chunks.
+        if any(abs(values[i]) > 1e-6 for i in (3, 7, 11)):
+            raise ValueError('Unsupported projective skinned render node.')
+        nodes.append(values)
+    if len(nodes) > 1:
+        raise ValueError('Multiple skinned render nodes are not supported.')
+    return nodes[0] if nodes else None
+
+
 def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
     """Decode known stream types, validating all mesh bounds before rendering."""
     info = inspect_model(data)
@@ -86,7 +124,13 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
         # Level designer brush positions may be three 32-bit floats.
         # Do not reinterpret a stride12 stream as packed half floats.
         points = struct.iter_unpack('<3f', raw_vertices)
+    transform = _skinned_node_transform(data, info)
     for x, y, z in points:
+        if transform is not None:
+            m = transform
+            x, y, z = (x*m[0] + y*m[4] + z*m[8] + m[12]*.01,
+                       x*m[1] + y*m[5] + z*m[9] + m[13]*.01,
+                       x*m[2] + y*m[6] + z*m[10] + m[14]*.01)
         if not all(math.isfinite(v) and abs(v) < 1e7 for v in (x, y, z)):
             raise ValueError('Invalid mesh vertex coordinates.')
         positions.append((x, y, z))
