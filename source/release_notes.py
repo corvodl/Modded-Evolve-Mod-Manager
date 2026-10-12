@@ -6,7 +6,7 @@ never appear here or in update names. Do not generate notes from commit logs.
 RELEASE_NOTES = (
     ('1.1.18-beta.25', (
         'Correct character texture UV orientation between software and GPU model previews.',
-        'Keep Goliath and Behemoth CAF bone keys synchronized on a shared timeline.',
+        'Keep monster CAF bone controllers synchronized on a shared animation timeline.',
         'Validate monster and character bind poses before playing incompatible rigs.',
     )),
     ('1.1.18-beta.24', (

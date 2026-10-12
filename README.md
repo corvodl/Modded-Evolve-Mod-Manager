@@ -14,7 +14,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 ## Latest Beta — v1.1.18-beta.25
 
 - Correct character texture UV orientation between software and GPU model previews.
-- Keep Goliath and Behemoth CAF bone keys synchronized on a shared timeline.
+- Keep monster CAF bone controllers synchronized on a shared animation timeline.
 - Validate monster and character bind poses before playing incompatible rigs.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
