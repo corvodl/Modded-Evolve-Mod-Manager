@@ -122,6 +122,32 @@ class LevelDependencyTests(unittest.TestCase):
         self.assertEqual(importer.call_count,1)
         self.assertFalse(result['missing'])
 
+    @patch('level_dependency_loader.material_dependency_candidates')
+    @patch('level_dependency_loader.providers_for_missing')
+    @patch('level_asset_mount.mount_map_index')
+    @patch('level_dependency_loader.import_pak')
+    @patch('level_dependency_loader.imported_archives')
+    @patch('level_dependency_loader.discover_game_paks')
+    def test_dds_fragments_in_different_signed_paks_are_both_imported(
+            self, scan, imported, importer, mounted, providers, materials):
+        p0=Path('/game/objects_basic_props.pak')
+        p1=Path('/game/textures.pak')
+        scan.return_value=SimpleNamespace(files=(p0,p1))
+        imported.return_value=()
+        mounted.return_value=({'objects/rock/rock.cgf':[{'file':'preimported'}]}, {})
+        materials.return_value=(('objects/rock/rock_d.dds.0',),)
+        providers.return_value={
+            'objects/rock/rock_d.dds.0':[p0],
+            'objects/rock/rock_d.dds.1':[p1]}
+        importer.return_value={'status':'imported'}
+        project=SimpleNamespace(level_name='Tutorial',workspace=Path('/project'),
+                                scene=(SimpleNamespace(model='objects/rock/rock.cgf',
+                                                      material=''),))
+        result=ensure_map_archives(project,'/game','/stage','/cache')
+        self.assertEqual(set(result['imported']),{p0.name,p1.name})
+        self.assertNotIn('DDS fragment: objects/rock/rock_d.dds.1',result['missing'])
+        self.assertTrue(providers.call_args.kwargs['stream_roots'])
+
     @patch('level_dependency_loader._keys', return_value=('key',))
     @patch('level_dependency_loader._verify_pak')
     def test_verified_provider_matching_and_other_map_fencing(self, verified, keys):
