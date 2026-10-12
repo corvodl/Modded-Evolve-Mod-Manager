@@ -1,7 +1,7 @@
 """Read-only preview of verified CryEngine CrChF v7 skinned render meshes.
 
-This decoder currently understands the Goliath-family POSITION half4 stream
-(type 0, stride 8) and 16-bit triangle-index stream (type 5, stride 2).
+Supports half4/float3 positions, packed half-position/UV streams and
+16-bit triangle indices used by Evolve character and designer meshes.
 Unsupported layouts are never guessed; no source file is modified.
 """
 from __future__ import annotations
@@ -46,19 +46,20 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
         if kind != DATA_STREAM_CHUNK:
             continue
         _flags, stream_type, count, stride, _a, _b = struct.unpack_from('<6I', data, offset)
-        if stream_type in (0, 2, 5):
+        if stream_type in (0, 2, 5, 15):
             if stream_type in streams:
                 raise ValueError('Multiple mesh position/index streams; grouped meshes are not yet supported.')
             streams[stream_type] = (count, stride, offset + 24)
-    if 0 not in streams or 5 not in streams:
+    if (0 not in streams and 15 not in streams) or 5 not in streams:
         raise ValueError('No supported render mesh: select its .skinm or .chrm companion, if available.')
-    vertex_count, vertex_stride, vertex_at = streams[0]
+    packed_stream = 0 not in streams
+    vertex_count, vertex_stride, vertex_at = streams[15 if packed_stream else 0]
     index_count, index_stride, index_at = streams[5]
     if not (3 <= vertex_count <= MAX_VERTICES and 3 <= index_count <= MAX_TRIANGLES * 3):
         raise ValueError('Mesh exceeds the preview safety limits.')
     if index_count % 3:
         raise ValueError('Index stream does not contain complete triangles.')
-    if vertex_stride not in (8, 12):
+    if vertex_stride not in ((16,) if packed_stream else (8, 12)):
         raise ValueError(f'Unsupported position encoding (stride {vertex_stride}). This model cannot yet be previewed.')
     if index_stride != 2:
         raise ValueError(f'Unsupported index encoding (stride {index_stride}). This model cannot yet be previewed.')
@@ -67,7 +68,15 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
     raw_vertices = memoryview(data)[vertex_at:vertex_at + vertex_count * vertex_stride]
     if len(raw_vertices) != vertex_count * vertex_stride:
         raise ValueError('Truncated mesh position data.')
-    if vertex_stride == 8:
+    packed_uvs = ()
+    if packed_stream:
+        # Evolve VERTSUVS: half3 position, 2 padding bytes, RGBA8, half2 UV.
+        rows = tuple(struct.iter_unpack('<3e2x4B2e', raw_vertices))
+        points = [row[:3] for row in rows]
+        packed_uvs = tuple(row[-2:] for row in rows)
+        if not all(math.isfinite(v) and abs(v) <= 1e4 for uv in packed_uvs for v in uv):
+            raise ValueError('Invalid packed texture coordinates.')
+    elif vertex_stride == 8:
         points = []
         for x, y, z, w in struct.iter_unpack('<4e', raw_vertices):
             if not all(math.isfinite(v) for v in (x,y,z,w)) or abs(w - 1) > 0.01:
@@ -82,7 +91,7 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
             raise ValueError('Invalid mesh vertex coordinates.')
         positions.append((x, y, z))
         xs.append(x); ys.append(y); zs.append(z)
-    uv_coordinates = ()
+    uv_coordinates = packed_uvs
     if 2 in streams:
         count_uv, uv_stride, uv_at = streams[2]
         if count_uv == vertex_count and uv_stride == 8:
@@ -94,7 +103,8 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
         kind, _cid, size, offset = struct.unpack_from('<4I', info.chunk_table, i * 16)
         if kind != 0x08001017 or size < 16:
             continue
-        num = struct.unpack_from('<I', data, offset)[0]
+        # SUBSETS flags precede the actual subset count (also used by rigging).
+        _flags, num = struct.unpack_from('<2I', data, offset)
         if not (1 <= num <= 128) or 16 + num * 36 > size:
             continue
         rows = []
