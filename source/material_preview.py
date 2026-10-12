@@ -279,38 +279,15 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         hit = _find_unique(index, ref, preferred_workspace=material['workspace'])
         if hit is not None:
             return hit
-        # Material texture names are often relative to the CHARACTER,
-        # not the .mtl directory. E.g. teleporter.mtl may say
-        # 'teleporter_diff.tif' while the TS archive owns
-        # characters/monsters/teleporter/textures/teleporter_diff.dds.0.
-        # Resolve only exact virtual paths rooted in the material's own
-        # character hierarchy; never guess a texture from a different actor.
-        normalized_ref = str(ref).strip().replace('\\', '/')
-        if (normalized_ref and not normalized_ref.startswith('/')
-                and ':' not in normalized_ref and
-                all(part not in ('.', '..', '') for part in normalized_ref.split('/'))):
-            ancestors = Path(material['relative']).parent.parts
-            # Limit fallback resolution to this model's character directory.
-            # Other archives retain their existing explicit-path lookup.
-            minimum = (3 if len(ancestors) >= 3
-                       and ancestors[0].casefold() == 'characters'
-                       and ancestors[1].casefold() in ('hunters', 'monsters', 'creatures')
-                       else 1)
-            # Fully qualified virtual paths were already checked above.
-            rooted = normalized_ref.casefold().startswith(
-                ('characters/', 'objects/', 'materials/', 'levels/'))
-            if not rooted:
-                for depth in range(len(ancestors), minimum - 1, -1):
-                    parent = '/'.join(ancestors[:depth])
-                    candidates = [parent + '/' + normalized_ref]
-                    if '/' not in normalized_ref:
-                        candidates.append(parent + '/textures/' + normalized_ref)
-                    for candidate in candidates:
-                        hit = _find_unique(
-                            index, candidate,
-                            preferred_workspace=material['workspace'])
-                        if hit is not None:
-                            return hit
+        from multi_pak_assets import resolve_material_texture
+        candidates, state = resolve_material_texture(
+            index, ref, material['relative'],
+            preferred_workspace=material['workspace'])
+        if state == 'ambiguous':
+            raise ValueError(
+                'Different versions of this material texture exist: ' + str(ref))
+        if state == 'found':
+            return candidates[0]
         hit = _external_lookup(texture_folder, ref)
         return hit if hit is not None else recover_unique_dds(ref)
 
