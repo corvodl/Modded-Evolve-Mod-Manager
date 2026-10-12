@@ -883,6 +883,15 @@ class QtGPUModelPanel(QWidget):
                            self.canvas.update()))
         ambient_row.addWidget(self.studio_fill_slider, 1)
         self._overlay_sections['Materials'][1].addLayout(ambient_row)
+        self.diffuse_source_info = QLabel('Diffuse DDS diagnostics will appear here.')
+        self.diffuse_source_info.setObjectName('modelDiffuseSourceInfo')
+        self.diffuse_source_info.setWordWrap(True)
+        self.diffuse_source_info.setStyleSheet(
+            'QLabel#modelDiffuseSourceInfo {color:#bbb9c9;'
+            'background:#24252e;border-radius:6px;padding:8px;}')
+        self._overlay_sections['Materials'][1].addWidget(self.diffuse_source_info)
+        self.part_select.currentIndexChanged.connect(
+            lambda _index: self._update_source_brightness())
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = _CompactDiagnosticText(self)
@@ -1026,7 +1035,35 @@ class QtGPUModelPanel(QWidget):
             self._position_overlay()
         return super().eventFilter(obj, event)
 
+    def _update_source_brightness(self):
+        from material_preview import diffuse_source_stats
+        materials = self.canvas.materials
+        slots = (sorted({part[2] for part in self.canvas.mesh.subsets})
+                 if self.canvas.mesh.subsets else [0])
+        selected = self.part_select.currentData()
+        if selected is not None:
+            slots = [selected]
+        rows = [(slot, diffuse_source_stats(materials, slot)) for slot in slots]
+        found = [(slot, data) for slot, data in rows if data is not None]
+        if not found:
+            message = 'No decoded diffuse DDS for the selected material slot(s).'
+        elif selected is not None:
+            average, black = found[0][1]
+            message = ('DDS source brightness: %.0f/255 average; '
+                       '%d%% of sampled pixels near black.' % (average, black))
+            if black > 65:
+                message += ' The source texture itself is dark; try Unlit diffuse.'
+            else:
+                message += ' Dark shading may come from normals, UVs or lighting.'
+        else:
+            dark = sum(data[1] > 65 for _,data in found)
+            message = ('%d/%d used slots have decoded diffuse DDS; %d are '
+                       'mostly dark in the source image.' %
+                       (len(found),len(slots),dark))
+        self.diffuse_source_info.setText(message)
+
     def _populate_material_slots(self,mesh,materials):
+        from material_preview import diffuse_source_stats
         slots=sorted({part[2] for part in mesh.subsets}) if mesh.subsets else [0]
         self.part_select.blockSignals(True)
         self.part_select.clear()
@@ -1035,8 +1072,15 @@ class QtGPUModelPanel(QWidget):
             title=(materials.names[slot] if materials and slot<len(materials.names)
                    else 'Material slot %d'%slot)
             self.part_select.addItem('%d — %s'%(slot,title[:75]),slot)
+            data = diffuse_source_stats(materials,slot)
+            tip = ('No source diffuse DDS for this slot.' if data is None
+                   else ('Decoded DDS mean brightness %.0f/255; '
+                         '%d%% near-black source pixels' % data))
+            self.part_select.setItemData(self.part_select.count()-1,tip,Qt.ToolTipRole)
         self.part_select.blockSignals(False)
         self.canvas.set_visible_material_slot(None)
+        if hasattr(self,'diffuse_source_info'):
+            self._update_source_brightness()
 
     def show_uv_layout(self):
         from io import BytesIO
