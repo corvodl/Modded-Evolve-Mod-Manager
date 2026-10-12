@@ -58,17 +58,30 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
         raise ValueError('Mesh exceeds the preview safety limits.')
     if index_count % 3:
         raise ValueError('Index stream does not contain complete triangles.')
-    if vertex_stride != 8:
+    if vertex_stride not in (8, 12):
         raise ValueError(f'Unsupported position encoding (stride {vertex_stride}). This model cannot yet be previewed.')
     if index_stride != 2:
         raise ValueError(f'Unsupported index encoding (stride {index_stride}). This model cannot yet be previewed.')
     positions = []
     xs = []; ys = []; zs = []
-    for x, y, z, w in struct.iter_unpack('<4e', memoryview(data)[vertex_at:vertex_at + vertex_count * 8]):
-        if not all(math.isfinite(v) for v in (x,y,z,w)) or abs(w - 1) > 0.01:
-            raise ValueError('Invalid packed half-float vertex coordinates.')
-        positions.append((x,y,z))
-        xs.append(x);ys.append(y);zs.append(z)
+    raw_vertices = memoryview(data)[vertex_at:vertex_at + vertex_count * vertex_stride]
+    if len(raw_vertices) != vertex_count * vertex_stride:
+        raise ValueError('Truncated mesh position data.')
+    if vertex_stride == 8:
+        points = []
+        for x, y, z, w in struct.iter_unpack('<4e', raw_vertices):
+            if not all(math.isfinite(v) for v in (x,y,z,w)) or abs(w - 1) > 0.01:
+                raise ValueError('Invalid packed half-float vertex coordinates.')
+            points.append((x, y, z))
+    else:
+        # Level designer brush positions may be three 32-bit floats.
+        # Do not reinterpret a stride12 stream as packed half floats.
+        points = struct.iter_unpack('<3f', raw_vertices)
+    for x, y, z in points:
+        if not all(math.isfinite(v) and abs(v) < 1e7 for v in (x, y, z)):
+            raise ValueError('Invalid mesh vertex coordinates.')
+        positions.append((x, y, z))
+        xs.append(x); ys.append(y); zs.append(z)
     uv_coordinates = ()
     if 2 in streams:
         count_uv, uv_stride, uv_at = streams[2]
