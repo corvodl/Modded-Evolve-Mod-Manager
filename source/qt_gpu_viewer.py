@@ -361,12 +361,16 @@ class QtGLModelCanvas(QOpenGLWidget):
                         im.getchannel('A').getextrema()[0] < 255):
                     self.translucent_slots.add(index)
                 mode = 'RGBA' if rgba else 'RGB'
-                sample = im.convert(mode)  # Same DDS row/UV convention as CPU and GLB export.
+                # Pillow's first DDS row is top-left while OpenGL expects
+                # its first upload row at v=0 (bottom-left). The CPU UV preview
+                # already indexes the top row at v=0; reverse only GPU bytes.
+                from gl_texture_upload import gl_upload_pixels
+                pixels = gl_upload_pixels(im, mode)
                 format_id = GL_RGBA if rgba else GL_RGB
                 texid = int(glGenTextures(1))
                 glBindTexture(GL_TEXTURE_2D,texid)
-                glTexImage2D(GL_TEXTURE_2D,0,format_id,sample.width,sample.height,0,
-                             format_id,GL_UNSIGNED_BYTE,sample.tobytes())
+                glTexImage2D(GL_TEXTURE_2D,0,format_id,im.width,im.height,0,
+                             format_id,GL_UNSIGNED_BYTE,pixels)
                 for param in (GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER):
                     glTexParameteri(GL_TEXTURE_2D,param,GL_LINEAR)
                 for param in (GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T):
