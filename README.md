@@ -1,23 +1,25 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.19
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.21
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.19 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.21 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
 
 ## Latest Stable — v1.1.17.1
 
 - Add a Windows installer with optional Desktop and Start Menu shortcuts.
 - Compare Stable and Beta releases and offer only the newest version.
 
-## Latest Beta — v1.1.18-beta.19
+## Latest Beta — v1.1.18-beta.21
 
-- Choose character textures per material and retain matching textures in supported exports.
-- Improve original DBA animation previews and character material mapping.
-- Improve Level Editor model references, hierarchy diagnostics and supported static mesh decoding.
+- Assemble complete character models with distinct monster stage names and corrected textures.
+- Improve Goliath and other character animations with native skin binding and eight-weight support.
+- Keep character body attachments and selected textures consistent in previews and GLB exports.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
+
+Versioned release: [v1.1.18-beta.21](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.21).
 
 ## Download and install
 

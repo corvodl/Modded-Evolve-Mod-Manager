@@ -124,6 +124,32 @@ jobs:
             throw 'Beta branch moved; refusing to publish an older build.'
           }
           $version=((Get-Content 'source/VERSION.txt' -Raw).Trim() -split ' - ',2)[0]
+          # Publish an independently versioned prerelease. Keep the rolling
+          # Beta tag as the updater-compatible latest release, not the only record.
+          & '.build/venv/Scripts/python.exe' 'source/release_notes.py' --latest |
+            Set-Content -Encoding utf8 'dist/release-notes.md'
+          $versionTag="v$version"
+          gh release view $versionTag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $tagCommit=(gh api "repos/${{ github.repository }}/git/ref/tags/$versionTag" --jq '.object.sha').Trim()
+            if ($LASTEXITCODE -ne 0 -or $tagCommit -ne '${{ github.sha }}') {
+              throw "Version $versionTag already points to a different commit."
+            }
+          } else {
+            gh release create $versionTag --target '${{ github.sha }}' --title "Evolve Mod Manager v$version (Beta)" --prerelease --notes-file 'dist/release-notes.md'
+            if ($LASTEXITCODE -ne 0) { throw "Could not create versioned release $versionTag." }
+          }
+          foreach ($file in @('EvolveModManager-Setup.exe',
+                 'EvolveModManager-Windows.zip','EvolveModManager-compiled-screenshot.png',
+                 'EvolveModManager-Modding-screenshot.png')) {
+            gh release upload $versionTag "dist/$file" --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Could not publish $versionTag asset $file." }
+          }
+          gh release upload $versionTag 'dist/update-manifest.json' --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish versioned beta manifest." }
+          gh release edit $versionTag --title "Evolve Mod Manager v$version (Beta)" --prerelease --notes-file 'dist/release-notes.md'
+          if ($LASTEXITCODE -ne 0) { throw "Could not finalize $versionTag notes." }
+          # Compatibility alias for the manager's verified updater:
           gh release view Beta *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create Beta --target '${{ github.sha }}' --title "Evolve Mod Manager v$version (Beta)" --prerelease --notes 'Experimental prerelease. Back up projects before trying new features.'
@@ -137,7 +163,5 @@ jobs:
           }
           gh release upload Beta 'dist/update-manifest.json' --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Could not publish Beta manifest.' }
-          & '.build/venv/Scripts/python.exe' 'source/release_notes.py' --latest |
-            Set-Content -Encoding utf8 'dist/release-notes.md'
           gh release edit Beta --title "Evolve Mod Manager v$version (Beta)" --prerelease --notes-file 'dist/release-notes.md'
           if ($LASTEXITCODE -ne 0) { throw 'Could not update Beta release description.' }
