@@ -222,17 +222,18 @@ def ensure_map_archives(project, game, stage, cache_root, *,
     index, _ = mount_map_index(project.workspace, project.level_name,
                                library_root=imported_root, cache_root=cache_root)
     missing = needed_virtual_paths(project) - set(index)
-    if not missing:
-        return result
     others = [p for p in scan.files if str(p) not in prior
               and level_from_source(p) is None]
     result["scanned"] = len(others)
-    try:
-        provider_map = providers_for_missing(others, missing, stage=stage,
-                                             cancel=cancel, progress=progress)
-    except (OSError, ValueError) as exc:
-        result["errors"].append("Provider inventory: " + str(exc)[:180])
-        return result
+    if missing:
+        try:
+            provider_map = providers_for_missing(others, missing, stage=stage,
+                                                 cancel=cancel, progress=progress)
+        except (OSError, ValueError) as exc:
+            result["errors"].append("Provider inventory: " + str(exc)[:180])
+            return result
+    else:
+        provider_map = {}
     if provider_map is None:
         return result
     chosen = set()
