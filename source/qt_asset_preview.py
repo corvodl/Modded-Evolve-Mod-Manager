@@ -164,15 +164,20 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             QMessageBox.warning(self, 'Blender export', str(error))
 
     def export_blender_folder(self):
-        if self.mode != 'models' or not self.current:
-            QMessageBox.information(
-                self, 'Blender export', 'Select a model from File Explorer first.')
+        # Share Modding's source-folder selection: active folder node, selected
+        # model parent, then the currently opened model's parent.
+        try:
+            folder = self._current_model_folder_relative()
+            source = self._current_model_source_folder()
+        except (OSError, ValueError) as error:
+            QMessageBox.information(self, 'Blender export', str(error))
             return
         output = QFileDialog.getExistingDirectory(
-            self, 'Export up to 100 compatible models, preserving virtual paths')
+            self, 'Export selected model folder (destination only)',
+            str(Path.home()))
         if not output:
             return
-        prefix = str(Path(self.current).parent.as_posix()).casefold() + '/'
+        prefix = folder.casefold().rstrip('/') + '/'
         models = [rel for rel in self.entries if rel.casefold().startswith(prefix)
                   and rel.casefold().endswith(('.skinm', '.chrm', '.cgfm', '.cgam'))]
         if len(models) > 100:
