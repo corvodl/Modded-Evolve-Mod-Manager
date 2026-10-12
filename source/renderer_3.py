@@ -53,7 +53,10 @@ void main() {
         gl_FragColor = vec4(surface.rgb,alpha);
         return;
     }
+    // glTF/CryEngine double-sided materials must flip their backface normal.
+    // Otherwise visible inside-facing parts of characters shade almost black.
     vec3 n = normalize(eye_normal);
+    if (!gl_FrontFacing) n = -n;
     if (has_normal == 1) {
         vec3 p_dx = dFdx(eye_position);
         vec3 p_dy = dFdy(eye_position);
