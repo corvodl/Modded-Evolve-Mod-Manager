@@ -412,6 +412,10 @@ class QtManager(QMainWindow):
 
         self.pages = {}
         self._instructions_page()
+        # Migrate old hash-only archive folders BEFORE an editor can retain
+        # a path into the Asset Library. Stable 20-character archive IDs remain.
+        from asset_library import migrate_readable_archive_folders
+        migrate_readable_archive_folders()
         self._asset_library_page()
         self._modding_page()
         self._play_page()
@@ -689,7 +693,7 @@ class QtManager(QMainWindow):
         self.pages['asset_library'] = page
 
     def open_library_folder(self):
-        """Open imported reference files in Windows Explorer, never an editor."""
+        """Open readable archive directories in Windows Explorer."""
         from asset_library import LIBRARY_HOME
         folder = Path(LIBRARY_HOME).resolve()
         if not folder.is_dir():
@@ -731,8 +735,16 @@ class QtManager(QMainWindow):
             folder = str(Path(entry['source']).parent)
             if len(folder) > 75:
                 folder = '…' + folder[-72:]
+            from character_aliases import character_name_for_internal
+            from pak_dependencies import group_identity
+            family = group_identity(name)
+            friendly = (character_name_for_internal(family[2])
+                        if family[0] == 'character' else None)
+            description = archive_description(name)
+            if friendly:
+                description = friendly + ' (internal: ' + family[2] + ') • ' + description
             values = (group, folder,
-                      archive_description(name), name,
+                      description, name,
                       str(entry['entries']),
                       format_size(entry['bytes']))
             row = table.rowCount()
