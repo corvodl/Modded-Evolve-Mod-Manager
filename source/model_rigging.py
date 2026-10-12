@@ -243,11 +243,83 @@ def skin_glb(glb, mesh_raw, skeleton_raw):
         'Original CryEngine bone transforms and subset bone palettes. '
         'No CAF/DBA animation keyframes included.')
     payload = _pack_glb(document, binary)
+    validate_skin_rest_pose(payload)
     return payload, {
         'bone_count': len(names), 'vertex_count': vertex_count,
         'subset_count': subsets,
         'active_bones': len(np.unique(bone_ids[weights > 0])),
     }
+
+
+
+def validate_skin_rest_pose(glb, tolerance=0.02):
+    """Require every actively weighted glTF bone to preserve the rest mesh.
+
+    For each weighted joint, inverse(meshWorld) @ jointWorld @ inverseBind
+    must be the identity at rest. A partial name match or mismatched monster
+    stage may pass basic bone-name validation while producing twisted meshes.
+    Fail before loading its animation instead of presenting bad geometry as a
+    successful motion.
+    """
+    from model_textured_export import _unpack_glb
+    from model_animation import _accessor, _local_matrix
+    doc, binary = _unpack_glb(glb)
+    instances = [(i, node) for i, node in enumerate(doc.get('nodes', ()))
+                 if 'mesh' in node and 'skin' in node]
+    if len(instances) != 1:
+        raise ValueError('Skin rest validation needs one skinned mesh instance.')
+    mesh_node_id, instance = instances[0]
+    skin = doc['skins'][instance['skin']]
+    joints = [int(i) for i in skin['joints']]
+    matrices = _accessor(doc, binary, skin['inverseBindMatrices'])
+    if len(matrices) != len(joints):
+        raise ValueError('Bone inverse-bind count does not match the skin.')
+    inverse = matrices.reshape(-1,4,4).transpose(0,2,1)
+    active = set()
+    primitives = doc['meshes'][instance['mesh']]['primitives']
+    for primitive in primitives:
+        attrs = primitive['attributes']
+        for suffix in ('0','1'):
+            key, weight_key = 'JOINTS_'+suffix, 'WEIGHTS_'+suffix
+            if key not in attrs or weight_key not in attrs:
+                continue
+            ids = _accessor(doc,binary,attrs[key]).astype(np.int32)
+            weights = _accessor(doc,binary,attrs[weight_key]).astype(np.float64)
+            if ids.shape != weights.shape:
+                raise ValueError('Skin joint and weight accessor shapes differ.')
+            active.update(int(i) for i in ids[weights > 0.0001])
+    if not active or min(active) < 0 or max(active) >= len(joints):
+        raise ValueError('Rig has no valid weighted joints.')
+    parents = {}
+    for i,node in enumerate(doc['nodes']):
+        for child in node.get('children',()):
+            if child in parents:
+                raise ValueError('Ambiguous joint parentage in rig.')
+            parents[child] = i
+    world = {}
+    visiting = set()
+    def matrix(i):
+        if i in world:
+            return world[i]
+        if i in visiting:
+            raise ValueError('Cyclic rig hierarchy.')
+        visiting.add(i)
+        value = _local_matrix(doc['nodes'][i])
+        if i in parents:
+            value = matrix(parents[i]) @ value
+        visiting.remove(i)
+        world[i] = value
+        return value
+    mesh_inverse = np.linalg.inv(matrix(mesh_node_id))
+    for local_joint in sorted(active):
+        node_id = joints[local_joint]
+        rest = mesh_inverse @ matrix(node_id) @ inverse[local_joint]
+        if not np.all(np.isfinite(rest)) or np.max(np.abs(rest-np.eye(4))) > tolerance:
+            name = doc['nodes'][node_id].get('name','joint '+str(local_joint))
+            raise ValueError(
+                'Incompatible character bind/rest pose for ' + name +
+                '; try the correct stage CDF, skin, and skeleton.')
+    return len(active)
 
 
 def skin_companion_path(source):
@@ -368,9 +440,11 @@ def skin_glb_composite(glb, rig_parts, skeleton_raw):
     if len(instances)!=1:
         raise ValueError('Composite GLB needs exactly one mesh instance')
     instances[0]['skin']=0
-    return _pack_glb(doc,binary), {
+    output = _pack_glb(doc,binary)
+    weighted = validate_skin_rest_pose(output)
+    return output, {
         'bone_count':len(names), 'vertex_count':count,
-        'part_count':len(rig_parts)}
+        'part_count':len(rig_parts), 'verified_weighted_bones':weighted}
 
 
 def _extra_influences(doc, add_view, primitives, ids, weights):
