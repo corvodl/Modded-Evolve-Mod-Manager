@@ -226,8 +226,22 @@ class LevelGLViewport(QOpenGLWidget):
 
         def job():
             try:
-                value = prepare_scene(project, cancel, game=self.game_root,
-                                      stage=self.stage_root, cache_root=self.cache_root)
+                def report(*args):
+                    if cancel.is_set():
+                        return
+                    if len(args) == 3:
+                        label,current,total = args
+                        self.statusChanged.emit(
+                            f"{label} ({current+1}/{max(1,total)})")
+                    elif len(args) == 2:
+                        current,total = args
+                        step=max(1,total//10)
+                        if current % step == 0 or current == total:
+                            self.statusChanged.emit(
+                                f"Preparing mesh/materials {current:,} / {total:,}")
+                value = prepare_scene(project, cancel, report,
+                                      game=self.game_root, stage=self.stage_root,
+                                      cache_root=self.cache_root)
             except Exception as exc:
                 value = (None, {"scene initialization: " + str(exc)[:160]: 1}, {})
             if not cancel.is_set():
@@ -253,8 +267,22 @@ class LevelGLViewport(QOpenGLWidget):
         project = self.project
         def job():
             try:
-                result = prepare_scene(project, cancel, game=self.game_root,
-                                       stage=self.stage_root, cache_root=self.cache_root)
+                def report(*args):
+                    if cancel.is_set():
+                        return
+                    if len(args)==3:
+                        label,current,total=args
+                        self.statusChanged.emit(
+                            f"{label} ({current+1}/{max(1,total)})")
+                    elif len(args)==2:
+                        current,total=args
+                        step=max(1,total//10)
+                        if current % step==0 or current==total:
+                            self.statusChanged.emit(
+                                f"Preparing mesh/materials {current:,} / {total:,}")
+                result = prepare_scene(project, cancel, report,
+                                       game=self.game_root, stage=self.stage_root,
+                                       cache_root=self.cache_root)
             except Exception as exc:
                 result = ({}, {"scene initialization: " + str(exc)[:160]: 1}, {})
             if not cancel.is_set():
