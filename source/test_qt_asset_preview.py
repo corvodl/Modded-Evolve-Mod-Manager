@@ -139,8 +139,15 @@ class ReadOnlyAssetPreviewUITests(TestCase):
             self.folder / 'files' / 'characters' / 'scrap')
         output = Path(self.temp.name) / 'BlenderExports'
         output.mkdir()
+        # Run the queued worker body in-process for this source-selection
+        # test; thread lifecycle is exercised in test_beta15_export_progress.
+        def run_inline(_parent, _title, _label, work, **callbacks):
+            result = work(lambda *_: None, lambda: False)
+            callbacks['on_success'](result)
         with patch('qt_asset_preview.QFileDialog.getExistingDirectory',
                    return_value=str(output)) as choose_destination, \
+             patch('qt_background_exports.begin_file_operation',
+                   side_effect=run_inline), \
              patch('qt_asset_preview.export_glb',
                    side_effect=lambda archive, rel, target: (target, {})) as exported:
             self.window.export_blender_folder()
