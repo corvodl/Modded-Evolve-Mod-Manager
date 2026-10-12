@@ -5,7 +5,7 @@ never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
     ('1.1.18-beta.24', (
-        'Keep Lennox's cockpit mesh with the body when switching character equipment.',
+        "Keep Lennox's cockpit mesh with the body when switching character equipment.",
         'Identify exact DDS source PAKs and missing material links for visible character parts.',
         'Improve texture diagnostics when assets are spread across different game PAKs.',
     )),
