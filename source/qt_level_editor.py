@@ -492,8 +492,6 @@ class UnrealStyleLevelEditor(QMainWindow):
         self._map_catalog_generation += 1
         token = self._map_catalog_generation
         game = getattr(self.viewport,"game_root",None)
-        if game is None:
-            return
         workspaces = tuple(self._map_projects.values())
         def scan():
             try:
