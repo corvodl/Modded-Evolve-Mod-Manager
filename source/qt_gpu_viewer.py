@@ -1364,12 +1364,19 @@ class QtGPUModelPanel(QWidget):
         self._native_signals.completed.connect(self._native_ready)
 
     def set_native_catalog(self, references, idle=None, description='',
-                           loader=None, refresh_library=None):
+                           loader=None, refresh_library=None, character=None):
         """Filter a potentially huge native animation catalog on the GUI thread."""
-        from character_animation_catalog import native_clip_playability
+        from character_animation_catalog import (
+            native_clip_playability, preferred_third_person_dba)
         self._native_generation += 1
+        self._auto_dba_loading = False
         self._native_loader = loader
         self._native_references = tuple(references)
+        # The selected row from another character must not carry over:
+        # the numeric catalog index may now name a completely different clip.
+        self.native_clip_select.blockSignals(True)
+        self.native_clip_select.clear()
+        self.native_clip_select.blockSignals(False)
         previous_base = self.layer_base_select.currentData()
         self.layer_base_select.clear()
         for idx, ref in enumerate(references):
@@ -1390,9 +1397,15 @@ class QtGPUModelPanel(QWidget):
         self.native_refresh_button.setEnabled(refresh_library is not None)
         available = [(i, ref) for i, ref in enumerate(references)
                      if native_clip_playability(ref)[0] == 'candidate']
-        auto = next((i for i, ref in available
-                     if idle is not None and ref.virtual_path == idle.virtual_path
-                     and ref.name == idle.name), -1)
+        preferred_db = preferred_third_person_dba(references, character)
+        auto = next((i for i, ref in enumerate(references)
+                     if preferred_db is not None and
+                     ref.virtual_path == preferred_db.virtual_path
+                     and ref.kind == 'dba'), -1)
+        if auto < 0:
+            auto = next((i for i, ref in available
+                         if idle is not None and ref.virtual_path == idle.virtual_path
+                         and ref.name == idle.name), -1)
         if auto < 0 and available:
             auto = min(available, key=lambda pair: (
                 not any(x in pair[1].name.casefold()
@@ -1413,11 +1426,16 @@ class QtGPUModelPanel(QWidget):
         if description:
             self._native_catalog_summary += ' • Map: ' + description[:75]
         self._filter_native_catalog()
-        if auto >= 0 and loader and idle is not None:
+        if auto >= 0 and loader:
             generation = self._native_generation
-            QTimer.singleShot(
-                80, lambda: self.load_native()
-                if generation == self._native_generation else None)
+            def start_default():
+                if (generation != self._native_generation or
+                        self.native_clip_select.currentData() != auto):
+                    return
+                self._auto_dba_loading = (
+                    preferred_db is not None and references[auto].kind == 'dba')
+                self.load_native()
+            QTimer.singleShot(120, start_default)
 
     @staticmethod
     def _animation_motion(name):
@@ -1497,6 +1515,7 @@ class QtGPUModelPanel(QWidget):
 
     def _native_selection(self, index):
         from character_animation_catalog import native_clip_playability
+        self._auto_dba_loading = False
         # A pending asynchronous conversion belongs to the previous choice.
         # Do not let it replace the currently selected animation after a click.
         self._native_generation += 1
@@ -1593,6 +1612,8 @@ class QtGPUModelPanel(QWidget):
         if token != self._native_generation:
             return
         self.play_native_button.setEnabled(True)
+        was_default_dba = self._auto_dba_loading
+        self._auto_dba_loading = False
         if error:
             self.native_info.setText('Native animation unavailable: ' + error[:230])
             return
@@ -1605,8 +1626,9 @@ class QtGPUModelPanel(QWidget):
                 imported = AnimatedGLB(payload, 'Native Evolve animation')
                 geometry = None
             pair = details.get('_layered_pair')
-            self._show_animated(imported, auto_play=not bool(pair),
-                                prepared_geometry=geometry)
+            self._show_animated(
+                imported, auto_play=not bool(pair),
+                prepared_geometry=geometry, choose_dba_fallback=was_default_dba)
             self._layered_pair = pair
             if pair:
                 base_name, overlay_name = pair
@@ -1653,7 +1675,8 @@ class QtGPUModelPanel(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, 'Animation import failed', str(exc))
 
-    def _show_animated(self, imported, *, auto_play, prepared_geometry=None):
+    def _show_animated(self, imported, *, auto_play, prepared_geometry=None,
+                       choose_dba_fallback=False):
         self.anim_timer.stop()
         self.anim_playing = False
         self.play_button.setText('Play')
@@ -1668,6 +1691,15 @@ class QtGPUModelPanel(QWidget):
         self.playlist_items.addItems(tuple(imported.clips))
         idle = next((name for name in imported.clips if
                      'idle' in name.casefold() and 'additive' not in name.casefold()), None)
+        if idle is None and choose_dba_fallback:
+            idle = next((name for name in imported.clips if
+                         'stand' in name.casefold() and
+                         'additive' not in name.casefold()), None)
+            if idle is None and imported.clips:
+                idle = next(iter(imported.clips))
+                self.anim_status.setText(
+                    'No named idle in this DBA; playing the first verified '
+                    'clip. Choose another motion from Playback if needed.')
         if idle:
             self.clip_select.setCurrentText(idle)
         self.clip_select.blockSignals(False)
