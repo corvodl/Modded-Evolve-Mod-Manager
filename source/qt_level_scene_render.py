@@ -1,0 +1,437 @@
+"""Depth-tested level mesh viewport for copied CryEngine map projects.
+
+Only proven CrChF static streams are rendered. Decoding and DDS preparation
+run in a bounded background thread; OpenGL calls are exclusively on the Qt
+context thread. No terrain, collision or navmesh is synthesized.
+"""
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+import math
+from pathlib import Path, PurePosixPath
+from queue import Empty, Queue
+from threading import Event, Thread
+
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QSurfaceFormat
+from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from PySide6.QtWidgets import QWidget
+
+SUPPORTED_STATIC = frozenset((".cgf", ".skinm", ".chrm", ".cgam", ".cgfm"))
+MAX_MESH_FILE = 32 * 1024 * 1024
+MAX_SCENE_MEMORY = 240 * 1024 * 1024
+MAX_RENDER_DISTANCE = 20000.0
+
+
+@dataclass(frozen=True)
+class RenderAsset:
+    mesh: object
+    geometry: object
+    materials: object
+    size: int
+    model_file: str
+
+
+def _asset_key(item):
+    return item.model.casefold(), item.material.casefold()
+
+
+def prepare_scene(project, cancel, progress=None):
+    """CPU-only preparation. Return shared geometry and explicit diagnostics."""
+    from level_asset_mount import mount_map_index, resolve_scoped
+    from model_preview import read_preview_mesh
+    from gpu_model_preview import prepare_geometry
+    from material_preview import load_preview_materials
+
+    index, details = mount_map_index(project.workspace, project.level_name)
+    assets, issues, models = {}, Counter(), {}
+    candidates = {_asset_key(o): o for o in project.scene if o.model}
+    total = len(candidates)
+    size = 0
+    for i, (key, obj) in enumerate(candidates.items()):
+        if cancel.is_set():
+            return None
+        if progress:
+            progress(i, total)
+        extension = PurePosixPath(obj.model).suffix.casefold()
+        if extension not in SUPPORTED_STATIC:
+            issues["unsupported geometry format " + extension] += 1
+            continue
+        record, status = resolve_scoped(index, obj.model, project.workspace)
+        if record is None:
+            issues["asset " + status] += 1
+            continue
+        try:
+            path = Path(record["file"])
+            if not 0 < path.stat().st_size <= MAX_MESH_FILE:
+                raise ValueError("mesh exceeds decoder bounds")
+            cache_key = str(path.resolve())
+            if cache_key not in models:
+                mesh = read_preview_mesh(path.read_bytes(), obj.model)
+                geometry = prepare_geometry(mesh, "smooth")
+                models[cache_key] = (mesh, geometry)
+            mesh, geometry = models[cache_key]
+            if key[1]:
+                materials = load_preview_materials(
+                    project.workspace, obj.model, index=index,
+                    material_override=obj.material)
+            else:
+                try:
+                    materials = load_preview_materials(
+                        project.workspace, obj.model, index=index)
+                except (OSError, ValueError):
+                    materials = None
+                    issues["missing / unsupported diffuse material"] += 1
+            cost = (0 if any(a.model_file == cache_key for a in assets.values())
+                    else sum(array.nbytes for array in (
+                        geometry.vertices, geometry.uvs, geometry.normals, geometry.indices)))
+            if materials:
+                cost += sum(im.width * im.height * 4 for im in materials.textures if im is not None)
+            if size + cost > MAX_SCENE_MEMORY:
+                issues["bounded memory budget (not rendered)"] += 1
+                continue
+            size += cost
+            assets[key] = RenderAsset(mesh, geometry, materials, cost, cache_key)
+        except (OSError, ValueError, TypeError) as exc:
+            issues[str(exc)[:130]] += 1
+    if progress:
+        progress(total, total)
+    return assets, dict(issues), details
+
+
+class LevelGLViewport(QOpenGLWidget):
+    """Render multiple world-space instances without per-model normalization."""
+    selected = Signal(str, int)
+    moved = Signal(str, int, object)
+    statusChanged = Signal(str)
+
+    def __init__(self, project, parent=None):
+        super().__init__(parent)
+        fmt = QSurfaceFormat()
+        fmt.setRenderableType(QSurfaceFormat.OpenGL)
+        fmt.setVersion(2, 1)
+        fmt.setProfile(QSurfaceFormat.CompatibilityProfile)
+        fmt.setDepthBufferSize(24)
+        self.setFormat(fmt)
+        self.setMinimumSize(300, 260)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.project = project
+        self.mode = "select"
+        self.active = None
+        self.yaw = .6
+        self.pitch = .6
+        self.camera = [0., 0., 0.]
+        self.distance = 500.
+        self.projection_mode = "Perspective"
+        self.assets = {}
+        self._textures = {}
+        self._cancel = Event()
+        self._results = Queue(maxsize=2)
+        self._generation = 1
+        self._mouse = None
+        self._dragged = False
+        self._press_origin = None
+        self._preview = None
+        self._lookup = {}
+        for item in project.objects:
+            node = project._node(item.layer, item.index)
+            guid = (node.get("Id") or node.get("EntityId") or f"{item.layer}#{item.index}").casefold()
+            self._lookup.setdefault(guid, (item.layer, item.index))
+        self._visible = ()
+        self._issues = {}
+        self.frame_all()
+        self._poll = QTimer(self)
+        self._poll.timeout.connect(self._receive)
+        self._poll.start(80)
+        token = self._generation
+
+        def job():
+            try:
+                value = prepare_scene(project, self._cancel)
+            except Exception as exc:
+                value = (None, {"scene initialization: " + str(exc)[:160]: 1}, {})
+            if not self._cancel.is_set():
+                self._results.put((token, value))
+        self._loader = Thread(target=job, name="Evolve-Level-CPU-Loader", daemon=True)
+        self._loader.start()
+        self.statusChanged.emit("Preparing map meshes and textures in background…")
+
+    def _receive(self):
+        try:
+            token, result = self._results.get_nowait()
+        except Empty:
+            return
+        if token != self._generation or result is None:
+            return
+        assets, issues, details = result
+        self._issues = issues
+        self.assets = assets or {}
+        self._textures.clear()
+        count = sum(1 for obj in self.project.scene if _asset_key(obj) in self.assets)
+        detail = ", ".join(f"{k}: {v}" for k, v in list(issues.items())[:5])
+        self.statusChanged.emit(
+            f"3D geometry: {count:,} / {len(self.project.scene):,} placed nodes; "
+            f"{len(self.assets)} decoded material variants; "
+            f"{details.get('mounts',0)} scoped map archives. "
+            + (("Issues: " + detail) if detail else "No decoding warnings."))
+        self.update()
+
+    def frame_all(self):
+        points = [x.world.pos for x in self.project.scene]
+        if not points:
+            return
+        coords = [sorted(point[i] for point in points) for i in range(3)]
+        mid = len(points) // 2
+        self.camera = [axis[mid] for axis in coords]
+        spans = [axis[min(len(axis)-1, int(len(axis)*.9))] -
+                 axis[min(len(axis)-1, int(len(axis)*.1))] for axis in coords]
+        self.distance = max(15., min(MAX_RENDER_DISTANCE, max(spans)*1.5))
+        self.update()
+
+    def focus_object(self, obj):
+        node = self.project._node(obj.layer, obj.index)
+        guid = (node.get("Id") or node.get("EntityId") or f"{obj.layer}#{obj.index}").casefold()
+        selected = next((x for x in self.project.scene if x.id == guid), None)
+        self.camera = list(selected.world.pos if selected else obj.pos)
+        self.distance = max(3., min(self.distance, 75.))
+        self.update()
+
+    def _eye(self):
+        cp = math.cos(self.pitch)
+        return (self.camera[0]+self.distance*cp*math.cos(self.yaw),
+                self.camera[1]+self.distance*cp*math.sin(self.yaw),
+                self.camera[2]+self.distance*math.sin(self.pitch))
+
+    def initializeGL(self):
+        from OpenGL.GL import (
+            glClearColor, glEnable, glShadeModel, glLightfv,
+            GL_DEPTH_TEST, GL_LIGHTING, GL_LIGHT0, GL_NORMALIZE,
+            GL_POSITION, GL_AMBIENT, GL_DIFFUSE, GL_SMOOTH
+        )
+        glClearColor(.12,.12,.14,1)
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_NORMALIZE)
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+        glShadeModel(GL_SMOOTH)
+        glLightfv(GL_LIGHT0, GL_POSITION, (.6,.4,1.,0.))
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, (.8,.8,.8,1.))
+        glLightfv(GL_LIGHT0, GL_AMBIENT, (.23,.23,.25,1.))
+
+    def resizeGL(self, width, height):
+        from OpenGL.GL import glViewport
+        glViewport(0,0,max(1,width),max(1,height))
+
+    def _texture(self, key, slot, asset):
+        """Lazy GPU uploads on context owner thread, shared by instances."""
+        from OpenGL.GL import (
+            glGenTextures,glBindTexture,glTexImage2D,glTexParameteri,
+            GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER,
+            GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T,GL_LINEAR,GL_REPEAT,
+            GL_RGBA,GL_UNSIGNED_BYTE
+        )
+        tex_id = (key,slot)
+        if tex_id in self._textures:
+            return self._textures[tex_id]
+        materials = asset.materials
+        image = (materials.textures[slot] if materials and slot<len(materials.textures) else None)
+        if image is None:
+            self._textures[tex_id] = 0
+            return 0
+        if image.width > 2048 or image.height > 2048:
+            image.thumbnail((2048,2048))
+        rgba = image.convert("RGBA")
+        ident = int(glGenTextures(1))
+        glBindTexture(GL_TEXTURE_2D,ident)
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT)
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_REPEAT)
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,rgba.width,rgba.height,0,
+                     GL_RGBA,GL_UNSIGNED_BYTE,rgba.tobytes())
+        self._textures[tex_id] = ident
+        return ident
+
+    def paintGL(self):
+        from OpenGL.GL import (
+            glClear,glMatrixMode,glLoadIdentity,glFrustum,glOrtho,
+            glPushMatrix,glPopMatrix,glTranslatef,glRotatef,glScalef,
+            glColor3f,glEnable,glDisable,glBindTexture,
+            glEnableClientState,glDisableClientState,glVertexPointer,
+            glNormalPointer,glTexCoordPointer,glDrawElements,
+            glMatrixMode,glLoadMatrixf,glMultMatrixf,
+            GL_COLOR_BUFFER_BIT,GL_DEPTH_BUFFER_BIT,GL_PROJECTION,
+            GL_MODELVIEW,GL_VERTEX_ARRAY,GL_NORMAL_ARRAY,
+            GL_TEXTURE_COORD_ARRAY,GL_TEXTURE_2D,GL_FLOAT,
+            GL_TRIANGLES,GL_UNSIGNED_INT
+        )
+        from OpenGL.GLU import gluLookAt
+        import numpy as np
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
+        ratio = self.width()/max(1,self.height())
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        half=math.tan(math.radians(60)/2)
+        near=.25
+        far=max(1000., min(50000.,self.distance*6))
+        if self.projection_mode=="Orthographic":
+            extent=max(2.,self.distance*.48)
+            glOrtho(-extent*ratio,extent*ratio,-extent,extent,near,far)
+        else:
+            glFrustum(-half*ratio*near,half*ratio*near,-half*near,half*near,near,far)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+        eye=self._eye()
+        gluLookAt(*eye,*self.camera,0.,0.,1.)
+        visible=[]
+        for item in self.project.scene:
+            key=_asset_key(item)
+            asset=self.assets.get(key)
+            if asset is None or item.status=="hidden in editor":
+                continue
+            center=item.world.pos
+            d=sum((center[i]-eye[i])**2 for i in range(3))**.5
+            bounding=max(1.,asset.mesh.radius*max(abs(s) for s in item.world.scale))
+            if d>far+bounding:
+                continue
+            visible.append(item)
+            glPushMatrix()
+            glTranslatef(*center)
+            qw,qx,qy,qz=item.world.rotate
+            angle=2*math.degrees(math.acos(max(-1.,min(1.,qw))))
+            norm=math.hypot(qx,qy,qz)
+            if norm>1e-8:
+                glRotatef(angle,qx/norm,qy/norm,qz/norm)
+            glScalef(*item.world.scale)
+            geom=asset.geometry
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glEnableClientState(GL_NORMAL_ARRAY)
+            glVertexPointer(3,GL_FLOAT,0,geom.vertices)
+            glNormalPointer(GL_FLOAT,0,geom.normals)
+            has_uv=bool(asset.materials) and len(asset.mesh.uvs)==len(asset.mesh.vertices)
+            if has_uv:
+                glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+                glTexCoordPointer(2,GL_FLOAT,0,geom.uvs)
+            for first,count,slot in geom.draws:
+                tex=self._texture(key,slot,asset) if has_uv else 0
+                if tex:
+                    from texture_transform import transform_for, gl_matrix
+                    glEnable(GL_TEXTURE_2D)
+                    glBindTexture(GL_TEXTURE_2D,tex)
+                    glMatrixMode(GL_TEXTURE)
+                    glPushMatrix()
+                    glLoadMatrixf(np.asarray(gl_matrix(transform_for(asset.materials,slot)),dtype=np.float32))
+                    glMatrixMode(GL_MODELVIEW)
+                else:
+                    glDisable(GL_TEXTURE_2D)
+                glColor3f(1.,.74,.4) if self.active == self._lookup.get(item.id) else glColor3f(.86,.86,.87)
+                glDrawElements(GL_TRIANGLES,count,GL_UNSIGNED_INT,geom.indices[first:first+count])
+                if tex:
+                    glMatrixMode(GL_TEXTURE)
+                    glPopMatrix()
+                    glMatrixMode(GL_MODELVIEW)
+            glDisable(GL_TEXTURE_2D)
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+            glDisableClientState(GL_NORMAL_ARRAY)
+            glDisableClientState(GL_VERTEX_ARRAY)
+            glPopMatrix()
+        self._visible=tuple(visible)
+
+    def _pick(self, px, py):
+        import numpy as np
+        eye=np.asarray(self._eye(),dtype=float)
+        target=np.asarray(self.camera,dtype=float)
+        f=(target-eye);f/=max(1e-9,np.linalg.norm(f))
+        right=np.cross(f,(0.,0.,1.));right/=max(1e-9,np.linalg.norm(right))
+        up=np.cross(right,f)
+        aspect=self.width()/max(1,self.height())
+        k=math.tan(math.radians(60)/2)
+        x=(2*px/max(1,self.width())-1)*aspect*k
+        y=(1-2*py/max(1,self.height()))*k
+        direction=f+x*right+y*up
+        direction/=max(1e-9,np.linalg.norm(direction))
+        best=None
+        best_t=float("inf")
+        for obj in self._visible:
+            asset=self.assets[_asset_key(obj)]
+            local=tuple(asset.mesh.center[i]*obj.world.scale[i] for i in range(3))
+            from level_scene_core import rotate_vector
+            world_center=np.asarray(obj.world.pos)+np.asarray(rotate_vector(obj.world.rotate,local))
+            rad=max(0.25,asset.mesh.radius*max(abs(v) for v in obj.world.scale))
+            delta=eye-world_center
+            b=float(np.dot(direction,delta))
+            c=float(np.dot(delta,delta)-rad*rad)
+            discriminant=b*b-c
+            if discriminant<0:
+                continue
+            t=-b-math.sqrt(discriminant)
+            if 0<t<best_t:
+                best_t,best=t,obj
+        return best
+
+    def mousePressEvent(self,event):
+        self._mouse=event.position()
+        self._dragged=False
+        self._press_origin=event.position()
+        if event.button()==Qt.LeftButton:
+            item=self._pick(event.position().x(),event.position().y())
+            if item and item.id in self._lookup:
+                layer,index=self._lookup[item.id]
+                self.active=(layer,index)
+                self.selected.emit(layer,index)
+                self.update()
+
+    def mouseMoveEvent(self,event):
+        if self._mouse is None:
+            return
+        pos=event.position()
+        dx=pos.x()-self._mouse.x()
+        dy=pos.y()-self._mouse.y()
+        self._mouse=pos
+        if abs(dx)+abs(dy)>0:
+            self._dragged=True
+        if event.buttons()&Qt.RightButton:
+            self.yaw-=dx*.006
+            self.pitch=max(-1.48,min(1.48,self.pitch+dy*.006))
+        elif event.buttons()&Qt.MiddleButton:
+            scale=self.distance/max(160.,self.height())
+            self.camera[0]+=dx*scale*math.sin(self.yaw)+dy*scale*math.cos(self.yaw)
+            self.camera[1]+=-dx*scale*math.cos(self.yaw)+dy*scale*math.sin(self.yaw)
+        elif event.buttons()&Qt.LeftButton and self.mode=="move" and self.active:
+            if self._preview is None:
+                obj=self.project.get(*self.active)
+                self._preview=tuple(obj.pos)
+            scale=self.distance/max(160.,self.height())
+            self._preview=(self._preview[0]+dx*scale*math.sin(self.yaw),
+                           self._preview[1]-dx*scale*math.cos(self.yaw),
+                           self._preview[2])
+        self.update()
+
+    def mouseReleaseEvent(self,event):
+        if (event.button()==Qt.LeftButton and self._preview is not None
+                and self.active and self._dragged):
+            self.moved.emit(*self.active,self._preview)
+        self._preview=None
+        self._mouse=None
+        self._press_origin=None
+
+    def wheelEvent(self,event):
+        self.distance=max(.5,min(MAX_RENDER_DISTANCE,self.distance*math.pow(.87,event.angleDelta().y()/120.)))
+        self.update()
+
+    def closeEvent(self,event):
+        self._generation+=1
+        self._cancel.set()
+        self._poll.stop()
+        if self.isValid():
+            self.makeCurrent()
+            try:
+                from OpenGL.GL import glDeleteTextures
+                for tex in self._textures.values():
+                    if tex:
+                        glDeleteTextures([tex])
+            finally:
+                self.doneCurrent()
+        self._textures.clear()
+        super().closeEvent(event)
