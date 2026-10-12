@@ -140,9 +140,17 @@ def _workspace_for_file(source, projects_root):
 
 def textured_model_from_workspace(mesh, workspace, relative,
                                   *, texture_folder=None, projects_root=None,
-                                  stage_root=None):
+                                  stage_root=None, index=None):
     """Return GLB plus texturing/rig readiness information, no on-disk writes."""
-    from material_preview import load_preview_materials
+    from material_preview import load_preview_materials, _workspace_index
+    if index is None:
+        # Use the same cross-PAK index for textures AND the native rig companion.
+        # In particular, an Asset Library model's .skin may be in a different
+        # imported game archive, and extracted folders need the shared TS PAK.
+        try:
+            index = _workspace_index(workspace, projects_root, stage_root)
+        except (OSError, ValueError, KeyError):
+            index = None
     payload = glb_bytes(mesh, name=Path(relative).stem)
     report = {'texture_count': 0, 'texture_status': 'No material resources found',
               'rig_status': 'Unrigged: no compatible skin source found',
@@ -150,13 +158,15 @@ def textured_model_from_workspace(mesh, workspace, relative,
     try:
         mats = load_preview_materials(
             workspace, relative, texture_folder,
-            projects_root=projects_root, stage_root=stage_root)
+            projects_root=projects_root, stage_root=stage_root, index=index)
     except (ValueError, OSError) as exc:
         report['texture_status'] = str(exc)
     else:
         payload, count = embed_diffuse_textures(payload, mats)
+        warnings = tuple(mats.issues)
         report.update(texture_count=count,
-                      texture_status='%d diffuse textures embedded from unpacked PAKs' % count)
+                      texture_status='%d diffuse textures embedded from unpacked PAKs' % count,
+                      texture_warnings=warnings)
     # Resolve the original .skin/.chr companion in a safe, read-only way.
     # CompiledBones stores inverse-bind and rest-pose matrices; each mesh
     # subset has its own local-to-global bone palette.
@@ -168,8 +178,18 @@ def textured_model_from_workspace(mesh, workspace, relative,
         model_file = (files_root / relative).resolve()
         bone_file = (files_root / companion).resolve()
         if not bone_file.is_file() or not bone_file.is_relative_to(files_root):
-            bone_file = locate_related_asset(
-                workspace, companion, projects_root, stage_root)
+            # The selected model may come from the permanent Asset Library,
+            # with its matching .skin/.chr in another imported PAK. Honor the
+            # same virtual-path catalog used to render its materials.
+            if index is not None:
+                from multi_pak_assets import _resolve
+                hits, state = _resolve(index, companion, preferred_workspace=workspace)
+                bone_file = Path(hits[0]['file']) if state == 'found' else None
+                if state == 'ambiguous':
+                    report['rig_status'] = 'Unrigged: multiple different skin companions'
+            else:
+                bone_file = locate_related_asset(
+                    workspace, companion.as_posix(), projects_root, stage_root)
         if (model_file.is_file() and model_file.is_relative_to(files_root)
                 and bone_file is not None and Path(bone_file).is_file()):
             try:

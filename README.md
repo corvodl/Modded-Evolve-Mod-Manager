@@ -1,10 +1,16 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.15
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.16
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.15 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.16 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.18-beta.16
+
+- Model texture diagnostics now fit a compact searchable dialog with collapsed DDS fragments and full report copy.
+- Improved character texture lookup across the Asset Library, including Wraith's teleporter textures and shared hunter assets.
+- Blender export reuses verified game assets and avoids the Windows companion-path type error.
 
 ## What's new in v1.1.18-beta.15
 

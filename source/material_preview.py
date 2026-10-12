@@ -53,6 +53,13 @@ class RenderCancelled(Exception):
 
 def _workspace_index(workspace, projects_root=None, stage_root=None):
     workspace = Path(workspace).resolve()
+    # Imported PAK folders contain asset-library.json, not a project
+    # workspace manifest. Their game-relative paths must still resolve
+    # against every imported shared/data/texture archive.
+    if (workspace / 'asset-library.json').is_file():
+        from asset_library_preview import archive_folder, library_model_index
+        if archive_folder(workspace.name, root=workspace.parent) == workspace:
+            return library_model_index(workspace.name, root=workspace.parent)
     linked = related_asset_index(workspace, projects_root, stage_root)
     if linked is not None:
         # Persistent imports remain visible even when a multi-PAK project
@@ -272,23 +279,15 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         hit = _find_unique(index, ref, preferred_workspace=material['workspace'])
         if hit is not None:
             return hit
-        # Some character .mtl files refer to 'textures/foo.tif' relative
-        # to their own virtual folder; the imported PAK stores the complete
-        # 'characters/hunters/merc_x/textures/foo.dds.0' path.
-        normalized_ref = ref.strip().replace('\\', '/')
-        # A virtual relative path is safe only when it contains no traversal.
-        if (normalized_ref and not normalized_ref.startswith('/')
-                and ':' not in normalized_ref and
-                '..' not in normalized_ref.split('/')):
-            parent = Path(material['relative']).parent.as_posix()
-            if parent != '.':
-                try:
-                    hit = _find_unique(index, parent + '/' + normalized_ref,
-                                       preferred_workspace=material['workspace'])
-                except ValueError:
-                    raise
-                if hit is not None:
-                    return hit
+        from multi_pak_assets import resolve_material_texture
+        candidates, state = resolve_material_texture(
+            index, ref, material['relative'],
+            preferred_workspace=material['workspace'])
+        if state == 'ambiguous':
+            raise ValueError(
+                'Different versions of this material texture exist: ' + str(ref))
+        if state == 'found':
+            return candidates[0]
         hit = _external_lookup(texture_folder, ref)
         return hit if hit is not None else recover_unique_dds(ref)
 

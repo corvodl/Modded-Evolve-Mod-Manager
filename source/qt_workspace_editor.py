@@ -1879,8 +1879,9 @@ class QtWorkspaceEditor(QMainWindow):
         model, raw, workspace, virtual = (
             self.mesh, self.raw, self.workspace, self.current)
         character_assembly = bool(self.character_preview)
-        projects, stage, textures = (
-            self.manager.projects_path, self.manager.stage_path, self.texture_folder)
+        projects, stage, textures, asset_index = (
+            self.manager.projects_path, self.manager.stage_path,
+            self.texture_folder, self.preview_index)
 
         def work(progress, cancelled):
             progress('Resolving character geometry and textures', 0, 1)
@@ -1892,7 +1893,7 @@ class QtWorkspaceEditor(QMainWindow):
             payload, report = textured_model_from_workspace(
                 export_mesh, workspace, virtual,
                 texture_folder=textures,
-                projects_root=projects, stage_root=stage)
+                projects_root=projects, stage_root=stage, index=asset_index)
             if cancelled():
                 raise InterruptedError('Export cancelled before writing the GLB.')
             temporary = None
@@ -1917,6 +1918,9 @@ class QtWorkspaceEditor(QMainWindow):
                 (vertices, triangles, report['texture_count'], report['rig_status']))
             if not report['texture_count']:
                 message += ' Missing: ' + report['texture_status'][:180]
+            elif report.get('texture_warnings'):
+                message += ' Texture warnings: ' + '; '.join(
+                    report['texture_warnings'][:3])[:240]
             self.status.setText(message)
 
         begin_file_operation(
@@ -2158,13 +2162,16 @@ class QtWorkspaceEditor(QMainWindow):
                 'On Windows, verify that an OpenGL-capable graphics driver is installed.')
 
     def find_model_textures(self):
-        """Diagnose real virtual paths, never generated character mesh labels."""
+        """Inspect model dependencies in a bounded, searchable diagnostics dialog.
+
+        The material links may include thousands of streamed DDS filenames,
+        so never put their physical paths into a QMessageBox. Show the
+        virtual material/texture relationships immediately and only expand
+        individual DDS mip parts on demand.
+        """
         if self.mode != 'models' or not self.current:
             return
         try:
-            # Composite previews deliberately have a descriptive source_name
-            # like "Character assembly: maggiebody, flashlight". That is NOT
-            # a CryEngine path and must not be passed to normalized_name().
             targets = [self.current]
             if self.character_preview:
                 targets.extend(part[0] for part in
@@ -2172,65 +2179,31 @@ class QtWorkspaceEditor(QMainWindow):
             targets = list(dict.fromkeys(targets))
             from material_preview import _workspace_index
             from multi_pak_assets import model_material_links
+            from qt_model_texture_diagnostics import ModelTextureDiagnosticsDialog
             index = self.preview_index
             if index is None:
                 index = _workspace_index(
                     self.workspace, self.manager.projects_path,
                     self.manager.stage_path)
-            lines = [
-                'Character model: ' + self.current,
-                'Preview: ' + str(self.mesh.source_name if self.mesh else ''),
-                'Inspecting %d real model / attachment paths.' % len(targets),
-            ]
+            reports = []
             for path in targets[:12]:
-                lines.append('\n' + path)
                 try:
                     links = model_material_links(
                         self.workspace, path,
                         projects_root=self.manager.projects_path,
                         stage_root=self.manager.stage_path, index=index)
                 except (OSError, ValueError) as exc:
-                    lines.append('  Lookup unavailable: ' + str(exc)[:160])
-                    continue
-                lines.append('  Material: ' + str(links.get('material') or '(not found)'))
-                lines.append('  Status: ' + str(links.get('status')))
-                if links.get('basis') and links['basis'] != 'unresolved':
-                    lines.append('  Association: ' + links['basis'])
-                if links.get('status') == 'missing':
-                    nearby = links.get('nearby_materials') or ()
-                    if nearby:
-                        lines.append('  Other .mtl files in this character folder '
-                                     '(not automatically assigned):')
-                        lines.extend('    ' + name for name in nearby[:8])
-                    lines.append('  The equipment has no verified material link '
-                                 'in the indexed PAKs; this is not necessarily a '
-                                 'missing DDS texture.')
-                for record in links.get('textures', ()):
-                    lines.append('  %s: %s — %s' % (
-                        record.get('map'), record.get('reference'),
-                        record.get('status')))
-                    if record.get('paths'):
-                        lines.append('     Source: ' +
-                                     ', '.join(record['paths'][:4]))
-                    if record.get('archives'):
-                        lines.append('     PAKs: ' +
-                                     ', '.join(record['archives'][:4]))
-                    for physical in record.get('physical_paths', ())[:4]:
-                        lines.append('     On disk: ' + physical)
-                    fragments = record.get('stream_parts') or ()
-                    if fragments:
-                        lines.append('     DDS fragments: %d indexed part(s)' %
-                                     len(fragments))
-                        for frag in fragments[:16]:
-                            lines.append(
-                                '       .%d  %s | %s' %
-                                (frag['part'], frag['archive'], frag['physical']))
-            if self.materials and self.materials.issues:
-                lines.append('\nMaterial decode issues:')
-                lines.extend('  ' + issue for issue in self.materials.issues[:16])
-            lines.append('\nThe Asset Library is read-only. Create a Modding '
-                         'project to make changes.')
-            QMessageBox.information(self, 'Model textures', '\n'.join(lines))
+                    links = {
+                        'material': str(exc), 'status': 'lookup unavailable',
+                        'textures': (),
+                    }
+                reports.append((path, links))
+            issues = self.materials.issues if self.materials is not None else ()
+            selected = self.current
+            preview = self.mesh.source_name if self.mesh else ''
+            dialog = ModelTextureDiagnosticsDialog(
+                selected, preview, reports, issues, self)
+            dialog.exec()
         except Exception as exc:
             QMessageBox.critical(self, 'Model textures', str(exc))
 

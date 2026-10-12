@@ -7,7 +7,7 @@ import argparse
 import hashlib
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 import json
 import re
 from types import SimpleNamespace
@@ -144,6 +144,12 @@ def _asset_index(batch, data):
 
 def _candidates(ref):
     """CryEngine .tif material references generally point to cooked DDS assets."""
+    # Companions created by skin_companion_path are pathlib objects, not
+    # strings. Preserve their virtual path semantics on Windows.
+    if isinstance(ref, PurePath):
+        ref = ref.as_posix()
+    if not isinstance(ref, str):
+        raise ValueError('Expected a virtual asset path.')
     rel = normalized_name(ref.strip().replace('\\', '/'))
     opts=[rel]
     if rel.casefold().endswith('.tif'):
@@ -209,6 +215,46 @@ def _resolve(index, ref, *, preferred_workspace=None):
             return unique, 'ambiguous'
         return unique, 'ambiguous'
     return [], 'missing'
+
+def resolve_material_texture(index, reference, material_relative, *, preferred_workspace=None):
+    """Resolve a CryEngine material map relative to its owning character.
+
+    Short names such as teleporter_diff.tif are allowed to point at the
+    character's sibling textures/ directory even when the material lives in
+    materials/.  Every candidate is still verified against the exact imported
+    virtual path; a similarly named map belonging to a different character
+    cannot satisfy this resolver.
+    """
+    hits, state = _resolve(index, reference, preferred_workspace=preferred_workspace)
+    if state != 'missing':
+        return hits, state
+    if not isinstance(reference, (str, PurePath)):
+        return [], 'unsafe-path'
+    virtual = (reference.as_posix() if isinstance(reference, PurePath)
+               else reference).strip().replace('\\', '/')
+    if (not virtual or virtual.startswith('/') or ':' in virtual or
+            any(part in ('', '.', '..') for part in virtual.split('/'))):
+        return [], 'unsafe-path'
+    if virtual.casefold().startswith(
+            ('characters/', 'objects/', 'materials/', 'levels/')):
+        return [], 'missing'
+    parent_parts = Path(material_relative).parent.parts
+    minimum = (3 if len(parent_parts) >= 3
+               and parent_parts[0].casefold() == 'characters'
+               and parent_parts[1].casefold() in ('hunters', 'monsters', 'creatures')
+               else 1)
+    for count in range(len(parent_parts), minimum - 1, -1):
+        parent = '/'.join(parent_parts[:count])
+        choices = [parent + '/' + virtual]
+        if '/' not in virtual:
+            choices.append(parent + '/textures/' + virtual)
+        for candidate in choices:
+            hits, state = _resolve(
+                index, candidate, preferred_workspace=preferred_workspace)
+            if state != 'missing':
+                return hits, state
+    return [], 'missing'
+
 
 MAX_DISCOVERY_PROJECTS = 200
 MAX_DISCOVERY_WORKSPACES = 256
@@ -328,7 +374,7 @@ def locate_related_asset(workspace, virtual_path, projects_root=None, stage_root
         return None
     hits, status = _resolve(index, virtual_path, preferred_workspace=workspace)
     if status == 'ambiguous':
-        raise ValueError('Companion asset is ambiguous across extracted PAKs: ' + virtual_path)
+        raise ValueError('Companion asset is ambiguous across extracted PAKs: ' + str(virtual_path))
     return hits[0]['file'] if status == 'found' else None
 
 
@@ -358,7 +404,14 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
     workspace = Path(workspace).resolve()
     normalized_name(model_relative)
     if index is None:
-        index = related_asset_index(workspace, projects_root, stage_root)
+        # An imported PAK has asset-library.json rather than an editable
+        # workspace manifest. Pull the complete verified Asset Library index
+        # so diagnostics agree with the GPU viewer.
+        if (workspace / 'asset-library.json').is_file():
+            from material_preview import _workspace_index
+            index = _workspace_index(workspace, projects_root, stage_root)
+        else:
+            index = related_asset_index(workspace, projects_root, stage_root)
     has_links = index is not None
     if index is None:
         index = defaultdict(list)
@@ -411,15 +464,9 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
         if signature in seen:
             continue
         seen.add(signature)
-        matches,resolution = _resolve(index, ref, preferred_workspace=material['workspace'])
-        if resolution == 'missing':
-            virtual = ref.strip().replace('\\', '/')
-            if virtual and not virtual.startswith('/') and ':' not in virtual and '..' not in virtual.split('/'):
-                parent = Path(material['relative']).parent.as_posix()
-                if parent != '.':
-                    matches,resolution = _resolve(
-                        index, parent + '/' + virtual,
-                        preferred_workspace=material['workspace'])
+        matches,resolution = resolve_material_texture(
+            index, ref, material['relative'],
+            preferred_workspace=material['workspace'])
         fragments = []
         for match in matches:
             virtual = match.get('relative', '')
