@@ -151,8 +151,8 @@ class FlatCharacterFolderTests(unittest.TestCase):
             return b'glTF' + rel.encode(), {
                 'texture_count': 2, 'bone_count': 8,
                 'rig_status': 'Rigged CDF assembly'}
-        with patch('character_assembly.assemble_character', side_effect=assemble), \\
-             patch('character_asset_export.assembled_character_glb', side_effect=glb):
+        with (patch('character_assembly.assemble_character', side_effect=assemble),
+              patch('character_asset_export.assembled_character_glb', side_effect=glb)):
             prepared, errors = build_cdf_folder_glbs(
                 self.workspace, self.prefix, self.index)
         self.assertEqual(len(prepared), 3)
