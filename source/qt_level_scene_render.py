@@ -202,16 +202,16 @@ class LevelGLViewport(QOpenGLWidget):
         self._poll = QTimer(self)
         self._poll.timeout.connect(self._receive)
         self._poll.start(80)
-        token = self._generation
+        token, cancel, results = self._generation, self._cancel, self._results
 
         def job():
             try:
-                value = prepare_scene(project, self._cancel, game=self.game_root,
+                value = prepare_scene(project, cancel, game=self.game_root,
                                       stage=self.stage_root, cache_root=self.cache_root)
             except Exception as exc:
                 value = (None, {"scene initialization: " + str(exc)[:160]: 1}, {})
-            if not self._cancel.is_set():
-                self._results.put((token, value))
+            if not cancel.is_set():
+                results.put((token, value))
         self._loader = Thread(target=job, name="Evolve-Level-CPU-Loader", daemon=True)
         self._loader.start()
         self.statusChanged.emit("Preparing map meshes and textures in background…")
