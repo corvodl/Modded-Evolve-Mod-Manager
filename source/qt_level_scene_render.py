@@ -332,6 +332,13 @@ class LevelGLViewport(QOpenGLWidget):
         glLoadIdentity()
         eye=self._eye()
         gluLookAt(*eye,*self.camera,0.,0.,1.)
+        forward=tuple((self.camera[i]-eye[i])/max(1e-8,self.distance) for i in range(3))
+        right=(-forward[1],forward[0],0.)
+        right_len=max(1e-8,math.hypot(right[0],right[1]))
+        right=tuple(v/right_len for v in right)
+        up=(right[1]*forward[2]-right[2]*forward[1],
+            right[2]*forward[0]-right[0]*forward[2],
+            right[0]*forward[1]-right[1]*forward[0])
         visible=[]
         for item in self.project.scene:
             key=_asset_key(item)
@@ -339,9 +346,14 @@ class LevelGLViewport(QOpenGLWidget):
             if asset is None or item.status=="hidden in editor":
                 continue
             center=item.world.pos
-            d=sum((center[i]-eye[i])**2 for i in range(3))**.5
-            bounding=max(1.,asset.mesh.radius*max(abs(s) for s in item.world.scale))
-            if d>far+bounding:
+            delta=tuple(center[i]-eye[i] for i in range(3))
+            depth=sum(delta[i]*forward[i] for i in range(3))
+            bounding=max(1.,1.74*asset.mesh.radius*max(abs(s) for s in item.world.scale))
+            if depth+bounding<near or depth-bounding>far:
+                continue
+            limit=max(0.,depth)*half
+            if (abs(sum(delta[i]*right[i] for i in range(3))) > ratio*limit+bounding
+                    or abs(sum(delta[i]*up[i] for i in range(3))) > limit+bounding):
                 continue
             visible.append(item)
             glPushMatrix()
