@@ -6,6 +6,12 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 **Version:** 1.1.18-beta.16 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
 
+## What's new in v1.1.18-beta.16
+
+- Model texture diagnostics now fit a compact searchable dialog with collapsed DDS fragments and full report copy.
+- Improved character texture lookup across the Asset Library, including Wraith's teleporter textures and shared hunter assets.
+- Blender export reuses verified game assets and avoids the Windows companion-path type error.
+
 ## What's new in v1.1.18-beta.15
 
 - Native animation selection is now a compact **scrollable in-panel list** instead of a screen-height popup. Long asset paths show in a bounded, independently scrollable details pane.
