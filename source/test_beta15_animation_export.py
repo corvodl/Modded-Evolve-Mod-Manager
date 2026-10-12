@@ -119,7 +119,9 @@ class AsyncProgressTests(unittest.TestCase):
         self.assertGreaterEqual(len(ticks), 3)
         # Process thread.finished cleanup queued after completed.
         self.app.processEvents()
-        self.assertTrue(thread.isFinished() or not thread.isRunning())
+        # The worker is deleted asynchronously when its finished signal
+        # fires; avoid dereferencing a potentially destroyed Qt wrapper.
+        self.assertFalse(exports_busy(panel))
 
     def test_cancellation_is_seen_by_worker_between_models(self):
         mesh = read_preview_mesh(uv_mesh(), 'synthetic.skinm')
