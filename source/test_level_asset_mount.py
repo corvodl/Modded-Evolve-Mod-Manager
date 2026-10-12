@@ -17,6 +17,7 @@ class ScopedMountTests(unittest.TestCase):
         self.assertEqual(level_from_source(
             r"C:\Games\Evolve\Game\levels\Desert_Canyon\terraintexture.pak"),
             "desert_canyon")
+        self.assertEqual(level_from_source(r"C:\Games\Evolve\Game\levels_Desert_Canyon.pak"), "desert_canyon")
         self.assertIsNone(level_from_source(r"C:\Games\Evolve\Game\characters\data.pak"))
         self.assertTrue(map_relative_asset("brush/designer_100.cgf"))
         self.assertTrue(map_relative_asset("tile0_0.raw"))
