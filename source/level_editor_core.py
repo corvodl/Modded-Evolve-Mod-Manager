@@ -158,7 +158,7 @@ class LevelProject:
             self._originals[name] = data
             for i, node in enumerate(nodes):
                 self._original_attrs[(name, i)] = {
-                    k: node.get(k) for k in ("Pos", "Rotate", "Scale")}
+                    k: node.get(k) for k in ("Pos", "Rotate", "Scale", "Material")}
                 if parse_vec(node.get("Pos")) is None:
                     continue
                 a = node.attrib
@@ -226,6 +226,37 @@ class LevelProject:
         self.refresh_scene()
         return True
 
+    def apply_material(self, layer, index, value):
+        """Set a verified-looking material virtual path on an editable copy.
+
+        Missing/ambiguous materials are diagnosed during preview; this does
+        not silently alter the referenced mesh or unpacked game archive.
+        """
+        from level_scene_core import normalize_reference
+        material = str(value).strip().replace("\\", "/")
+        if material:
+            if len(material) > 190:
+                raise ValueError("Material reference is too long.")
+            normalized = normalize_reference(material)
+            if normalized.endswith(".mtl"):
+                material = material[:-4]
+            elif "." in Path(material).name:
+                raise ValueError("Select a CryEngine .mtl or extensionless material.")
+        node = self._node(layer, index)
+        before = node.get("Material")
+        after = material or None
+        if before == after:
+            return False
+        self.undo_stack.append((layer, index, "Material", before, after))
+        self.redo_stack.clear()
+        if after is None:
+            node.attrib.pop("Material", None)
+        else:
+            node.set("Material", after)
+        self._refresh_object(layer, index)
+        self.refresh_scene()
+        return True
+
     def undo(self):
         if not self.undo_stack:
             return False
@@ -246,7 +277,11 @@ class LevelProject:
             return False
         change = self.redo_stack.pop()
         layer, index, key, before, after = change
-        self._node(layer, index).set(key, after)
+        node = self._node(layer, index)
+        if after is None:
+            node.attrib.pop(key, None)
+        else:
+            node.set(key, after)
         self.undo_stack.append(change)
         self._refresh_object(layer,index)
         self.refresh_scene()
@@ -305,7 +340,7 @@ class LevelProject:
         for (name, i) in self._original_attrs:
             node = self._node(name, i)
             self._original_attrs[(name, i)] = {
-                key: node.get(key) for key in ("Pos", "Rotate", "Scale")}
+                key: node.get(key) for key in ("Pos", "Rotate", "Scale", "Material")}
         self.undo_stack.clear()
         self.redo_stack.clear()
         return tuple(results)

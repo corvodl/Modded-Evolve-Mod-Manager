@@ -221,12 +221,24 @@ def _decode_texture(item, *, index=None):
     return tex
 
 
-def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None):
+def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None, material_override=None):
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
     from model_material_resolve import find_model_material
-    material, reason, attempted = find_model_material(
-        index, model_relative, preferred_workspace=workspace, cdf=cdf)
+    if material_override:
+        from multi_pak_assets import _resolve
+        from model_material_resolve import _material_path
+        exact = _material_path(material_override, '')
+        if not exact:
+            raise ValueError('Invalid explicit level material override.')
+        hits, state = _resolve(index, exact, preferred_workspace=workspace)
+        if state != 'found':
+            raise ValueError('Explicit level material could not be uniquely resolved: '
+                             + exact + ' (' + state + ')')
+        material, reason, attempted = hits[0], 'level instance Material override', (exact,)
+    else:
+        material, reason, attempted = find_model_material(
+            index, model_relative, preferred_workspace=workspace, cdf=cdf)
     if material is None:
         raise ValueError('No verified model .mtl association for ' +
                          model_relative + '; searched: ' +
