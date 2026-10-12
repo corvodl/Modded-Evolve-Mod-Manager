@@ -102,7 +102,7 @@ class NativeCafTests(unittest.TestCase):
             header=struct.pack('<IHHBBBBBBH',ident,2,2,1,2,2,0,0,1,0)
             quats=struct.pack('<8f',0,0,0,1,0,0,0,1)
             times=bytes((first,last))
-            pad=b'\\0'*2
+            pad=bytes(2)
             poses=struct.pack('<6f',0,0,0,0.1,0,0)
             return header+quats+times+pad+poses
         caf=crchf([
