@@ -1,4 +1,4 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.15
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.16
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
