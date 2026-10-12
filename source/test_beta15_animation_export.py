@@ -67,7 +67,12 @@ class CompactAnimationUITests(unittest.TestCase):
         self.assertEqual(
             p.native_info.horizontalScrollBarPolicy(), Qt.ScrollBarAlwaysOff)
         self.assertIn(item.virtual_path, p.native_info.toPlainText())
+        self.assertFalse(p.conversion_status.isVisible())
+        p.conversion_status.setText('Converter exited with code 1: missing skeleton')
+        p.conversion_status.show()
+        self.app.processEvents()
         self.assertTrue(p.conversion_status.isVisible())
+        self.assertIn('missing skeleton', p.conversion_status.toPlainText())
 
 
 class AsyncProgressTests(unittest.TestCase):
