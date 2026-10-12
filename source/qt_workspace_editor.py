@@ -978,6 +978,9 @@ class QtWorkspaceEditor(QMainWindow):
                         from character_aliases import pretty_folder
                         display = pretty_folder(part, '/'.join(parts[:i]))
                         folder = QTreeWidgetItem([display, ''])
+                        # Store the original virtual directory independent of
+                        # friendly display aliases (e.g. Gorgon/mon_lurker).
+                        folder.setData(0, Qt.UserRole + 1, key)
                         folder.setToolTip(0, key + (
                             '\\nCharacter: ' + display if display != part else ''))
                         if parent is not None:
@@ -1895,11 +1898,39 @@ class QtWorkspaceEditor(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, 'Blender export failed', str(exc))
 
+    def _current_model_folder_relative(self):
+        """Use the selected folder, or the parent of the selected/open file.
+
+        Item labels can be friendly character aliases or grouped model names,
+        so always use exact virtual path metadata, never visible text.
+        """
+        item = self.file_tree.currentItem()
+        if item is not None:
+            virtual = item.data(0, Qt.UserRole)
+            if virtual:
+                return Path(normalized_name(virtual)).parent.as_posix()
+            folder = item.data(0, Qt.UserRole + 1)
+            if folder:
+                return normalized_name(folder)
+        if self.current:
+            return Path(normalized_name(self.current)).parent.as_posix()
+        raise ValueError('Select a model or a folder in File Explorer first.')
+
+    def _current_model_source_folder(self):
+        root = (self.workspace / 'files').resolve()
+        folder = self._current_model_folder_relative()
+        source = (root / folder).resolve()
+        if (not root.is_dir() or not source.is_relative_to(root) or
+                not source.is_dir() or source.is_symlink()):
+            raise ValueError('Selected model folder is missing or outside the extracted PAK.')
+        return source
+
     def export_blender_folder(self):
-        """Export supported meshes with textures from other unpacked PAK workspaces."""
-        source = QFileDialog.getExistingDirectory(
-            self, 'Choose unpacked model folder', str(self.workspace / 'files'))
-        if not source:
+        """Export the currently selected model folder (no source chooser)."""
+        try:
+            source = self._current_model_source_folder()
+        except (OSError, ValueError) as exc:
+            QMessageBox.information(self, 'Export Model Folder', str(exc))
             return
         destination = QFileDialog.getExistingDirectory(
             self, 'Choose a separate Blender export folder',
