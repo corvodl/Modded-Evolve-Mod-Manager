@@ -2096,7 +2096,7 @@ class QtWorkspaceEditor(QMainWindow):
 
         # Capture the source model paths before the QThreadPool callback;
         # workers must never access live QWidget state.
-        self_records = frozenset(self.records)
+        self_records = frozenset(name.casefold() for name in self.records)
 
         def completed(report):
             note = ('Exported %d original character assets to %s' %
