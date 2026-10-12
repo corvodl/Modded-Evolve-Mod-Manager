@@ -157,6 +157,32 @@ class LevelGLViewport(QOpenGLWidget):
         self._loader.start()
         self.statusChanged.emit("Preparing map meshes and textures in background…")
 
+    def reload_scene(self):
+        """Replace results safely; late responses from old tasks are ignored."""
+        self._cancel.set()
+        self._generation += 1
+        self._cancel = Event()
+        self._results = Queue(maxsize=2)
+        self.assets = {}
+        self._lookup.clear()
+        for item in self.project.objects:
+            node = self.project._node(item.layer, item.index)
+            guid = (node.get("Id") or node.get("EntityId") or f"{item.layer}#{item.index}").casefold()
+            self._lookup.setdefault(guid, (item.layer, item.index))
+        token, cancel, queue = self._generation, self._cancel, self._results
+        project = self.project
+        def job():
+            try:
+                result = prepare_scene(project, cancel)
+            except Exception as exc:
+                result = ({}, {"scene initialization: " + str(exc)[:160]: 1}, {})
+            if not cancel.is_set():
+                queue.put((token, result))
+        self._loader = Thread(target=job, name="Evolve-Level-CPU-Reload", daemon=True)
+        self._loader.start()
+        self.statusChanged.emit("Refreshing copied scene assets…")
+        self.update()
+
     def _receive(self):
         try:
             token, result = self._results.get_nowait()
@@ -239,9 +265,9 @@ class LevelGLViewport(QOpenGLWidget):
         if image is None:
             self._textures[tex_id] = 0
             return 0
-        if image.width > 2048 or image.height > 2048:
-            image.thumbnail((2048,2048))
         rgba = image.convert("RGBA")
+        if rgba.width > 2048 or rgba.height > 2048:
+            rgba.thumbnail((2048,2048))
         ident = int(glGenTextures(1))
         glBindTexture(GL_TEXTURE_2D,ident)
         glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR)
@@ -260,7 +286,7 @@ class LevelGLViewport(QOpenGLWidget):
             glColor3f,glEnable,glDisable,glBindTexture,
             glEnableClientState,glDisableClientState,glVertexPointer,
             glNormalPointer,glTexCoordPointer,glDrawElements,
-            glMatrixMode,glLoadMatrixf,glMultMatrixf,
+            glMatrixMode,glLoadMatrixf,GL_TEXTURE,
             GL_COLOR_BUFFER_BIT,GL_DEPTH_BUFFER_BIT,GL_PROJECTION,
             GL_MODELVIEW,GL_VERTEX_ARRAY,GL_NORMAL_ARRAY,
             GL_TEXTURE_COORD_ARRAY,GL_TEXTURE_2D,GL_FLOAT,
