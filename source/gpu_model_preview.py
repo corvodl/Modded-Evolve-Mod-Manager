@@ -270,7 +270,8 @@ class Win32GPUPreview:
                 rgb = image.convert('RGB')
                 from PIL import Image
                 rgb.thumbnail((self.texture_limit,self.texture_limit), resample=Image.Resampling.BILINEAR)
-                pixels = np.ascontiguousarray(rgb, dtype=np.uint8)
+                from gl_texture_upload import gl_upload_pixels
+                pixels = np.frombuffer(gl_upload_pixels(rgb, 'RGB'), dtype=np.uint8)
                 out = ct.c_uint()
                 self._call('glGenTextures',1,ct.byref(out))
                 if out.value == 0:
