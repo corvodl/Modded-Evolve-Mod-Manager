@@ -116,6 +116,31 @@ class CharacterStageTests(unittest.TestCase):
             self.assertEqual(c.included,('body','tail','head'))
             self.assertEqual(len(c.mesh.vertices),12)
 
+    def test_alternate_monster_states_are_not_superimposed(self):
+        from character_assembly import assemble_character
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        skins=(('body','characters/monsters/robot/robot_body.skin'),
+               ('oh','characters/monsters/robot/robot_oh.skin'),
+               ('normal','characters/monsters/robot/robot_normal.skin'),
+               ('evil','characters/monsters/robot/robot_evil.skin'),
+               ('healing','characters/monsters/robot/robot_healing.skin'),
+               ('broken','characters/monsters/robot/robot_broken.skin'),
+               ('healingtotem','characters/monsters/robot/robot_totem.skin'))
+        with TemporaryDirectory() as folder:
+            model=Path(folder)/'test.skinm';model.write_bytes(tiny_mesh())
+            with (patch('character_assembly._character_definition',
+                        return_value=('characters/monsters/robot/robot.cdf',
+                                      'characters/monsters/robot/robot.chr',skins,{})),
+                  patch('character_assembly._resolve_file',return_value=model),
+                  patch('character_assembly.load_preview_materials',return_value=None)):
+                normal=assemble_character(None,'characters/monsters/robot/robot_body.skinm',{})
+                evil=assemble_character(None,'characters/monsters/robot/robot_body.skinm',{},
+                                        equipment=skins[3][1])
+            self.assertEqual(normal.included,('body','normal'))
+            self.assertEqual(evil.included,('body','evil'))
+            self.assertEqual(len(normal.mesh.vertices),8)
+
     def test_hunter_accessory_stays_when_changing_equipment(self):
         from character_assembly import assemble_character
         from tempfile import TemporaryDirectory
