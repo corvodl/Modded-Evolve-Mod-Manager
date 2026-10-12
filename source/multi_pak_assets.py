@@ -216,6 +216,46 @@ def _resolve(index, ref, *, preferred_workspace=None):
         return unique, 'ambiguous'
     return [], 'missing'
 
+def resolve_material_texture(index, reference, material_relative, *, preferred_workspace=None):
+    """Resolve a CryEngine material map relative to its owning character.
+
+    Short names such as teleporter_diff.tif are allowed to point at the
+    character's sibling textures/ directory even when the material lives in
+    materials/.  Every candidate is still verified against the exact imported
+    virtual path; a similarly named map belonging to a different character
+    cannot satisfy this resolver.
+    """
+    hits, state = _resolve(index, reference, preferred_workspace=preferred_workspace)
+    if state != 'missing':
+        return hits, state
+    if not isinstance(reference, (str, PurePath)):
+        return [], 'unsafe-path'
+    virtual = (reference.as_posix() if isinstance(reference, PurePath)
+               else reference).strip().replace('\\', '/')
+    if (not virtual or virtual.startswith('/') or ':' in virtual or
+            any(part in ('', '.', '..') for part in virtual.split('/'))):
+        return [], 'unsafe-path'
+    if virtual.casefold().startswith(
+            ('characters/', 'objects/', 'materials/', 'levels/')):
+        return [], 'missing'
+    parent_parts = Path(material_relative).parent.parts
+    minimum = (3 if len(parent_parts) >= 3
+               and parent_parts[0].casefold() == 'characters'
+               and parent_parts[1].casefold() in ('hunters', 'monsters', 'creatures')
+               else 1)
+    for count in range(len(parent_parts), minimum - 1, -1):
+        parent = '/'.join(parent_parts[:count])
+        choices = [parent + '/' + virtual]
+        if '/' not in virtual:
+            choices.append(parent + '/textures/' + virtual)
+        for candidate in choices:
+            hits, state = _resolve(
+                index, candidate, preferred_workspace=preferred_workspace)
+            if state != 'missing':
+                return hits, state
+    return [], 'missing'
+
+
 MAX_DISCOVERY_PROJECTS = 200
 MAX_DISCOVERY_WORKSPACES = 256
 
@@ -417,15 +457,9 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
         if signature in seen:
             continue
         seen.add(signature)
-        matches,resolution = _resolve(index, ref, preferred_workspace=material['workspace'])
-        if resolution == 'missing':
-            virtual = ref.strip().replace('\\', '/')
-            if virtual and not virtual.startswith('/') and ':' not in virtual and '..' not in virtual.split('/'):
-                parent = Path(material['relative']).parent.as_posix()
-                if parent != '.':
-                    matches,resolution = _resolve(
-                        index, parent + '/' + virtual,
-                        preferred_workspace=material['workspace'])
+        matches,resolution = resolve_material_texture(
+            index, ref, material['relative'],
+            preferred_workspace=material['workspace'])
         fragments = []
         for match in matches:
             virtual = match.get('relative', '')
