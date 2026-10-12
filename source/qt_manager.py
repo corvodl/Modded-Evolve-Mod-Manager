@@ -1528,6 +1528,12 @@ class QtManager(QMainWindow):
             write_permission=self._developer_memory_write_permission)
         panel.addWidget(self.dev_memory_panel)
         lay.addWidget(card)
+        card, panel = self._developer_fold_card('Account profile / progression',
+            'Inspect readable backups, compare ownership and XP, and export isolated offline copies.')
+        profile_button = _button('Open Account Profile Inspector…', self._open_account_profile_inspector)
+        profile_button.setObjectName('developerProfileInspector')
+        panel.addWidget(profile_button)
+        lay.addWidget(card)
         card, panel = self._developer_fold_card('Developer diagnostics',
             'Live pointer/snapshot tools and isolated relay, session and '
             'trace diagnostics. Local fixture services cannot target public endpoints.', expanded=True)
@@ -1544,6 +1550,11 @@ class QtManager(QMainWindow):
         self.pages['developer'] = scroll
         QTimer.singleShot(0, self.dev_memory_panel.start)
         QTimer.singleShot(0, self.dev_lab_panel.refresh_pids)
+
+    def _open_account_profile_inspector(self):
+        from qt_account_profile import AccountProfileInspector
+        dialog = AccountProfileInspector(self)
+        dialog.exec()
 
     def _developer_memory_write_permission(self):
         from developer_write_policy import require_developer_write
