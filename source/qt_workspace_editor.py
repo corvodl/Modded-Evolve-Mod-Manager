@@ -170,6 +170,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.loose_animation_index = None
         self.preview_index = None
         self.character_preview = None
+        self.full_character_active = False
         self.character_skin_choice = None
         self._prepared_animation = None
         self.gpu_windows = []
@@ -441,6 +442,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Export for Blender (.glb)…', self.export_blender_model)
         action('File', 'Export Animated Character (.glb)…', self.export_animated_character)
         action('File', 'Export Model Folder…', self.export_blender_folder)
+        action('File', 'Export Individual Meshes as GLB…', self.export_individual_glbs)
         action('File', 'Batch Asset Export…', self.open_asset_search)
         action('File', 'Project History & Undo…', self.open_project_history)
         action('Edit', 'Save Text', self.save)
@@ -896,7 +898,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         clear_model_cache(self.workspace)
         self.preview_index = None
-        self.load(self.current)
+        self.load(self.current, full_character=self.full_character_active)
         self.status.setText('Reloading materials and textures…')
 
     @staticmethod
@@ -961,7 +963,9 @@ class QtWorkspaceEditor(QMainWindow):
             # Collapse only verified model families. Children retain their
             # exact virtual file paths, so editing/favorites still work.
             from model_families import group_model_families
+            from character_full_models import discover_full_characters
             family_by_parent = group_model_families(entries)
+            full_characters = discover_full_characters(entries)
             member_to_parent = {
                 member: parent for parent, group in family_by_parent.items()
                 for member in group.members if member != parent
@@ -1032,6 +1036,22 @@ class QtWorkspaceEditor(QMainWindow):
                     tree.addTopLevelItem(item)
                 if rel == previous:
                     restored = item
+            # Virtual Full Character options remain separate from editable
+            # native meshes. Their user-data points at the actual .skinm.
+            for primary, full in full_characters.items():
+                parent = folders.get('/'.join(primary.split('/')[:-1]))
+                if parent is None:
+                    continue
+                item = QTreeWidgetItem(['◆ ' + full.label, 'CDF assembly'])
+                item.setData(0, Qt.UserRole, primary)
+                item.setData(0, Qt.UserRole + 2, 'full-character')
+                item.setToolTip(0,
+                    'Full character assembled from ' + full.definition +
+                    '\\nThe CDF selects the body and compatible equipment. ' +
+                    'Original meshes remain independently selectable.')
+                parent.insertChild(0, item)
+                if primary == previous and self.full_character_active:
+                    restored = item
             for owner, children in grouped_nodes.items():
                 primary_item = getattr(self, '_model_group_items', {}).get(owner)
                 if primary_item is None:
@@ -1078,20 +1098,25 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             chosen = self.selected()
+            item = self.file_tree.currentItem()
+            full_character = bool(
+                item and item.data(0, Qt.UserRole + 2) == 'full-character')
             if chosen.casefold().endswith('.lyr') and not self.read_only_library:
                 self.manager.open_level_editor(self.workspace)
             else:
-                self.load(chosen)
+                self.load(chosen, full_character=full_character)
         except ValueError as exc:
             self.status.setText(str(exc))
 
-    def load(self, rel):
+    def load(self, rel, *, full_character=False):
         if rel not in self.records:
             raise ValueError('This file is no longer in the extracted PAK.')
         # The internal pages are selected by file type; their tab bar is hidden.
         target_mode = self._category(rel)
         self.tabs.setCurrentIndex(self.TABS.index(target_mode))
-        self.current_file_label.setText(rel)
+        self.full_character_active = bool(full_character)
+        self.current_file_label.setText(
+            'Full Character • ' + Path(rel).stem if full_character else rel)
         from character_aliases import character_asset_description
         description = character_asset_description(rel)
         self.current_file_label.setToolTip(
@@ -1169,7 +1194,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.preview_index = None
         self._prepared_animation = None
         self.status.setText('Refreshing current Asset Library references…')
-        self.load(self.current)
+        self.load(self.current, full_character=self.full_character_active)
 
     def _load_model_background(self, rel):
         """Load heavy CryEngine files and textures away from the GUI thread."""
@@ -1195,6 +1220,7 @@ class QtWorkspaceEditor(QMainWindow):
         tex = self.texture_folder
         ani = self.loose_animation_index
         equipment = self.character_skin_choice
+        require_assembly = self.full_character_active
         token = self._model_generation
 
         def resolve(_unused):
@@ -1207,7 +1233,8 @@ class QtWorkspaceEditor(QMainWindow):
             data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
                 projects_root=projects, stage_root=stage,
                 texture_folder=tex, animation_index=ani,
-                equipment=equipment, index=active_index)
+                equipment=equipment, index=active_index,
+                require_assembly=require_assembly)
             return (data, cache_hit, load_ms), None
 
         # Tests and headless software previews retain deterministic synchronous
@@ -1303,7 +1330,7 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode != 'models' or not self.current:
             return
         self.character_skin_choice = name
-        self.load(self.current)
+        self.load(self.current, full_character=self.full_character_active)
 
     def _paint_model(self, view, mesh):
         """The complete GPU controls are embedded by default in the Models tab."""
@@ -1568,7 +1595,7 @@ class QtWorkspaceEditor(QMainWindow):
         if self.current and self._confirm_buffer():
             clear_model_cache(self.workspace)
             self.preview_index = None
-            self.load(self.current)
+            self.load(self.current, full_character=self.full_character_active)
 
     def explore(self):
         try:
@@ -1886,7 +1913,8 @@ class QtWorkspaceEditor(QMainWindow):
             QMessageBox.information(
                 self, 'Export for Blender', 'Select a supported model first.')
             return
-        name = Path(self.current).stem + '.glb'
+        name = (Path(self.current).stem + '_Full_Character.glb'
+                if self.character_preview else Path(self.current).stem + '.glb')
         destination, _ = QFileDialog.getSaveFileName(
             self, 'Export Blender model (geometry and available textures)',
             str(Path(self.manager.projects_path) / name),
@@ -1909,22 +1937,26 @@ class QtWorkspaceEditor(QMainWindow):
         import tempfile
         model, raw, workspace, virtual = (
             self.mesh, self.raw, self.workspace, self.current)
-        character_assembly = bool(self.character_preview)
+        source_character = self.character_preview
         projects, stage, textures, asset_index = (
             self.manager.projects_path, self.manager.stage_path,
             self.texture_folder, self.preview_index)
 
         def work(progress, cancelled):
             progress('Resolving character geometry and textures', 0, 1)
-            export_mesh = (
-                find_preview_mesh(
-                    workspace, virtual, raw,
-                    projects_root=projects, stage_root=stage)
-                if character_assembly else model)
-            payload, report = textured_model_from_workspace(
-                export_mesh, workspace, virtual,
-                texture_folder=textures,
-                projects_root=projects, stage_root=stage, index=asset_index)
+            if source_character is not None:
+                from character_asset_export import assembled_character_glb
+                payload, report = assembled_character_glb(
+                    source_character, workspace, virtual, asset_index,
+                    texture_folder=textures, projects_root=projects,
+                    stage_root=stage)
+                export_mesh = source_character.mesh
+            else:
+                export_mesh = model
+                payload, report = textured_model_from_workspace(
+                    export_mesh, workspace, virtual,
+                    texture_folder=textures,
+                    projects_root=projects, stage_root=stage, index=asset_index)
             if cancelled():
                 raise InterruptedError('Export cancelled before writing the GLB.')
             temporary = None
@@ -1988,7 +2020,108 @@ class QtWorkspaceEditor(QMainWindow):
         return source
 
     def export_blender_folder(self):
-        """Export the currently selected model folder without freezing Qt."""
+        """Export one self-contained character folder without virtual prefixes.
+
+        Example: <chosen output>/merc_parnelltank/{weapons,textures,*.skinm,
+        Full_Character.glb}. Companion TS PAK files are included by exact
+        character virtual path, and a manifest preserves source provenance.
+        """
+        try:
+            virtual_folder = self._current_model_folder_relative()
+            source = self._current_model_source_folder()
+        except (OSError, ValueError) as exc:
+            QMessageBox.information(self, 'Export Model Folder', str(exc))
+            return
+        from qt_background_exports import begin_file_operation, exports_busy
+        if exports_busy(self):
+            QMessageBox.information(
+                self, 'Export in progress',
+                'Wait for the current export to finish, or cancel it.')
+            return
+        selected_root = Path(source).name
+        from PySide6.QtWidgets import QFileDialog
+        destination = QFileDialog.getExistingDirectory(
+            self, 'Choose where to create ' + selected_root,
+            str(Path(self.manager.projects_path)))
+        if not destination:
+            return
+        folder = Path(destination)
+        workspace = self.workspace
+        projects = self.manager.projects_path
+        stage = self.manager.stage_path
+        textures = self.texture_folder
+        current_index = self.preview_index
+        selected_model = self.current if self.mode == 'models' else None
+        selected_character = self.character_preview
+
+        def worker(progress, cancelled):
+            from character_asset_export import (
+                export_character_asset_folder, assembled_character_glb)
+            from material_preview import _workspace_index
+            from character_full_models import discover_full_characters
+            from character_assembly import assemble_character
+            index = current_index or _workspace_index(workspace, projects, stage)
+            full_model = None
+            prefix = virtual_folder.casefold() + '/'
+            # Prefer the actual open assembly; otherwise locate the verified
+            # third-person CDF/body pair from the imported virtual catalog.
+            model_path = selected_model if (
+                selected_model and selected_model.casefold().startswith(prefix)
+                and selected_character is not None) else None
+            character = selected_character if model_path else None
+            if character is None:
+                local_paths = [
+                    key for key in index if key.casefold().startswith(prefix)]
+                options = discover_full_characters(local_paths)
+                model_path = next(
+                    (p for p in options if p.casefold() in self_records), None)
+                if model_path:
+                    try:
+                        character = assemble_character(
+                            workspace, model_path, index, texture_folder=textures,
+                            projects_root=projects, stage_root=stage)
+                    except (OSError, ValueError):
+                        character = None
+            if character is not None:
+                progress('Assembling full character for Blender', 0, 1)
+                full_model = assembled_character_glb(
+                    character, workspace, model_path, index,
+                    texture_folder=textures, projects_root=projects,
+                    stage_root=stage)
+            if cancelled():
+                raise InterruptedError('Character export cancelled.')
+            return export_character_asset_folder(
+                workspace, virtual_folder, folder, index=index,
+                full_model=full_model, progress=progress, cancelled=cancelled)
+
+        # Capture the source model paths before the QThreadPool callback;
+        # workers must never access live QWidget state.
+        self_records = frozenset(name.casefold() for name in self.records)
+
+        def completed(report):
+            note = ('Exported %d original character assets to %s' %
+                    (report['files'], report['folder']))
+            if report['full_model'] is not None:
+                note += ' • Combined Full_Character.glb'
+                if not report['full_model'].get('bone_count'):
+                    note += ' (unrigged)'
+            else:
+                note += ' • no verified full CDF assembly'
+            if report['unresolved']:
+                note += ' • %d ambiguous companion paths skipped' % len(
+                    report['unresolved'])
+            self.status.setText(note)
+            QMessageBox.information(self, 'Model folder exported', note)
+
+        begin_file_operation(
+            self, 'Export Model Folder',
+            'Copying actual character assets from imported PAKs',
+            worker, on_success=completed,
+            on_error=lambda error: QMessageBox.warning(
+                self, 'Model folder export stopped', error))
+
+    def export_individual_glbs(self):
+        """Legacy individual-GLB conversion, retained as a separate option."""
         try:
             source = self._current_model_source_folder()
         except (OSError, ValueError) as exc:
@@ -2065,7 +2198,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             replace_model(self.workspace,self.current,target,digest(self.raw))
-            self.load(self.current)
+            self.load(self.current, full_character=self.full_character_active)
         except Exception as exc:
             QMessageBox.critical(self,'Model import rejected',str(exc))
 
@@ -2082,7 +2215,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         self.animation_folder = Path(folder).resolve()
         if self.current and self.mode == 'models':
-            self.load(self.current)
+            self.load(self.current, full_character=self.full_character_active)
         else:
             self.status.setText('Extracted animation directory indexed: ' + folder)
 

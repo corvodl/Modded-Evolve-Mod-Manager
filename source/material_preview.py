@@ -295,9 +295,11 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         candidates, state = resolve_material_texture(
             index, ref, material['relative'],
             preferred_workspace=material['workspace'])
-        if state in ('ambiguous', 'unsafe-path'):
+        if state == 'ambiguous':
             raise ValueError(
-                'Ambiguous or unsafe material texture: ' + str(ref))
+                'Different versions of this material texture exist: ' + str(ref))
+        if state == 'unsafe-path':
+            raise ValueError('Unsafe material texture path: ' + str(ref))
         if state == 'found':
             return candidates[0]
         hit = _external_lookup(texture_folder, ref)

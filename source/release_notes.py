@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.18', (
+        'Export character folders directly with matching assets from imported PAKs.',
+        'Browse CDF-based Full Character models separately from individual meshes.',
+        'Export an assembled character GLB with embedded textures when available.',
+    )),
     ('1.1.18-beta.17', (
         'Improve character material and shared-texture mapping across imported PAKs.',
         'Make Asset Library folders readable in Windows while preserving archive IDs.',
