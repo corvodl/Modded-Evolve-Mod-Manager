@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.17', (
+        'Improve character material and shared-texture mapping across imported PAKs.',
+        'Make Asset Library folders readable in Windows while preserving archive IDs.',
+        'Show in-game character names in file explorers and fix read-only PAK switching.',
+    )),
     ('1.1.18-beta.16', (
         'Show model texture diagnoses in a compact, searchable and collapsible window.',
         'Improve Wraith and Griffin material links across imported texture PAKs.',
