@@ -192,6 +192,13 @@ class LevelGLViewport(QOpenGLWidget):
             return
         assets, issues, details = result
         self._issues = issues
+        if self._textures and self.isValid():
+            self.makeCurrent()
+            try:
+                from OpenGL.GL import glDeleteTextures
+                glDeleteTextures([value for value in self._textures.values() if value])
+            finally:
+                self.doneCurrent()
         self.assets = assets or {}
         self._textures.clear()
         count = sum(1 for obj in self.project.scene if _asset_key(obj) in self.assets)
@@ -233,13 +240,17 @@ class LevelGLViewport(QOpenGLWidget):
         from OpenGL.GL import (
             glClearColor, glEnable, glShadeModel, glLightfv,
             GL_DEPTH_TEST, GL_LIGHTING, GL_LIGHT0, GL_NORMALIZE,
-            GL_POSITION, GL_AMBIENT, GL_DIFFUSE, GL_SMOOTH
+            GL_POSITION, GL_AMBIENT, GL_DIFFUSE, GL_SMOOTH,
+            GL_COLOR_MATERIAL, GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE
         )
         glClearColor(.12,.12,.14,1)
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_NORMALIZE)
         glEnable(GL_LIGHTING)
         glEnable(GL_LIGHT0)
+        glEnable(GL_COLOR_MATERIAL)
+        from OpenGL.GL import glColorMaterial
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
         glShadeModel(GL_SMOOTH)
         glLightfv(GL_LIGHT0, GL_POSITION, (.6,.4,1.,0.))
         glLightfv(GL_LIGHT0, GL_DIFFUSE, (.8,.8,.8,1.))
