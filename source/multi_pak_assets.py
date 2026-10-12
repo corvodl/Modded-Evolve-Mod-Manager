@@ -404,7 +404,14 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
     workspace = Path(workspace).resolve()
     normalized_name(model_relative)
     if index is None:
-        index = related_asset_index(workspace, projects_root, stage_root)
+        # An imported PAK has asset-library.json rather than an editable
+        # workspace manifest. Pull the complete verified Asset Library index
+        # so diagnostics agree with the GPU viewer.
+        if (workspace / 'asset-library.json').is_file():
+            from material_preview import _workspace_index
+            index = _workspace_index(workspace, projects_root, stage_root)
+        else:
+            index = related_asset_index(workspace, projects_root, stage_root)
     has_links = index is not None
     if index is None:
         index = defaultdict(list)
