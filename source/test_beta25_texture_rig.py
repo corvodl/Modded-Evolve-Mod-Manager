@@ -54,6 +54,31 @@ class GPUTextureOrientationTests(unittest.TestCase):
         self.assertIn('gl_upload_pixels(rgb,',b)
 
 
+class NativeMonsterTimingTests(unittest.TestCase):
+    def test_per_joint_delayed_keys_keep_original_time_offsets(self):
+        from unittest.mock import patch
+        import zlib
+        from native_caf import CafTrack, CafMotion, append_caf_animations
+        from model_animation import AnimatedGLB
+        raw=tiny_mesh()
+        rigged,_=skin_glb(
+            glb_bytes(read_preview_mesh(raw,'monster.skinm')),
+            raw,tiny_skeleton())
+        root=CafTrack(zlib.crc32(b'root'),(0.,30.),
+                      ((0.,0.,0.,1.),(0.,0.,0.,1.)),(),())
+        late=CafTrack(zlib.crc32(b'child'),(15.,30.),
+                      ((0.,0.,0.,1.),(0.,0.,0.,1.)),(),())
+        motion=CafMotion((root,late),0.,30.,30.,False,True)
+        with patch('native_caf.decode_caf',return_value=motion):
+            result,_=append_caf_animations(rigged,[('monster_idle',b'fixture')])
+        player=AnimatedGLB(result)
+        tracks=player.clips['monster_idle'][1]
+        starts={player.nodes[t.node]['name']:float(t.times[0]) for t in tracks}
+        self.assertAlmostEqual(starts['root'],0.)
+        self.assertAlmostEqual(starts['child'],0.5)
+        self.assertAlmostEqual(player.clips['monster_idle'][0],1.)
+
+
 class RigRestPoseTests(unittest.TestCase):
     def test_supported_single_skin_and_composite_preserve_rest_mesh(self):
         raw=tiny_mesh()
