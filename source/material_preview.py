@@ -36,6 +36,8 @@ class PreviewMaterials:
     alpha_modes: tuple = ()  # True only where material explicitly uses texture alpha
 
     uv_transforms: tuple = ()
+    diffuse_sources: tuple = ()  # exact resolved (virtual path, PAK), per material slot
+    diffuse_references: tuple = ()  # original MTL File attr, even if missing
 
     @property
     def count(self):
@@ -337,7 +339,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         return _decode_texture(hit, index=index)
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]
-    transforms = []
+    transforms = []; sources = []; references = []
     for item in subs:
         name = item.get('Name') or 'unnamed'
         names.append(name)
@@ -375,28 +377,42 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 issues.append(name+': optional material map not loaded: '+str(error))
         diffuse = next((child.get('File') or child.get('file') for child in item.findall('./Textures/Texture')
                         if (child.get('Map') or child.get('map') or '').casefold() == 'diffuse'), None)
+        references.append(diffuse or '')
         if not diffuse or item.get('Shader','').casefold()=='nodraw':
             if not diffuse and item.get('Shader','').casefold() != 'nodraw':
                 issues.append(name + ': material has no diffuse map; '
                               'rendering this slot without a texture')
             result.append(None)
+            sources.append(None)
             continue
         try:
             found = find_texture(diffuse)
             if found is None:
-                issues.append(name + ': DDS missing for ' + diffuse)
+                from multi_pak_assets import _candidates
+                cooked = tuple(p for p in _candidates(diffuse)
+                               if p.casefold().endswith(('.dds', '.dds.0')))
+                issues.append(
+                    name + ': DDS missing for ' + diffuse
+                    + ('; expected cooked ' + ', '.join(cooked[:2]) if cooked else ''))
                 result.append(None)
+                sources.append(None)
                 continue
-            result.append(_decode_texture(found, index=index))
+            image = _decode_texture(found, index=index)
+            result.append(image)
+            sources.append((
+                str(found.get('relative') or diffuse),
+                str(found.get('archive') or 'extracted workspace')))
         except (ValueError, OSError) as error:
             issues.append(name + ': ' + str(error))
             result.append(None)
+            sources.append(None)
     if not any(x is not None for x in result):
         detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
-                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),tuple(transforms))
+                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
+                            tuple(transforms),tuple(sources),tuple(references))
 
 
 
