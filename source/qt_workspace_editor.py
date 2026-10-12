@@ -2070,43 +2070,34 @@ class QtWorkspaceEditor(QMainWindow):
 
         def worker(progress, cancelled):
             from character_asset_export import (
-                export_character_asset_folder, assembled_character_glb)
+                export_character_asset_folder, build_cdf_folder_glbs)
             from material_preview import _workspace_index
-            from character_full_models import discover_full_characters
-            from character_assembly import assemble_character
             index = current_index or _workspace_index(workspace, projects, stage)
+            # Export EVERY verified CDF in this selected character folder,
+            # including separate monster stages and hunter perspectives.
+            assemblies, errors = build_cdf_folder_glbs(
+                workspace, virtual_folder, index,
+                texture_folder=textures, projects_root=projects, stage_root=stage,
+                progress=progress, cancelled=cancelled)
             full_model = None
-            prefix = virtual_folder.casefold() + '/'
-            # Prefer the actual open assembly; otherwise locate the verified
-            # third-person CDF/body pair from the imported virtual catalog.
-            model_path = selected_model if (
-                selected_model and selected_model.casefold().startswith(prefix)
-                and selected_character is not None) else None
-            character = selected_character if model_path else None
-            if character is None:
-                local_paths = [
-                    key for key in index if key.casefold().startswith(prefix)]
-                options = discover_full_characters(local_paths)
-                model_path = next(
-                    (p for p in options if p.casefold() in self_records), None)
-                if model_path:
-                    try:
-                        character = assemble_character(
-                            workspace, model_path, index, texture_folder=textures,
-                            projects_root=projects, stage_root=stage)
-                    except (OSError, ValueError):
-                        character = None
-            if character is not None:
-                progress('Assembling full character for Blender', 0, 1)
-                full_model = assembled_character_glb(
-                    character, workspace, model_path, index,
-                    texture_folder=textures, projects_root=projects,
-                    stage_root=stage)
+            # Preserve the familiar Full_Character.glb entry. Prefer the
+            # currently open CDF; otherwise use the first verified assembly.
+            preferred_cdf = (selected_character.cdf.casefold()
+                             if selected_character is not None else None)
+            chosen = next((pair for pair in assemblies.values()
+                           if preferred_cdf and
+                           pair[1]['cdf'].casefold() == preferred_cdf), None)
+            if chosen is None and assemblies:
+                chosen = next(iter(assemblies.values()))
+            if chosen is not None:
+                blob, info = chosen
+                full_model = blob, info
             if cancelled():
                 raise InterruptedError('Character export cancelled.')
             return export_character_asset_folder(
                 workspace, virtual_folder, folder, index=index,
-                full_model=full_model, progress=progress, cancelled=cancelled)
+                full_model=full_model, assemblies=assemblies,
+                assembly_errors=errors, progress=progress, cancelled=cancelled)
 
         # Capture the source model paths before the QThreadPool callback;
         # workers must never access live QWidget state.
@@ -2115,12 +2106,15 @@ class QtWorkspaceEditor(QMainWindow):
         def completed(report):
             note = ('Exported %d original character assets to %s' %
                     (report['files'], report['folder']))
+            converted = len(report['cdf_assemblies'])
+            skipped = len(report['cdf_assembly_errors'])
+            note += ' • %d CDF Blender GLB(s) in Assemblies/' % converted
             if report['full_model'] is not None:
-                note += ' • Combined Full_Character.glb'
-                if not report['full_model'].get('bone_count'):
-                    note += ' (unrigged)'
+                note += ' • Full_Character.glb included'
             else:
                 note += ' • no verified full CDF assembly'
+            if skipped:
+                note += ' • %d unsupported CDF(s) listed in asset_sources.json' % skipped
             if report['unresolved']:
                 note += ' • %d ambiguous companion paths skipped' % len(
                     report['unresolved'])
