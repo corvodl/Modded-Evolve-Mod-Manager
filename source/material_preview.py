@@ -38,6 +38,7 @@ class PreviewMaterials:
     uv_transforms: tuple = ()
     diffuse_sources: tuple = ()  # exact resolved (virtual path, PAK), per material slot
     diffuse_references: tuple = ()  # original MTL File attr, even if missing
+    uv_available: tuple = ()  # source render mesh has decoded UVs for this slot
 
     @property
     def count(self):
