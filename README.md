@@ -6,137 +6,16 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 **Version:** 1.1.17.1 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
 
-## What's new in v1.1.17.1
+## Latest Stable — v1.1.17.1
 
 - Add a Windows installer with optional Desktop and Start Menu shortcuts.
 - Compare Stable and Beta releases and offer only the newest version.
 
-## What's new in v1.1.17
+## Latest Beta — v1.1.18-beta.16
 
-- Speed up model preparation and improve material rendering reliability.
-- Validate Blender exports and restore model, animation and editor settings.
-- Add appearance presets and a performance diagnostics panel.
-
-## What's new in v1.1.16
-
-- Improve GPU previews with normal/specular materials and transparency.
-- Save animation playlists, refine timelines, and restore editor layouts.
-- Add project health checks, benchmarks, and customizable light/dark colors.
-
-## What's new in v1.1.15.1
-
-- Improve compiled interface visual verification and screenshot coverage.
-
-## What's new in v1.1.15
-
-- Add task queues, project dashboards, gameplay presets and conflict inspection.
-- Speed up model reopening and improve material preview and editing.
-- Add safer bulk text editing, offline test preparation and crash recovery.
-
-## What's new in v1.1.14
-
-- Fix PAK double-click reopening the wrong extracted project.
-- Add safe old-project cleanup, PAK diffs, asset dependencies and mod validation.
-- Improve animation timelines, model parts, file search and project history.
-
-## What's new in v1.1.13
-
-- Add visual gameplay values and texture adjustment editors.
-- Search assets across PAKs, batch export files, and share mod profiles.
-- Expand GPU viewing with camera presets, lighting, and screenshots.
-
-## What's new in v1.1.12
-
-- Play supported native Evolve CAF animations, with compatible idle autoplay.
-- View assembled characters and export animated, textured Blender GLBs.
-- Load models in the background and refresh GPU textures correctly.
-
-## What's new in v1.1.11
-
-- Organized model actions into a compact File, View and Animation menu bar.
-- Improved cross-PAK diffuse texture lookup and added texture diagnostics.
-
-## What's new in v1.1.10
-
-- The full GPU model viewer now opens directly inside Edit Files.
-- File editor windows now support normal maximize and restore controls.
-
-## What's new in v1.1.9
-
-- Editors can maximize; model cameras now support panning and sharper shading.
-- Added skeletal GLB animation playback and optional CryEngine clip conversion.
-
-## What's new in v1.1.8
-
-- Blender exports can now include original CryEngine rigs and skin weights.
-- Added verified bone hierarchy and bind-pose conversion for supported models.
-
-## What's new in v1.1.7
-
-- Blender GLB exports can include diffuse textures from unpacked companion PAKs.
-- Clarified model, skeleton and animation archive descriptions.
-
-## What's new in v1.1.6
-
-- Export supported CryEngine models and folders to Blender-ready GLB files.
-- Models now use GPU preview by default when supported.
-
-## What's new in v1.1.5
-
-- Added mod profiles for organizing and switching signed PAK changes.
-- Added conflict checks and reversible profile staging.
-
-## What's new in v1.1.4
-
-- Info buttons now open help when clicked.
-- Added a What's New tab with brief version notes.
-
-## What's new in v1.1.3
-
-- Added contextual help and an inline launch-status refresh button.
-- Fixed the Play & Restore menu label.
-
-## What's new in v1.1.2
-
-- Organized Settings and added display, activity and snapshot preferences.
-- Added advance mod preparation and reduced redundant file checks.
-
-## What's new in v1.1.1
-
-- Fixed unreadable Windows fonts and strengthened screenshot checks.
-
-## What's new in v1.1.0
-
-- Moved the manager and editors to Qt with a smooth overlay menu.
-- Added a native OpenGL model viewer.
-
-## What's new in v1.0.7
-
-- Manual update checks can offer experimental builds; automatic checks stay stable-only.
-
-## What's new in v1.0.6
-
-- Added a sliding menu and optional desktop shortcut.
-
-## What's new in v1.0.5
-
-- Refined the Menu button and simplified Help labels.
-
-## What's new in v1.0.4
-
-- Moved navigation into a collapsible sidebar for more workspace.
-
-## What's new in v1.0.3
-
-- Fixed Windows control sizing and card backgrounds.
-
-## What's new in v1.0.2
-
-- Updated app icons, colors and control styling.
-
-## What's new in v1.0.1
-
-- Added instructions-first setup and simplified update controls.
+- Model texture diagnostics now fit a compact searchable dialog with collapsed DDS fragments and full report copy.
+- Improved character texture lookup across the Asset Library, including Wraith's teleporter textures and shared hunter assets.
+- Blender export reuses verified game assets and avoids the Windows companion-path type error.
 
 ## Download and install
 
