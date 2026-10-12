@@ -31,6 +31,7 @@ class RenderAsset:
     materials: object
     size: int
     model_file: str
+    bounds: tuple
 
 
 def _asset_key(item):
@@ -96,7 +97,10 @@ def prepare_scene(project, cancel, progress=None):
                 issues["bounded memory budget (not rendered)"] += 1
                 continue
             size += cost
-            assets[key] = RenderAsset(mesh, geometry, materials, cost, cache_key)
+            lower = tuple(float(v) for v in geometry.vertices.min(axis=0))
+            upper = tuple(float(v) for v in geometry.vertices.max(axis=0))
+            assets[key] = RenderAsset(mesh, geometry, materials, cost, cache_key,
+                                      (lower, upper))
         except (OSError, ValueError, TypeError) as exc:
             issues[str(exc)[:130]] += 1
     if progress:
@@ -379,8 +383,37 @@ class LevelGLViewport(QOpenGLWidget):
             glDisableClientState(GL_TEXTURE_COORD_ARRAY)
             glDisableClientState(GL_NORMAL_ARRAY)
             glDisableClientState(GL_VERTEX_ARRAY)
+            if self.active == self._lookup.get(item.id):
+                self._selection_bounds(asset.bounds)
             glPopMatrix()
         self._visible=tuple(visible)
+
+    @staticmethod
+    def _selection_bounds(bounds):
+        """Visible orange wireframe bounds for the selected real mesh."""
+        from OpenGL.GL import (
+            glBegin,glEnd,glVertex3f,glDisable,glEnable,glColor3f,
+            glLineWidth,GL_LINES,GL_LIGHTING,GL_DEPTH_TEST
+        )
+        low, high = bounds
+        verts = [(x,y,z) for x in (low[0],high[0])
+                         for y in (low[1],high[1])
+                         for z in (low[2],high[2])]
+        glDisable(GL_LIGHTING)
+        glDisable(GL_DEPTH_TEST)
+        glLineWidth(2.)
+        glColor3f(1.,.55,.18)
+        glBegin(GL_LINES)
+        for i in range(8):
+            for bit in (1,2,4):
+                j=i ^ bit
+                if i<j:
+                    glVertex3f(*verts[i])
+                    glVertex3f(*verts[j])
+        glEnd()
+        glLineWidth(1.)
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
 
     def _pick(self, px, py):
         import numpy as np
