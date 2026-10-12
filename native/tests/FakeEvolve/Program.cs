@@ -56,6 +56,9 @@ internal static unsafe class Program
                 {
                     Console.WriteLine("SIMULATED_CALLBACK " + Called);
                     Console.Out.Flush();
+                    // Leave enough time for the loopback reply to be sent
+                    // before this synthetic test process unloads the DLL.
+                    Thread.Sleep(600);
                     return 0;
                 }
                 Thread.Sleep(10);
