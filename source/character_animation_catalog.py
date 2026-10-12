@@ -7,6 +7,7 @@ optionally selected loose asset directory. Actual CAF playback needs a decoder.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 import os
 import re
@@ -86,8 +87,42 @@ def parse_animation_references(data, exists, can_extract=None):
     return tuple(out)
 
 
+
+def _is_additive_caf(path):
+    """Read motion flags so unnamed additive clips are not offered standalone."""
+    try:
+        path = Path(path)
+        stat = path.stat()
+        return _cached_additive_flag(str(path), stat.st_mtime_ns, stat.st_size)
+    except (OSError, ValueError, struct.error):
+        return False  # The playback decoder will explain invalid/missing CAFs.
+
+
+@lru_cache(maxsize=512)
+def _cached_additive_flag(path, modified, size):
+    if not 32 <= size <= 64 * 1024 * 1024:
+        return False
+    with open(path, 'rb') as source:
+        header = source.read(16)
+        if header[:8] != b'CrChF\x07\0\0':
+            return False
+        count, table = struct.unpack_from('<II', header, 8)
+        if not 1 <= count <= 1520 or table < 16 or table + count * 16 > size:
+            return False
+        source.seek(table)
+        entries = source.read(count * 16)
+        for kind, _ident, length, offset in struct.iter_unpack('<4I', entries):
+            if kind != 0x09253002:
+                continue
+            if length < 40 or offset < table + count * 16 or offset + length > size:
+                return False
+            source.seek(offset)
+            return bool(struct.unpack('<I', source.read(4))[0] & 1)
+    return False
+
+
 def native_clip_playability(reference):
-    """Classify playback without attempting CAF decoding or I/O.
+    """Classify playback without decoding CAF controllers.
 
     Missing standalone CAFs can trigger exact-path extraction on Play.
     Aimposes require a separate CryEngine base animation and are never
@@ -104,7 +139,9 @@ def native_clip_playability(reference):
     if reference.kind != 'caf':
         return 'metadata', 'Blendspaces / combination graphs are not standalone motions.'
     name = reference.name.casefold()
-    if ('aimpose' in name or 'additive' in name or
+    flagged_additive = (reference.available and reference.file is not None
+                        and _is_additive_caf(reference.file))
+    if (flagged_additive or 'aimpose' in name or 'additive' in name or
             re.search(r'(^|[_\\-])aim[_\\-]', name)):
         return 'layered', (
             'Layered/additive aim pose. Needs a compatible base animation and '

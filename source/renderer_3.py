@@ -31,6 +31,7 @@ uniform int has_diffuse;
 uniform int has_normal;
 uniform int has_specular;
 uniform float opacity;
+uniform float alpha_cutoff;
 uniform int use_alpha_texture;
 uniform float specular_intensity;
 uniform float illumination;
@@ -45,7 +46,7 @@ void main() {
                                    : vec4(0.82, 0.80, 0.83, 1.0);
     // Alpha may contain non-opacity data in standard CryEngine diffuse DDS.
     float alpha = (use_alpha_texture == 1 ? surface.a : 1.0) * opacity;
-    if (alpha < 0.02) discard;
+    if (alpha < alpha_cutoff) discard;
     // Diagnostic: compare actual diffuse DDS pixels without shader lighting,
     // normal-mapping or specular darkening. Intentionally dark source maps
     // should remain dark here; an unbound slot remains neutral gray.
@@ -110,20 +111,20 @@ class Renderer3:
         glUseProgram(self.program)
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
             'diffuse_map','normal_map','specular_map','has_diffuse','has_normal',
-            'has_specular','opacity','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
+            'has_specular','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
         for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
-             alpha_texture=False, unlit=False, fill=0.35):
+             alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f
         glUseProgram(self.program)
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
                            ('has_specular',specular), ('use_alpha_texture',alpha_texture),
                            ('unlit_diffuse',unlit)):
             glUniform1i(self.uniforms[name],int(bool(value)))
-        for name,value in (('opacity',opacity),('specular_intensity',gloss),
+        for name,value in (('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),
                            ('illumination',illumination), ('studio_fill',fill)):
             glUniform1f(self.uniforms[name],float(value))
 
