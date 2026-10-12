@@ -202,10 +202,13 @@ public static class EvolveBridge
         CallConvs = new[] { typeof(CallConvCdecl) })]
     public static void Stop()
     {
+        Task? worker;
         lock (Sync)
         {
             Cancellation?.Cancel();
             Listener?.Stop();
+            worker = Worker;
+            Worker = null;
             Listener = null;
             Cancellation = null;
             Token = null;
@@ -215,6 +218,10 @@ public static class EvolveBridge
                 task.Result.TrySetResult(0);
             GameThread = 0;
         }
+        // A native DLL must not unload while its listener thread is still
+        // executing AOT code. Finish pending client reads before returning.
+        try { worker?.Wait(TimeSpan.FromSeconds(4)); }
+        catch (AggregateException) { /* listener stopped during shutdown */ }
     }
 
     private static async Task ServeAsync(TcpListener listener, CancellationToken cancellation)
