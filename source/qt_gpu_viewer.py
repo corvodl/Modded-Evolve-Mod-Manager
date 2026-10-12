@@ -15,7 +15,7 @@ from PySide6.QtGui import QSurfaceFormat, QIcon, QPixmap, QPainter, QPen, QColor
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
-    QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup, QLineEdit, QLayout)
+    QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup, QLineEdit, QLayout, QListWidget, QListWidgetItem, QAbstractItemView, QPlainTextEdit, QProgressBar)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
 
@@ -51,6 +51,74 @@ def _viewport_tool_icon(kind):
         painter.drawEllipse(3, 3, 12, 12)
     painter.end()
     return QIcon(canvas)
+
+
+class _CompactAnimationList(QListWidget):
+    """In-panel searchable animation list; never opens a screen-sized popup.
+
+    The tiny ComboBox-compatible API keeps existing catalog/filter callers
+    and tests usable while real Qt widgets display only six scrollable rows.
+    """
+    currentIndexChanged = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName('referencedNativeAnimations')
+        self.setMinimumHeight(112)
+        self.setMaximumHeight(152)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setTextElideMode(Qt.ElideMiddle)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.currentRowChanged.connect(self.currentIndexChanged.emit)
+
+    def addItem(self, title, data=None):
+        item = QListWidgetItem(str(title))
+        item.setData(Qt.UserRole, data)
+        super().addItem(item)
+
+    def currentData(self):
+        item = self.currentItem()
+        return item.data(Qt.UserRole) if item else None
+
+    def itemData(self, index, role=Qt.UserRole):
+        item = self.item(index)
+        return item.data(role) if item else None
+
+    def setItemData(self, index, value, role=Qt.UserRole):
+        item = self.item(index)
+        if item:
+            item.setData(role, value)
+
+    def itemText(self, index):
+        item = self.item(index)
+        return item.text() if item else ''
+
+    def currentIndex(self):
+        return self.currentRow()
+
+    def setCurrentIndex(self, index):
+        self.setCurrentRow(index)
+
+
+class _CompactDiagnosticText(QPlainTextEdit):
+    """Bounded, scrollable information with wrap-anywhere game paths."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        self.setMaximumHeight(90)
+        self.setMinimumHeight(60)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setObjectName('nativeAnimationDetail')
+        self.setToolTip('Scroll within the details to see full paths and errors.')
+
+    def setText(self, value):
+        self.setPlainText(str(value))
+
+    def text(self):
+        return self.toPlainText()
 
 
 class _NativeResult(QObject):
@@ -758,8 +826,8 @@ class QtGPUModelPanel(QWidget):
         self._overlay_sections['Materials'][1].addWidget(self.solid_geometry)
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
-        self.native_info = QLabel('Native game animations: not scanned')
-        self.native_info.setWordWrap(True)
+        self.native_info = _CompactDiagnosticText(self)
+        self.native_info.setText('Native game animations: not scanned')
         self._overlay_sections['Animation'][1].addWidget(self.native_info)
         # Keep the selected clip's status immediately under its browser.
         self._overlay_sections['Animation'][1].removeWidget(self.native_info)
@@ -885,10 +953,10 @@ class QtGPUModelPanel(QWidget):
     def _position_overlay(self):
         if not hasattr(self, '_overlay') or self._overlay is None:
             return
-        width = max(180, min(570, self.canvas.width() - 70))
+        width = max(180, min(470, self.canvas.width() - 70))
         page = self._overlay_sections.get(self._active_overlay)
         wanted = (page[0].sizeHint().height() + 35) if page else 200
-        height = max(80, min(wanted, 510, self.canvas.height() - 55))
+        height = max(80, min(wanted, 415 if self._active_overlay == 'Animation' else 500, self.canvas.height() - 55))
         self._overlay.setGeometry(56, 43, width, height)
         self._position_navigation()
 
@@ -1078,9 +1146,7 @@ class QtGPUModelPanel(QWidget):
         catalog_layout.addWidget(self.native_result_count)
 
         native_row = QHBoxLayout()
-        self.native_clip_select = QComboBox()
-        self.native_clip_select.setObjectName('referencedNativeAnimations')
-        self.native_clip_select.setMaxVisibleItems(16)
+        self.native_clip_select = _CompactAnimationList(self)
         self.native_clip_select.setToolTip(
             'Search or filter the animation index above. Only a manageable '
             'subset is listed; no unrelated CAF is substituted.')
@@ -1187,8 +1253,20 @@ class QtGPUModelPanel(QWidget):
         self.anim_status = QLabel('Animation playback: load a rigged GLB containing clips, or '
                                   'use an optional CryEngine converter for CAF/DBA files.')
         self.anim_status.setWordWrap(True)
-        self.anim_status.setVisible(not self.compact)
+        self.anim_status.setVisible(True)
         playback_layout.addWidget(self.anim_status)
+        # Converter diagnostics must be readable without opening Playback
+        # Controls; the live progress strip stays in the browser section.
+        self.conversion_progress = QProgressBar(self)
+        self.conversion_progress.setObjectName('animationConversionProgress')
+        self.conversion_progress.setRange(0, 0)
+        self.conversion_progress.setFixedHeight(11)
+        self.conversion_progress.hide()
+        catalog_layout.addWidget(self.conversion_progress)
+        self.conversion_status = _CompactDiagnosticText(self)
+        self.conversion_status.setMaximumHeight(72)
+        self.conversion_status.setText('Converter idle.')
+        catalog_layout.addWidget(self.conversion_status)
         self.animated = None
         self.anim_position = 0.
         self.anim_playing = False
