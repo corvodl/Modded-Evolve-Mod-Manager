@@ -174,6 +174,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.translucent_slots = set()
         self._batch_sort_cache = None
         self.enhanced_materials = True
+        self.unlit_diffuse = False
         self._renderer3 = None
         self.rotation = [-30.0, 14.0]
         self.zoom = 1.0
@@ -536,14 +537,21 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 illumination=strength,diffuse=bool(tex),
                                 normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
                                 specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
-                                alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])))
+                                alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
+                                unlit=self.unlit_diffuse)
                 if tex:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D,tex)
                 else:
                     glDisable(GL_TEXTURE_2D)
-                glColor3f(0.84,0.82,0.82)
-                glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[0.81,0.8,0.82,alpha])
+                # For the legacy GL fallback an unlit view shows the actual
+                # diffuse DDS rather than applying two darkening multipliers.
+                if not shader and self.unlit_diffuse:
+                    glDisable(GL_LIGHTING)
+                elif not shader:
+                    glEnable(GL_LIGHTING)
+                glColor3f(1.0,1.0,1.0)
+                glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[1.0,1.0,1.0,alpha])
                 spec=self.specular_intensity
                 glMaterialfv(GL_FRONT_AND_BACK,GL_SPECULAR,[spec,spec,spec,1.0])
                 glMaterialf(GL_FRONT_AND_BACK,GL_SHININESS,38.0)
@@ -555,6 +563,8 @@ class QtGLModelCanvas(QOpenGLWidget):
             glMatrixMode(GL_TEXTURE)
             glLoadIdentity()
             glMatrixMode(GL_MODELVIEW)
+            if self.unlit_diffuse and not shader:
+                glEnable(GL_LIGHTING)
             if shader:
                 shader.unbind()
                 for unit in (2,1,0):
@@ -840,6 +850,16 @@ class QtGPUModelPanel(QWidget):
         self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
         self.solid_geometry.toggled.connect(lambda checked: (setattr(self.canvas, 'force_opaque_preview', checked), self.canvas.update()))
         self._overlay_sections['Materials'][1].addWidget(self.solid_geometry)
+        self.unlit_diffuse_checkbox=QCheckBox('Unlit diffuse (inspect dark textures)')
+        self.unlit_diffuse_checkbox.setObjectName('modelUnlitDiffuseDiagnostic')
+        self.unlit_diffuse_checkbox.setToolTip(
+            'Show the original diffuse texture pixels without lighting, normal maps, '
+            'or specular shading. A black surface here may have a genuinely dark '
+            'DDS or an unresolved material slot.')
+        self.unlit_diffuse_checkbox.toggled.connect(
+            lambda checked:(setattr(self.canvas,'unlit_diffuse',checked),
+                            self.canvas.update()))
+        self._overlay_sections['Materials'][1].addWidget(self.unlit_diffuse_checkbox)
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = _CompactDiagnosticText(self)

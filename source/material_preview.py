@@ -376,6 +376,9 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         diffuse = next((child.get('File') or child.get('file') for child in item.findall('./Textures/Texture')
                         if (child.get('Map') or child.get('map') or '').casefold() == 'diffuse'), None)
         if not diffuse or item.get('Shader','').casefold()=='nodraw':
+            if not diffuse and item.get('Shader','').casefold() != 'nodraw':
+                issues.append(name + ': material has no diffuse map; '
+                              'rendering this slot without a texture')
             result.append(None)
             continue
         try:

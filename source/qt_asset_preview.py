@@ -220,35 +220,64 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         archive_id = self.identifier
         models = tuple(models)
 
+        workspace = self.workspace
+
         def work(progress, cancelled):
+            from character_asset_export import build_cdf_folder_glbs
+            from asset_library_preview import library_model_index
+            import json
             converted, failed = 0, []
+            export_root = root / Path(folder).name
             progress('Preparing Blender export', 0, len(models))
-            for index, rel in enumerate(models, 1):
+            for number, rel in enumerate(models, 1):
                 if cancelled():
                     raise InterruptedError(
                         'Cancelled after %d of %d models.' %
-                        (index - 1, len(models)))
-                progress('Converting ' + rel, index - 1, len(models))
-                destination = root / Path(rel).with_suffix('.glb')
+                        (number - 1, len(models)))
+                progress('Converting ' + rel, number - 1, len(models))
+                local = rel[len(folder.rstrip('/') + '/'):]
+                destination = export_root / Path(local).with_suffix('.glb')
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     export_glb(archive_id, rel, destination)
                     converted += 1
                 except (OSError, ValueError) as error:
-                    failed.append(rel + ': ' + str(error)[:70])
-                progress('Exporting Blender models', index, len(models))
-            return converted, failed
+                    failed.append(rel + ': ' + str(error)[:110])
+                progress('Exporting Blender models', number, len(models))
+            index = library_model_index(archive_id)
+            assemblies, unresolved = build_cdf_folder_glbs(
+                workspace, folder, index,
+                progress=progress, cancelled=cancelled)
+            assembly_dest = export_root
+            if assemblies or unresolved:
+                for rel, (blob, details) in assemblies.items():
+                    if cancelled():
+                        raise InterruptedError('Cancelled during CDF assembly export.')
+                    output = assembly_dest.joinpath(*Path(rel).parts)
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    with output.open('xb') as output_file:
+                        output_file.write(blob)
+                assembly_dest.mkdir(parents=True, exist_ok=True)
+                (assembly_dest / 'CDF_assembly_report.json').write_text(
+                    json.dumps({'generated': [dict(glb=rel, **info)
+                                              for rel, (_, info) in assemblies.items()],
+                                'unsupported': list(unresolved)}, indent=2),
+                    encoding='utf-8')
+            failed.extend(name + ': ' + reason for name, reason in unresolved)
+            return converted, len(assemblies), failed
 
         def finish(result):
-            converted, failed = result
+            converted, assembled, failed = result
             self.status.setText(
-                'Exported %d Blender model(s); %d unsupported | %s' %
-                (converted, len(failed), output))
+                'Exported %d individual meshes and %d complete CDF GLBs; '
+                '%d unsupported | %s' %
+                (converted, assembled, len(failed), output))
             if failed:
                 QMessageBox.information(
                     self, 'Blender export',
-                    'Exported %d models; %d skipped. First issue: %s' %
-                    (converted, len(failed), failed[0]))
+                    '%d individual GLBs, %d CDF assemblies; %d skipped. '
+                    'First issue: %s' %
+                    (converted, assembled, len(failed), failed[0]))
 
         def fail(error):
             self.status.setText('Blender export stopped: ' + error[:180])
