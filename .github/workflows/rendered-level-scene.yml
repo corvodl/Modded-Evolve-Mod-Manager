@@ -21,7 +21,7 @@ jobs:
           python-version: "3.11"
       - name: Check Python syntax
         run: |
-          python -m py_compile source/level_asset_mount.py source/level_source_metadata.py source/qt_level_scene_render.py source/qt_level_editor.py source/level_editor_core.py source/material_preview.py
+          python -m py_compile source/level_dependency_loader.py source/level_asset_mount.py source/level_source_metadata.py source/qt_level_scene_render.py source/qt_level_editor.py source/level_editor_core.py source/material_preview.py
       - name: Install headless Qt system libraries
         run: |
           sudo apt-get update -qq
@@ -32,7 +32,7 @@ jobs:
         env:
           PYTHONPATH: source
         run: |
-          python -m unittest -v test_level_asset_mount test_level_source_metadata test_level_editor test_qt_level_editor
+          python -m unittest -v test_level_asset_mount test_level_dependency_loader test_level_source_metadata test_level_editor test_qt_level_editor
           python -m unittest discover -s tests -p 'test_level_scene_core.py' -v
       - name: Rasterize synthetic mesh in actual software OpenGL context
         env:
