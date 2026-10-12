@@ -93,6 +93,7 @@ class UnrealStyleLevelEditorSmoke(unittest.TestCase):
         self.assertEqual(self.editor.project.workspace,self.ws.resolve())
         self.assertEqual(self.editor.project.get(LAYER_A,0).pos[0],47.)
         self.assertTrue(self.editor.project.dirty_layers())
+        self.editor.project.undo()  # Avoid modal unsaved prompt during test cleanup.
 
     def test_unsaved_save_failure_preserves_old_project(self):
         other=self._another_project()
@@ -105,6 +106,7 @@ class UnrealStyleLevelEditorSmoke(unittest.TestCase):
             self.assertFalse(self.editor.switch_map(other))
         self.assertEqual(self.editor.project.workspace,self.ws.resolve())
         self.assertEqual(self.editor.project.get(LAYER_A,0).pos[0],47.)
+        self.editor.project.undo()  # Avoid modal unsaved prompt during test cleanup.
 
     def test_failed_new_map_load_keeps_old_map(self):
         other=self._another_project()
