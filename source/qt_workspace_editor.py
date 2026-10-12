@@ -1850,10 +1850,10 @@ class QtWorkspaceEditor(QMainWindow):
             (report.get('animations',0),self._export_native_target))
 
     def export_blender_model(self):
-        """Export current mesh and diffuse textures from compatible unpacked PAKs."""
+        """Export Blender GLB off-thread so the conversion UI stays responsive."""
         if self.mode != 'models' or not self.current or self.mesh is None:
-            QMessageBox.information(self, 'Export for Blender',
-                                    'Select a supported CryEngine model first.')
+            QMessageBox.information(
+                self, 'Export for Blender', 'Select a supported model first.')
             return
         name = Path(self.current).stem + '.glb'
         destination, _ = QFileDialog.getSaveFileName(
@@ -1862,41 +1862,68 @@ class QtWorkspaceEditor(QMainWindow):
             'Blender glTF 2.0 (*.glb)')
         if not destination:
             return
-        try:
-            target = Path(destination)
-            if target.suffix.casefold() != '.glb':
-                target = target.with_suffix('.glb')
-            if not target.parent.is_dir():
-                raise FileNotFoundError('Choose an existing export folder.')
-            # Native GLB skin weights correspond to the individual .skinm,
-            # not the assembled preview vertex order. Preserve rigged export
-            # semantics by exporting the original model, never the composite.
-            mesh_source = self.current
-            export_mesh = (find_preview_mesh(
-                self.workspace, self.current, self.raw,
-                projects_root=self.manager.projects_path,
-                stage_root=self.manager.stage_path) if self.character_preview else self.mesh)
-            from qt_operation_progress import run_busy
-            def convert_for_blender():
-                payload, report = textured_model_from_workspace(
-                    export_mesh, self.workspace, mesh_source,
-                    texture_folder=self.texture_folder,
-                    projects_root=self.manager.projects_path,
-                    stage_root=self.manager.stage_path)
-                target.write_bytes(payload)
-                return report
-            report = run_busy(
-                self, 'Export Blender model',
-                'Preparing model, texture links and rigging…',
-                convert_for_blender)
-            message = ('Exported %d vertices, %d triangles, %d diffuse textures. %s.' %
-                       (len(export_mesh.vertices), len(export_mesh.triangles),
-                        report['texture_count'], report['rig_status']))
+        from qt_background_exports import begin_file_operation, exports_busy
+        if exports_busy(self):
+            QMessageBox.information(
+                self, 'Export already running', 'Finish the current export first.')
+            return
+        target = Path(destination)
+        if target.suffix.casefold() != '.glb':
+            target = target.with_suffix('.glb')
+        if not target.parent.is_dir():
+            QMessageBox.warning(
+                self, 'Blender export', 'Choose an existing export folder.')
+            return
+        import os
+        import tempfile
+        model, raw, workspace, virtual = (
+            self.mesh, self.raw, self.workspace, self.current)
+        character_assembly = bool(self.character_preview)
+        projects, stage, textures = (
+            self.manager.projects_path, self.manager.stage_path, self.texture_folder)
+
+        def work(progress, cancelled):
+            progress('Resolving character geometry and textures', 0, 1)
+            export_mesh = (
+                find_preview_mesh(
+                    workspace, virtual, raw,
+                    projects_root=projects, stage_root=stage)
+                if character_assembly else model)
+            payload, report = textured_model_from_workspace(
+                export_mesh, workspace, virtual,
+                texture_folder=textures,
+                projects_root=projects, stage_root=stage)
+            if cancelled():
+                raise InterruptedError('Export cancelled before writing the GLB.')
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                        prefix='.evolve-glb-', dir=target.parent,
+                        delete=False) as file:
+                    temporary = Path(file.name)
+                    file.write(payload)
+                os.replace(temporary, target)
+                temporary = None
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            progress('Blender model exported', 1, 1)
+            return (len(export_mesh.vertices), len(export_mesh.triangles), report)
+
+        def completed(result):
+            vertices, triangles, report = result
+            message = (
+                'Exported %d vertices, %d triangles, %d diffuse textures. %s.' %
+                (vertices, triangles, report['texture_count'], report['rig_status']))
+            if not report['texture_count']:
+                message += ' Missing: ' + report['texture_status'][:180]
             self.status.setText(message)
-            if report['texture_count'] == 0:
-                self.status.setText(message + ' Missing: ' + report['texture_status'][:180])
-        except Exception as exc:
-            QMessageBox.critical(self, 'Blender export failed', str(exc))
+
+        begin_file_operation(
+            self, 'Export Blender model', 'Converting ' + virtual,
+            work, on_success=completed,
+            on_error=lambda exc: QMessageBox.warning(
+                self, 'Blender export stopped', exc))
 
     def _current_model_folder_relative(self):
         """Use the selected folder, or the parent of the selected/open file.
