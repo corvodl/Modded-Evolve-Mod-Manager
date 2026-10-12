@@ -134,6 +134,50 @@ class FlatCharacterFolderTests(unittest.TestCase):
         self.assertEqual(report['unresolved'][0][0], self.dds)
         self.assertFalse((Path(report['folder']) / 'textures/body_diff.dds.0').exists())
 
+    def test_cdf_folder_exports_each_verified_stage_as_separate_glb(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from character_asset_export import build_cdf_folder_glbs
+        for stage in (1,2,3):
+            self._add(self.prefix + '/parnell' + str(stage) + '.cdf',
+                      b'<CharacterDefinition/>', self.workspace)
+        other = 'characters/hunters/merc_val/other.cdf'
+        self._add(other, b'<CharacterDefinition/>', self.root / 'other')
+        seen = []
+        def assemble(_workspace, selected, _index, **_):
+            seen.append(selected)
+            return SimpleNamespace(cdf=selected)
+        def glb(model, workspace, rel, index, **kwargs):
+            return b'glTF' + rel.encode(), {
+                'texture_count': 2, 'bone_count': 8,
+                'rig_status': 'Rigged CDF assembly'}
+        with patch('character_assembly.assemble_character', side_effect=assemble), \\
+             patch('character_asset_export.assembled_character_glb', side_effect=glb):
+            prepared, errors = build_cdf_folder_glbs(
+                self.workspace, self.prefix, self.index)
+        self.assertEqual(len(prepared), 3)
+        self.assertEqual(len(errors), 0)
+        self.assertFalse(any('merc_val' in name for name in seen))
+        report = export_character_asset_folder(
+            self.workspace, self.prefix, self.output, index=self.index,
+            assemblies=prepared, assembly_errors=errors)
+        target = Path(report['folder'])
+        self.assertEqual(len(report['cdf_assemblies']), 3)
+        for stage in (1,2,3):
+            output = target/'Assemblies'/('parnell'+str(stage)+'.glb')
+            self.assertTrue(output.read_bytes().startswith(b'glTF'))
+        manifest = json.loads((target/'asset_sources.json').read_text('utf-8'))
+        self.assertEqual(len(manifest['cdf_assemblies']), 3)
+        self.assertFalse((target/'Assemblies'/'other.glb').exists())
+
+    def test_unsafe_cdf_assembly_path_rejected_atomically(self):
+        with self.assertRaisesRegex(ValueError,'Invalid CDF'):
+            export_character_asset_folder(
+                self.workspace, self.prefix, self.output,
+                index=self.index, assemblies={'Assemblies/../hijack.glb':
+                    (b'glTFfake',{'cdf':'invalid'})})
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_invalid_destination_does_not_modify_assets(self):
         with self.assertRaisesRegex(ValueError, 'outside'):
             export_character_asset_folder(
