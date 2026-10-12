@@ -172,8 +172,12 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
     selected_skin = normalized_name(selected).casefold()
     if selected_skin.endswith('.skinm'):
         selected_skin = selected_skin[:-1]
+    # Cockpit is a permanent character mesh (Lennox's head/face/eyes),
+    # not a mutually exclusive weapon. Its submaterial table is distinct
+    # from the body and must be included even when a rifle is equipped.
     primary = [(label, rel) for label, rel in skins
-               if label.casefold() in ('body', 'hands', 'character', 'base', 'main')]
+               if label.casefold() in
+               ('body', 'hands', 'character', 'base', 'main', 'cockpit')]
     if not primary and skins:
         primary = [skins[0]]
     # Monster/creature attachments are body parts, not mutually exclusive guns.
