@@ -3392,6 +3392,12 @@ class QtManager(QMainWindow):
             self.info('Still running', 'Finish the current operation before closing; interrupted swaps are unsafe.')
             event.ignore()
             return
+        if any(exports_busy(editor) for editor in
+               list(self.editors) + list(self.library_previews)):
+            self.info('Export still running',
+                      'Finish or cancel the model export before closing the manager.')
+            event.ignore()
+            return
         if not self.flush_editors():
             event.ignore()
             return
