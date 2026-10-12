@@ -1262,11 +1262,17 @@ class QtGPUModelPanel(QWidget):
         self.conversion_progress.setRange(0, 0)
         self.conversion_progress.setFixedHeight(11)
         self.conversion_progress.hide()
-        catalog_layout.addWidget(self.conversion_progress)
+        catalog_layout.insertWidget(0, self.conversion_progress)
         self.conversion_status = _CompactDiagnosticText(self)
         self.conversion_status.setMaximumHeight(72)
         self.conversion_status.setText('Converter idle.')
-        catalog_layout.addWidget(self.conversion_status)
+        self.conversion_status.hide()
+        catalog_layout.insertWidget(0, self.conversion_status)
+        self.stop_conversion_button = QPushButton('Stop Conversion', self)
+        self.stop_conversion_button.setObjectName('stopAnimationConversion')
+        self.stop_conversion_button.clicked.connect(self.stop_conversion)
+        self.stop_conversion_button.hide()
+        catalog_layout.insertWidget(2, self.stop_conversion_button)
         self.animated = None
         self.anim_position = 0.
         self.anim_playing = False
@@ -1840,6 +1846,17 @@ class QtGPUModelPanel(QWidget):
             self.anim_position = duration * value/1000.
             self._display_animation_frame()
 
+    def stop_conversion(self):
+        process = self.converter_process
+        if process is None or process.state() == QProcess.NotRunning:
+            return
+        self.conversion_status.show()
+        self.conversion_status.setText('Stopping converter process…')
+        process.terminate()
+        QTimer.singleShot(
+            2500, lambda: process.kill()
+            if process.state() != QProcess.NotRunning else None)
+
     def _converter_output(self):
         """Stream real converter stdout/stderr into the always-visible browser."""
         process = self.converter_process
@@ -1858,6 +1875,8 @@ class QtGPUModelPanel(QWidget):
         process = self.converter_process
         detail = process.errorString() if process is not None else str(error)
         self.conversion_progress.hide()
+        self.stop_conversion_button.hide()
+        self.conversion_status.show()
         self.conversion_status.setText('Converter process error: ' + detail)
         self.anim_status.setText('Animation conversion failed: ' + detail)
         self.play_native_button.setEnabled(True)
@@ -1919,6 +1938,8 @@ class QtGPUModelPanel(QWidget):
             self.converter_process.errorOccurred.connect(self._converter_error)
             self.play_native_button.setEnabled(False)
             self.conversion_progress.show()
+            self.stop_conversion_button.show()
+            self.conversion_status.show()
             self.conversion_status.setText(
                 'Starting bundled converter…\nSource: ' + str(source) +
                 '\nOutput: ' + str(output))
@@ -1927,6 +1948,8 @@ class QtGPUModelPanel(QWidget):
             QTimer.singleShot(0, self._update_animation_scrolling)
         except Exception as exc:
             self.conversion_progress.hide()
+            self.stop_conversion_button.hide()
+            self.conversion_status.show()
             self.play_native_button.setEnabled(True)
             self.conversion_status.setText('Conversion setup failed: ' + str(exc))
             QMessageBox.warning(self, 'Animation conversion', str(exc))
@@ -1934,6 +1957,7 @@ class QtGPUModelPanel(QWidget):
     def _conversion_finished(self, code, status, folder):
         self._converter_output()
         self.conversion_progress.hide()
+        self.stop_conversion_button.hide()
         self.play_native_button.setEnabled(True)
         if code != 0 or status != QProcess.NormalExit:
             message = (
