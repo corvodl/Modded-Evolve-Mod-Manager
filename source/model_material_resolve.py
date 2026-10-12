@@ -141,17 +141,20 @@ def find_model_material(index, model_relative, *, preferred_workspace=None):
                 return record, reason, tuple(attempts)
         return None
 
-    for base in bases:
-        result = check((PurePosixPath(parent) / (base + '.mtl')).as_posix(),
-                       'same-name material')
-        if result:
-            return result
+    # Explicit CDF material overrides are authoritative. A same-named .mtl
+    # may exist for another LOD or skin variant and must not silently replace
+    # an explicit attachment material (which would map the wrong DDS slots).
     for hint, reason in _cdf_hints(index, model, preferred_workspace):
         result = check(hint, reason)
         if result:
             return result
     for hint, reason in _embedded_hints(index, model, preferred_workspace):
         result = check(hint, reason)
+        if result:
+            return result
+    for base in bases:
+        result = check((PurePosixPath(parent) / (base + '.mtl')).as_posix(),
+                       'same-name material')
         if result:
             return result
 
