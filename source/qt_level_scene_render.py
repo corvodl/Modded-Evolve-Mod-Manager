@@ -92,6 +92,25 @@ def prepare_scene(project, cancel, progress=None, *, game=None, stage=None, cach
     details["materials"] = tuple(material_names[:20000])
     details["material_catalog_truncated"] = len(material_names) > 20000
     assets, issues, models = {}, Counter(), {}
+    details["terrain"] = None
+    height_source = "levels/" + str(project.level_name) + "/leveldata/heightmap.dat"
+    source_record, terrain_state = resolve_scoped(
+        index, height_source, project.workspace)
+    if source_record is not None:
+        from level_terrain_decode import decode_terrain, MAX_SOURCE_BYTES
+        try:
+            source_file = Path(source_record["file"])
+            if source_file.is_symlink() or not 0 < source_file.stat().st_size <= MAX_SOURCE_BYTES:
+                raise ValueError("Unsafe or oversized source terrain payload")
+            details["terrain"] = decode_terrain(
+                source_file.read_bytes(),
+                source=str(source_record.get("relative") or height_source))
+        except (OSError, ValueError) as exc:
+            issues["Terrain HeightmapData: " + str(exc)[:180]] += 1
+    elif "terrain/terrain.dat" in index:
+        issues["compiled terrain present, but no verified source Heightmap.dat"] += 1
+    else:
+        issues["terrain source " + terrain_state + ": " + height_source] += 1
     candidates = {_asset_key(o): o for o in project.scene if o.model}
     total = len(candidates)
     size = 0
@@ -182,6 +201,7 @@ class LevelGLViewport(QOpenGLWidget):
         self.distance = 500.
         self.projection_mode = "Perspective"
         self.assets = {}
+        self.terrain = None
         self._textures = {}
         self._cancel = Event()
         self._results = Queue(maxsize=2)
@@ -223,6 +243,7 @@ class LevelGLViewport(QOpenGLWidget):
         self._cancel = Event()
         self._results = Queue(maxsize=2)
         self.assets = {}
+        self.terrain = None
         self._lookup.clear()
         for item in self.project.objects:
             node = self.project._node(item.layer, item.index)
@@ -263,12 +284,15 @@ class LevelGLViewport(QOpenGLWidget):
             finally:
                 self.doneCurrent()
         self.assets = assets or {}
+        self.terrain = details.get('terrain')
         self._textures.clear()
         count = sum(1 for obj in self.project.scene if _asset_key(obj) in self.assets)
         detail = ", ".join(f"{k}: {v}" for k, v in list(issues.items())[:5])
         self.statusChanged.emit(
             f"3D geometry: {count:,} / {len(self.project.scene):,} placed nodes; "
             f"{len(self.assets)} decoded material variants; "
+            + (f"Terrain {len(self.terrain.indices)//3:,} verified triangles; "
+               if self.terrain is not None else "Terrain unavailable; ")
             f"{details.get('mounts',0)} scoped map archives. "
             + (("Issues: " + detail) if detail else "No decoding warnings."))
         self.update()
@@ -390,6 +414,20 @@ class LevelGLViewport(QOpenGLWidget):
         up=(right[1]*forward[2]-right[2]*forward[1],
             right[2]*forward[0]-right[0]*forward[2],
             right[0]*forward[1]-right[1]*forward[0])
+        # The real source HeightmapData is drawn in authored world coordinates.
+        # No flat proxy, inferred terrain texture, or generated collision.
+        terrain = self.terrain
+        if terrain is not None:
+            glDisable(GL_TEXTURE_2D)
+            glColor3f(.52,.59,.51)  # Explicit untextured preview until tile format verified.
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glEnableClientState(GL_NORMAL_ARRAY)
+            glVertexPointer(3,GL_FLOAT,0,terrain.vertices)
+            glNormalPointer(GL_FLOAT,0,terrain.normals)
+            glDrawElements(GL_TRIANGLES,len(terrain.indices),
+                           GL_UNSIGNED_INT,terrain.indices)
+            glDisableClientState(GL_NORMAL_ARRAY)
+            glDisableClientState(GL_VERTEX_ARRAY)
         visible=[]
         for item in self.project.scene:
             key=_asset_key(item)
