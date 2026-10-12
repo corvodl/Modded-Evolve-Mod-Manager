@@ -260,6 +260,16 @@ def append_caf_animations(glb, clips, *, allow_layered=False):
     animations = []
     for name, raw in clips:
         motion = decode_caf(raw)
+        # Use one timeline origin across ALL bone controllers. Previously
+        # every joint subtracted its own first key's timestamp, shifting
+        # late-starting tracks to frame zero and desynchronizing creature
+        # joints (particularly multi-track monster idle animations).
+        start_keys = [float(times[0]) for track in motion.tracks
+                      for times in (track.rotation_times, track.position_times)
+                      if times]
+        if not start_keys:
+            raise ValueError('CAF has no controller timestamps.')
+        time_origin = min(start_keys)
         layered = (motion.additive or 'aimpose' in name.casefold()
                    or 'additive' in name.casefold())
         if layered and not allow_layered:
@@ -292,7 +302,7 @@ def append_caf_animations(glb, clips, *, allow_layered=False):
                 if not values:
                     continue
                 time = np.asarray(times, dtype=np.float32)
-                time = (time - time[0])/motion.fps
+                time = (time - time_origin)/motion.fps
                 # glTF accessors require increasing keys.
                 if len(time) > 1 and np.any(np.diff(time) <= 0):
                     unique = np.concatenate(([True], np.diff(time) > 0))
