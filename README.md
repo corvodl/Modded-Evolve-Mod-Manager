@@ -1,10 +1,16 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.14
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.15
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.14 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.15 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.18-beta.15
+
+- Native animation selection is now a compact **scrollable in-panel list** instead of a screen-height popup. Long asset paths show in a bounded, independently scrollable details pane.
+- The bundled CAF/DBA converter shows real standard-output/error logs, working progress and a **Stop Conversion** control. When an exact requested animation cannot be decoded it reports the reason rather than silently failing.
+- Model-folder exports in the Asset Library, Modding viewer and main manager run in background workers. Progress updates per completed model, displays activity while one model converts, and supports cancellation between models.
 
 ## What's new in v1.1.18-beta.14
 
