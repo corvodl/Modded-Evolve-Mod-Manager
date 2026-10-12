@@ -170,6 +170,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.loose_animation_index = None
         self.preview_index = None
         self.character_preview = None
+        self.full_character_active = False
         self.character_skin_choice = None
         self._prepared_animation = None
         self.gpu_windows = []
@@ -441,6 +442,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Export for Blender (.glb)…', self.export_blender_model)
         action('File', 'Export Animated Character (.glb)…', self.export_animated_character)
         action('File', 'Export Model Folder…', self.export_blender_folder)
+        action('File', 'Export Individual Meshes as GLB…', self.export_individual_glbs)
         action('File', 'Batch Asset Export…', self.open_asset_search)
         action('File', 'Project History & Undo…', self.open_project_history)
         action('Edit', 'Save Text', self.save)
@@ -896,7 +898,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         clear_model_cache(self.workspace)
         self.preview_index = None
-        self.load(self.current)
+        self.load(self.current, full_character=self.full_character_active)
         self.status.setText('Reloading materials and textures…')
 
     @staticmethod
@@ -961,7 +963,9 @@ class QtWorkspaceEditor(QMainWindow):
             # Collapse only verified model families. Children retain their
             # exact virtual file paths, so editing/favorites still work.
             from model_families import group_model_families
+            from character_full_models import discover_full_characters
             family_by_parent = group_model_families(entries)
+            full_characters = discover_full_characters(entries)
             member_to_parent = {
                 member: parent for parent, group in family_by_parent.items()
                 for member in group.members if member != parent
@@ -1032,6 +1036,22 @@ class QtWorkspaceEditor(QMainWindow):
                     tree.addTopLevelItem(item)
                 if rel == previous:
                     restored = item
+            # Virtual Full Character options remain separate from editable
+            # native meshes. Their user-data points at the actual .skinm.
+            for primary, full in full_characters.items():
+                parent = folders.get('/'.join(primary.split('/')[:-1]))
+                if parent is None:
+                    continue
+                item = QTreeWidgetItem(['◆ ' + full.label, 'CDF assembly'])
+                item.setData(0, Qt.UserRole, primary)
+                item.setData(0, Qt.UserRole + 2, 'full-character')
+                item.setToolTip(0,
+                    'Full character assembled from ' + full.definition +
+                    '\\nThe CDF selects the body and compatible equipment. ' +
+                    'Original meshes remain independently selectable.')
+                parent.insertChild(0, item)
+                if primary == previous and self.full_character_active:
+                    restored = item
             for owner, children in grouped_nodes.items():
                 primary_item = getattr(self, '_model_group_items', {}).get(owner)
                 if primary_item is None:
@@ -1078,20 +1098,25 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             chosen = self.selected()
+            item = self.file_tree.currentItem()
+            full_character = bool(
+                item and item.data(0, Qt.UserRole + 2) == 'full-character')
             if chosen.casefold().endswith('.lyr') and not self.read_only_library:
                 self.manager.open_level_editor(self.workspace)
             else:
-                self.load(chosen)
+                self.load(chosen, full_character=full_character)
         except ValueError as exc:
             self.status.setText(str(exc))
 
-    def load(self, rel):
+    def load(self, rel, *, full_character=False):
         if rel not in self.records:
             raise ValueError('This file is no longer in the extracted PAK.')
         # The internal pages are selected by file type; their tab bar is hidden.
         target_mode = self._category(rel)
         self.tabs.setCurrentIndex(self.TABS.index(target_mode))
-        self.current_file_label.setText(rel)
+        self.full_character_active = bool(full_character)
+        self.current_file_label.setText(
+            'Full Character • ' + Path(rel).stem if full_character else rel)
         from character_aliases import character_asset_description
         description = character_asset_description(rel)
         self.current_file_label.setToolTip(
@@ -1169,7 +1194,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.preview_index = None
         self._prepared_animation = None
         self.status.setText('Refreshing current Asset Library references…')
-        self.load(self.current)
+        self.load(self.current, full_character=self.full_character_active)
 
     def _load_model_background(self, rel):
         """Load heavy CryEngine files and textures away from the GUI thread."""
@@ -1195,6 +1220,7 @@ class QtWorkspaceEditor(QMainWindow):
         tex = self.texture_folder
         ani = self.loose_animation_index
         equipment = self.character_skin_choice
+        require_assembly = self.full_character_active
         token = self._model_generation
 
         def resolve(_unused):
@@ -1207,7 +1233,8 @@ class QtWorkspaceEditor(QMainWindow):
             data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
                 projects_root=projects, stage_root=stage,
                 texture_folder=tex, animation_index=ani,
-                equipment=equipment, index=active_index)
+                equipment=equipment, index=active_index,
+                require_assembly=require_assembly)
             return (data, cache_hit, load_ms), None
 
         # Tests and headless software previews retain deterministic synchronous
@@ -1303,7 +1330,7 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode != 'models' or not self.current:
             return
         self.character_skin_choice = name
-        self.load(self.current)
+        self.load(self.current, full_character=self.full_character_active)
 
     def _paint_model(self, view, mesh):
         """The complete GPU controls are embedded by default in the Models tab."""
@@ -1568,7 +1595,7 @@ class QtWorkspaceEditor(QMainWindow):
         if self.current and self._confirm_buffer():
             clear_model_cache(self.workspace)
             self.preview_index = None
-            self.load(self.current)
+            self.load(self.current, full_character=self.full_character_active)
 
     def explore(self):
         try:
@@ -2065,7 +2092,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             replace_model(self.workspace,self.current,target,digest(self.raw))
-            self.load(self.current)
+            self.load(self.current, full_character=self.full_character_active)
         except Exception as exc:
             QMessageBox.critical(self,'Model import rejected',str(exc))
 
@@ -2082,7 +2109,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         self.animation_folder = Path(folder).resolve()
         if self.current and self.mode == 'models':
-            self.load(self.current)
+            self.load(self.current, full_character=self.full_character_active)
         else:
             self.status.setText('Extracted animation directory indexed: ' + folder)
 
