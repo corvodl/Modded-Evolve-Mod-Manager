@@ -71,9 +71,12 @@ def embed_diffuse_textures(blob, materials):
             continue
         if count >= MAX_TEXTURES:
             raise ValueError('Exceeded texture export safety limit.')
+        alpha_mode = slot < len(materials.alpha_modes) and materials.alpha_modes[slot]
+        cutoff = materials.alpha_cutoffs[slot] if slot < len(materials.alpha_cutoffs) else 0.
+        opacity = materials.opacity[slot] if slot < len(materials.opacity) else 1.
         with BytesIO() as output:
             # Original DDS may use BCn compression; embed a portable PNG.
-            image.convert('RGB').save(output, format='PNG')
+            image.convert('RGBA' if alpha_mode else 'RGB').save(output, format='PNG')
             payload = output.getvalue()
         if len(payload) > MAX_IMAGE_BYTES:
             raise ValueError('A material diffuse PNG is too large to embed.')
@@ -85,7 +88,10 @@ def embed_diffuse_textures(blob, materials):
                        'mimeType': 'image/png',
                        'name': 'Diffuse slot %d' % slot})
         textures.append({'source': len(images)-1})
-        material['pbrMetallicRoughness']['baseColorFactor'] = [1, 1, 1, 1]
+        material['pbrMetallicRoughness']['baseColorFactor'] = [1, 1, 1, opacity]
+        material['alphaMode'] = 'MASK' if cutoff > 0 else ('BLEND' if alpha_mode or opacity < .999 else 'OPAQUE')
+        if cutoff > 0:
+            material['alphaCutoff'] = cutoff
         material['pbrMetallicRoughness']['baseColorTexture'] = {
             'index': len(textures)-1}
         from texture_transform import transform_for, IDENTITY

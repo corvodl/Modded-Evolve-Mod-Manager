@@ -36,10 +36,17 @@ class PreviewMaterials:
     alpha_modes: tuple = ()  # True only where material explicitly uses texture alpha
 
     uv_transforms: tuple = ()
+    alpha_cutoffs: tuple = ()  # Explicit CryEngine AlphaTest thresholds
 
     @property
     def count(self):
         return sum(tex is not None for tex in self.textures)
+
+    @cached_property
+    def alpha_arrays(self):
+        import numpy as np
+        return tuple(None if im is None else np.asarray(im.convert('RGBA').getchannel('A'), dtype=np.uint8)
+                     for im in self.textures)
 
     @cached_property
     def rgb_arrays(self):
@@ -217,7 +224,14 @@ def _decode_texture(item, *, index=None):
             raise ValueError('Unsupported texture encoding for model preview.')
         im.load()
         tex = im.convert('RGBA') if 'A' in im.getbands() else im.convert('RGB')
+    # DDS alpha may be auxiliary material data. Pillow RGBA resampling
+    # premultiplies it into RGB, destroying opaque colors wherever alpha is 0.
+    # Preserve independent channels; the material decides how alpha is used.
+    alpha = tex.getchannel('A') if tex.mode == 'RGBA' else None
+    tex = tex.convert('RGB')
     tex.thumbnail((MAX_PREVIEW_TEX_DIM, MAX_PREVIEW_TEX_DIM * 2), Image.Resampling.LANCZOS)
+    if alpha is not None:
+        tex.putalpha(alpha.resize(tex.size, Image.Resampling.LANCZOS))
     return tex
 
 
@@ -336,7 +350,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             return None
         return _decode_texture(hit, index=index)
 
-    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]
+    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []
     for item in subs:
         name = item.get('Name') or 'unnamed'
@@ -361,10 +375,11 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         # CryEngine diffuse DDS alpha is frequently a mask or auxiliary data,
         # not an alpha-blend instruction. Do NOT hide opaque armor/body meshes.
         try:
-            alpha_test = float(item.get('AlphaTest', '0')) > 0
+            alpha_test = max(0., min(1., float(item.get('AlphaTest', '0'))))
         except ValueError:
             alpha_test = False
-        alpha_modes.append(alpha_test or opacity < 0.999 or
+        cutoffs.append(float(alpha_test))
+        alpha_modes.append(bool(alpha_test) or opacity < 0.999 or
                            any(word in shader for word in ('glass', 'transparent', 'translucent', 'decal')))
         for target,keys in ((normals,('bumpmap','normal','normalmap')),
                             (speculars,('specular','specularcolor','gloss'))):
@@ -393,7 +408,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
-                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),tuple(transforms))
+                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),tuple(transforms),tuple(cutoffs))
 
 
 def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevation=.24, zoom=1., *, pan=(0.,0.), cancel=None):
@@ -476,6 +491,13 @@ def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevat
         lighting=.50+.50*abs(float(np.dot(normal,light)/norm)) if norm>1e-12 else .65
         color=np.clip(tex[ty,tx].astype(np.float32)*lighting,0,255).astype(np.uint8)
         dest=buffer[y0:y1,x0:x1]
+        opacity = materials.opacity[texno] if texno < len(materials.opacity) else 1.
+        cutoff = materials.alpha_cutoffs[texno] if texno < len(materials.alpha_cutoffs) else 0.
+        uses_alpha = texno < len(materials.alpha_modes) and materials.alpha_modes[texno]
+        alpha = materials.alpha_arrays[texno][ty,tx] / 255. * opacity if uses_alpha else np.full(tx.shape, opacity)
+        inside &= alpha >= (cutoff if cutoff > 0 else .02)
+        if cutoff <= 0 and (uses_alpha or opacity < .999):
+            color = (color * alpha[...,None] + dest * (1-alpha[...,None])).astype(np.uint8)
         dest[inside]=color[inside]
         depth[inside]=zs[inside]
     if cancel is not None and cancel():

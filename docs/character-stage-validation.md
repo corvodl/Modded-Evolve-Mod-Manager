@@ -11,19 +11,14 @@ Against the extracted Asset Library on 2026-10-12:
 - 123 discovered CDF-backed entries successfully assembled and generated rigged GLBs, including body, creature and equipment definitions. This count is not 123 distinct playable characters.
 - All 123 resolved at least one used diffuse texture; no material-association failures were reported. Source shader features such as animated material modifiers remain approximations.
 - Teleporter2 diffuse preview was rendered and inspected: 20,987 vertices, 36,670 triangles, five subsets correctly assigned to its body material.
-- All three Goliath and Teleporter stages converted DBA data into playable clips. A sampled clip at three times yielded finite positions and nonzero movement for each stage. This does not establish that every clip on every character was visually validated.
-
-| Stage | Converted clips |
-|---|---:|
-| goliath1 | 274 |
-| goliath2 | 274 |
-| goliath3 | 274 |
-| teleporter1 | 178 |
-| teleporter2 | 177 |
-| teleporter3 | 177 |
+- 76 actor models passed expanded animation checks: 24 monster stages (eight families), 29 hunter models/variants, and 23 creatures. Every one of 14,672 converted DBA clips was parsed and sampled at its midpoint for finite transforms; three representative motions per actor were sampled for vertex deformation. This is not a visual review of every frame of every clip.
+- All 19 available standalone native CAF selections in this inventory passed export/playback checks. 442 layered references were classified as requiring a base animation, including Kala's jetpack deploy CAF whose additive flag is absent from its name. Layered motions are not falsely advertised as standalone playback.
+- The reported Goliath3 uphill/right run clip was separately tested through the character-preview conversion path: 198 channels and 199 bones, playable without the incompatible ankle-rest error.
+- Lennox exposed a DDS resize defect: premultiplied RGBA filtering erased RGB where auxiliary alpha was zero. Color and alpha are now resized independently; original torso mean RGB (48.94, 41.17, 36.39) is preserved instead of collapsing to approximately (1.88, 1.38, 1.13). A zero-alpha DDS regression covers the shared hunter/creature/monster decoding path.
+- Explicit material AlphaTest cutoffs now survive assembly, CPU/GPU preview, GLB export and animated reimport. Character assemblies honor material transparency by default; the manual ignore-alpha diagnostic remains available. Opaque diffuse auxiliary alpha remains ignored.
 
 ## Regressions
 
-110 tests across 16 local modules passed, including nine synthetic character-stage tests. The viewer-materials CI workflow includes the new tests and executes additional archive suites on Linux. Synthetic fixtures cover distinct stage labels, unique skins, packed vertices/UVs, subset flags/counts, extensionless material lookup, monster body parts, persistent hunter accessories, differing CHR/skin rest poses, rejected weighted conflicts and eight-influence playback/export.
+113 tests across 16 local modules passed, including 12 synthetic character-stage tests. The viewer-materials CI workflow includes the new tests and executes additional archive suites on Linux. Synthetic fixtures cover distinct stage labels, unique skins, packed vertices/UVs, subset flags/counts, extensionless material lookup, monster body parts, persistent hunter accessories, differing CHR/skin rest poses, rejected weighted conflicts eight-influence playback/export, additive CAF flag classification and transparency-cutoff round trips.
 
 No original game, installed application or Asset Library files were modified. No game model/texture/animation bytes are included in the repository. Procedural attachment physics and rigid CA_BONE socket geometry remain outside this skin-assembly path. Existing equipment selection does not claim to simulate gameplay loadouts.

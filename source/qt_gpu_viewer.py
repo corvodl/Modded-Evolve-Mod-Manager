@@ -167,7 +167,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         # Character assembled parts can use CryEngine alpha semantics that
         # are not reproduced by the preview. Solid diagnostic rendering keeps
         # all decoded geometry visible while missing materials are resolved.
-        self.force_opaque_preview = mesh.source_name.startswith('Character assembly:')
+        self.force_opaque_preview = False
         self.textures = []
         self.normal_textures = []
         self.specular_textures = []
@@ -203,7 +203,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self._grid_floor = min((vertex[2] for vertex in mesh.vertices), default=0.0)
         self._batch_sort_cache = None
         self.materials = materials
-        self.force_opaque_preview = mesh.source_name.startswith('Character assembly:')
+        self.force_opaque_preview = False
         if self.isValid():
             self.makeCurrent()
             try:
@@ -493,6 +493,9 @@ class QtGLModelCanvas(QOpenGLWidget):
                 if self.force_opaque_preview:
                     return False
                 values=getattr(self.materials,'opacity',()) if self.materials else ()
+                cutoffs=getattr(self.materials,'alpha_cutoffs',())
+                if slot<len(cutoffs) and cutoffs[slot]>0:
+                    return False
                 return slot in self.translucent_slots or (slot<len(values) and values[slot]<.999)
             from renderer_3 import ordered_transparency_batches
             transparent_slots={slot for _,_,slot in arrays.draws if is_translucent(slot)}
@@ -511,6 +514,13 @@ class QtGLModelCanvas(QOpenGLWidget):
                          slot<len(getattr(self.materials,'opacity',())) else 1.0)
                 if self.force_opaque_preview:
                     alpha = 1.0
+                cutoffs = getattr(self.materials, 'alpha_cutoffs', ())
+                cutoff = cutoffs[slot] if not self.force_opaque_preview and slot < len(cutoffs) else 0.
+                from OpenGL.GL import GL_ALPHA_TEST, GL_GEQUAL, glAlphaFunc
+                if cutoff > 0:
+                    glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GEQUAL, cutoff)
+                else:
+                    glDisable(GL_ALPHA_TEST)
                 transparent = is_translucent(slot)
                 if transparent:
                     glEnable(GL_BLEND)
@@ -532,7 +542,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                         glActiveTexture(GL_TEXTURE0+unit)
                         glBindTexture(GL_TEXTURE_2D,handle)
                     glActiveTexture(GL_TEXTURE0)
-                    shader.bind(opacity=alpha,gloss=self.specular_intensity,
+                    shader.bind(opacity=alpha,gloss=self.specular_intensity, alpha_cutoff=cutoff or .02,
                                 illumination=strength,diffuse=bool(tex),
                                 normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
                                 specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
@@ -550,7 +560,8 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glDrawElements(GL_TRIANGLES,int(count),GL_UNSIGNED_INT,
                                arrays.indices[first:first+count])
         finally:
-            from OpenGL.GL import GL_TEXTURE
+            from OpenGL.GL import GL_TEXTURE, GL_ALPHA_TEST
+            glDisable(GL_ALPHA_TEST)
             glActiveTexture(GL_TEXTURE0)
             glMatrixMode(GL_TEXTURE)
             glLoadIdentity()

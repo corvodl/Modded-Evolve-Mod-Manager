@@ -100,7 +100,7 @@ def combine_meshes(items):
     vertices, triangles, uvs, subsets = [], [], [], []
     textures, names, issues = [], [], []
     normals, speculars, opacities, alpha_modes = [], [], [], []
-    transforms = []
+    transforms = []; cutoffs = []
     included = []
     for name, mesh, materials in items:
         if len(vertices) + len(mesh.vertices) > MAX_VERTICES or len(triangles) + len(mesh.triangles) > MAX_TRIANGLES:
@@ -134,6 +134,8 @@ def combine_meshes(items):
                              slot < len(materials.opacity) else 1.0)
             alpha_modes.append(materials.alpha_modes[slot] if materials and
                                slot < len(materials.alpha_modes) else False)
+            cutoffs.append(materials.alpha_cutoffs[slot] if materials and
+                           slot < len(materials.alpha_cutoffs) else 0.)
             names.append(name + ': ' + label)
         vertices.extend(mesh.vertices)
         triangles.extend(tuple(v + base_vertex for v in tri) for tri in mesh.triangles)
@@ -154,7 +156,7 @@ def combine_meshes(items):
     material = PreviewMaterials(tuple(textures), tuple(names),
                                 'CDF character assembly', tuple(issues),
                                 tuple(normals), tuple(speculars),
-                                tuple(opacities), tuple(alpha_modes), tuple(transforms))
+                                tuple(opacities), tuple(alpha_modes), tuple(transforms), tuple(cutoffs))
     return mesh, material
 
 

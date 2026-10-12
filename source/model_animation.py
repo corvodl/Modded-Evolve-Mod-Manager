@@ -267,8 +267,12 @@ class AnimatedGLB:
         embedded = self.doc.get('images', [])
         textures = self.doc.get('textures', [])
         used = []
-        transforms = []
+        transforms = []; opacities = []; alpha_modes = []; cutoffs = []
         for material in materials[:64]:
+            mode = material.get('alphaMode', 'OPAQUE')
+            alpha_modes.append(mode in ('MASK', 'BLEND'))
+            cutoffs.append(float(material.get('alphaCutoff', .5)) if mode == 'MASK' else 0.)
+            opacities.append(float(material.get('pbrMetallicRoughness', {}).get('baseColorFactor', [1,1,1,1])[3]) if mode != 'OPAQUE' else 1.)
             transform = material.get('pbrMetallicRoughness', {}).get('baseColorTexture', {}).get('extensions', {}).get('KHR_texture_transform', {})
             transforms.append((*transform.get('scale', [1., 1.]), *transform.get('offset', [0., 0.]), transform.get('rotation', 0.)))
             index = material.get('pbrMetallicRoughness',{}).get(
@@ -287,13 +291,14 @@ class AnimatedGLB:
                                 with Image.open(BytesIO(self.binary[start:start+length])) as im:
                                     if im.width*im.height<=8_000_000:
                                         im.load()
-                                        image=im.convert('RGB')
+                                        image=im.convert('RGBA' if mode in ('MASK', 'BLEND') else 'RGB')
                             except (OSError,ValueError):
                                 pass
             used.append(image)
         return PreviewMaterials(tuple(used),
             tuple(m.get('name','Material %d'%i) for i,m in enumerate(materials[:64])),
-            'Embedded GLB textures', uv_transforms=tuple(transforms))
+            'Embedded GLB textures', uv_transforms=tuple(transforms), opacity=tuple(opacities),
+            alpha_modes=tuple(alpha_modes), alpha_cutoffs=tuple(cutoffs))
 
     @classmethod
     def from_file(cls,path):

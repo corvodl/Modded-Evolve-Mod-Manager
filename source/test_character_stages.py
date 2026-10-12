@@ -13,6 +13,46 @@ from model_animation import _accessor, _local_matrix
 from test_model_rigging import crchf, tiny_mesh, tiny_skeleton, bone_record
 
 class CharacterStageTests(unittest.TestCase):
+    def test_explicit_alpha_cutoff_survives_assembly_export_and_animation(self):
+        from dataclasses import replace
+        from PIL import Image
+        from material_preview import PreviewMaterials, render_textured_mesh
+        from character_assembly import combine_meshes
+        from model_textured_export import embed_diffuse_textures
+        from model_animation import AnimatedGLB
+        from test_material_preview import uv_mesh
+        mesh=read_preview_mesh(uv_mesh())
+        image=Image.new('RGBA',(8,8),(220,20,20,204))
+        material=PreviewMaterials((image,),('cutout',),'test',alpha_modes=(True,),alpha_cutoffs=(.92,))
+        combined,material=combine_meshes([('body',mesh,material)])
+        self.assertEqual(material.alpha_cutoffs,(.92,))
+        masked=render_textured_mesh(combined,material,260,260)
+        opaque=render_textured_mesh(combined,replace(material,alpha_modes=(False,),alpha_cutoffs=(0.,)),260,260)
+        self.assertEqual(masked.getpixel((130,130)),(32,33,42))
+        self.assertNotEqual(opaque.getpixel((130,130)),(32,33,42))
+        blob,count=embed_diffuse_textures(glb_bytes(combined),material)
+        doc,binary=_unpack_glb(blob)
+        self.assertEqual(count,1)
+        self.assertEqual(doc['materials'][0]['alphaMode'],'MASK')
+        self.assertAlmostEqual(doc['materials'][0]['alphaCutoff'],.92)
+        reader=object.__new__(AnimatedGLB);reader.doc=doc;reader.binary=binary
+        decoded=reader._embedded_materials()
+        self.assertEqual(decoded.alpha_cutoffs,(.92,))
+        self.assertEqual(decoded.textures[0].getpixel((0,0)),(220,20,20,204))
+
+    def test_dds_resize_preserves_rgb_under_zero_auxiliary_alpha(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from PIL import Image
+        from material_preview import _decode_texture
+        with TemporaryDirectory() as folder:
+            path=Path(folder)/'body.dds'
+            Image.new('RGBA',(32,32),(160,90,40,0)).save(path,format='DDS')
+            with patch('material_preview.MAX_PREVIEW_TEX_DIM',8):
+                image=_decode_texture({'file':path,'relative':'body.dds','workspace':None})
+            self.assertEqual(image.size,(8,8))
+            self.assertEqual(image.getpixel((4,4)),(160,90,40,0))
+
     def test_stage_labels_are_distinct(self):
         base='characters/monsters/teleporter/teleporter'
         paths=[base+str(i)+ext for i in (1,2,3) for ext in ('.cdf','.skinm')]
@@ -131,5 +171,20 @@ class CharacterStageTests(unittest.TestCase):
                 c=assemble_character(None,'characters/hunters/h/h_3p.skinm',{},equipment='body')
             self.assertEqual(c.included,('body','mask'))
             self.assertEqual(c.equipment_options,(skins[2],))
+
+
+    def test_additive_motion_flags_override_a_standalone_looking_name(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from test_native_caf import synthetic_caf
+        from character_animation_catalog import AnimationReference, native_clip_playability
+        raw=bytearray(synthetic_caf())
+        _,_,_,offset=struct.unpack_from('<4I',raw,16)
+        struct.pack_into('<I',raw,offset,1)
+        with TemporaryDirectory() as folder:
+            file=Path(folder)/'deploy.caf';file.write_bytes(raw)
+            ref=AnimationReference('jetpack_deploy_neutral','deploy.caf','caf',True,file)
+            self.assertEqual(native_clip_playability(ref)[0],'layered')
+            self.assertIn('base animation',native_clip_playability(ref)[1])
 
 if __name__=='__main__':unittest.main()
