@@ -1,10 +1,15 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.13
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.14
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.13 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.14 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+
+## What's new in v1.1.18-beta.14
+
+- **Export Model Folder** uses the current file-explorer folder without reselecting it. If a model file is selected, exports start from that model's parent directory. The same behavior applies to Modding and the read-only Asset Library.
+- You choose only the destination. Grouped models and in-game character aliases continue to resolve exact CryEngine virtual paths.
 
 ## What's new in v1.1.18-beta.13
 
