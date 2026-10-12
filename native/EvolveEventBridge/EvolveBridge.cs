@@ -161,6 +161,9 @@ public static unsafe class EvolveBridge
         int processed = 0;
         while (processed < 16 && Pending.TryDequeue(out DispatchRequest? item))
         {
+            // If a socket request timed out, never activate that stale event
+            // on a future frame.
+            if (item.Result.Task.IsCompleted) continue;
             int outcome = 0;
             try
             {
@@ -253,8 +256,9 @@ public static unsafe class EvolveBridge
             GetInt(hello, "pid") != pid || !IsHex(nonce, 32)) return;
         lock (Sync)
         {
-            if (!PreviousNonces.Add(nonce)) return;
-            if (PreviousNonces.Count > 2048) PreviousNonces.Clear();
+            // Stop accepting sessions when the replay cache is full. Never
+            // silently clear the cache and permit an old nonce to be reused.
+            if (PreviousNonces.Count >= 2048 || !PreviousNonces.Add(nonce)) return;
         }
         string[] available;
         lock (Sync) { available = Handlers.Keys.OrderBy(x => x, StringComparer.Ordinal).ToArray(); }
@@ -285,6 +289,8 @@ public static unsafe class EvolveBridge
             Task completed = await Task.WhenAny(item.Result.Task, Task.Delay(1400));
             if (completed == item.Result.Task)
                 outcome = item.Result.Task.Result;
+            else
+                item.Result.TrySetResult(0); // prevents late-frame execution
         }
         Dictionary<string, object> result = new() {
             ["protocol"] = Protocol, ["op"] = "result", ["nonce"] = nonce,
@@ -301,9 +307,11 @@ public static unsafe class EvolveBridge
     {
         if (param.ValueKind != JsonValueKind.Object) return false;
         int count = 0;
+        HashSet<string> seen = new(StringComparer.Ordinal);
         foreach (JsonProperty prop in param.EnumerateObject())
         {
-            if (!schema.TryGetValue(prop.Name, out string? kind)) return false;
+            if (!seen.Add(prop.Name) ||
+                !schema.TryGetValue(prop.Name, out string? kind)) return false;
             bool valid = kind switch {
                 "entity" or "string" => prop.Value.ValueKind == JsonValueKind.String &&
                     prop.Value.GetString() is { Length: > 0 and <= 1024 },
