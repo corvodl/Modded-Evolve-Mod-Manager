@@ -64,6 +64,27 @@ class CharacterAssetCoverageTests(unittest.TestCase):
                 bare=assemble_character(root,body,index,equipment='body')
                 self.assertEqual(bare.included,('body','cockpit'))
 
+    def test_cdf_without_uv_does_not_sample_single_black_texel(self):
+        from dataclasses import replace
+        from character_assembly import combine_meshes
+        texture = Image.new('RGB',(4,4),(220,160,115))
+        mesh = PreviewMesh(((0.,0.,0.),(1.,0.,0.),(0.,1.,0.)),
+                           ((0,1,2),),(.5,.5,0.),1.,'part',
+                           ((0.,0.),(1.,0.),(0.,1.)),((0,3,0),))
+        mats = PreviewMaterials(
+            (texture,),('armor',),'armor.mtl',
+            diffuse_sources=(('characters/hunters/example/armor.dds','shared.pak'),),
+            diffuse_references=('characters/hunters/example/armor.tif',))
+        combined, result = combine_meshes([
+            ('body', mesh, mats),
+            ('cockpit', replace(mesh, uvs=()), mats)])
+        self.assertIsNotNone(result.textures[0])
+        self.assertIsNone(result.textures[1])
+        self.assertEqual(result.uv_available, (True, False))
+        self.assertEqual(result.diffuse_sources[1][1], 'shared.pak')
+        self.assertTrue(any('no decoded UV' in row for row in result.issues))
+        self.assertEqual(len(combined.uvs),len(combined.vertices))
+
     def test_resolved_dds_and_missing_diffuse_have_distinct_sources(self):
         base='characters/hunters/merc_lennox/'
         with TemporaryDirectory() as folder:
