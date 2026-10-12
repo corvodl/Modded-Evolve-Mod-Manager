@@ -992,7 +992,7 @@ class QtGPUModelPanel(QWidget):
         width = max(180, min(470, self.canvas.width() - 70))
         page = self._overlay_sections.get(self._active_overlay)
         wanted = (page[0].sizeHint().height() + 35) if page else 200
-        height = max(80, min(wanted, 415 if self._active_overlay == 'Animation' else 500, self.canvas.height() - 55))
+        height = max(80, min(wanted, 395 if self._active_overlay == 'Animation' else 500, self.canvas.height() - 55))
         self._overlay.setGeometry(56, 43, width, height)
         self._position_navigation()
 
@@ -1100,6 +1100,50 @@ class QtGPUModelPanel(QWidget):
 
     def _prepare_animation_controls(self, layout):
         from PySide6.QtWidgets import QSlider, QToolButton, QWidget
+        panel = layout.parentWidget()
+        panel.setObjectName('animationOverlayPage')
+        panel.setStyleSheet("""
+            QWidget#animationOverlayPage { background: #1b1c22; }
+            QWidget#animationOverlayPage QToolButton[sectionHeader="true"] {
+                background: #292b33; border: 1px solid #373943;
+                border-radius: 6px; padding: 7px 10px;
+                text-align: left; color: #ededf1; font-weight: 600;
+            }
+            QWidget#animationOverlayPage QToolButton[sectionHeader="true"]:checked {
+                border-color: #7a3540; background: #32252d;
+            }
+            QWidget#animationOverlayPage QPushButton {
+                background: #303039; border: 1px solid #484650;
+                border-radius: 6px; min-height: 25px; padding: 2px 10px;
+            }
+            QWidget#animationOverlayPage QPushButton:hover {
+                border-color: #bb505b; background: #3a323b;
+            }
+            QWidget#animationOverlayPage QPushButton#nativePlayAction {
+                background: #8b303b; border-color: #bd5360;
+                font-weight: 700; min-height: 29px;
+            }
+            QWidget#animationOverlayPage QPushButton#nativePlayAction:disabled {
+                background: #35343a; border-color: #44434a; color: #aaa9b1;
+            }
+            QWidget#animationOverlayPage QLineEdit,
+            QWidget#animationOverlayPage QComboBox,
+            QWidget#animationOverlayPage QListWidget {
+                background: #24252d; border: 1px solid #41434d;
+                border-radius: 6px; selection-background-color: #8b303b;
+                padding: 4px 7px;
+            }
+            QWidget#animationOverlayPage QListWidget::item {
+                padding: 5px 7px; border-radius: 4px;
+            }
+            QWidget#animationOverlayPage QListWidget::item:selected {
+                background: #71313d; color: #ffffff;
+            }
+        """)
+        heading = QLabel('Animation Library')
+        heading.setObjectName('animationLibraryTitle')
+        heading.setStyleSheet('font-size: 15px; font-weight: 700; color: #eeeeef;')
+        layout.addWidget(heading)
         # Reusable Blender-like disclosure rows: collapsed sections consume
         # no height and keep the narrow GPU popover usable at 720p.
         self.animation_sections = {}
@@ -1110,6 +1154,8 @@ class QtGPUModelPanel(QWidget):
             heading.setCheckable(True)
             heading.setChecked(opened)
             heading.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            heading.setProperty('sectionHeader', True)
+            heading.setCursor(Qt.PointingHandCursor)
             body = QWidget(self)
             inner = QVBoxLayout(body)
             inner.setSizeConstraint(QLayout.SetMinAndMaxSize)
@@ -1145,40 +1191,42 @@ class QtGPUModelPanel(QWidget):
         self.play_button.clicked.connect(self.toggle_play)
         line.addWidget(self.play_button)
         playback_layout.addLayout(line)
-        native_header = QVBoxLayout()
-        native_header.addWidget(QLabel('Game animations'))
+        search_tools = QHBoxLayout()
+        search_tools.setSpacing(6)
         self.native_search = QLineEdit()
         self.native_search.setObjectName('nativeAnimationSearch')
-        self.native_search.setPlaceholderText('Find an animation by name or file path…')
+        self.native_search.setPlaceholderText('Search animation names…')
         self.native_search.setClearButtonEnabled(True)
         self.native_search.textChanged.connect(self._filter_native_catalog)
-        native_header.addWidget(self.native_search, 1)
-        self.native_refresh_button = QPushButton('Refresh Library')
+        search_tools.addWidget(self.native_search, 1)
+        self.native_refresh_button = QToolButton(self)
+        self.native_refresh_button.setText('Refresh')
         self.native_refresh_button.setObjectName('refreshNativeLibrary')
         self.native_refresh_button.setToolTip(
-            'Re-read the current Asset Library and update this model\'s animation references.')
+            'Reload this character’s animation references from the Asset Library.')
         self.native_refresh_button.clicked.connect(self.refresh_native_catalog)
-        native_header.addWidget(self.native_refresh_button)
-        catalog_layout.addLayout(native_header)
-
-        native_filters = QVBoxLayout()
+        search_tools.addWidget(self.native_refresh_button)
+        catalog_layout.addLayout(search_tools)
+        native_filters = QHBoxLayout()
+        native_filters.setSpacing(6)
         self.native_state_filter = QComboBox()
         self.native_state_filter.setObjectName('nativeAnimationStateFilter')
         self.native_state_filter.addItems((
             'All availability', 'Ready in library', 'In PAK (extract on play)',
             'Not found', 'Layered / additive', 'Graph / unavailable', 'DBA converter'))
         self.native_state_filter.currentIndexChanged.connect(self._filter_native_catalog)
-        native_filters.addWidget(self.native_state_filter)
+        native_filters.addWidget(self.native_state_filter, 1)
         self.native_motion_filter = QComboBox()
         self.native_motion_filter.setObjectName('nativeAnimationMotionFilter')
         self.native_motion_filter.addItems((
             'All motions', 'Idle / Stand', 'Move / Run', 'Combat / Aim',
             'Actions / Other'))
         self.native_motion_filter.currentIndexChanged.connect(self._filter_native_catalog)
-        native_filters.addWidget(self.native_motion_filter)
+        native_filters.addWidget(self.native_motion_filter, 1)
         catalog_layout.addLayout(native_filters)
         self.native_result_count = QLabel('No animation references loaded')
-        self.native_result_count.setWordWrap(True)
+        self.native_result_count.setWordWrap(False)
+        self.native_result_count.setStyleSheet('color: #a9a9b5; font-size: 11px;')
         catalog_layout.addWidget(self.native_result_count)
 
         native_row = QHBoxLayout()
@@ -1188,7 +1236,9 @@ class QtGPUModelPanel(QWidget):
             'subset is listed; no unrelated CAF is substituted.')
         self.native_clip_select.currentIndexChanged.connect(self._native_selection)
         native_row.addWidget(self.native_clip_select, 1)
-        self.play_native_button = QPushButton('Play Game Clip')
+        self.play_native_button = QPushButton('Play')
+        self.play_native_button.setObjectName('nativePlayAction')
+        self.play_native_button.setToolTip('Play the selected clip using its verified source and compatible rig')
         self.play_native_button.clicked.connect(self.load_native)
         catalog_layout.addLayout(native_row)
         # Keep the action reachable at small widths instead of letting the
@@ -1481,13 +1531,9 @@ class QtGPUModelPanel(QWidget):
         self.play_native_button.setEnabled(
             bool(layered_ready or state == 'converter') or bool(
                 self._native_loader and state in ('candidate', 'extractable', 'missing')))
-        self.play_native_button.setText(
-            ('Find in DBA & Play' if ref.kind == 'caf' else 'Convert DBA & Play')
-            if state == 'converter'
-            else 'Play Layered Pose' if state == 'layered'
-            else 'Extract & Play' if state == 'extractable'
-            else 'Search PAK & Play' if state == 'missing'
-            else 'Play Game Clip')
+        # Keep one consistent, easily scannable label. Source lookup,
+        # extraction, DBA conversion and layered setup still happen on click.
+        self.play_native_button.setText('Play')
         if state == 'layered':
             available_note = (
                 'Select a compatible base and adjust the layer weight, then play.'
@@ -1594,7 +1640,7 @@ class QtGPUModelPanel(QWidget):
                 updated[i] = resolved
                 self._native_references = tuple(updated)
                 self._filter_native_catalog()
-                self.play_native_button.setText('Play Game Clip')
+                self.play_native_button.setText('Play')
         origin = details.get('_animation_asset_origin', '')
         fetched = 'Extracted on demand from ' + origin + ' • ' if details.get('_extracted_on_play') else ''
         self.native_info.setText(
