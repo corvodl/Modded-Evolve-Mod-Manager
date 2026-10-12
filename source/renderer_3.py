@@ -34,6 +34,7 @@ uniform float opacity;
 uniform int use_alpha_texture;
 uniform float specular_intensity;
 uniform float illumination;
+uniform int unlit_diffuse;
 varying vec3 eye_normal;
 varying vec3 eye_position;
 varying vec2 texcoord;
@@ -44,6 +45,13 @@ void main() {
     // Alpha may contain non-opacity data in standard CryEngine diffuse DDS.
     float alpha = (use_alpha_texture == 1 ? surface.a : 1.0) * opacity;
     if (alpha < 0.02) discard;
+    // Diagnostic: compare actual diffuse DDS pixels without shader lighting,
+    // normal-mapping or specular darkening. Intentionally dark source maps
+    // should remain dark here; an unbound slot remains neutral gray.
+    if (unlit_diffuse == 1) {
+        gl_FragColor = vec4(surface.rgb,alpha);
+        return;
+    }
     vec3 n = normalize(eye_normal);
     if (has_normal == 1) {
         vec3 p_dx = dFdx(eye_position);
@@ -85,17 +93,18 @@ class Renderer3:
         glUseProgram(self.program)
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
             'diffuse_map','normal_map','specular_map','has_diffuse','has_normal',
-            'has_specular','opacity','use_alpha_texture','specular_intensity','illumination')}
+            'has_specular','opacity','use_alpha_texture','specular_intensity','illumination','unlit_diffuse')}
         for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
-             alpha_texture=False):
+             alpha_texture=False, unlit=False):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f
         glUseProgram(self.program)
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
-                           ('has_specular',specular), ('use_alpha_texture',alpha_texture)):
+                           ('has_specular',specular), ('use_alpha_texture',alpha_texture),
+                           ('unlit_diffuse',unlit)):
             glUniform1i(self.uniforms[name],int(bool(value)))
         for name,value in (('opacity',opacity),('specular_intensity',gloss),
                            ('illumination',illumination)):
