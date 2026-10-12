@@ -1920,8 +1920,8 @@ class QtGPUModelPanel(QWidget):
             self.play_native_button.setEnabled(False)
             self.conversion_progress.show()
             self.conversion_status.setText(
-                'Starting bundled converter…\\nSource: ' + str(source) +
-                '\\nOutput: ' + str(output))
+                'Starting bundled converter…\nSource: ' + str(source) +
+                '\nOutput: ' + str(output))
             self.converter_process.start()
             self.anim_status.setText('Converting animation…')
             QTimer.singleShot(0, self._update_animation_scrolling)
@@ -1941,7 +1941,7 @@ class QtGPUModelPanel(QWidget):
                 'unsupported or dependencies may be in other imported PAKs.' % code)
             self.anim_status.setText(message)
             self.conversion_status.setText(
-                message + '\\n' + getattr(self, '_converter_log', '')[-2400:])
+                message + '\n' + getattr(self, '_converter_log', '')[-2400:])
             return
         # A missing CAF may live inside a DBA. Never play the wrong packed
         # motion just because it was the first converted output.
@@ -1959,8 +1959,8 @@ class QtGPUModelPanel(QWidget):
             except (OSError, ValueError) as exc:
                 self.anim_status.setText('Exact DBA clip unavailable: ' + str(exc)[:220])
                 self.conversion_status.setText(
-                    'Conversion finished but the selected motion was not found.\\n' +
-                    str(exc) + '\\n' + getattr(self, '_converter_log', '')[-900:])
+                    'Conversion finished but the selected motion was not found.\n' +
+                    str(exc) + '\n' + getattr(self, '_converter_log', '')[-900:])
             return
         paths = [path for path in Path(folder).rglob('*.glb')
                  if path.is_file() and not path.is_symlink()]
@@ -1971,7 +1971,7 @@ class QtGPUModelPanel(QWidget):
             'Converter produced %d GLB(s). Select the corresponding animation.' % len(paths))
         if not paths:
             self.conversion_status.setText(
-                'Conversion completed without any .glb output.\\n' +
+                'Conversion completed without any .glb output.\n' +
                 getattr(self, '_converter_log', '')[-2000:])
             return
         file, _ = QFileDialog.getOpenFileName(
