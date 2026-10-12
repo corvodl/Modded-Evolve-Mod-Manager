@@ -88,6 +88,52 @@ class NativeCafTests(unittest.TestCase):
         self.assertTrue(np.isfinite(later).all())
         self.assertFalse(np.allclose(first,later))
 
+    def test_goliath_scale_rig_controllers_keep_one_shared_timeline(self):
+        from native_caf import minimum_matching_controllers
+        from model_animation import _accessor
+        self.assertEqual(minimum_matching_controllers(1),1)
+        self.assertEqual(minimum_matching_controllers(3),3)
+        self.assertEqual(minimum_matching_controllers(20),12)
+        raw=tiny_mesh()
+        mesh=read_preview_mesh(raw)
+        rigged,_=skin_glb(glb_bytes(mesh),raw,tiny_skeleton())
+        def controller(name,first,last):
+            ident=zlib.crc32(name.casefold().encode('utf-8'))
+            header=struct.pack('<IHHBBBBBBH',ident,2,2,1,2,2,0,0,1,0)
+            quats=struct.pack('<8f',0,0,0,1,0,0,0,1)
+            times=bytes((first,last))
+            pad=b'\\0'*2
+            poses=struct.pack('<6f',0,0,0,0.1,0,0)
+            return header+quats+times+pad+poses
+        caf=crchf([
+            (0x0829100d,controller('root',0,30)),
+            (0x0829100d,controller('child',15,45))])
+        output,_=append_caf_animations(rigged,[('two-bone',caf)])
+        doc,binary=_unpack_glb(output)
+        channels=doc['animations'][0]['channels']
+        samplers=doc['animations'][0]['samplers']
+        by_name={}
+        for channel in channels:
+            joint=doc['nodes'][channel['target']['node']]['name']
+            timeline=_accessor(doc,binary,
+                samplers[channel['sampler']]['input']).reshape(-1)
+            by_name.setdefault(joint,[]).append(timeline)
+        self.assertAlmostEqual(by_name['root'][0][0],0.,places=5)
+        self.assertAlmostEqual(by_name['child'][0][0],.5,places=5)
+
+    def test_large_foreign_rig_with_shared_root_is_rejected(self):
+        from unittest.mock import patch
+        from native_caf import CafTrack,CafMotion
+        mesh=read_preview_mesh(tiny_mesh())
+        model,_=skin_glb(glb_bytes(mesh),tiny_mesh(),tiny_skeleton())
+        tracks=[CafTrack(zlib.crc32(b'root'),(0.,1.),((0,0,0,1),)*2,(),())]
+        tracks += [CafTrack(100000+i,(0.,1.),((0,0,0,1),)*2,(),())
+                   for i in range(11)]
+        fake=CafMotion(tuple(tracks),0.,1.,30.,False,False)
+        with patch('native_caf.decode_caf',return_value=fake):
+            with self.assertRaisesRegex(ValueError,'matches only 1 of 12'):
+                append_caf_animations(model,[('different-monster-stage',b'synthetic')])
+
     def test_export_skips_invalid_caf_without_losing_playable_clips(self):
         from pathlib import Path
         from tempfile import TemporaryDirectory
