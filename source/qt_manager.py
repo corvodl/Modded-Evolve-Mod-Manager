@@ -1888,7 +1888,7 @@ class QtManager(QMainWindow):
                        'Apply Mod Profile', complete)
 
     def export_model_folder(self):
-        """Export existing CryEngine render-mesh files to Blender without setup."""
+        """Export native model files without blocking the application UI."""
         input_folder = QFileDialog.getExistingDirectory(
             self, 'Choose folder containing CryEngine models', self.projects_path)
         if not input_folder:
@@ -1897,35 +1897,39 @@ class QtManager(QMainWindow):
             self, 'Choose a separate Blender export folder', self.projects_path)
         if not output_folder:
             return
-        try:
-            from model_textured_export import export_extracted_folder
-            self._show_file_progress('Exporting Blender models')
-            def progress(label, done, total):
-                self._set_file_progress(label, done, total)
-                QApplication.processEvents()
-            try:
-                exported, skipped = export_extracted_folder(
-                    Path(input_folder), Path(output_folder),
-                    projects_root=self.projects_path, stage_root=self.stage_path,
-                    progress=progress)
-            finally:
-                self.operation_progress.hide()
-            with_textures = sum(bool(info['texture_count']) for _, _, _, info in exported)
-            with_rigs = sum(bool(info.get('bone_count')) for _, _, _, info in exported)
-            summary = (f'{len(exported)} models exported to .glb '
-                       f'({with_textures} textured, {with_rigs} rigged); '
-                       f'{len(skipped)} unsupported/skipped.')
+        from qt_background_exports import begin_file_operation, exports_busy
+        if exports_busy(self):
+            self.info('Export in progress', 'Finish or cancel the current model export first.')
+            return
+        from model_textured_export import export_extracted_folder
+        source = Path(input_folder)
+        destination = Path(output_folder)
+        projects, stage = self.projects_path, self.stage_path
+
+        def work(progress, cancelled):
+            return export_extracted_folder(
+                source, destination, projects_root=projects, stage_root=stage,
+                progress=progress, cancelled=cancelled)
+
+        def success(result):
+            exported, skipped = result
+            textured = sum(bool(info['texture_count']) for _, _, _, info in exported)
+            rigged = sum(bool(info.get('bone_count')) for _, _, _, info in exported)
             if skipped:
-                (Path(output_folder) / 'Blender_export_report.txt').write_text(
-                    '\n'.join(f'{name}: {reason}' for name, reason in skipped),
+                (destination / 'Blender_export_report.txt').write_text(
+                    '\n'.join(name + ': ' + reason for name, reason in skipped),
                     encoding='utf-8')
-            self.info('Blender export finished',
-                      summary + '\n\nOutput folder: ' + output_folder +
-                      '\nImport .glb in Blender using File > Import > glTF 2.0. '
-                      'Geometry, available diffuse textures and supported skeletons '
-                      'are exported. Animation track export is not yet available.')
-        except Exception as exc:
-            self.failure(exc)
+            self.info(
+                'Blender export finished',
+                '%d models exported (%d textured, %d rigged), %d skipped.\\n%s' %
+                (len(exported), textured, rigged, len(skipped), output_folder))
+
+        def failed(error):
+            self.failure('Blender export stopped: ' + error)
+
+        begin_file_operation(
+            self, 'Export Blender models', 'Preparing model folder export…',
+            work, on_success=success, on_error=failed)
 
     def browse_external_pak(self):
         source, _ = QFileDialog.getOpenFileName(self, 'Choose custom-signed PAK',
@@ -3373,6 +3377,12 @@ class QtManager(QMainWindow):
         QApplication.instance().quit()
 
     def closeEvent(self, event):
+        from qt_background_exports import exports_busy
+        if exports_busy(self):
+            self.info('Model export running',
+                      'Wait for file export to finish or cancel it before closing.')
+            event.ignore()
+            return
         if self.asset_library_controller.busy:
             self.info('Asset Library import running',
                       'Finish or cancel extracted PAK import before closing the manager.')
