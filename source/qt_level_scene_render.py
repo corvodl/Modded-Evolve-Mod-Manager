@@ -293,7 +293,7 @@ class LevelGLViewport(QOpenGLWidget):
             f"{len(self.assets)} decoded material variants; "
             + (f"Terrain {len(self.terrain.indices)//3:,} verified triangles; "
                if self.terrain is not None else "Terrain unavailable; ")
-            f"{details.get('mounts',0)} scoped map archives. "
+            + f"{details.get('mounts',0)} scoped map archives. "
             + (("Issues: " + detail) if detail else "No decoding warnings."))
         self.update()
 
