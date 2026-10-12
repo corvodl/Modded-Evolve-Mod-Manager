@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.25', (
+        'Correct character texture UV orientation between software and GPU model previews.',
+        'Keep Goliath and Behemoth CAF bone keys synchronized on a shared timeline.',
+        'Validate monster and character bind poses before playing incompatible rigs.',
+    )),
     ('1.1.18-beta.24', (
         "Keep Lennox's cockpit mesh with the body when switching character equipment.",
         'Identify exact DDS source PAKs and missing material links for visible character parts.',
