@@ -1426,6 +1426,20 @@ class QtGPUModelPanel(QWidget):
             native_clip_playability, preferred_third_person_dba)
         self._native_generation += 1
         self._auto_dba_loading = False
+        # A new character should never inherit the old character's filter,
+        # which could conceal the exact 3P DBA and prevent default playback.
+        identity = str(character or description).casefold()
+        if identity != getattr(self, '_catalog_character', None):
+            self.native_search.blockSignals(True)
+            self.native_state_filter.blockSignals(True)
+            self.native_motion_filter.blockSignals(True)
+            self.native_search.clear()
+            self.native_state_filter.setCurrentIndex(0)
+            self.native_motion_filter.setCurrentIndex(0)
+            self.native_search.blockSignals(False)
+            self.native_state_filter.blockSignals(False)
+            self.native_motion_filter.blockSignals(False)
+        self._catalog_character = identity
         self._native_loader = loader
         self._native_references = tuple(references)
         # The selected row from another character must not carry over:
