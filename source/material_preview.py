@@ -57,9 +57,12 @@ def _workspace_index(workspace, projects_root=None, stage_root=None):
     # workspace manifest. Their game-relative paths must still resolve
     # against every imported shared/data/texture archive.
     if (workspace / 'asset-library.json').is_file():
+        from asset_library import _archive_identifier
         from asset_library_preview import archive_folder, library_model_index
-        if archive_folder(workspace.name, root=workspace.parent) == workspace:
-            return library_model_index(workspace.name, root=workspace.parent)
+        identifier = _archive_identifier(workspace)
+        if (identifier is not None and
+                archive_folder(identifier, root=workspace.parent) == workspace):
+            return library_model_index(identifier, root=workspace.parent)
     linked = related_asset_index(workspace, projects_root, stage_root)
     if linked is not None:
         # Persistent imports remain visible even when a multi-PAK project
@@ -247,7 +250,19 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         basenames = {Path(item).name.casefold() for item in _candidates(ref)
                      if item.casefold().endswith(('.dds','.dds.0'))}
         hits = {}
+        material_parts = str(material['relative']).replace('\\', '/').casefold().split('/')
+        # A missing character texture must NOT be filled from another actor's
+        # equally named DDS (common in monster/hunter skins). Only search the
+        # same character's virtual subtree. Explicit shared references are
+        # resolved by the normal path lookup above.
+        character_prefix = ('/'.join(material_parts[:3]) + '/'
+                            if len(material_parts) >= 3
+                            and material_parts[0] == 'characters'
+                            and material_parts[1] in ('hunters', 'monsters', 'creatures')
+                            else None)
         for path, records in index.items():
+            if character_prefix and not path.casefold().startswith(character_prefix):
+                continue
             if Path(path).name.casefold() not in basenames:
                 continue
             for record in records:
@@ -276,16 +291,13 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
 
     def find_texture(ref):
         """Try exact game path, then material-relative refs, without guessing."""
-        hit = _find_unique(index, ref, preferred_workspace=material['workspace'])
-        if hit is not None:
-            return hit
         from multi_pak_assets import resolve_material_texture
         candidates, state = resolve_material_texture(
             index, ref, material['relative'],
             preferred_workspace=material['workspace'])
-        if state == 'ambiguous':
+        if state in ('ambiguous', 'unsafe-path'):
             raise ValueError(
-                'Different versions of this material texture exist: ' + str(ref))
+                'Ambiguous or unsafe material texture: ' + str(ref))
         if state == 'found':
             return candidates[0]
         hit = _external_lookup(texture_folder, ref)

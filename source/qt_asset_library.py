@@ -198,7 +198,9 @@ class AssetLibraryDialog(QDialog):
                       str(data["warnings"]), data["source"])
             for col, value in enumerate(values):
                 cell = QTableWidgetItem(value)
-                cell.setToolTip(data["source"])
+                from pak_browser import archive_description
+                cell.setToolTip(data["source"] + '\\n' +
+                                archive_description(data["name"]))
                 self.table.setItem(row, col, cell)
         size = sum(item["bytes"] for item in archives)
         required = required_archive_status()

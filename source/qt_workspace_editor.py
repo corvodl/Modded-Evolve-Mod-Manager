@@ -975,14 +975,16 @@ class QtWorkspaceEditor(QMainWindow):
                 for i, part in enumerate(parts[:-1]):
                     key = '/'.join(parts[:i + 1])
                     if key not in folders:
-                        from character_aliases import pretty_folder
+                        from character_aliases import (
+                            pretty_folder, character_asset_description)
                         display = pretty_folder(part, '/'.join(parts[:i]))
                         folder = QTreeWidgetItem([display, ''])
                         # Store the original virtual directory independent of
                         # friendly display aliases (e.g. Gorgon/mon_lurker).
                         folder.setData(0, Qt.UserRole + 1, key)
+                        description = character_asset_description(key)
                         folder.setToolTip(0, key + (
-                            '\\nCharacter: ' + display if display != part else ''))
+                            '\\n' + description if description else ''))
                         if parent is not None:
                             parent.addChild(folder)
                         else:
@@ -1002,7 +1004,10 @@ class QtWorkspaceEditor(QMainWindow):
                 category = self._category(rel)
                 item = QTreeWidgetItem([symbol + parts[-1], size])
                 item.setData(0, Qt.UserRole, rel)
-                item.setToolTip(0, category.title() + ' • ' + rel)
+                from character_aliases import character_asset_description
+                char_description = character_asset_description(rel)
+                item.setToolTip(0, category.title() + ' • ' + rel +
+                                ('\\n' + char_description if char_description else ''))
                 if rel in member_to_parent:
                     # The parent may appear later alphabetically, so defer
                     # these children until every primary model is registered.
@@ -1013,7 +1018,8 @@ class QtWorkspaceEditor(QMainWindow):
                 group = family_by_parent.get(rel)
                 if group is not None:
                     item.setText(0, symbol + group.title)
-                    item.setToolTip(0, 'Open complete game character; expand for individual LODs, skins and dependencies.')
+                    item.setToolTip(0, 'Open complete game character; expand for individual LODs, skins and dependencies.\\n'
+                                       + rel + ('\\n' + char_description if char_description else ''))
                     item.setText(1, str(len(group.members)) + ' assets')
                     grouped_nodes.setdefault(rel, [])
                     # Register this primary as a model family header.
@@ -1086,7 +1092,10 @@ class QtWorkspaceEditor(QMainWindow):
         target_mode = self._category(rel)
         self.tabs.setCurrentIndex(self.TABS.index(target_mode))
         self.current_file_label.setText(rel)
-        self.current_file_label.setToolTip(rel)
+        from character_aliases import character_asset_description
+        description = character_asset_description(rel)
+        self.current_file_label.setToolTip(
+            rel + ('\\n' + description if description else ''))
         if rel != self.current:
             self._capture_playback_preferences()
         if rel != self.current:
@@ -1464,9 +1473,25 @@ class QtWorkspaceEditor(QMainWindow):
             self.archive_select.setCurrentText(old)
             self.archive_select.blockSignals(False)
             return
-        self._save_project_session()
+        if not self.read_only_library:
+            self._save_project_session()
         target = self.archive_map[name]
-        new_records = self._read_records(target)
+        if self.read_only_library:
+            from asset_library import imported_archives, _archive_identifier
+            from asset_library_preview import archive_entries
+            identifier = _archive_identifier(target)
+            selected = next(
+                (entry for entry in imported_archives()
+                 if entry['id'] == identifier), None)
+            if selected is None:
+                raise ValueError('Selected imported PAK is no longer available.')
+            new_records = {
+                rel: {'path': rel, 'format': 'raw'}
+                for rel in archive_entries(identifier)
+            }
+            self.library_archive = selected
+        else:
+            new_records = self._read_records(target)
         self.dependency_button.setEnabled(False)
         self.workspace, self.records = target, new_records
         self.favorites_only.setChecked(False)
@@ -1474,16 +1499,22 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.character_skin_choice = None
         self.current, self.loaded_text, self.raw = None, '', b''
-        self.manager.current_workspace = str(target)
-        self.manager.archive_label = name
-        self.manager.output_pak = ''
-        self.manager.persist()
+        if not self.read_only_library:
+            self.manager.current_workspace = str(target)
+            self.manager.archive_label = name
+            self.manager.output_pak = ''
+            self.manager.persist()
         self.populate()
         self.current_file_label.setText('Select a file from ' + name)
         self.tabs.setCurrentIndex(0)
         self.views['files'].clear()
-        QTimer.singleShot(0,self._restore_project_session)
-        self.status.setText('Browsing ' + name + ' | Build Mod applies only to this PAK.')
+        if not self.read_only_library:
+            QTimer.singleShot(0,self._restore_project_session)
+        self.status.setText(
+            'Browsing ' + name + (
+                ' | Asset Library preview/export only (read-only).'
+                if self.read_only_library else
+                ' | Build Mod applies only to this PAK.'))
 
     def change_tab(self, index):
         if self._dirty():

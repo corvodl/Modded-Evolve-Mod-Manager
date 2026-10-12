@@ -47,7 +47,12 @@ def group_title(relative):
     if family[0] == "level":
         return "Level • " + family[1].replace("_", " ").title()
     if family[0] == "character":
-        return family[1].title() + " • " + family[2].replace("_", " ").title()
+        from character_aliases import character_name_for_internal
+        internal = family[2]
+        friendly = character_name_for_internal(internal)
+        label = (friendly + " (" + internal + ")" if friendly
+                 else internal.replace("_", " ").title())
+        return family[1].title() + " • " + label
     if family[0] == "animation":
         return "Global • Animations"
     return "Other • " + PurePosixPath(_clean(relative)).name

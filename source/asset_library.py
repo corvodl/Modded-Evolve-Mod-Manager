@@ -67,13 +67,72 @@ def _invalidate():
         _index_fingerprint = None
 
 
+def _archive_identifier(folder):
+    """Keep the original 20-char library ID in readable folder names."""
+    match = re.fullmatch(
+        r"(?:[A-Za-z0-9][A-Za-z0-9._-]{0,95}__)?([0-9a-f]{20})",
+        Path(folder).name)
+    return match.group(1) if match else None
+
+
+def _archive_directory_name(name, identifier):
+    """Windows-safe human-readable PAK name with collision-proof stable ID."""
+    if not re.fullmatch(r"[0-9a-f]{20}", str(identifier)):
+        raise ValueError("Invalid library archive identifier.")
+    basename = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name)).strip(" ._")[:96]
+    if not basename:
+        basename = "Imported_PAK"
+    return basename + "__" + identifier
+
+
+def _folder_for_identifier(identifier, root):
+    """Resolve a stable identifier across legacy and readable layouts."""
+    if not re.fullmatch(r"[0-9a-f]{20}", str(identifier)):
+        raise ValueError("Invalid library archive identifier.")
+    legacy = root / identifier
+    if legacy.is_dir() and not legacy.is_symlink():
+        return legacy
+    for folder in _manifest_dirs(root):
+        if _archive_identifier(folder) == identifier:
+            return folder
+    return legacy
+
+
+def migrate_readable_archive_folders(root=None):
+    """Rename legacy hash folders safely, without re-extracting any PAK bytes.
+
+    Intended for app startup before model editor paths/indexes are loaded.
+    Import IDs remain stable; collisions and inaccessible folders are skipped.
+    """
+    home = _home(root)
+    changed = []
+    with _lock:
+        for folder in _manifest_dirs(home):
+            if folder.name != _archive_identifier(folder):
+                continue
+            try:
+                manifest = _load_manifest(folder)
+                dest = home / _archive_directory_name(
+                    manifest.get("name", ""), folder.name)
+                if dest.exists() or folder.is_symlink():
+                    continue
+                os.rename(folder, dest)
+                changed.append((folder, dest))
+            except (OSError, ValueError, KeyError, TypeError):
+                # Windows may have a file open; keep the original folder safe.
+                continue
+        if changed:
+            _invalidate()
+    return tuple(changed)
+
+
 def _manifest_dirs(root):
     if not root.is_dir():
         return []
     result = []
     for child in root.iterdir():
         if (child.is_dir() and not child.is_symlink()
-                and re.fullmatch("[0-9a-f]{20}", child.name)
+                and _archive_identifier(child) is not None
                 and (child / MANIFEST).is_file()
                 and not (child / MANIFEST).is_symlink()):
             result.append(child)
@@ -100,7 +159,7 @@ def imported_archives(root=None):
         except (OSError, ValueError, KeyError):
             continue
         result.append({
-            "id": folder.name,
+            "id": _archive_identifier(folder),
             "name": str(data.get("name", folder.name)),
             "source": str(data.get("source", "")),
             "source_sha256": str(data.get("source_sha256", "")),
@@ -225,7 +284,7 @@ def extracted_index(root=None):
                 index[virtual.casefold()].append({
                     "archive": manifest["name"], "workspace": None,
                     "relative": virtual, "file": source_path,
-                    "_asset_library": folder.name,
+                    "_asset_library": _archive_identifier(folder),
                 })
         except (OSError, ValueError, KeyError, TypeError):
             # Partial/damaged imports cannot silently provide assets.
@@ -317,7 +376,11 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
             continue
     sha = _sha_file(source)
     slug = hashlib.sha256((source.name.casefold() + "|" + sha).encode()).hexdigest()[:20]
-    target = root / slug
+    # Preserve a previously imported legacy hash folder until explicitly
+    # migrated; all new imports use the readable PAK name.
+    legacy = root / slug
+    target = (legacy if legacy.exists() else
+              root / _archive_directory_name(source.name, slug))
     if target.is_dir() and (target / MANIFEST).is_file():
         manifest = _load_manifest(target)
         if manifest.get("source_sha256") == sha:
@@ -453,7 +516,7 @@ def remove_archive(identifier, root=None):
     home = _home(root)
     if not re.fullmatch("[0-9a-f]{20}", str(identifier)):
         raise ValueError("Invalid library archive identifier.")
-    folder = home / identifier
+    folder = _folder_for_identifier(identifier, home)
     if folder.is_symlink() or not folder.is_dir() or not (folder / MANIFEST).is_file():
         raise ValueError("Selected library archive no longer exists.")
     # Reject unexpected links before cleanup.
