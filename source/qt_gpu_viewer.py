@@ -1061,6 +1061,10 @@ class QtGPUModelPanel(QWidget):
                        'mostly dark in the source image.' %
                        (len(found),len(slots),dark))
         if selected is not None and materials:
+            if (selected < len(materials.uv_available) and
+                    not materials.uv_available[selected]):
+                message += ('\\nThis CDF part has no decoded UV coordinates; '
+                            'the texture cannot be mapped. Untextured shading is used.')
             source = (materials.diffuse_sources[selected]
                       if selected < len(materials.diffuse_sources) else None)
             ref = (materials.diffuse_references[selected]
@@ -1098,6 +1102,9 @@ class QtGPUModelPanel(QWidget):
                 tip += '\nLoaded: %s\nPAK: %s' % source
             elif expected:
                 tip += '\nMTL wants ' + expected
+            if (materials and slot < len(materials.uv_available) and
+                    not materials.uv_available[slot]):
+                tip += '\nNO UV STREAM — original DDS cannot map to this part'
             self.part_select.setItemData(self.part_select.count()-1,tip,Qt.ToolTipRole)
         self.part_select.blockSignals(False)
         self.canvas.set_visible_material_slot(None)
