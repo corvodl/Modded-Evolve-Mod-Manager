@@ -100,7 +100,7 @@ def combine_meshes(items):
     vertices, triangles, uvs, subsets = [], [], [], []
     textures, names, issues = [], [], []
     normals, speculars, opacities, alpha_modes = [], [], [], []
-    transforms = []
+    transforms, sources, references = [], [], []
     included = []
     for name, mesh, materials in items:
         if len(vertices) + len(mesh.vertices) > MAX_VERTICES or len(triangles) + len(mesh.triangles) > MAX_TRIANGLES:
@@ -121,6 +121,12 @@ def combine_meshes(items):
             label = (materials.names[slot] if materials and
                      slot < len(materials.names) else 'unresolved slot ' + str(slot))
             textures.append(tex)
+            source = (materials.diffuse_sources[slot] if materials and
+                      slot < len(materials.diffuse_sources) else None)
+            reference = (materials.diffuse_references[slot] if materials and
+                         slot < len(materials.diffuse_references) else '')
+            sources.append(source)
+            references.append(reference)
             from texture_transform import transform_for
             transforms.append(transform_for(materials, slot))
             # Preserve per-part material settings when combining CDF skins.
@@ -154,7 +160,8 @@ def combine_meshes(items):
     material = PreviewMaterials(tuple(textures), tuple(names),
                                 'CDF character assembly', tuple(issues),
                                 tuple(normals), tuple(speculars),
-                                tuple(opacities), tuple(alpha_modes), tuple(transforms))
+                                tuple(opacities), tuple(alpha_modes), tuple(transforms),
+                                tuple(sources), tuple(references))
     return mesh, material
 
 
