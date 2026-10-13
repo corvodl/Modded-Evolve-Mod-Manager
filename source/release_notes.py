@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.36', (
+        'Decode streamed CryEngine DDS normal maps at the highest available resolution.',
+        'Discover normal maps through materials and the Asset Library for GPU model previews.',
+        'Export diffuse, normal and auxiliary textures in textures/ with Blender-compatible GLB normal mapping.',
+    )),
     ('1.1.18-beta.35', (
         'Import PAKs from a selected source directory and browse Asset Library archives by build.',
         'Select and export multiple assets; create editable projects from verified Stage 2 PAKs and supported maps.',
