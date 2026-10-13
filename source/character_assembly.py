@@ -101,7 +101,7 @@ def combine_meshes(items):
     textures, names, issues = [], [], []
     normals, speculars, opacities, alpha_modes = [], [], [], []
     transforms, sources, references, uv_available = [], [], [], []
-    cutoffs = []
+    cutoffs = []; hidden = []
     included = []
     for name, mesh, materials in items:
         if len(vertices) + len(mesh.vertices) > MAX_VERTICES or len(triangles) + len(mesh.triangles) > MAX_TRIANGLES:
@@ -122,6 +122,7 @@ def combine_meshes(items):
         remap = {}
         for slot in slots:
             remap[slot] = len(textures)
+            hidden.append(bool(materials and slot < len(materials.hidden) and materials.hidden[slot]))
             tex = (materials.textures[slot] if has_uv and materials and
                    slot < len(materials.textures) else None)
             uv_available.append(has_uv)
@@ -170,7 +171,7 @@ def combine_meshes(items):
                                 'CDF character assembly', tuple(issues),
                                 tuple(normals), tuple(speculars),
                                 tuple(opacities), tuple(alpha_modes), tuple(transforms),
-                                tuple(sources), tuple(references), tuple(uv_available), tuple(cutoffs))
+                                tuple(sources), tuple(references), tuple(uv_available), tuple(cutoffs), hidden=tuple(hidden))
     return mesh, material
 
 
@@ -195,7 +196,12 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
                if label.casefold() in
                ('body', 'hands', 'character', 'base', 'main', 'cockpit')]
     if not primary and skins:
-        primary = [skins[0]]
+        # CDF labels are arbitrary (e.g. maggiebody). Prefer the owning CDF's
+        # matching main skin before falling back to attachment order.
+        main_skin = str(Path(cdf).with_suffix('.skin')).replace('\\', '/').casefold()
+        primary = [(label, rel) for label, rel in skins if rel.casefold() == main_skin]
+        if not primary:
+            primary = [skins[0]]
     # Monster/creature attachments are body parts, not mutually exclusive guns.
     if normalized_name(selected).split('/')[1].casefold() in ('monsters', 'creatures'):
         primary = sorted(skins, key=lambda item: item[0].casefold() not in ('body', 'character', 'base', 'main'))

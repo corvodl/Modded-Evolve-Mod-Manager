@@ -41,6 +41,8 @@ class PreviewMaterials:
     uv_available: tuple = ()  # source render mesh has decoded UVs for this slot
     alpha_cutoffs: tuple = ()  # Explicit CryEngine AlphaTest thresholds
 
+    hidden: tuple = ()  # Explicit NoDraw slots; never inferred from missing DDS.
+
     @property
     def count(self):
         return sum(tex is not None for tex in self.textures)
@@ -57,6 +59,27 @@ class PreviewMaterials:
         import numpy as np
         return tuple(None if im is None else np.asarray(im.convert('RGB'), dtype=np.uint8)
                      for im in self.textures)
+
+
+def material_color(image, value):
+    """Bake linear MTL diffuse tint into sRGB RGB, preserving texture alpha."""
+    import numpy as np
+    try:
+        tint = np.asarray([float(v) for v in value.split(',')], dtype=np.float64)
+        if tint.shape != (3,) or not np.isfinite(tint).all():
+            return image
+        tint = np.clip(tint, 0., 1.)
+    except (ValueError, TypeError):
+        return image
+    if np.all(tint == 1):
+        return image
+    rgba = np.asarray(image.convert('RGBA')).copy()
+    rgb = rgba[:, :, :3] / 255.
+    linear = np.where(rgb <= .04045, rgb / 12.92, ((rgb + .055) / 1.055) ** 2.4)
+    linear *= tint
+    rgb = np.where(linear <= .0031308, linear * 12.92, 1.055 * linear ** (1/2.4) - .055)
+    rgba[:, :, :3] = np.rint(np.clip(rgb, 0, 1) * 255).astype('uint8')
+    return Image.fromarray(rgba)
 
 
 class RenderCancelled(Exception):
@@ -354,7 +377,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         return _decode_texture(hit, index=index)
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
-    transforms = []; sources = []; references = []
+    transforms = []; sources = []; references = []; hidden = []
     for item in subs:
         name = item.get('Name') or 'unnamed'
         names.append(name)
@@ -375,6 +398,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             opacity = 1.
         opacities.append(opacity)
         shader = item.get('Shader', '').casefold()
+        hidden.append(shader == 'nodraw')
         # CryEngine diffuse DDS alpha is frequently a mask or auxiliary data,
         # not an alpha-blend instruction. Do NOT hide opaque armor/body meshes.
         try:
@@ -395,6 +419,10 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                         if (child.get('Map') or child.get('map') or '').casefold() == 'diffuse'), None)
         references.append(diffuse or '')
         if not diffuse or item.get('Shader','').casefold()=='nodraw':
+            if shader == 'glass' and not diffuse:
+                result.append(material_color(Image.new('RGBA', (1, 1), 'white'), item.get('Diffuse', '1,1,1')))
+                sources.append(None)
+                continue
             if not diffuse and item.get('Shader','').casefold() != 'nodraw':
                 issues.append(name + ': material has no diffuse map; '
                               'rendering this slot without a texture')
@@ -414,7 +442,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 sources.append(None)
                 continue
             image = _decode_texture(found, index=index)
-            result.append(image)
+            result.append(material_color(image, item.get('Diffuse', '1,1,1')))
             sources.append((
                 str(found.get('relative') or diffuse),
                 str(found.get('archive') or 'extracted workspace')))
@@ -422,13 +450,13 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             issues.append(name + ': ' + str(error))
             result.append(None)
             sources.append(None)
-    if not any(x is not None for x in result):
+    if not any(x is not None for x in result) and not any(hidden):
         detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
-                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs))
+                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden))
 
 
 
@@ -496,7 +524,10 @@ def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevat
     for index,face in enumerate(tris):
         if cancel is not None and index % 32 == 0 and cancel():
             raise RenderCancelled('No longer needed')
-        texno=int(mapping[index]);tex=textures[texno] if texno<len(textures) else None
+        texno=int(mapping[index])
+        if texno < len(materials.hidden) and materials.hidden[texno]:
+            continue
+        tex=textures[texno] if texno<len(textures) else None
         if tex is None:
             continue
         p=screen[face]

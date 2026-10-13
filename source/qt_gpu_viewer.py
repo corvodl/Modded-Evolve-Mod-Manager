@@ -523,6 +523,9 @@ class QtGLModelCanvas(QOpenGLWidget):
             else:
                 batches=self._batch_sort_cache[1]
             for first,count,slot in batches:
+                hidden = getattr(self.materials, 'hidden', ())
+                if slot < len(hidden) and hidden[slot]:
+                    continue
                 if self.visible_material_slot is not None and slot != self.visible_material_slot:
                     continue
                 alpha = (self.materials.opacity[slot] if self.materials and
