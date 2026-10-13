@@ -636,6 +636,8 @@ class QtManager(QMainWindow):
         file_menu = bar.addMenu('File')
         file_menu.addAction('Import PAKs / Manage Library…', self.open_asset_library)
         file_menu.addAction('Preview Selected PAK…', self.preview_library_archive)
+        file_menu.addAction('Edit / Add to Mod Project…', self.edit_selected_library_archive)
+        file_menu.addAction('Open Map in Level Editor…', self.edit_selected_library_map)
         file_menu.addAction('Export Selected PAK Layout…', self.export_selected_library_archive)
         file_menu.addAction('Open Asset Library Folder', self.open_library_folder)
         view_menu = bar.addMenu('View')
@@ -643,6 +645,26 @@ class QtManager(QMainWindow):
         tools_menu = bar.addMenu('Tools')
         tools_menu.addAction('Verify / Remove Imported PAKs…', self.open_asset_library)
         layout.addWidget(bar)
+        # A visible build view is inventory-only; previews carry an explicit build ID.
+        self.asset_view_tabs = QTabWidget(page)
+        self.asset_view_tabs.setObjectName('assetCollectionViews')
+        all_tab = QWidget()
+        all_tab.setLayout(_row(_label('All imported archives across snapshots',
+                                     muted=True)))
+        build_tab = QWidget()
+        build_row = QHBoxLayout(build_tab)
+        build_row.setContentsMargins(8, 4, 8, 4)
+        build_row.addWidget(_label('Build snapshot:'))
+        self.asset_build_filter = QComboBox()
+        self.asset_build_filter.setObjectName('assetBuildSnapshotFilter')
+        self.asset_build_filter.setToolTip(
+            'Source previews use only dependencies in this build snapshot.')
+        self.asset_build_filter.currentIndexChanged.connect(self.refresh_library_table)
+        build_row.addWidget(self.asset_build_filter, 1)
+        self.asset_view_tabs.addTab(all_tab, 'All Assets')
+        self.asset_view_tabs.addTab(build_tab, 'By Build')
+        self.asset_view_tabs.currentChanged.connect(self.refresh_library_table)
+        layout.addWidget(self.asset_view_tabs)
         controls = QHBoxLayout()
         self.asset_search = QLineEdit()
         self.asset_search.setPlaceholderText('Search imported PAKs, names, folders…')
@@ -684,7 +706,9 @@ class QtManager(QMainWindow):
         actions = QHBoxLayout()
         for title, callback, primary in (
             ('Import / Manage PAKs…', self.open_asset_library, False),
-            ('Preview Files', self.preview_library_archive, True),
+            ('Preview Files', self.preview_library_archive, False),
+            ('Edit / Add to Mod Project', self.edit_selected_library_archive, True),
+            ('Open Map', self.edit_selected_library_map, False),
             ('Export PAK Layout…', self.export_selected_library_archive, False),
             ('Open Asset Library Folder', self.open_library_folder, False),
         ):
@@ -711,11 +735,26 @@ class QtManager(QMainWindow):
         from pak_dependencies import group_title
         selected = self._selected_library_id()
         archives = imported_archives()
+        from build_collections import catalog
+        builds = catalog()['builds']
+        current_build = self.asset_build_filter.currentData()
+        self.asset_build_filter.blockSignals(True)
+        self.asset_build_filter.clear()
+        for bid, entry in builds.items():
+            self.asset_build_filter.addItem(
+                entry['label'] + ' (' + entry['family'] + ')', bid)
+        selected_index = self.asset_build_filter.findData(current_build)
+        self.asset_build_filter.setCurrentIndex(max(0, selected_index))
+        self.asset_build_filter.blockSignals(False)
+        viewing_build = self.asset_view_tabs.currentIndex() == 1
+        filtered_build = self.asset_build_filter.currentData() if viewing_build else None
         self._library_rows = {entry['id']: entry for entry in archives}
         text = self.asset_search.text().strip().casefold()
         mode = self.asset_filter.currentIndex()
         visible = []
         for entry in archives:
+            if filtered_build and entry['id'] not in builds[filtered_build]['members']:
+                continue
             name = entry['name']
             lowered = name.casefold()
             is_character = lowered.startswith('characters_')
@@ -770,6 +809,31 @@ class QtManager(QMainWindow):
             (len(visible), len(archives),
              sum(a['bytes'] for a in archives) / (1024 ** 3)))
 
+    def _library_build_context(self):
+        if hasattr(self, 'asset_view_tabs') and self.asset_view_tabs.currentIndex() == 1:
+            return self.asset_build_filter.currentData()
+        return None
+
+    def edit_selected_library_archive(self, open_level=False):
+        record = self._selected_library_record()
+        if record is None:
+            return
+        build_id = self._library_build_context()
+        if build_id in ('unassigned', 'all'):
+            build_id = None
+        self.create_mod_project_from_asset_library(
+            record['id'], source_build_id=build_id, open_level=open_level)
+
+    def edit_selected_library_map(self):
+        record = self._selected_library_record()
+        if record is None:
+            return
+        from pak_dependencies import is_level_pak
+        if not is_level_pak(record['name']):
+            self.info('Open Map', 'Select a supported level PAK in Asset Library.')
+            return
+        self.edit_selected_library_archive(open_level=True)
+
     def _selected_library_id(self):
         table = getattr(self, 'asset_table', None)
         if table is None:
@@ -796,7 +860,8 @@ class QtManager(QMainWindow):
                     existing.raise_()
                     existing.activateWindow()
                     return
-            window = QtAssetPreviewWindow(self, record)
+            window = QtAssetPreviewWindow(self, dict(
+                record, build_id=self._library_build_context()))
             window.setAttribute(Qt.WA_DeleteOnClose, False)
             self.library_previews.append(window)
             window.show()
@@ -2092,7 +2157,8 @@ class QtManager(QMainWindow):
             self.game_root or self._find_game_root())
         dialog.exec()
 
-    def create_mod_project_from_asset_library(self, library_id):
+    def create_mod_project_from_asset_library(
+            self, library_id, *, source_build_id=None, open_level=False):
         """Create an editable workspace from the custom-signed matching PAK.
 
         Reference assets remain untouched; the existing Build Mod action
@@ -2107,9 +2173,11 @@ class QtManager(QMainWindow):
             folder = self._new_folder('AssetLibrary_Mod')
             game = self.game_root or self._find_game_root()
             relative, command = project_command(
-                library_id, self.stage_path, folder, game)
+                library_id, self.stage_path, folder, game, build_id=source_build_id)
             # Store explicit signed baseline ownership in the resulting project.
             self._pending_library_archive = library_id
+            self._pending_library_build = source_build_id
+            self._pending_library_map = bool(open_level)
             self.archive_label = relative
             self.run_steps(
                 [('Creating editable project from verified staged PAK', command)],
@@ -2135,6 +2203,7 @@ class QtManager(QMainWindow):
         try:
             from project_catalog import register_project
             register_project(self.projects_path, folder, self.stage_path,
+                             source_build_id=getattr(self, '_pending_library_build', None),
                              archive_id=getattr(self, '_pending_library_archive', None))
             self.refresh_project_list()
         except (OSError, ValueError) as exc:
@@ -2143,7 +2212,11 @@ class QtManager(QMainWindow):
             'Editable project ready: ' + str(folder) +
             '\\nThe Asset Library is unchanged. Edit project copies and use Build Mod '
             'to sign modified entries using the existing custom key.')
-        self._open_project_workspace(folder)
+        if getattr(self, '_pending_library_map', False):
+            self._pending_library_map = False
+            self.open_level_editor(folder)
+        else:
+            self._open_project_workspace(folder)
 
     def _open_project_workspace(self, folder):
         from qt_workspace_editor import QtWorkspaceEditor
