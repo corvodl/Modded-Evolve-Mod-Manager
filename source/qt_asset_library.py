@@ -225,11 +225,21 @@ class AssetLibraryDialog(QDialog):
 
     def assign_selected(self):
         record = self._selected_record()
-        build_id = self.build_filter.currentData()
-        if record is None or build_id in (None, "all", "unassigned"):
-            QMessageBox.information(self, "Choose a build",
-                                    "Select a registered build and an imported archive.")
+        if record is None:
             return
+        builds = catalog()["builds"]
+        options = [(identifier, entry["label"]) for identifier, entry in builds.items()
+                   if identifier != "unassigned"]
+        if not options:
+            QMessageBox.information(self, "Register a build",
+                                    "Register a build snapshot before assigning archives.")
+            return
+        labels = [label + " [" + identifier[:8] + "]" for identifier, label in options]
+        selected, ok = QInputDialog.getItem(self, "Assign archive to build",
+                                             "Destination build:", labels, 0, False)
+        if not ok:
+            return
+        build_id = options[labels.index(selected)][0]
         try:
             assign_archive(build_id, record["id"])
             self.refresh()
