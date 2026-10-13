@@ -146,7 +146,7 @@ def embed_diffuse_textures(blob, materials):
                 payload = output.getvalue()
             if len(payload) > MAX_IMAGE_BYTES:
                 raise ValueError('A material %s PNG is too large to embed.' % role)
-            binary.extend(b'\\x00' * (-len(binary) % 4))
+            binary.extend(bytes(-len(binary) % 4))
             view = {'buffer': 0, 'byteOffset': len(binary), 'byteLength': len(payload)}
             binary.extend(payload)
             doc['bufferViews'].append(view)
