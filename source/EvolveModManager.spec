@@ -22,6 +22,8 @@ datas += [(str(root/'launcher_support'), 'launcher_support'),
           (str(root/'VERSION.txt'), '.')]
 binaries = []
 hidden = [
+    'level_blender_export', 'blender_native_project',
+    'level_terrain_decode', 'level_dependency_loader', 'qt_level_scene_render',
     'database_animation', 'texture_selection', 'texture_transform', 'qt_texture_selection',
     'evolve_pak_workspace', 'evolve_pak_rekey', 'evolve_gameplay_editor',
     'evolve_video_pak_tool_fixed', 'dds_texture', 'dds_png_import',
