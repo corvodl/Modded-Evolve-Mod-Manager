@@ -194,6 +194,8 @@ def export_level_glb(project, destination, *, game=None, stage=None,
             "stride":terrain.stride})
         report["terrain"]=True
     emitted={}
+    map_index=None
+    late_resolved=0
     for idx,obj in enumerate(project.scene):
         if cancel.is_set():
             raise InterruptedError("Level export cancelled.")
@@ -201,14 +203,57 @@ def export_level_glb(project, destination, *, game=None, stage=None,
             continue
         key=_asset_key(obj)
         resource=assets.get(key)
-        if resource is None:
-            if obj.model: report["omitted"].append({
-                "object":obj.name,"model":obj.model,"reason":obj.status})
-            continue
         if key not in combined.mesh_ids:
-            blob=glb_bytes(resource.mesh,name=obj.model)
-            if resource.materials is not None:
-                blob,_=embed_diffuse_textures(blob,resource.materials)
+            blob=None
+            if resource is not None:
+                blob=glb_bytes(resource.mesh,name=obj.model)
+                if resource.materials is not None:
+                    blob,_=embed_diffuse_textures(blob,resource.materials)
+            elif hasattr(project,"workspace") and obj.model and (
+                    Path(obj.model).suffix.casefold() in
+                    {".cgf",".skinm",".chrm",".cgam",".cgfm"}):
+                # The live preview imposes a 240 MiB prepared-scene budget.
+                # Try those deferred models one at a time rather than silently
+                # omitting them from the full map export as well.
+                try:
+                    from level_asset_mount import mount_map_index,resolve_scoped
+                    from model_preview import read_preview_mesh
+                    from material_preview import load_preview_materials
+                    if map_index is None:
+                        map_index,_=mount_map_index(project.workspace,
+                            project.level_name,cache_root=cache_root)
+                    candidate,state=resolve_scoped(
+                        map_index,obj.model,project.workspace)
+                    if candidate is None:
+                        raise ValueError("unresolved model: "+state)
+                    source=Path(candidate["file"])
+                    if source.is_symlink() or not source.is_file():
+                        raise ValueError("unsafe or absent model resource")
+                    if not 0 < source.stat().st_size <= 128*1024*1024:
+                        raise ValueError("model exceeds 128 MiB export limit")
+                    raw=source.read_bytes()
+                    decoded=read_preview_mesh(raw,obj.model)
+                    blob=glb_bytes(decoded,name=obj.model)
+                    try:
+                        materials=load_preview_materials(
+                            project.workspace,obj.model,index=map_index,
+                            material_override=obj.material or None)
+                        blob,_=embed_diffuse_textures(blob,materials)
+                    except (OSError,ValueError,TypeError) as texture_error:
+                        report["unresolved"]["material for "+obj.model]=(
+                            str(texture_error)[:180])
+                    late_resolved+=1
+                except (OSError,ValueError,TypeError) as exc:
+                    report["omitted"].append({
+                        "object":obj.name,"model":obj.model,
+                        "reason":str(exc)[:180]})
+                    continue
+            if blob is None:
+                if obj.model:
+                    report["omitted"].append({
+                        "object":obj.name,"model":obj.model,
+                        "reason":obj.status})
+                continue
             mesh_id=combined.append_glb(key,blob)
         else:
             mesh_id=combined.mesh_ids[key]
@@ -226,6 +271,7 @@ def export_level_glb(project, destination, *, game=None, stage=None,
         combined.doc["nodes"][node_id]["matrix"]=_world_matrix(obj.local)
         combined.doc["nodes"][parent_id].setdefault("children",[]).append(node_id)
         combined.doc["scenes"][0]["nodes"].remove(node_id)
+    report["recovered_preview_deferred_meshes"]=late_resolved
     report["mesh_resources"]=len(combined.mesh_ids)
     report["omitted_count"]=len(report["omitted"])
     report["coverage_fraction"]=(report["objects"]/report["selected_objects"]
