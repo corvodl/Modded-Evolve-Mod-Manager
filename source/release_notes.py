@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.32', (
+        'Prefer matching streamed character textures over low-resolution DDS fallbacks.',
+        'Save exported Blender texture PNGs in a dedicated Textures folder.',
+        'Reload original model textures during export instead of using preview caches.',
+    )),
     ('1.1.18-beta.31', (
         'Preview combined level terrain and supported objects as editable Blender scenes.',
         'Export GLB scenes and optional native Blender projects.',

@@ -372,7 +372,18 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         if state == 'unsafe-path':
             raise ValueError('Unsafe material texture path: ' + str(ref))
         if state == 'found':
-            return candidates[0]
+            chosen = candidates[0]
+            # CryEngine's .dds may be a low-mip fallback while the matching
+            # .dds.0 + .dds.N stream contains the full-resolution source.
+            # Probe only the *same verified virtual asset path*; never guess
+            # by basename or borrow another character's similarly named DDS.
+            relative = str(chosen.get('relative') or '').replace('\\', '/')
+            if relative.casefold().endswith('.dds') and index:
+                streamed = _find_unique(index, relative + '.0',
+                                        preferred_workspace=material['workspace'])
+                if streamed is not None:
+                    return streamed
+            return chosen
         hit = _external_lookup(texture_folder, ref)
         return hit if hit is not None else recover_unique_dds(ref)
 

@@ -263,6 +263,8 @@ def export_extracted_model(source, destination, *, projects_root=None,
         if destination.suffix.casefold() != '.glb' or not destination.parent.is_dir():
             raise ValueError('Choose an existing export folder and .glb filename.')
         destination.write_bytes(blob)
+        from blender_texture_folder import write_texture_folder
+        write_texture_folder(blob, destination)
         return (len(mesh.vertices), len(mesh.triangles)), report
     mesh = read_preview_mesh(source.read_bytes(), source.name)
     glb, report = textured_model_from_workspace(
@@ -273,6 +275,8 @@ def export_extracted_model(source, destination, *, projects_root=None,
     if destination.resolve() == source:
         raise ValueError('Cannot overwrite the original CryEngine model.')
     destination.write_bytes(glb)
+    from blender_texture_folder import write_texture_folder
+    write_texture_folder(glb, destination)
     report['weight_status'] = weight_stream_status(source.read_bytes())['status']
     return (len(mesh.vertices), len(mesh.triangles)), report
 

@@ -240,6 +240,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
                 raise InterruptedError('Character export cancelled.')
             payload, info = full_model
             (staging / 'Full_Character.glb').write_bytes(payload)
+            from blender_texture_folder import write_texture_folder
+            write_texture_folder(payload, staging / 'Full_Character.glb')
             if progress:
                 progress('Writing full character model', count, count)
         assembly_rows = []
@@ -253,6 +255,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
             out.parent.mkdir(parents=True, exist_ok=True)
             with out.open('xb') as target_file:
                 target_file.write(payload)
+            from blender_texture_folder import write_texture_folder
+            write_texture_folder(payload, out)
             assembly_rows.append({'glb': location, **report})
             if progress:
                 progress('Writing CDF Blender assemblies',
