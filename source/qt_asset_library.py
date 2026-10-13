@@ -372,8 +372,12 @@ class AssetLibraryDialog(QDialog):
                 self.table.setItem(row, col, cell)
         self.table.setSortingEnabled(True)
         total_bytes = sum(a["bytes"] for a in self.rows)
-        self.status.setText("%d visible PAKs • %.1f MiB • %s" %
-                            (len(self.rows), total_bytes / 1048576, self.controller.status))
+        coverage = required_archive_status(
+            build_id=selected if selected != "all" else None)
+        self.status.setText(
+            "%d visible PAKs • %.1f MiB • Shared %d/6 • Animations %d/3 • %s" %
+            (len(self.rows), total_bytes / 1048576,
+             coverage["shared"], coverage["animations"], self.controller.status))
         self._sync()
 
     def _sync(self):
