@@ -121,6 +121,11 @@ class Beta36NormalPipelineTests(unittest.TestCase):
         blob, count = embed_diffuse_textures(glb_bytes(mesh), mats)
         self.assertEqual(count, 1)
         doc, data = _unpack_glb(blob)
+        attributes = doc["meshes"][0]["primitives"][0]["attributes"]
+        self.assertIn("NORMAL", attributes)
+        self.assertIn("TANGENT", attributes)
+        self.assertEqual(doc["accessors"][attributes["TANGENT"]]["type"], "VEC4")
+        self.assertEqual(doc["accessors"][attributes["TANGENT"]]["count"], 3)
         self.assertEqual(len(doc["images"]), 3)
         bind = doc["materials"][0]["normalTexture"]
         self.assertEqual(doc["images"][doc["textures"][bind["index"]]["source"]]["name"],
