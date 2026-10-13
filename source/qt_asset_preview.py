@@ -96,8 +96,8 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             QMessageBox.information(self, "Open map",
                 "Choose a supported level PAK for editable map projects.")
             return
-        self.manager.create_mod_project_from_asset_library(
-            self.identifier, source_build_id=self.build_id, open_level=True)
+        self.manager.open_library_map_from_archive(
+            self.identifier, build_id=self.build_id)
 
     def export_selection(self):
         from asset_library_preview import _outside_library, export_file
