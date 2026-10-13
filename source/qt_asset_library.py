@@ -59,7 +59,7 @@ class AssetLibraryController(QObject):
                          name="AssetLibrary-" + action).start()
         return True
 
-    def import_files(self, paths, stage, *, automatic=False, extra_keys=()):
+    def import_files(self, paths, stage, *, automatic=False, extra_keys=(), build_id=None):
         files = tuple(Path(p) for p in paths)
         if not files:
             return False
@@ -73,7 +73,7 @@ class AssetLibraryController(QObject):
                                    (i, len(files), path.name), 0, 1)
                 try:
                     result = import_pak(
-                        path, stage=stage, extra_keys=extra_keys,
+                        path, stage=stage, extra_keys=extra_keys, build_id=build_id,
                         cancelled=self._cancel.is_set,
                         progress=lambda name, done, total:
                             self.progress.emit(name, done, total))
@@ -85,10 +85,10 @@ class AssetLibraryController(QObject):
 
         return self._start("automatic-import" if automatic else "import", work)
 
-    def import_all_game(self, scan, stage):
+    def import_all_game(self, scan, stage, *, build_id=None):
         # Reuse the same cancellable per-PAK importer. Completed archive
         # manifests are retained and unchanged ones are skipped on rerun.
-        return self.import_files(scan.files, stage, automatic=False)
+        return self.import_files(scan.files, stage, automatic=False, build_id=build_id)
 
     def verify(self):
         return self._start(
@@ -293,12 +293,16 @@ class AssetLibraryDialog(QDialog):
         self.project_button.setEnabled(not running and self._selected_record() is not None)
         self.cancel_button.setEnabled(running)
 
+    def _import_build(self):
+        selected = self.build_filter.currentData()
+        return selected if selected not in (None, "all", "unassigned") else None
+
     def add_paks(self):
         names, _ = QFileDialog.getOpenFileNames(
             self, "Select Evolve PAKs to add",
             str(self.game or Path.home()), "Evolve PAKs (*.pak);;All files (*)")
         if names:
-            self.controller.import_files(names, self.stage)
+            self.controller.import_files(names, self.stage, build_id=self._import_build())
 
     def add_with_key(self):
         names, _ = QFileDialog.getOpenFileNames(
@@ -310,7 +314,7 @@ class AssetLibraryDialog(QDialog):
             self, "Choose RSA public verification key (never a private key)",
             str(self.game or Path.home()), "RSA Public Key (*.bin *.der)")
         if key:
-            self.controller.import_files(names, self.stage, extra_keys=(key,))
+            self.controller.import_files(names, self.stage, extra_keys=(key,), build_id=self._import_build())
 
     def import_defaults(self):
         files = installed_defaults(self.game)
@@ -318,7 +322,7 @@ class AssetLibraryDialog(QDialog):
             QMessageBox.warning(self, "Game not found",
                 "Select an installed EvolveGame with the shared / animation PAKs.")
             return
-        self.controller.import_files(files, self.stage)
+        self.controller.import_files(files, self.stage, build_id=self._import_build())
 
     def import_all_game(self):
         from asset_library_bulk import discover_game_paks
@@ -350,7 +354,7 @@ class AssetLibraryDialog(QDialog):
             % (len(scan.files), scan.already_imported, total, free, todo),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
-        self.controller.import_all_game(scan, self.stage)
+        self.controller.import_all_game(scan, self.stage, build_id=self._import_build())
 
     def create_mod_project(self):
         record = self._selected_record()
