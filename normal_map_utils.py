@@ -142,3 +142,67 @@ def inspect_dds_header(data: bytes) -> DDSMetadata:
     else:
         raise ValueError("Unsupported DDS pixel format")
     return DDSMetadata(width, height, mip_count, fmt, x_channel, y_channel)
+
+
+def _decode_bc4_block(block: bytes) -> tuple[int, ...]:
+    """Decode a single 4x4 unsigned BC4 block in DDS pixel order."""
+    if len(block) != 8:
+        raise ValueError("Incomplete BC4 block")
+    a, b = block[0], block[1]
+    if a > b:
+        palette = (a, b) + tuple(((7 - i) * a + i * b) // 7 for i in range(1, 7))
+    else:
+        palette = (a, b) + tuple(((5 - i) * a + i * b) // 5 for i in range(1, 5)) + (0, 255)
+    packed = int.from_bytes(block[2:], "little")
+    return tuple(palette[(packed >> (3 * i)) & 7] for i in range(16))
+
+
+def decode_bc5_normal(width: int, height: int, blocks: bytes, *,
+                      invert_green: bool = False) -> NormalMap:
+    """Decode unsigned BC5 blocks into tangent-space RGBA normals.
+
+    Expects only compressed mip payload, not DDS headers or stream sidecars.
+    BC5_SNORM is deliberately excluded because signed endpoint interpolation
+    differs. Partial edge blocks are cropped to the image dimensions.
+    """
+    if width <= 0 or height <= 0 or width > 32768 or height > 32768:
+        raise ValueError("Invalid BC5 dimensions")
+    blocks_x = (width + 3) // 4
+    blocks_y = (height + 3) // 4
+    if len(blocks) != blocks_x * blocks_y * 16:
+        raise ValueError("Incomplete BC5 mip payload")
+    rgba = bytearray(width * height * 4)
+    for by in range(blocks_y):
+        for bx in range(blocks_x):
+            offset = (by * blocks_x + bx) * 16
+            red = _decode_bc4_block(blocks[offset:offset + 8])
+            green = _decode_bc4_block(blocks[offset + 8:offset + 16])
+            for iy in range(4):
+                for ix in range(4):
+                    px, py = bx * 4 + ix, by * 4 + iy
+                    if px >= width or py >= height:
+                        continue
+                    source = iy * 4 + ix
+                    target = (py * width + px) * 4
+                    rgba[target:target + 4] = bytes((red[source], green[source], 0, 255))
+    return decode_xy_normal_rgba(width, height, bytes(rgba),
+                                 invert_green=invert_green)
+
+
+def decode_bc5_dds(data: bytes, *, invert_green: bool = False) -> NormalMap:
+    """Decode first complete unsigned BC5 mip in a standard DDS file.
+
+    CryEngine split DDS streaming must be assembled by the existing archive
+    resolver first. A truncated highest mip raises rather than returning a
+    misleading low-resolution texture.
+    """
+    meta = inspect_dds_header(data)
+    if meta.format_name != "BC5":
+        raise ValueError("DDS is not unsigned BC5")
+    header_size = 148 if data[84:88] == b"DX10" else 128
+    size = ((meta.width + 3) // 4) * ((meta.height + 3) // 4) * 16
+    if len(data) < header_size + size:
+        raise ValueError("Missing highest-resolution BC5 mip data")
+    return decode_bc5_normal(meta.width, meta.height,
+                             data[header_size:header_size + size],
+                             invert_green=invert_green)
