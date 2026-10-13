@@ -127,7 +127,8 @@ def inspect_dds_header(data: bytes) -> DDSMetadata:
     if size != 124 or pixel_format_size != 32 or not (0 < width <= 32768 and 0 < height <= 32768):
         raise ValueError("Malformed DDS header")
     mapping = {b"ATI2": ("BC5", 0, 1), b"BC5U": ("BC5", 0, 1),
-               b"DXT5": ("DXT5", None, None), b"DXT1": ("DXT1", None, None)}
+               b"DXT5": ("DXT5", None, None), b"DXT1": ("DXT1", None, None),
+               b"BC5S": ("BC5_SNORM", 0, 1)}
     if fourcc == b"DX10":
         if len(data) < 148:
             raise ValueError("Truncated DDS DX10 header")
@@ -157,13 +158,26 @@ def _decode_bc4_block(block: bytes) -> tuple[int, ...]:
     return tuple(palette[(packed >> (3 * i)) & 7] for i in range(16))
 
 
+def _decode_bc4_signed_block(block: bytes) -> tuple[int, ...]:
+    """BC4_SNORM endpoints are signed, unlike BC4_UNORM."""
+    if len(block) != 8:
+        raise ValueError("Incomplete signed BC4 block")
+    a = max(-127, int.from_bytes(block[:1], "little", signed=True))
+    b = max(-127, int.from_bytes(block[1:2], "little", signed=True))
+    if a > b:
+        palette = (a, b) + tuple(int(((7-i)*a+i*b)/7) for i in range(1, 7))
+    else:
+        palette = (a, b) + tuple(int(((5-i)*a+i*b)/5) for i in range(1, 5)) + (-127, 127)
+    bits = int.from_bytes(block[2:], "little")
+    return tuple(palette[(bits >> (3*i)) & 7] for i in range(16))
+
+
 def decode_bc5_normal(width: int, height: int, blocks: bytes, *,
-                      invert_green: bool = False) -> NormalMap:
+                      invert_green: bool = False, signed: bool = False) -> NormalMap:
     """Decode unsigned BC5 blocks into tangent-space RGBA normals.
 
     Expects only compressed mip payload, not DDS headers or stream sidecars.
-    BC5_SNORM is deliberately excluded because signed endpoint interpolation
-    differs. Partial edge blocks are cropped to the image dimensions.
+    BC5_SNORM requires signed endpoint interpolation. Partial edge blocks are cropped to the image dimensions.
     """
     if width <= 0 or height <= 0 or width > 32768 or height > 32768:
         raise ValueError("Invalid BC5 dimensions")
@@ -175,8 +189,9 @@ def decode_bc5_normal(width: int, height: int, blocks: bytes, *,
     for by in range(blocks_y):
         for bx in range(blocks_x):
             offset = (by * blocks_x + bx) * 16
-            red = _decode_bc4_block(blocks[offset:offset + 8])
-            green = _decode_bc4_block(blocks[offset + 8:offset + 16])
+            decoder = _decode_bc4_signed_block if signed else _decode_bc4_block
+            red = decoder(blocks[offset:offset + 8])
+            green = decoder(blocks[offset + 8:offset + 16])
             for iy in range(4):
                 for ix in range(4):
                     px, py = bx * 4 + ix, by * 4 + iy
@@ -184,7 +199,9 @@ def decode_bc5_normal(width: int, height: int, blocks: bytes, *,
                         continue
                     source = iy * 4 + ix
                     target = (py * width + px) * 4
-                    rgba[target:target + 4] = bytes((red[source], green[source], 0, 255))
+                    red8 = round((red[source]/127+1)*127.5) if signed else red[source]
+                    green8 = round((green[source]/127+1)*127.5) if signed else green[source]
+                    rgba[target:target + 4] = bytes((red8, green8, 0, 255))
     return decode_xy_normal_rgba(width, height, bytes(rgba),
                                  invert_green=invert_green)
 
@@ -206,3 +223,82 @@ def decode_bc5_dds(data: bytes, *, invert_green: bool = False) -> NormalMap:
     return decode_bc5_normal(meta.width, meta.height,
                              data[header_size:header_size + size],
                              invert_green=invert_green)
+
+
+def _decode_dxt5nm_normal(width: int, height: int, blocks: bytes,
+                           *, invert_green: bool = False) -> NormalMap:
+    """Decode BC3/DXT5nm alpha-as-X and green-as-Y without Pillow swizzle loss."""
+    import struct
+    blocks_x = (width + 3) // 4
+    blocks_y = (height + 3) // 4
+    if width <= 0 or height <= 0 or len(blocks) != blocks_x * blocks_y * 16:
+        raise ValueError("Incomplete DXT5nm highest mip payload")
+    packed = bytearray(width * height * 4)
+    for by in range(blocks_y):
+        for bx in range(blocks_x):
+            chunk = blocks[(by * blocks_x + bx)*16: (by * blocks_x + bx + 1)*16]
+            xs = _decode_bc4_block(chunk[:8])
+            c0, c1 = struct.unpack_from("<HH", chunk, 8)
+            g0 = ((c0 >> 5) & 63) * 255 // 63
+            g1 = ((c1 >> 5) & 63) * 255 // 63
+            greens = (g0, g1, (2*g0 + g1)//3, (g0 + 2*g1)//3)
+            indices = int.from_bytes(chunk[12:16], "little")
+            for iy in range(4):
+                for ix in range(4):
+                    x, y = bx*4 + ix, by*4 + iy
+                    if x >= width or y >= height:
+                        continue
+                    p = iy*4 + ix
+                    off = (y*width + x)*4
+                    packed[off:off+4] = bytes((xs[p], greens[(indices >> (2*p)) & 3], 0, 255))
+    return decode_xy_normal_rgba(width, height, bytes(packed),
+                                 invert_green=invert_green)
+
+
+def decode_normal_dds_image(data: bytes, *, source_name: str = "",
+                            invert_green: bool = False):
+    """Decode a complete, highest-mip DDS to glTF-ready tangent-space RGB.
+
+    Material slots are explicit evidence that these pixels represent normals.
+    Standard BC5 uses R/G; CryEngine DXT5nm uses alpha/green. Uncompressed
+    already-encoded RGB normal textures are preserved rather than re-swizzled.
+    Unsupported signed/unknown compressed variants fail explicitly.
+    """
+    from io import BytesIO
+    from PIL import Image
+
+    try:
+        info = inspect_dds_header(data)
+    except ValueError:
+        # Uncompressed legacy DDS is independently decoded by Pillow, whose
+        # RGB channel masks may differ from compressed DDS fourCC metadata.
+        from dds_texture import parse_dds
+        parsed = parse_dds(data)
+        if not parsed.pixel_format.endswith("RGB/luminance"):
+            raise
+        info = None
+    if info is not None and info.format_name in ("BC5", "BC5_SNORM"):
+        offset = 148 if data[84:88] == b"DX10" else 128
+        count = ((info.width+3)//4)*((info.height+3)//4)*16
+        if len(data) < offset + count:
+            raise ValueError("Missing highest-resolution BC5 mip data")
+        normal = decode_bc5_normal(info.width, info.height,
+                                   data[offset:offset+count],
+                                   signed=(info.format_name == "BC5_SNORM"),
+                                   invert_green=invert_green)
+        return Image.frombytes("RGBA", (normal.width, normal.height), normal.rgba)
+    if info is not None and info.format_name in ("DXT5", "BC3", "BC3_SRGB"):
+        off = 148 if data[84:88] == b"DX10" else 128
+        expected = ((info.width + 3)//4)*((info.height + 3)//4)*16
+        if len(data) < off + expected:
+            raise ValueError("Missing highest-resolution DXT5nm mip data")
+        # Called only for a normal material slot, not arbitrary diffuse DXT5.
+        decoded = _decode_dxt5nm_normal(info.width, info.height,
+                                         data[off:off+expected],
+                                         invert_green=invert_green)
+        return Image.frombytes("RGBA", (decoded.width, decoded.height), decoded.rgba)
+    with Image.open(BytesIO(data)) as im:
+        if im.format != "DDS":
+            raise ValueError("Unsupported DDS normal image")
+        im.load()
+        return im.convert("RGB")
