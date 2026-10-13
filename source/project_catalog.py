@@ -50,7 +50,11 @@ def verified_target(workspace, stage):
     from evolve_pak_workspace import load_workspace
     info = load_workspace(Path(workspace))
     source = Path(info["source_pak"]).resolve(strict=True)
-    base = (Path(stage).resolve(strict=True) / "paks").resolve(strict=True)
+    # Persisted GUI settings store the stage as a string. Convert once before
+    # passing it to universal_stage.allowed_paks(), which uses Path / operators.
+    # Without this, any previously saved project crashes Qt during startup.
+    stage = Path(stage).resolve(strict=True)
+    base = (stage / "paks").resolve(strict=True)
     if not source.is_file() or source.is_symlink() or not source.is_relative_to(base):
         raise ValueError("Project is not backed by a signed staged target archive.")
     relative = source.relative_to(base).as_posix()

@@ -51,6 +51,49 @@ class ModernQtNavigationTests(unittest.TestCase):
             self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index(label))
         self.assertTrue(navigation_icon("Settings").availableSizes())
 
+    def test_sidebar_icons_have_unclipped_bounds_at_narrow_width(self):
+        # Exercise the actual sidebar buttons, not just isolated SVG assets.
+        self.win.menu_button.click()
+        self.win.menu_animation.setCurrentTime(205)
+        self.app.processEvents()
+        for label in SECTIONS[:-1]:
+            button = self.win.nav_buttons[SECTIONS.index(label)]
+            region = button.icon_bounds()
+            self.assertGreaterEqual(region.left(), 8, label)
+            self.assertGreaterEqual(region.top(), 6, label)
+            self.assertLessEqual(region.right(), button.width() - 8, label)
+            self.assertLessEqual(region.bottom(), button.height() - 6, label)
+            self.assertFalse(button.icon().isNull(), label)
+
+    def test_sidebar_icon_renders_with_visible_pixels_and_scaled_asset(self):
+        # QWidget.render(QPainter) into a synthetic 2x QImage causes an
+        # offscreen Qt paint-device error on Windows. Capture the real button
+        # instead, and test the bundled icon's 2x raster independently.
+        from PySide6.QtGui import QImage
+        self.win.menu_button.click()
+        self.win.menu_animation.setCurrentTime(205)
+        self.app.processEvents()
+        button = self.win.nav_buttons[0]
+        bounds = button.icon_bounds()
+        screenshot = button.grab().toImage().convertToFormat(QImage.Format_RGBA8888)
+        self.assertFalse(screenshot.isNull())
+        self.assertGreaterEqual(screenshot.width(), bounds.right() + 1)
+        self.assertGreaterEqual(screenshot.height(), bounds.bottom() + 1)
+        # Icon strokes are light; the dark/red navigation background is not.
+        bright = sum(
+            1 for y in range(bounds.top(), bounds.bottom() + 1)
+            for x in range(bounds.left(), bounds.right() + 1)
+            if all(channel > 145 for channel in (
+                screenshot.pixelColor(x, y).red(),
+                screenshot.pixelColor(x, y).green(),
+                screenshot.pixelColor(x, y).blue()
+            ))
+        )
+        self.assertGreater(bright, 5, 'Navigation SVG did not render in its bounds')
+        large = navigation_icon('Instructions', '#ffffff', 40).pixmap(40, 40)
+        self.assertFalse(large.isNull())
+        self.assertGreaterEqual(large.width(), 40)
+
     def test_update_first_section_and_one_real_action(self):
         settings = self.win.pages["settings"]
         top = settings.widget().layout()

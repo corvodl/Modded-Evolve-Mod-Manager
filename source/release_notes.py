@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.37', (
+        'Repair startup when loading existing mod projects from earlier beta installations.',
+        'Keep navigation menu icons fully visible at Windows display scaling.',
+        'Preserve normals and tangents when exporting separate Blender CDF armatures.',
+    )),
     ('1.1.18-beta.36', (
         'Decode streamed CryEngine DDS normal maps at the highest available resolution.',
         'Discover normal maps through materials and the Asset Library for GPU model previews.',

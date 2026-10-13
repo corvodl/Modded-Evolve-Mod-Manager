@@ -63,6 +63,17 @@ class BlenderCDFRigTests(unittest.TestCase):
             self.assertIn('JOINTS_0',attrs)
             positions=_accessor(doc,binary,attrs['POSITION'])
             self.assertEqual(len(positions),4)
+            # Splitting incompatible armatures must preserve normals/tangents
+            # from the original combined mesh; normal-mapped GLBs depend on them.
+            source_doc, source_binary = _unpack_glb(self.base)
+            source_attrs = source_doc['meshes'][0]['primitives'][0]['attributes']
+            for semantic in ('NORMAL', 'TANGENT'):
+                self.assertIn(semantic, source_attrs)
+                self.assertIn(semantic, attrs)
+                original = _accessor(source_doc, source_binary, source_attrs[semantic])
+                exported = _accessor(doc, binary, attrs[semantic])
+                self.assertEqual(len(exported), 4)
+                self.assertTrue(np.array_equal(exported, original[i*4:(i+1)*4]))
             self.assertEqual(len(_accessor(doc,binary,primitive['indices'])),12)
             self.assertTrue(np.isclose(
                 _accessor(doc,binary,attrs['WEIGHTS_0']).sum(axis=1),1).all())

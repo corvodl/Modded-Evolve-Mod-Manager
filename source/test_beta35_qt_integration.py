@@ -59,6 +59,52 @@ class Beta35QtIntegrationTests(unittest.TestCase):
         self.assertTrue(self.window.asset_build_filter.isVisible())
         self.assertTrue(self.window.asset_table.isSortingEnabled())
 
+    def test_legacy_project_warning_does_not_abort_startup(self):
+        # A populated beta.34 Data folder may have a stale/malformed
+        # project catalog. The warning must be logged after log_lines exists.
+        # Other tests intentionally mock this refresh for UI-only coverage.
+        self.patches[-1].stop()
+        try:
+            with patch("project_catalog.project_rows",
+                       side_effect=ValueError("old project cannot be indexed")):
+                restored = QtManager()
+            try:
+                self.app.processEvents()
+                self.assertTrue(hasattr(restored, "status"))
+                self.assertIn("old project cannot be indexed",
+                              "\n".join(restored.log_lines))
+            finally:
+                restored.close()
+        finally:
+            self.patches[-1].start()
+
+    def test_legacy_selected_project_can_set_warning_tooltip(self):
+        # A selected modified project may produce validation warnings;
+        # status and activity objects must exist before initial refresh.
+        self.patches[-1].stop()
+        try:
+            row = {
+                "id": "legacy-workspace", "workspace": str(Path(self.tmp.name)/"old"),
+                "label": "Existing project", "target_archive": "Game/foo.pak",
+                "changed": 1, "source_build_id": None, "status": "modified",
+                "details": "",
+            }
+            (Path(self.tmp.name) / "missing-settings.json").write_text(
+                __import__("json").dumps({"current_workspace": row["workspace"]}),
+                encoding="utf-8")
+            with patch("project_catalog.project_rows", return_value=(row,)), \
+                 patch("asset_intelligence.validate_project",
+                       return_value=(("asset.mtl",), ("old project needs review",))):
+                restored = QtManager()
+            try:
+                self.app.processEvents()
+                self.assertEqual(restored.project_table.rowCount(), 1)
+                self.assertIn("old project needs review", restored.status.toolTip())
+            finally:
+                restored.close()
+        finally:
+            self.patches[-1].start()
+
     def test_settings_update_action_stays_first(self):
         self.window.open_page(SECTIONS.index("Settings"))
         self.app.processEvents()
