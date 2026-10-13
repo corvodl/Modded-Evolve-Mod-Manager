@@ -229,6 +229,7 @@ class UnrealStyleLevelEditor(QMainWindow):
     """UE4/5-like placement workspace for extracted Evolve Stage 2 levels."""
     mapCatalogReady = Signal(int,object)
     mapCopyReady = Signal(int,object,object)
+    levelExportReady = Signal(object,object)
 
     def __init__(self,parent,workspace):
         super().__init__(parent)
@@ -257,6 +258,9 @@ class UnrealStyleLevelEditor(QMainWindow):
         self._map_copy_cancel=Event()
         self.mapCatalogReady.connect(self._apply_map_catalog)
         self.mapCopyReady.connect(self._complete_map_copy)
+        self._export_cancel=Event()
+        self._export_running=False
+        self.levelExportReady.connect(self._level_export_complete)
         self._build_toolbar()
         self._build_workspace()
         self._populate()
@@ -276,6 +280,9 @@ class UnrealStyleLevelEditor(QMainWindow):
         file=menu.addMenu("File")
         file.addAction(self._action("Save Level Layers",self.save,"Ctrl+S"))
         file.addAction(self._action("Open Extracted Project…",self.open_project))
+        export_menu=menu.addMenu("Export")
+        export_menu.addAction(self._action("Entire Map to Blender (.glb)…",self.export_level))
+        export_menu.addAction(self._action("Selected Object to Blender (.glb)…",lambda: self.export_level(selected_only=True)))
         maps=menu.addMenu("Maps")
         maps.addAction(self._action("Choose Extracted Map Project…", self.open_map_picker))
         edit=menu.addMenu("Edit")
@@ -647,6 +654,62 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.map_selector.setFocus()
         self.map_selector.showPopup()
 
+    def export_level(self,selected_only=False):
+        """Export assembled source/compiled/shared map parts without UI stalls."""
+        if self._export_running:
+            QMessageBox.information(self,"Export in progress","Wait for the active level export.")
+            return
+        selection=None
+        if selected_only:
+            if self.selected is None:
+                QMessageBox.information(self,"Nothing selected","Select an object first.")
+                return
+            layer,idx=self.selected
+            record=self.project._node(layer,idx)
+            guid=(record.get("Id") or record.get("EntityId")
+                  or f"{layer}#{idx}").casefold()
+            selection={guid}
+        suggested=str(self.project.workspace.parent/(self.project.level_name+".glb"))
+        chosen,_=QFileDialog.getSaveFileName(
+            self,"Export Blender Level Scene",suggested,"glTF binary (*.glb)")
+        if not chosen:
+            return
+        source=Path(chosen)
+        if source.suffix.casefold()!=".glb":
+            source=source.with_suffix(".glb")
+        self._export_cancel=Event()
+        cancel=self._export_cancel
+        self._export_running=True
+        self.statusBar().showMessage("Assembling Blender scene from map PAK parts…")
+        game,stage,cache=(self.viewport.game_root,self.viewport.stage_root,
+                          self.viewport.cache_root)
+        project=self.project
+        def job():
+            try:
+                from level_blender_export import export_level_glb
+                result=export_level_glb(
+                    project,source,game=game,stage=stage,
+                    cache_root=cache,cancel=cancel,selection=selection)
+                self.levelExportReady.emit(result,None)
+            except (OSError,ValueError,InterruptedError,RuntimeError) as exc:
+                self.levelExportReady.emit(None,str(exc)[:500])
+        Thread(target=job,name="Evolve-Level-GLB-Export",daemon=True).start()
+
+    def _level_export_complete(self,result,error):
+        self._export_running=False
+        if error:
+            QMessageBox.warning(self,"Level export failed",error)
+            return
+        omitted=len(result.get("omitted",()))
+        message=(f"Exported {result['objects']} placed mesh instances, "
+                 f"{result['mesh_resources']} unique mesh resources and "
+                 f"{'terrain' if result['terrain'] else 'no terrain'}.\n"
+                 f"{omitted} referenced objects were not exported. "
+                 "This GLB is a supported-geometry scene, not an entire "
+                 "CryEngine level rebuild.")
+        self.statusBar().showMessage("Blender scene GLB exported",8000)
+        QMessageBox.information(self,"Level GLB exported",message)
+
     def _projection(self, mode):
         self.viewport.projection_mode = mode
         self.viewport.update()
@@ -986,5 +1049,6 @@ class UnrealStyleLevelEditor(QMainWindow):
                 event.ignore()
                 return
         self._map_copy_cancel.set()
+        self._export_cancel.set()
         self._map_catalog_generation += 1
         event.accept()
