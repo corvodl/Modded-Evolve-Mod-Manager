@@ -59,6 +59,9 @@ jobs:
           }
           Capture-CompiledApp '--capture-screenshot' 'dist/EvolveModManager-compiled-screenshot.png'
           Capture-CompiledApp '--capture-modding-screenshot' 'dist/EvolveModManager-Modding-screenshot.png'
+          Capture-CompiledApp '--capture-settings-screenshot' 'dist/EvolveModManager-Settings-screenshot.png'
+          Capture-CompiledApp '--capture-library-screenshot' 'dist/EvolveModManager-Library-screenshot.png'
+          Capture-CompiledApp '--capture-play-screenshot' 'dist/EvolveModManager-Play-screenshot.png'
           $channel=(Get-Content '.build/app-dist/EvolveModManager/BUILD_CHANNEL.txt' -Raw).Trim()
           if ($channel -ne 'beta') { throw "Unexpected executable channel: $channel" }
           Add-Type -AssemblyName System.IO.Compression
@@ -99,6 +102,9 @@ jobs:
             dist/EvolveModManager-Windows.zip
             dist/EvolveModManager-compiled-screenshot.png
             dist/EvolveModManager-Modding-screenshot.png
+            dist/EvolveModManager-Settings-screenshot.png
+            dist/EvolveModManager-Library-screenshot.png
+            dist/EvolveModManager-Play-screenshot.png
           if-no-files-found: error
       - name: Prepare beta update manifest
         shell: pwsh
@@ -146,7 +152,10 @@ jobs:
           }
           foreach ($file in @('EvolveModManager-Setup.exe',
                  'EvolveModManager-Windows.zip','EvolveModManager-compiled-screenshot.png',
-                 'EvolveModManager-Modding-screenshot.png')) {
+                 'EvolveModManager-Modding-screenshot.png',
+                 'EvolveModManager-Settings-screenshot.png',
+                 'EvolveModManager-Library-screenshot.png',
+                 'EvolveModManager-Play-screenshot.png')) {
             gh release upload $versionTag "dist/$file" --clobber
             if ($LASTEXITCODE -ne 0) { throw "Could not publish $versionTag asset $file." }
           }
