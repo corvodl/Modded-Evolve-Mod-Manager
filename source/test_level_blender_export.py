@@ -72,6 +72,28 @@ class CombinedMapExportTests(TestCase):
             self.assertEqual(doc["nodes"][1]["extras"]["guid"],"rock-a")
             self.assertEqual(doc["nodes"][2]["extras"]["guid"],"rock-b")
 
+    def test_parent_child_mesh_hierarchy_is_retained(self):
+        from qt_level_scene_render import RenderAsset
+        with TemporaryDirectory() as temp:
+            output=Path(temp)/"Hierarchy.glb"
+            parent=SimpleNamespace(name="Parent",id="p",parent_id="",source="layer",
+                kind="Brush",model="objects/rock.cgf",material="",
+                local=WorldTransform(pos=(10.,0.,0.)),
+                world=WorldTransform(pos=(10.,0.,0.)),status="")
+            child=SimpleNamespace(**{**vars(parent),"name":"Child","id":"c",
+                "parent_id":"p","local":WorldTransform(pos=(2.,0.,0.)),
+                "world":WorldTransform(pos=(12.,0.,0.))})
+            asset=RenderAsset(mesh(),None,None,0,"model.cgf",((0,0,0),(1,1,0)))
+            with patch("qt_level_scene_render.prepare_scene",
+                return_value=({("objects/rock.cgf",""):asset},{},{"terrain":None})):
+                export_level_glb(SimpleNamespace(level_name="Tutorial",
+                    scene=(parent,child)),output)
+            doc,_=_unpack_glb(output.read_bytes())
+            self.assertEqual(len(doc["scenes"][0]["nodes"]),1)
+            root=doc["scenes"][0]["nodes"][0]
+            self.assertEqual(doc["nodes"][root]["children"],[1])
+            self.assertEqual(doc["nodes"][1]["matrix"][12],2.)
+
     def test_selected_mesh_does_not_include_entire_map_terrain(self):
         from qt_level_scene_render import RenderAsset
         with TemporaryDirectory() as temp:
