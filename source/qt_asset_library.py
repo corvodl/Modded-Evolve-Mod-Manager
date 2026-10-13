@@ -8,8 +8,9 @@ from PySide6.QtCore import QObject, Signal, Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QHeaderView, QFileDialog, QMessageBox,
-    QAbstractItemView, QProgressBar)
+    QAbstractItemView, QProgressBar, QComboBox, QInputDialog)
 
+from build_collections import catalog, register_build, assign_archive
 from asset_library import (LIBRARY_HOME, import_pak, installed_defaults,
                            imported_archives, verify_library, remove_archive,
                            extracted_index, required_archive_status)
@@ -122,15 +123,28 @@ class AssetLibraryDialog(QDialog):
         self.location = QLabel("Library: " + str(LIBRARY_HOME))
         self.location.setTextInteractionFlags(Qt.TextSelectableByMouse)
         lay.addWidget(self.location)
-        self.table = QTableWidget(0, 5)
+        self.build_filter = QComboBox()
+        self.build_filter.currentIndexChanged.connect(self.refresh)
+        self.register_button = QPushButton("Register Build…")
+        self.register_button.clicked.connect(self.register_build_dialog)
+        self.assign_button = QPushButton("Assign to Build")
+        self.assign_button.clicked.connect(self.assign_selected)
+        build_row = QHBoxLayout()
+        build_row.addWidget(QLabel("Build:"))
+        build_row.addWidget(self.build_filter, 1)
+        build_row.addWidget(self.register_button)
+        build_row.addWidget(self.assign_button)
+        lay.addLayout(build_row)
+        self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["Archive", "Files", "Extracted Size", "Warnings", "Source"])
+            ["Archive", "Build", "Files", "Extracted Size", "Warnings", "Source"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         self.table.verticalHeader().hide()
+        self.table.setSortingEnabled(True)
         lay.addWidget(self.table, 1)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -188,40 +202,85 @@ class AssetLibraryDialog(QDialog):
         self.refresh()
         self._sync()
 
+    def _selected_record(self):
+        item = self.table.item(self.table.currentRow(), 0)
+        if item is None:
+            return None
+        identifier = item.data(Qt.UserRole)
+        return next((record for record in self.rows if record["id"] == identifier), None)
+
+    def register_build_dialog(self):
+        label, ok = QInputDialog.getText(self, "Register build", "Snapshot label:")
+        if not ok or not label.strip():
+            return
+        family, ok = QInputDialog.getItem(
+            self, "Build family", "Family:", ["early", "legacy", "stage2", "unknown"], 0, False)
+        if ok:
+            try:
+                identifier = register_build(label, family)
+                self.refresh()
+                self.build_filter.setCurrentIndex(self.build_filter.findData(identifier))
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "Build registration", str(exc))
+
+    def assign_selected(self):
+        record = self._selected_record()
+        build_id = self.build_filter.currentData()
+        if record is None or build_id in (None, "all", "unassigned"):
+            QMessageBox.information(self, "Choose a build",
+                                    "Select a registered build and an imported archive.")
+            return
+        try:
+            assign_archive(build_id, record["id"])
+            self.refresh()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Build membership", str(exc))
+
     def refresh(self):
+        builds = catalog()["builds"]
+        previous = self.build_filter.currentData()
+        self.build_filter.blockSignals(True)
+        self.build_filter.clear()
+        self.build_filter.addItem("All Builds (inventory)", "all")
+        for build_id, data in builds.items():
+            self.build_filter.addItem(data["label"] + " (" + data["family"] + ")", build_id)
+        selected_index = self.build_filter.findData(previous)
+        self.build_filter.setCurrentIndex(max(0, selected_index))
+        self.build_filter.blockSignals(False)
+        selected = self.build_filter.currentData()
         archives = imported_archives()
-        self.table.setRowCount(len(archives))
-        self.rows = archives
-        for row, data in enumerate(archives):
-            values = (data["name"], str(data["entries"]),
-                      "%.1f MiB" % (data["bytes"] / 1048576),
+        self.rows = tuple(a for a in archives if selected == "all"
+                          or a["id"] in builds[selected]["members"])
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(self.rows))
+        for row, data in enumerate(self.rows):
+            names = [build["label"] for build in builds.values()
+                     if data["id"] in build["members"]]
+            values = (data["name"], ", ".join(names) or "Unassigned",
+                      str(data["entries"]), "%.1f MiB" % (data["bytes"] / 1048576),
                       str(data["warnings"]), data["source"])
             for col, value in enumerate(values):
                 cell = QTableWidgetItem(value)
+                if col == 0:
+                    cell.setData(Qt.UserRole, data["id"])
                 from pak_browser import archive_description
-                cell.setToolTip(data["source"] + '\\n' +
-                                archive_description(data["name"]))
+                cell.setToolTip(data["source"] + "\\n" + archive_description(data["name"]))
                 self.table.setItem(row, col, cell)
-        size = sum(item["bytes"] for item in archives)
-        required = required_archive_status()
-        missing = (' • Missing: ' + ', '.join(required['missing'])
-                   if required['missing'] else ' • Required set complete')
-        warnings = (' • %d skipped entries' % required['warnings']
-                    if required['warnings'] else '')
-        self.status.setText(
-            'Shared %d/6 • Animations %d/3 • %d total PAKs • %.1f MiB%s%s\n%s' %
-            (required['shared'], required['animations'], len(archives),
-             size / 1048576, missing, warnings, self.controller.status))
+        self.table.setSortingEnabled(True)
+        total_bytes = sum(a["bytes"] for a in self.rows)
+        self.status.setText("%d visible PAKs • %.1f MiB • %s" %
+                            (len(self.rows), total_bytes / 1048576, self.controller.status))
         self._sync()
 
     def _sync(self):
         running = self.controller.busy
         for button in (self.add_button, self.key_button, self.all_button,
                        self.default_button, self.verify_button,
-                       self.remove_button, self.project_button):
+                       self.remove_button, self.project_button,
+                       self.register_button, self.assign_button):
             button.setEnabled(not running)
-        self.remove_button.setEnabled(not running and bool(self.table.selectedItems()))
-        self.project_button.setEnabled(not running and bool(self.table.selectedItems()))
+        self.remove_button.setEnabled(not running and self._selected_record() is not None)
+        self.project_button.setEnabled(not running and self._selected_record() is not None)
         self.cancel_button.setEnabled(running)
 
     def add_paks(self):
@@ -284,10 +343,9 @@ class AssetLibraryDialog(QDialog):
         self.controller.import_all_game(scan, self.stage)
 
     def create_mod_project(self):
-        row = self.table.currentRow()
-        if row < 0 or row >= len(self.rows):
+        record = self._selected_record()
+        if record is None:
             return
-        record = self.rows[row]
         try:
             from asset_library_bulk import stage_source_for_import
             relative, staged = stage_source_for_import(
@@ -314,10 +372,9 @@ class AssetLibraryDialog(QDialog):
         self.controller.verify()
 
     def remove_selected(self):
-        row = self.table.currentRow()
-        if row < 0 or row >= len(self.rows):
+        record = self._selected_record()
+        if record is None:
             return
-        record = self.rows[row]
         if QMessageBox.question(
             self, "Remove extracted archive?",
             "Remove extracted reference files for " + record["name"] +
