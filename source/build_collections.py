@@ -177,7 +177,7 @@ def compare_builds(source_id, target_id, *, root=None):
         return result
     left, right = entries(source_id), entries(target_id)
     return tuple({"path": path, "status": (
-        "added" if path not in left else "removed" if path not in right
+        "added" if path not in right else "removed" if path not in left
         else "identical" if len(left[path]) == len(right[path]) == 1 and left[path] == right[path]
         else "changed" if len(left[path]) == len(right[path]) == 1 else "unknown"),
         "hash_type": "normalized-extracted-sha256"}
