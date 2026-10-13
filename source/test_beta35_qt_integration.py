@@ -72,7 +72,7 @@ class Beta35QtIntegrationTests(unittest.TestCase):
                 self.app.processEvents()
                 self.assertTrue(hasattr(restored, "status"))
                 self.assertIn("old project cannot be indexed",
-                              "\\n".join(restored.log_lines))
+                              "\n".join(restored.log_lines))
             finally:
                 restored.close()
         finally:
@@ -89,7 +89,10 @@ class Beta35QtIntegrationTests(unittest.TestCase):
                 "changed": 1, "source_build_id": None, "status": "modified",
                 "details": "",
             }
-            with patch("project_catalog.project_rows", return_value=(row,)), \\
+            (Path(self.tmp.name) / "missing-settings.json").write_text(
+                __import__("json").dumps({"current_workspace": row["workspace"]}),
+                encoding="utf-8")
+            with patch("project_catalog.project_rows", return_value=(row,)), \
                  patch("asset_intelligence.validate_project",
                        return_value=(("asset.mtl",), ("old project needs review",))):
                 restored = QtManager()
