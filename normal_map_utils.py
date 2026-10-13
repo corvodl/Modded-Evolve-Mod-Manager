@@ -21,7 +21,7 @@ class NormalMap:
 def is_normal_texture(name: str) -> bool:
     """Recognize CryEngine normal map suffixes, including DDS sidecars."""
     base = Path(name.replace("\\", "/")).name.lower()
-    return bool(re.search(r"(?:_ddn|_normal|_nrm)\\.dds(?:\\.\\d+)?$", base))
+    return bool(re.search(r"(?:_ddn|_normal|_nrm)\.dds(?:\.\d+)?$", base))
 
 
 def decode_xy_normal_rgba(width: int, height: int, rgba: bytes, *,
