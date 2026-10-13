@@ -13,9 +13,8 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Beta — v1.1.18-beta.34
 
-- Improve level scene assembly, terrain previews, and resource-loading diagnostics.
-- Organize asset libraries by build and prepare reference-only Stage 2 transfer plans.
-- Refresh icon navigation and move manual update checking to the top of Settings.
+- Improve Level Editor scene assembly, terrain preview, and resource loading.
+- Organize assets by build and plan reference-only transfers to Stage 2.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 
