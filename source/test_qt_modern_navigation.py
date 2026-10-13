@@ -72,6 +72,7 @@ class ModernQtNavigationTests(unittest.TestCase):
             self.win.busy = True
             self.win.update_button.click()
             self.assertFalse(self.win.update_running)
+            self.win.busy = False  # Closing the fixture must never prompt for an active task.
 
     def test_icon_offline_themes(self):
         for tone in ("#ffffff", "#202129"):
