@@ -65,25 +65,34 @@ class ModernQtNavigationTests(unittest.TestCase):
             self.assertLessEqual(region.bottom(), button.height() - 6, label)
             self.assertFalse(button.icon().isNull(), label)
 
-    def test_sidebar_icon_renders_at_high_device_scale(self):
+    def test_sidebar_icon_renders_with_visible_pixels_and_scaled_asset(self):
+        # QWidget.render(QPainter) into a synthetic 2x QImage causes an
+        # offscreen Qt paint-device error on Windows. Capture the real button
+        # instead, and test the bundled icon's 2x raster independently.
         from PySide6.QtGui import QImage
-        from PySide6.QtCore import Qt
         self.win.menu_button.click()
         self.win.menu_animation.setCurrentTime(205)
         self.app.processEvents()
         button = self.win.nav_buttons[0]
-        # A 2x raster simulates scaled capture with the exact onscreen button.
-        image = QImage(button.width() * 2, button.height() * 2,
-                       QImage.Format_ARGB32)
-        image.setDevicePixelRatio(2)
-        image.fill(Qt.transparent)
-        from PySide6.QtGui import QPainter
-        painter = QPainter(image)
-        button.render(painter)
-        painter.end()
         bounds = button.icon_bounds()
-        self.assertLess(bounds.right(), button.width() - 8)
-        self.assertFalse(image.isNull())
+        screenshot = button.grab().toImage().convertToFormat(QImage.Format_RGBA8888)
+        self.assertFalse(screenshot.isNull())
+        self.assertGreaterEqual(screenshot.width(), bounds.right() + 1)
+        self.assertGreaterEqual(screenshot.height(), bounds.bottom() + 1)
+        # Icon strokes are light; the dark/red navigation background is not.
+        bright = sum(
+            1 for y in range(bounds.top(), bounds.bottom() + 1)
+            for x in range(bounds.left(), bounds.right() + 1)
+            if all(channel > 145 for channel in (
+                screenshot.pixelColor(x, y).red(),
+                screenshot.pixelColor(x, y).green(),
+                screenshot.pixelColor(x, y).blue()
+            ))
+        )
+        self.assertGreater(bright, 5, 'Navigation SVG did not render in its bounds')
+        large = navigation_icon('Instructions', '#ffffff', 40).pixmap(40, 40)
+        self.assertFalse(large.isNull())
+        self.assertGreaterEqual(large.width(), 40)
 
     def test_update_first_section_and_one_real_action(self):
         settings = self.win.pages["settings"]
