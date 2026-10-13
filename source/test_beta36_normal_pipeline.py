@@ -64,6 +64,18 @@ class Beta36NormalPipelineTests(unittest.TestCase):
             decode_normal_dds_image(dds(b"ATI2", 8, 8, bc5_block()),
                                     source_name="broken_ddn.dds")
 
+    def test_dx10_uncompressed_rgba_and_bgra_normals(self):
+        pixels = bytes((128, 128, 255, 255)) * 16
+        base = dds(b"DX10", 4, 4, pixels)[:128]
+        for code, color in ((28, pixels), (87, bytes((255, 128, 128, 255))*16)):
+            extended = struct.pack("<5I", code, 3, 0, 1, 0)
+            image = decode_normal_dds_image(base+extended+color,
+                                            source_name="armor_ddn.dds")
+            self.assertEqual(image.getpixel((0, 0))[:3], (128, 128, 255))
+            with self.assertRaisesRegex(ValueError, "highest-resolution"):
+                decode_normal_dds_image(base+extended+color[:-4],
+                                        source_name="armor_ddn.dds")
+
     def test_split_stream_across_archive_roots_uses_full_top_mip(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
