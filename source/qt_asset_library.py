@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import threading
 import shutil
+import json
 
 from PySide6.QtCore import QObject, Signal, Qt
 from PySide6.QtWidgets import (
@@ -10,7 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QHeaderView, QFileDialog, QMessageBox,
     QAbstractItemView, QProgressBar, QComboBox, QInputDialog)
 
-from build_collections import catalog, register_build, assign_archive
+from build_collections import catalog, register_build, assign_archive, prepare_transfer
 from asset_library import (LIBRARY_HOME, import_pak, installed_defaults,
                            imported_archives, verify_library, remove_archive,
                            extracted_index, required_archive_status)
@@ -181,6 +182,12 @@ class AssetLibraryDialog(QDialog):
             "custom-signed staging copy; the reference library stays unchanged.")
         self.project_button.clicked.connect(self.create_mod_project)
         project_controls.addWidget(self.project_button)
+        self.transfer_button = QPushButton("Prepare Transfer to Stage 2…")
+        self.transfer_button.setToolTip(
+            "Write a reference-only transfer manifest for a selected asset. "
+            "No archive or project files are changed.")
+        self.transfer_button.clicked.connect(self.prepare_stage2_transfer)
+        project_controls.addWidget(self.transfer_button)
         self.remove_button = QPushButton("Remove Selected…")
         self.remove_button.clicked.connect(self.remove_selected)
         project_controls.addWidget(self.remove_button)
@@ -287,7 +294,7 @@ class AssetLibraryDialog(QDialog):
         for button in (self.add_button, self.key_button, self.all_button,
                        self.default_button, self.verify_button,
                        self.remove_button, self.project_button,
-                       self.register_button, self.assign_button):
+                       self.register_button, self.assign_button, self.transfer_button):
             button.setEnabled(not running)
         self.remove_button.setEnabled(not running and self._selected_record() is not None)
         self.project_button.setEnabled(not running and self._selected_record() is not None)
@@ -355,6 +362,65 @@ class AssetLibraryDialog(QDialog):
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         self.controller.import_all_game(scan, self.stage, build_id=self._import_build())
+
+    def prepare_stage2_transfer(self):
+        selected = self._selected_record()
+        source_id = self.build_filter.currentData()
+        if selected is None or source_id in (None, "all", "unassigned"):
+            QMessageBox.information(self, "Choose a source",
+                "Select a registered source build and an archive in that build.")
+            return
+        builds = catalog()["builds"]
+        targets = [(bid, item["label"]) for bid, item in builds.items()
+                   if item["family"] == "stage2" and bid != source_id]
+        if not targets:
+            QMessageBox.information(self, "Register target",
+                "Register a separate Stage 2 build before preparing a transfer.")
+            return
+        choices = [label + " [" + bid[:8] + "]" for bid, label in targets]
+        choice, ok = QInputDialog.getItem(
+            self, "Target Stage 2 build", "Target snapshot:", choices, 0, False)
+        if not ok:
+            return
+        target_id = targets[choices.index(choice)][0]
+        virtual, ok = QInputDialog.getText(
+            self, "Reference to transfer", "Exact virtual asset path from selected archive:")
+        if not ok or not virtual.strip():
+            return
+        from asset_library_preview import archive_entries
+        entries = archive_entries(selected["id"])
+        if virtual.casefold() not in {name.casefold() for name in entries}:
+            QMessageBox.warning(self, "Unknown asset",
+                                "The selected archive does not contain this exact asset path.")
+            return
+        target_project = QFileDialog.getExistingDirectory(
+            self, "Select existing Stage 2 target project for manifest")
+        if not target_project:
+            return
+        baseline, ok = QInputDialog.getText(
+            self, "Target baseline SHA-256",
+            "Expected verified target baseline SHA-256 (64 hexadecimal characters):")
+        if not ok or not baseline.strip():
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            self, "Save review-only transfer manifest", str(Path.home() / "stage2-transfer-plan.json"),
+            "JSON files (*.json)")
+        if not destination:
+            return
+        try:
+            output = Path(destination).resolve()
+            if output.exists() or output.is_relative_to(Path(target_project).resolve()) or (
+                    output.is_relative_to(Path(LIBRARY_HOME).resolve())):
+                raise ValueError("Select a new output outside target projects and Asset Library.")
+            plan = prepare_transfer(source_id, target_id, [virtual], 
+                                    target_baseline_sha256=baseline.strip(),
+                                    target_project=target_project)
+            output.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+            QMessageBox.information(self, "Transfer plan created",
+                "Saved review-only manifest. No source or target archives changed. "
+                "This does not verify compatibility or the target baseline.")
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Transfer planning", str(exc))
 
     def create_mod_project(self):
         record = self._selected_record()
