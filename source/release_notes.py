@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.31', (
+        'Preview combined level terrain and supported objects as editable Blender scenes.',
+        'Export GLB scenes and optional native Blender projects.',
+        'Report unresolved map geometry and retry deferred assets during export.',
+    )),
     ('1.1.18-beta.30', (
         'Preserve higher-resolution DDS textures in character previews and Blender exports.',
         'Recover verified streamed texture mipmaps across extracted PAKs.',
