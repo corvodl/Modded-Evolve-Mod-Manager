@@ -282,6 +282,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         file.addAction(self._action("Open Extracted Project…",self.open_project))
         export_menu=menu.addMenu("Export")
         export_menu.addAction(self._action("Entire Map to Blender (.glb)…",self.export_level))
+        export_menu.addAction(self._action("Entire Map to Native Blender (.blend)…",lambda: self.export_level(native=True)))
         export_menu.addAction(self._action("Selected Object to Blender (.glb)…",lambda: self.export_level(selected_only=True)))
         maps=menu.addMenu("Maps")
         maps.addAction(self._action("Choose Extracted Map Project…", self.open_map_picker))
@@ -654,7 +655,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.map_selector.setFocus()
         self.map_selector.showPopup()
 
-    def export_level(self,selected_only=False):
+    def export_level(self,selected_only=False,native=False):
         """Export assembled source/compiled/shared map parts without UI stalls."""
         if self._export_running:
             QMessageBox.information(self,"Export in progress","Wait for the active level export.")
@@ -669,14 +670,16 @@ class UnrealStyleLevelEditor(QMainWindow):
             guid=(record.get("Id") or record.get("EntityId")
                   or f"{layer}#{idx}").casefold()
             selection={guid}
-        suggested=str(self.project.workspace.parent/(self.project.level_name+".glb"))
+        ext=".blend" if native else ".glb"
+        suggested=str(self.project.workspace.parent/(self.project.level_name+ext))
         chosen,_=QFileDialog.getSaveFileName(
-            self,"Export Blender Level Scene",suggested,"glTF binary (*.glb)")
+            self,"Export Blender Level Scene",suggested,
+            "Blender Project (*.blend)" if native else "glTF binary (*.glb)")
         if not chosen:
             return
         source=Path(chosen)
-        if source.suffix.casefold()!=".glb":
-            source=source.with_suffix(".glb")
+        if source.suffix.casefold()!=ext:
+            source=source.with_suffix(ext)
         self._export_cancel=Event()
         cancel=self._export_cancel
         self._export_running=True
@@ -687,9 +690,22 @@ class UnrealStyleLevelEditor(QMainWindow):
         def job():
             try:
                 from level_blender_export import export_level_glb
-                result=export_level_glb(
-                    project,source,game=game,stage=stage,
-                    cache_root=cache,cancel=cancel,selection=selection)
+                if native:
+                    from blender_native_project import convert_glb_to_blend
+                    from tempfile import TemporaryDirectory
+                    with TemporaryDirectory(prefix="evolve-scene-",dir=source.parent) as temp:
+                        intermediate=Path(temp)/"LevelScene.glb"
+                        result=export_level_glb(
+                            project,intermediate,game=game,stage=stage,
+                            cache_root=cache,cancel=cancel,selection=selection)
+                        if cancel.is_set():
+                            raise InterruptedError("Level export cancelled.")
+                        convert_glb_to_blend(intermediate,source)
+                else:
+                    result=export_level_glb(
+                        project,source,game=game,stage=stage,
+                        cache_root=cache,cancel=cancel,selection=selection)
+                result["format"]="blend" if native else "glb"
                 self.levelExportReady.emit(result,None)
             except (OSError,ValueError,InterruptedError,RuntimeError) as exc:
                 self.levelExportReady.emit(None,str(exc)[:500])
