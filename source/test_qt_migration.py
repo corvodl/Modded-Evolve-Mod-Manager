@@ -184,8 +184,7 @@ class QtMigrationTests(unittest.TestCase):
     def test_info_click_opens_help_without_triggering_adjacent_action(self):
         # The compact Modding page routes help through a menu, rather than
         # eight large inline buttons with separate info icon columns.
-        help_menu = next(x.menu() for x in self.win.modding_menu.actions()
-                         if x.text() == 'Help')
+        help_menu = self.win._modding_menus['Help']
         action = next(x for x in help_menu.actions()
                       if x.text() == 'Modding Help')
         with patch.object(self.win, 'show_help') as help_dialog, \
@@ -421,7 +420,7 @@ class QtMigrationTests(unittest.TestCase):
         descriptions = [self.win.table.item(i,1).text()
                         for i in range(self.win.table.rowCount())]
         self.assertEqual(descriptions,['Game'])
-        self.assertEqual(self.win.table.item(0,2).text(),
+        self.assertEqual(self.win.table.item(0,3).text(),
                          'characters_monsters_goliath_data.pak')
 
     def test_qt_editor_preserves_text_and_shows_every_editor_action(self):
@@ -458,7 +457,7 @@ class QtMigrationTests(unittest.TestCase):
         self.assertNotIn('Export Native Model', button_labels)
         menus = editor.editor_menus
         self.assertEqual(list(menus), ['File', 'Edit', 'View', 'Model',
-                                       'Textures', 'Animation', 'Help'])
+                                       'Textures', 'Animation', 'Tools', 'Help'])
         menu_texts = {name: [action.text() for action in menu.actions()]
                       for name, menu in menus.items()}
         for label in ('Export for Blender (.glb)…', 'Export Model Folder…',
