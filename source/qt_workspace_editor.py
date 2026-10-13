@@ -2010,6 +2010,7 @@ class QtWorkspaceEditor(QMainWindow):
                     if cancelled():
                         raise InterruptedError('Export cancelled before Blender conversion.')
                     convert_glb_to_blend(temporary,target)
+                    temporary.unlink(missing_ok=True)
                 else:
                     os.replace(temporary, target)
                 temporary = None
