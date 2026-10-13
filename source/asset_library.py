@@ -168,15 +168,24 @@ def imported_archives(root=None):
     return tuple(result)
 
 
-def required_archive_status(root=None):
+def required_archive_status(root=None, *, build_id=None):
     """Report six shared + three animation PAK coverage, not arbitrary PAK count.
 
     Only complete imported manifests with readable extracted files count.
     Missing archives and per-PAK skipped files are visible to the user.
     """
     root = _home(root)
+    allowed = None
+    if build_id is not None:
+        from build_collections import catalog
+        builds = catalog(root)["builds"]
+        if build_id == "all" or build_id not in builds:
+            raise ValueError("An explicit build context is required.")
+        allowed = set(builds[build_id]["members"])
     found = {}
     for folder in _manifest_dirs(root):
+        if allowed is not None and _archive_identifier(folder) not in allowed:
+            continue
         try:
             manifest = _load_manifest(folder)
             name = str(manifest.get("name", "")).casefold()
@@ -339,7 +348,7 @@ def _verify_pak(path, keys):
 
 
 def import_pak(source, *, stage=None, root=None, extra_keys=(),
-               progress=None, cancelled=None):
+               progress=None, cancelled=None, build_id=None, relative_archive_path=None):
     """Extract entire verified PAK as loose references into AssetLibrary.
 
     This does not create a modding workspace or require repacking. A unique
@@ -349,6 +358,12 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
     from evolve_pak_workspace import normalized_name
     from evolve_gameplay_editor import decrypt_entry, decode_cryxml
     root = _home(root)
+    def finish(result):
+        if build_id is not None:
+            from build_collections import assign_archive
+            assign_archive(build_id, result["id"], root=root,
+                           relative_path=relative_archive_path)
+        return result
     supplied = Path(source).expanduser()
     if supplied.is_symlink():
         raise ValueError("Linked PAK sources are not accepted.")
@@ -371,8 +386,8 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
                 if all((prior / "files" / entry["path"]).is_file()
                        and (prior / "files" / entry["path"]).stat().st_size
                        == entry["bytes"] for entry in prior_manifest["entries"]):
-                    return {"status": "already-imported", "id": prior.name,
-                            "name": source.name, "entries": len(prior_manifest["entries"])}
+                    return finish({"status": "already-imported", "id": _archive_identifier(prior),
+                            "name": source.name, "entries": len(prior_manifest["entries"])})
         except (OSError, ValueError, KeyError, TypeError):
             continue
     sha = _sha_file(source)
@@ -389,8 +404,8 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
             if all((base / entry["path"]).is_file() and
                    (base / entry["path"]).stat().st_size == entry["bytes"]
                    for entry in manifest["entries"]):
-                return {"status": "already-imported", "id": slug,
-                        "name": source.name, "entries": len(manifest["entries"])}
+                return finish({"status": "already-imported", "id": slug,
+                        "name": source.name, "entries": len(manifest["entries"])})
             raise ValueError("Cached extraction has missing or damaged files. "
                              "Remove this archive in Asset Library and re-import it.")
     if target.exists():
@@ -465,8 +480,8 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
         (work / MANIFEST).write_text(json.dumps(manifest, indent=2), "utf-8")
         os.replace(work, target)
         _invalidate()
-        return {"status": "imported", "id": slug, "name": source.name,
-                "entries": len(records), "bytes": written, "skipped": len(skipped)}
+        return finish({"status": "imported", "id": slug, "name": source.name,
+                "entries": len(records), "bytes": written, "skipped": len(skipped)})
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
         raise
@@ -517,6 +532,11 @@ def remove_archive(identifier, root=None):
     home = _home(root)
     if not re.fullmatch("[0-9a-f]{20}", str(identifier)):
         raise ValueError("Invalid library archive identifier.")
+    from build_collections import catalog
+    memberships = [name for name, build in catalog(home)["builds"].items()
+                   if name != "unassigned" and identifier in build["members"]]
+    if memberships:
+        raise ValueError("Archive belongs to a registered build; remove memberships first.")
     folder = _folder_for_identifier(identifier, home)
     if folder.is_symlink() or not folder.is_dir() or not (folder / MANIFEST).is_file():
         raise ValueError("Selected library archive no longer exists.")

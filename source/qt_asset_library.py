@@ -3,13 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 import threading
 import shutil
+import json
 
 from PySide6.QtCore import QObject, Signal, Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QHeaderView, QFileDialog, QMessageBox,
-    QAbstractItemView, QProgressBar)
+    QAbstractItemView, QProgressBar, QComboBox, QInputDialog)
 
+from build_collections import (catalog, register_build, assign_archive,
+                               remove_membership, update_location, compare_builds,
+                               prepare_transfer)
 from asset_library import (LIBRARY_HOME, import_pak, installed_defaults,
                            imported_archives, verify_library, remove_archive,
                            extracted_index, required_archive_status)
@@ -58,7 +62,7 @@ class AssetLibraryController(QObject):
                          name="AssetLibrary-" + action).start()
         return True
 
-    def import_files(self, paths, stage, *, automatic=False, extra_keys=()):
+    def import_files(self, paths, stage, *, automatic=False, extra_keys=(), build_id=None):
         files = tuple(Path(p) for p in paths)
         if not files:
             return False
@@ -71,8 +75,18 @@ class AssetLibraryController(QObject):
                 self.progress.emit("Importing %d/%d: %s" %
                                    (i, len(files), path.name), 0, 1)
                 try:
+                    relative = None
+                    if build_id is not None:
+                        snapshot = catalog()["builds"][build_id]
+                        if snapshot.get("location"):
+                            try:
+                                relative = path.resolve().relative_to(
+                                    Path(snapshot["location"]).resolve()).as_posix()
+                            except ValueError:
+                                relative = None
                     result = import_pak(
-                        path, stage=stage, extra_keys=extra_keys,
+                        path, stage=stage, extra_keys=extra_keys, build_id=build_id,
+                        relative_archive_path=relative,
                         cancelled=self._cancel.is_set,
                         progress=lambda name, done, total:
                             self.progress.emit(name, done, total))
@@ -84,10 +98,10 @@ class AssetLibraryController(QObject):
 
         return self._start("automatic-import" if automatic else "import", work)
 
-    def import_all_game(self, scan, stage):
+    def import_all_game(self, scan, stage, *, build_id=None):
         # Reuse the same cancellable per-PAK importer. Completed archive
         # manifests are retained and unchanged ones are skipped on rerun.
-        return self.import_files(scan.files, stage, automatic=False)
+        return self.import_files(scan.files, stage, automatic=False, build_id=build_id)
 
     def verify(self):
         return self._start(
@@ -122,15 +136,37 @@ class AssetLibraryDialog(QDialog):
         self.location = QLabel("Library: " + str(LIBRARY_HOME))
         self.location.setTextInteractionFlags(Qt.TextSelectableByMouse)
         lay.addWidget(self.location)
-        self.table = QTableWidget(0, 5)
+        self.build_filter = QComboBox()
+        self.build_filter.currentIndexChanged.connect(self.refresh)
+        self.register_button = QPushButton("Register Build…")
+        self.register_button.clicked.connect(self.register_build_dialog)
+        self.assign_button = QPushButton("Assign to Build")
+        self.assign_button.clicked.connect(self.assign_selected)
+        build_row = QHBoxLayout()
+        build_row.addWidget(QLabel("Build:"))
+        build_row.addWidget(self.build_filter, 1)
+        build_row.addWidget(self.register_button)
+        build_row.addWidget(self.assign_button)
+        self.relocate_button = QPushButton("Update Location…")
+        self.relocate_button.clicked.connect(self.relocate_build)
+        self.detach_button = QPushButton("Remove Membership")
+        self.detach_button.clicked.connect(self.detach_selected)
+        self.compare_button = QPushButton("Compare Builds…")
+        self.compare_button.clicked.connect(self.compare_snapshots)
+        build_row.addWidget(self.relocate_button)
+        build_row.addWidget(self.detach_button)
+        build_row.addWidget(self.compare_button)
+        lay.addLayout(build_row)
+        self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["Archive", "Files", "Extracted Size", "Warnings", "Source"])
+            ["Archive", "Build", "Files", "Extracted Size", "Warnings", "Source"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         self.table.verticalHeader().hide()
+        self.table.setSortingEnabled(True)
         lay.addWidget(self.table, 1)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -167,6 +203,12 @@ class AssetLibraryDialog(QDialog):
             "custom-signed staging copy; the reference library stays unchanged.")
         self.project_button.clicked.connect(self.create_mod_project)
         project_controls.addWidget(self.project_button)
+        self.transfer_button = QPushButton("Prepare Transfer to Stage 2…")
+        self.transfer_button.setToolTip(
+            "Write a reference-only transfer manifest for a selected asset. "
+            "No archive or project files are changed.")
+        self.transfer_button.clicked.connect(self.prepare_stage2_transfer)
+        project_controls.addWidget(self.transfer_button)
         self.remove_button = QPushButton("Remove Selected…")
         self.remove_button.clicked.connect(self.remove_selected)
         project_controls.addWidget(self.remove_button)
@@ -188,48 +230,188 @@ class AssetLibraryDialog(QDialog):
         self.refresh()
         self._sync()
 
+    def _selected_record(self):
+        item = self.table.item(self.table.currentRow(), 0)
+        if item is None:
+            return None
+        identifier = item.data(Qt.UserRole)
+        return next((record for record in self.rows if record["id"] == identifier), None)
+
+    def register_build_dialog(self):
+        label, ok = QInputDialog.getText(self, "Register build", "Snapshot label:")
+        if not ok or not label.strip():
+            return
+        family, ok = QInputDialog.getItem(
+            self, "Build family", "Family:", ["early", "legacy", "stage2", "unknown"], 0, False)
+        if ok:
+            try:
+                location = QFileDialog.getExistingDirectory(
+                    self, "Optional archive collection directory (Cancel to skip)")
+                identifier = register_build(label, family, location=location or None)
+                self.refresh()
+                self.build_filter.setCurrentIndex(self.build_filter.findData(identifier))
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "Build registration", str(exc))
+
+    def assign_selected(self):
+        record = self._selected_record()
+        if record is None:
+            return
+        builds = catalog()["builds"]
+        options = [(identifier, entry["label"]) for identifier, entry in builds.items()
+                   if identifier != "unassigned"]
+        if not options:
+            QMessageBox.information(self, "Register a build",
+                                    "Register a build snapshot before assigning archives.")
+            return
+        labels = [label + " [" + identifier[:8] + "]" for identifier, label in options]
+        selected, ok = QInputDialog.getItem(self, "Assign archive to build",
+                                             "Destination build:", labels, 0, False)
+        if not ok:
+            return
+        build_id = options[labels.index(selected)][0]
+        try:
+            assign_archive(build_id, record["id"])
+            self.refresh()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Build membership", str(exc))
+
+    def relocate_build(self):
+        identifier = self.build_filter.currentData()
+        if identifier in (None, "all", "unassigned"):
+            QMessageBox.information(self, "Choose build", "Select a registered build.")
+            return
+        location = QFileDialog.getExistingDirectory(
+            self, "Choose new archive collection location (metadata only)")
+        if location:
+            try:
+                update_location(identifier, location)
+                self.refresh()
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "Build relocation", str(exc))
+
+    def detach_selected(self):
+        record = self._selected_record()
+        identifier = self.build_filter.currentData()
+        if record is None or identifier in (None, "all", "unassigned"):
+            QMessageBox.information(self, "Choose membership",
+                "Select a registered build and one of its archives.")
+            return
+        if QMessageBox.question(
+            self, "Remove build membership?",
+            "Detach this archive from the selected build? Its extracted files "
+            "will remain available to other builds.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            remove_membership(identifier, record["id"])
+            self.refresh()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Remove membership", str(exc))
+
+    def compare_snapshots(self):
+        builds = [(bid, entry["label"]) for bid, entry in catalog()["builds"].items()
+                  if bid != "unassigned"]
+        if len(builds) < 2:
+            QMessageBox.information(self, "Compare builds",
+                "Register at least two snapshots to compare assets.")
+            return
+        options = [label + " [" + bid[:8] + "]" for bid, label in builds]
+        first, ok = QInputDialog.getItem(
+            self, "Compare builds", "Source:", options, 0, False)
+        if not ok:
+            return
+        second, ok = QInputDialog.getItem(
+            self, "Compare builds", "Target:", options, 1, False)
+        if not ok:
+            return
+        source = builds[options.index(first)][0]
+        target = builds[options.index(second)][0]
+        if source == target:
+            QMessageBox.information(self, "Compare builds", "Choose two distinct builds.")
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            self, "Export build comparison", str(Path.home() / "build-comparison.json"),
+            "JSON files (*.json)")
+        if not destination:
+            return
+        try:
+            output = Path(destination).resolve()
+            if output.exists() or output.is_relative_to(Path(LIBRARY_HOME).resolve()):
+                raise ValueError("Choose a new comparison file outside the Asset Library.")
+            rows = compare_builds(source, target)
+            output.write_text(json.dumps({
+                "source_build": source, "target_build": target,
+                "hash_type": "normalized-extracted-sha256", "assets": rows
+            }, indent=2), encoding="utf-8")
+            QMessageBox.information(self, "Comparison exported",
+                "%d asset paths compared. Review identical, changed, added, removed "
+                "and unknown statuses in the JSON file." % len(rows))
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Build comparison", str(exc))
+
     def refresh(self):
+        builds = catalog()["builds"]
+        previous = self.build_filter.currentData()
+        self.build_filter.blockSignals(True)
+        self.build_filter.clear()
+        self.build_filter.addItem("All Builds (inventory)", "all")
+        for build_id, data in builds.items():
+            self.build_filter.addItem(data["label"] + " (" + data["family"] + ")", build_id)
+        selected_index = self.build_filter.findData(previous)
+        self.build_filter.setCurrentIndex(max(0, selected_index))
+        self.build_filter.blockSignals(False)
+        selected = self.build_filter.currentData()
         archives = imported_archives()
-        self.table.setRowCount(len(archives))
-        self.rows = archives
-        for row, data in enumerate(archives):
-            values = (data["name"], str(data["entries"]),
-                      "%.1f MiB" % (data["bytes"] / 1048576),
+        self.rows = tuple(a for a in archives if selected == "all"
+                          or a["id"] in builds[selected]["members"])
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(self.rows))
+        for row, data in enumerate(self.rows):
+            names = [build["label"] for build in builds.values()
+                     if data["id"] in build["members"]]
+            values = (data["name"], ", ".join(names) or "Unassigned",
+                      str(data["entries"]), "%.1f MiB" % (data["bytes"] / 1048576),
                       str(data["warnings"]), data["source"])
             for col, value in enumerate(values):
                 cell = QTableWidgetItem(value)
+                if col == 0:
+                    cell.setData(Qt.UserRole, data["id"])
                 from pak_browser import archive_description
-                cell.setToolTip(data["source"] + '\\n' +
-                                archive_description(data["name"]))
+                cell.setToolTip(data["source"] + "\\n" + archive_description(data["name"]))
                 self.table.setItem(row, col, cell)
-        size = sum(item["bytes"] for item in archives)
-        required = required_archive_status()
-        missing = (' • Missing: ' + ', '.join(required['missing'])
-                   if required['missing'] else ' • Required set complete')
-        warnings = (' • %d skipped entries' % required['warnings']
-                    if required['warnings'] else '')
+        self.table.setSortingEnabled(True)
+        total_bytes = sum(a["bytes"] for a in self.rows)
+        coverage = required_archive_status(
+            build_id=selected if selected != "all" else None)
         self.status.setText(
-            'Shared %d/6 • Animations %d/3 • %d total PAKs • %.1f MiB%s%s\n%s' %
-            (required['shared'], required['animations'], len(archives),
-             size / 1048576, missing, warnings, self.controller.status))
+            "%d visible PAKs • %.1f MiB • Shared %d/6 • Animations %d/3 • %s" %
+            (len(self.rows), total_bytes / 1048576,
+             coverage["shared"], coverage["animations"], self.controller.status))
         self._sync()
 
     def _sync(self):
         running = self.controller.busy
         for button in (self.add_button, self.key_button, self.all_button,
                        self.default_button, self.verify_button,
-                       self.remove_button, self.project_button):
+                       self.remove_button, self.project_button,
+                       self.register_button, self.assign_button, self.transfer_button,
+                       self.relocate_button, self.detach_button, self.compare_button):
             button.setEnabled(not running)
-        self.remove_button.setEnabled(not running and bool(self.table.selectedItems()))
-        self.project_button.setEnabled(not running and bool(self.table.selectedItems()))
+        self.remove_button.setEnabled(not running and self._selected_record() is not None)
+        self.project_button.setEnabled(not running and self._selected_record() is not None)
         self.cancel_button.setEnabled(running)
+
+    def _import_build(self):
+        selected = self.build_filter.currentData()
+        return selected if selected not in (None, "all", "unassigned") else None
 
     def add_paks(self):
         names, _ = QFileDialog.getOpenFileNames(
             self, "Select Evolve PAKs to add",
             str(self.game or Path.home()), "Evolve PAKs (*.pak);;All files (*)")
         if names:
-            self.controller.import_files(names, self.stage)
+            self.controller.import_files(names, self.stage, build_id=self._import_build())
 
     def add_with_key(self):
         names, _ = QFileDialog.getOpenFileNames(
@@ -241,7 +423,7 @@ class AssetLibraryDialog(QDialog):
             self, "Choose RSA public verification key (never a private key)",
             str(self.game or Path.home()), "RSA Public Key (*.bin *.der)")
         if key:
-            self.controller.import_files(names, self.stage, extra_keys=(key,))
+            self.controller.import_files(names, self.stage, extra_keys=(key,), build_id=self._import_build())
 
     def import_defaults(self):
         files = installed_defaults(self.game)
@@ -249,7 +431,7 @@ class AssetLibraryDialog(QDialog):
             QMessageBox.warning(self, "Game not found",
                 "Select an installed EvolveGame with the shared / animation PAKs.")
             return
-        self.controller.import_files(files, self.stage)
+        self.controller.import_files(files, self.stage, build_id=self._import_build())
 
     def import_all_game(self):
         from asset_library_bulk import discover_game_paks
@@ -281,13 +463,71 @@ class AssetLibraryDialog(QDialog):
             % (len(scan.files), scan.already_imported, total, free, todo),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
-        self.controller.import_all_game(scan, self.stage)
+        self.controller.import_all_game(scan, self.stage, build_id=self._import_build())
+
+    def prepare_stage2_transfer(self):
+        selected = self._selected_record()
+        source_id = self.build_filter.currentData()
+        if selected is None or source_id in (None, "all", "unassigned"):
+            QMessageBox.information(self, "Choose a source",
+                "Select a registered source build and an archive in that build.")
+            return
+        builds = catalog()["builds"]
+        targets = [(bid, item["label"]) for bid, item in builds.items()
+                   if item["family"] == "stage2" and bid != source_id]
+        if not targets:
+            QMessageBox.information(self, "Register target",
+                "Register a separate Stage 2 build before preparing a transfer.")
+            return
+        choices = [label + " [" + bid[:8] + "]" for bid, label in targets]
+        choice, ok = QInputDialog.getItem(
+            self, "Target Stage 2 build", "Target snapshot:", choices, 0, False)
+        if not ok:
+            return
+        target_id = targets[choices.index(choice)][0]
+        virtual, ok = QInputDialog.getText(
+            self, "Reference to transfer", "Exact virtual asset path from selected archive:")
+        if not ok or not virtual.strip():
+            return
+        from asset_library_preview import archive_entries
+        entries = archive_entries(selected["id"])
+        if virtual.casefold() not in {name.casefold() for name in entries}:
+            QMessageBox.warning(self, "Unknown asset",
+                                "The selected archive does not contain this exact asset path.")
+            return
+        target_project = QFileDialog.getExistingDirectory(
+            self, "Select existing Stage 2 target project for manifest")
+        if not target_project:
+            return
+        baseline, ok = QInputDialog.getText(
+            self, "Target baseline SHA-256",
+            "Expected verified target baseline SHA-256 (64 hexadecimal characters):")
+        if not ok or not baseline.strip():
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            self, "Save review-only transfer manifest", str(Path.home() / "stage2-transfer-plan.json"),
+            "JSON files (*.json)")
+        if not destination:
+            return
+        try:
+            output = Path(destination).resolve()
+            if output.exists() or output.is_relative_to(Path(target_project).resolve()) or (
+                    output.is_relative_to(Path(LIBRARY_HOME).resolve())):
+                raise ValueError("Select a new output outside target projects and Asset Library.")
+            plan = prepare_transfer(source_id, target_id, [virtual], 
+                                    target_baseline_sha256=baseline.strip(),
+                                    target_project=target_project)
+            output.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+            QMessageBox.information(self, "Transfer plan created",
+                "Saved review-only manifest. No source or target archives changed. "
+                "This does not verify compatibility or the target baseline.")
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Transfer planning", str(exc))
 
     def create_mod_project(self):
-        row = self.table.currentRow()
-        if row < 0 or row >= len(self.rows):
+        record = self._selected_record()
+        if record is None:
             return
-        record = self.rows[row]
         try:
             from asset_library_bulk import stage_source_for_import
             relative, staged = stage_source_for_import(
@@ -314,10 +554,9 @@ class AssetLibraryDialog(QDialog):
         self.controller.verify()
 
     def remove_selected(self):
-        row = self.table.currentRow()
-        if row < 0 or row >= len(self.rows):
+        record = self._selected_record()
+        if record is None:
             return
-        record = self.rows[row]
         if QMessageBox.question(
             self, "Remove extracted archive?",
             "Remove extracted reference files for " + record["name"] +
