@@ -1863,8 +1863,11 @@ class QtManager(QMainWindow):
         lay.addStretch()
         self.stack.insertWidget(self._developer_index, scroll)
         self.pages['developer'] = scroll
-        QTimer.singleShot(0, self.dev_memory_panel.start)
-        QTimer.singleShot(0, self.dev_lab_panel.refresh_pids)
+        # Initialize while the protected widgets are still owned by this page.
+        # Queued bound-method callbacks can outlive a quickly locked/deleted
+        # page and crash the Windows Qt runtime (0xC0000005).
+        self.dev_memory_panel.start()
+        self.dev_lab_panel.refresh_pids()
 
     def _open_account_profile_inspector(self):
         from qt_account_profile import AccountProfileInspector
