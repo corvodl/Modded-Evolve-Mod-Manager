@@ -173,7 +173,8 @@ def prepare_transfer(source_id, target_id, paths, *, root=None, target_baseline_
     """Read-only candidate manifest. No replacement, conversion or write occurs."""
     from evolve_pak_workspace import normalized_name
     data = catalog(root)
-    if (source_id not in data["builds"] or target_id not in data["builds"]\n            or source_id == target_id or source_id == UNASSIGNED or target_id == UNASSIGNED):
+    if (source_id not in data["builds"] or target_id not in data["builds"]
+            or source_id == target_id or source_id == UNASSIGNED or target_id == UNASSIGNED):
         raise ValueError("Select distinct registered source and target builds.")
     if data["builds"][target_id]["family"] != "stage2":
         raise ValueError("The target must be a Stage 2 build.")
