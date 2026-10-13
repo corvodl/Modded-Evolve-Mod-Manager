@@ -23,11 +23,11 @@ class BrowserLogicTests(unittest.TestCase):
 
     def test_filename_inferred_descriptions(self):
         self.assertEqual(archive_description('Game/characters_monsters_goliath_data.pak'),
-                         'Goliath Models')
+                         'Goliath Models / Skeletons / Animation References')
         self.assertEqual(archive_description('Game/characters_monsters_goliath_ts.pak'),
-                         'Goliath Textures')
+                         'Goliath Textures / Animation Assets (if present)')
         self.assertEqual(archive_description('Game/characters_hunters_merc_caira_ts.pak'),
-                         'Caira Textures')
+                         'Caira Textures / Animation Assets (if present)')
         self.assertEqual(archive_description('Game/objects_basic_props.pak'),
                          'Basic Props Objects')
         self.assertEqual(archive_description('Game/UI_Data.pak'), 'Interface Data')
@@ -35,7 +35,7 @@ class BrowserLogicTests(unittest.TestCase):
         self.assertEqual(archive_description('Game/unknown_archive.pak'), 'Unknown Archive')
         self.assertEqual(matching_archives(
             ['Game/characters_monsters_goliath_data.pak',
-             'Game/characters_monsters_goliath_ts.pak'], 'Goliath Models'),
+             'Game/characters_monsters_goliath_ts.pak'], 'Goliath Models / Skeletons / Animation References'),
             ['Game/characters_monsters_goliath_data.pak'])
 
     def test_search_sort_and_case_insensitivity(self):
@@ -96,13 +96,13 @@ class BrowserInterfaceTests(unittest.TestCase):
         self.assertEqual(tree.item('Game/goliath.pak')['values'][:3],
                          ['Game', 'Goliath', 'goliath.pak'])
         self.assertEqual(tree.item('Game/characters_monsters_goliath_data.pak')['values'][1],
-                         'Goliath Models')
+                         'Goliath Models / Skeletons / Animation References')
         # A broad search now matches both exact filenames and readable labels.
         self.manager.search.set('goliath')
         self.root.update()
         self.assertEqual(self.manager.visible, [
             'Game/characters_monsters_goliath_data.pak', 'Game/goliath.pak'])
-        self.manager.search.set('Goliath Models')
+        self.manager.search.set('Goliath Models / Skeletons / Animation References')
         self.root.update()
         self.assertEqual(self.manager.visible, [
             'Game/characters_monsters_goliath_data.pak'])
