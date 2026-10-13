@@ -6,6 +6,10 @@ on:
     paths:
       - 'source/build_collections.py'
       - 'source/test_build_collections.py'
+      - 'source/test_build_collections_qt.py'
+      - 'source/qt_asset_library.py'
+      - 'source/asset_library_preview.py'
+      - 'source/asset_library.py'
       - 'source/multi_pak_assets.py'
       - 'source/asset_library_bulk.py'
       - '.github/workflows/build-scoped-asset-library.yml'
@@ -24,9 +28,10 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install bounded test dependencies
-        run: python -m pip install cryptography Pillow numpy
+        run: python -m pip install cryptography Pillow numpy PySide6
       - name: Execute synthetic build tests
         shell: pwsh
         env:
           PYTHONPATH: ${{ github.workspace }}/source
-        run: python -m unittest -v test_build_collections
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest -v test_build_collections test_build_collections_qt
