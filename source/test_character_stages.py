@@ -48,8 +48,8 @@ class CharacterStageTests(unittest.TestCase):
         with TemporaryDirectory() as folder:
             path=Path(folder)/'body.dds'
             Image.new('RGBA',(32,32),(160,90,40,0)).save(path,format='DDS')
-            with patch('material_preview.MAX_PREVIEW_TEX_DIM',8):
-                image=_decode_texture({'file':path,'relative':'body.dds','workspace':None})
+            image=_decode_texture({'file':path,'relative':'body.dds','workspace':None},
+                                  max_dimension=8)
             self.assertEqual(image.size,(8,8))
             self.assertEqual(image.getpixel((4,4)),(160,90,40,0))
 

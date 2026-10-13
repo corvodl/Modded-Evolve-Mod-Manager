@@ -21,7 +21,7 @@ from multi_pak_assets import related_asset_index, _resolve, load_workspace, norm
 
 MAX_MATERIAL_BYTES = 5 * 1024 * 1024
 MAX_TEXTURE_BYTES = 64 * 1024 * 1024
-MAX_PREVIEW_TEX_DIM = 768
+MAX_PREVIEW_TEX_DIM = 4096  # original DDS resolution where bounded by pixel budget
 
 
 @dataclass(frozen=True)
@@ -174,13 +174,20 @@ def _external_lookup(folder, ref):
     return None
 
 
-def _decode_texture(item, *, index=None):
+def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM):
     path = item['file']
     if path.stat().st_size > MAX_TEXTURE_BYTES:
         raise ValueError('Texture fragment exceeds the 64 MiB preview limit.')
     relative = item['relative']
     if relative.casefold().endswith('.dds.0'):
-        if item['workspace'] is not None:
+        # Imported source PAKs commonly hold only .0 while higher-resolution
+        # .1/.2 mip payloads reside in a separate signed textures PAK.
+        # Resolve exact virtual stream names across the complete index before
+        # falling back to a self-contained workspace stream.
+        indexed_siblings = bool(index and any(
+            relative[:-2].casefold()+'.'+str(n) in index
+            for n in range(1,64)))
+        if item['workspace'] is not None and not indexed_siblings:
             try:
                 raw = inspect_whole_part0(item['workspace'], relative)
             except ValueError:
@@ -212,6 +219,7 @@ def _decode_texture(item, *, index=None):
                     candidate = Path(hit['file'])
                     if not candidate.is_symlink() and candidate.is_file():
                         parts[number] = candidate
+            parts[0] = path
             if 0 not in parts:
                 raise ValueError('Missing DDS .0 header.')
             first = path.read_bytes()
@@ -255,13 +263,16 @@ def _decode_texture(item, *, index=None):
     # Preserve independent channels; the material decides how alpha is used.
     alpha = tex.getchannel('A') if tex.mode == 'RGBA' else None
     tex = tex.convert('RGB')
-    tex.thumbnail((MAX_PREVIEW_TEX_DIM, MAX_PREVIEW_TEX_DIM * 2), Image.Resampling.LANCZOS)
+    tex.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
     if alpha is not None:
         tex.putalpha(alpha.resize(tex.size, Image.Resampling.LANCZOS))
     return tex
 
 
-def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None, material_override=None):
+def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None, material_override=None, texture_quality="highest"):
+    if texture_quality not in ("highest","balanced"):
+        raise ValueError("Unsupported texture quality setting.")
+    decode_max = 4096 if texture_quality == "highest" else 1024
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
     from model_material_resolve import find_model_material
@@ -374,7 +385,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         hit = find_texture(ref)
         if hit is None:
             return None
-        return _decode_texture(hit, index=index)
+        return _decode_texture(hit, index=index, max_dimension=decode_max)
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; sources = []; references = []; hidden = []
@@ -441,7 +452,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 result.append(None)
                 sources.append(None)
                 continue
-            image = _decode_texture(found, index=index)
+            image = _decode_texture(found, index=index, max_dimension=decode_max)
             result.append(material_color(image, item.get('Diffuse', '1,1,1')))
             sources.append((
                 str(found.get('relative') or diffuse),
