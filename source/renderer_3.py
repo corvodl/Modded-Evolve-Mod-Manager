@@ -61,8 +61,8 @@ void main() {
     if (has_normal == 1) {
         vec3 p_dx = dFdx(eye_position);
         vec3 p_dy = dFdy(eye_position);
-        vec2 uv_dx = dFdx(texcoord);
-        vec2 uv_dy = dFdy(texcoord);
+        vec2 uv_dx = dFdx(diffuse_coord);
+        vec2 uv_dy = dFdy(diffuse_coord);
         vec3 tangent = p_dx * uv_dy.y - p_dy * uv_dx.y;
         vec3 bitangent = p_dy * uv_dx.x - p_dx * uv_dy.x;
         if (dot(tangent,tangent) > 0.000001 &&
@@ -70,7 +70,7 @@ void main() {
             tangent = normalize(tangent - n * dot(n, tangent));
             bitangent = normalize(cross(n,tangent)) *
                         (dot(cross(n,tangent),bitangent) < 0.0 ? -1.0 : 1.0);
-            vec3 mapped = texture2D(normal_map,texcoord).xyz * 2.0 - 1.0;
+            vec3 mapped = texture2D(normal_map,diffuse_coord).xyz * 2.0 - 1.0;
             n = normalize(mat3(tangent,bitangent,n) * mapped);
         }
     }
@@ -79,7 +79,7 @@ void main() {
     float diffuse = max(0.0,dot(n,light));
     float gloss = pow(max(0.0,dot(n,normalize(light+view))),42.0);
     float specular = has_specular == 1 ?
-                     dot(texture2D(specular_map,texcoord).rgb,vec3(0.333333))
+                     dot(texture2D(specular_map,diffuse_coord).rgb,vec3(0.333333))
                      : 0.4;
     // Diffuse DDS colors are sRGB. Applying linear-space light directly to
     // encoded RGB makes dark outfits artificially black. Decode/encode around
