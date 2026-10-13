@@ -996,7 +996,21 @@ class QtManager(QMainWindow):
         self.project_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.project_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         self.project_table.itemDoubleClicked.connect(lambda _: self.open_active_project())
+        self.project_table.itemSelectionChanged.connect(self.refresh_project_changes)
         root.addWidget(self.project_table, 1)
+        root.addWidget(_label('MODIFIED FILES IN SELECTED PROJECT', muted=True))
+        self.project_changes_table = QTableWidget(0, 2)
+        self.project_changes_table.setObjectName('projectChangedFilesTable')
+        self.project_changes_table.setHorizontalHeaderLabels(('Modified Asset', 'Project Workspace'))
+        self.project_changes_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.project_changes_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.project_changes_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.project_changes_table.setSortingEnabled(True)
+        self.project_changes_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.project_changes_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.project_changes_table.itemDoubleClicked.connect(
+            lambda _: self.open_modified_project_file())
+        root.addWidget(self.project_changes_table, 1)
         project_actions = QHBoxLayout()
         for title, handler in (
             ('Refresh Projects', self.refresh_project_list),
@@ -1102,6 +1116,7 @@ class QtManager(QMainWindow):
             if table.item(i, 0).data(Qt.UserRole) == current:
                 table.selectRow(i)
                 break
+        self.refresh_project_changes()
 
     def selected_project_context(self):
         if not hasattr(self, 'project_table'):
@@ -1139,6 +1154,49 @@ class QtManager(QMainWindow):
             self.editors.append(editor)
             editor.show()
             editor.raise_()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def refresh_project_changes(self):
+        table = getattr(self, 'project_changes_table', None)
+        if table is None:
+            return
+        table.setSortingEnabled(False)
+        table.setRowCount(0)
+        record = self.selected_project_context()
+        if record and record['status'] not in ('missing', 'unavailable'):
+            try:
+                from asset_intelligence import validate_project
+                modified, problems = validate_project(Path(record['workspace']))
+                for virtual in modified:
+                    row = table.rowCount()
+                    table.insertRow(row)
+                    for col, value in enumerate((virtual, record['workspace'])):
+                        cell = QTableWidgetItem(value)
+                        if col == 0:
+                            cell.setData(Qt.UserRole, (record['workspace'], virtual))
+                        table.setItem(row, col, cell)
+                if problems:
+                    self.status.setToolTip('Project warnings: ' + '; '.join(problems[:5]))
+            except (OSError, ValueError, KeyError) as exc:
+                self._log('Project changes: ' + str(exc)[:200])
+        table.setSortingEnabled(True)
+
+    def open_modified_project_file(self):
+        current = self.project_changes_table.item(
+            self.project_changes_table.currentRow(), 0)
+        if current is None:
+            return
+        workspace, virtual = current.data(Qt.UserRole)
+        try:
+            from project_catalog import verified_target
+            relative, _ = verified_target(workspace, self.stage_path)
+            self.current_workspace = str(Path(workspace).resolve(strict=True))
+            self.archive_label = relative
+            self.workspace_input.setText(self.current_workspace)
+            self.persist()
+            self._pending_library_virtual = virtual
+            self._open_project_workspace(workspace)
         except (OSError, ValueError, RuntimeError) as exc:
             self.failure(exc)
 
