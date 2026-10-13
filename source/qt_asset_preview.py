@@ -6,6 +6,9 @@ Library references are fully extracted game files, never mod project copies.
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import shutil
+from uuid import uuid4
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -25,6 +28,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
     def __init__(self, manager, archive):
         self.identifier = archive['id']
         self.name = archive['name']
+        self.build_id = archive.get('build_id')
         folder = archive_folder(self.identifier)
         super().__init__(manager, folder, library_archive=archive)
         self.folder = self.workspace
@@ -42,6 +46,112 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         self.status.setText('Asset Library: preview and export only. No editing or importing.')
         self.editor_menus['File'].addAction(
             'Open Asset Library Folder', self.explore)
+        self.editor_menus['File'].addAction('Edit / Add to Mod Project…', self.edit_in_project)
+        self.editor_menus['File'].addAction('Export Selected Files…', self.export_selection)
+        self.editor_menus['File'].addAction('Open Entire Map…', self.edit_entire_map)
+        self.selection_label = QLabel('Use Ctrl/Shift for multi-file selection.')
+        self.centralWidget().layout().insertWidget(1, self.selection_label)
+        self.file_tree.itemSelectionChanged.connect(self._report_selection)
+
+    def selected_virtual_files(self, *, limit=500):
+        """Return deduplicated file identities under selected file/folder nodes."""
+        from evolve_pak_workspace import normalized_name
+        chosen = set()
+        for node in self.file_tree.selectedItems():
+            rel = node.data(0, Qt.UserRole)
+            folder = node.data(0, Qt.UserRole + 1)
+            if isinstance(rel, str) and rel in self.entries:
+                chosen.add(rel)
+            elif isinstance(folder, str):
+                prefix = normalized_name(folder).rstrip('/') + '/'
+                chosen.update(path for path in self.entries if path.startswith(prefix))
+            if len(chosen) > limit:
+                raise ValueError("At most %d files may be selected at once." % limit)
+        if not chosen and self.current in self.entries:
+            chosen.add(self.current)
+        return tuple(sorted(chosen, key=str.casefold))
+
+    def _report_selection(self):
+        try:
+            count = len(self.selected_virtual_files())
+            self.selection_label.setText(
+                "%d selected • Originals read only • Edit / Add to Mod Project makes copies" % count)
+        except ValueError as exc:
+            self.selection_label.setText(str(exc))
+
+    def edit_in_project(self):
+        try:
+            selected = self.selected_virtual_files()
+            if not selected:
+                raise ValueError("Select a file to edit.")
+            self.manager._pending_library_virtual = selected[0]
+            self.manager.create_mod_project_from_asset_library(
+                self.identifier, source_build_id=self.build_id)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Edit project", str(exc))
+
+    def edit_entire_map(self):
+        from pak_dependencies import is_level_pak
+        if not is_level_pak(self.name):
+            QMessageBox.information(self, "Open map",
+                "Choose a supported level PAK for editable map projects.")
+            return
+        self.manager.create_mod_project_from_asset_library(
+            self.identifier, source_build_id=self.build_id, open_level=True)
+
+    def export_selection(self):
+        from asset_library_preview import _outside_library, export_file
+        from qt_background_exports import begin_file_operation, exports_busy
+        if exports_busy(self):
+            QMessageBox.information(self, "Export busy", "Finish the existing export first.")
+            return
+        try:
+            selected = self.selected_virtual_files()
+            if not selected:
+                raise ValueError("Select one or more files.")
+        except ValueError as exc:
+            QMessageBox.warning(self, "Export", str(exc))
+            return
+        folder = QFileDialog.getExistingDirectory(
+            self, "Export selected original assets", str(Path.home()))
+        if not folder:
+            return
+        try:
+            parent = _outside_library(folder)
+            if not parent.is_dir():
+                raise ValueError("Choose an existing destination folder.")
+            output = parent / ("SelectedAssets-" + self.identifier[:8])
+            if output.exists():
+                raise FileExistsError("Selected assets export folder already exists.")
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Export", str(exc))
+            return
+        archive_id = self.identifier
+
+        def work(progress, cancelled):
+            staging = parent / ("." + output.name + "-" + uuid4().hex + ".tmp")
+            staging.mkdir()
+            try:
+                for number, virtual in enumerate(selected, 1):
+                    if cancelled():
+                        raise InterruptedError("Export cancelled.")
+                    target = staging.joinpath(*virtual.split('/'))
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    export_file(archive_id, virtual, target)
+                    progress("Exporting selected originals", number, len(selected))
+                if cancelled():
+                    raise InterruptedError("Export cancelled.")
+                os.replace(staging, output)
+                return output, len(selected)
+            except BaseException:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
+
+        begin_file_operation(
+            self, "Export selected files", "Copying read-only originals", work,
+            on_success=lambda result: self.status.setText(
+                "Exported %d files to %s" % (result[1], result[0])),
+            on_error=lambda error: QMessageBox.warning(self, "Export", str(error)))
 
     def switch_archive(self, name):
         """Allow the exact same top PAK picker to browse imported archives."""
