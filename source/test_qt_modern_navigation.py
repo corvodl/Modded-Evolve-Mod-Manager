@@ -51,6 +51,40 @@ class ModernQtNavigationTests(unittest.TestCase):
             self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index(label))
         self.assertTrue(navigation_icon("Settings").availableSizes())
 
+    def test_sidebar_icons_have_unclipped_bounds_at_narrow_width(self):
+        # Exercise the actual sidebar buttons, not just isolated SVG assets.
+        self.win.menu_button.click()
+        self.win.menu_animation.setCurrentTime(205)
+        self.app.processEvents()
+        for label in SECTIONS[:-1]:
+            button = self.win.nav_buttons[SECTIONS.index(label)]
+            region = button.icon_bounds()
+            self.assertGreaterEqual(region.left(), 8, label)
+            self.assertGreaterEqual(region.top(), 6, label)
+            self.assertLessEqual(region.right(), button.width() - 8, label)
+            self.assertLessEqual(region.bottom(), button.height() - 6, label)
+            self.assertFalse(button.icon().isNull(), label)
+
+    def test_sidebar_icon_renders_at_high_device_scale(self):
+        from PySide6.QtGui import QImage
+        from PySide6.QtCore import Qt
+        self.win.menu_button.click()
+        self.win.menu_animation.setCurrentTime(205)
+        self.app.processEvents()
+        button = self.win.nav_buttons[0]
+        # A 2x raster simulates scaled capture with the exact onscreen button.
+        image = QImage(button.width() * 2, button.height() * 2,
+                       QImage.Format_ARGB32)
+        image.setDevicePixelRatio(2)
+        image.fill(Qt.transparent)
+        from PySide6.QtGui import QPainter
+        painter = QPainter(image)
+        button.render(painter)
+        painter.end()
+        bounds = button.icon_bounds()
+        self.assertLess(bounds.right(), button.width() - 8)
+        self.assertFalse(image.isNull())
+
     def test_update_first_section_and_one_real_action(self):
         settings = self.win.pages["settings"]
         top = settings.widget().layout()
