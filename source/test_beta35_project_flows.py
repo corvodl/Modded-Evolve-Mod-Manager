@@ -80,6 +80,28 @@ class ProjectOwnershipTests(unittest.TestCase):
         self.assertEqual(rel, "Game/my_mod.pak")
         self.assertEqual(pak, self.target.resolve())
 
+    def test_persisted_string_stage_resolves_existing_signed_project(self):
+        # Real Qt settings persist stage paths as strings, not pathlib Paths.
+        # Use the real allowed_paks plan reader; mocking it previously hid
+        # the beta.36 crash when upgrading a populated beta.34 Data folder.
+        import json
+        (self.stage / "rekey_plan.json").write_text(json.dumps({
+            "entries": [{"kind": "signed-encrypted", "path": "Game/my_mod.pak"}],
+            "blocked": False
+        }), encoding="utf-8")
+        self.patchers[-1].stop()
+        try:
+            relative, source = verified_target(self.workspace, str(self.stage))
+            self.assertEqual(relative, "Game/my_mod.pak")
+            self.assertEqual(source, self.target.resolve())
+            with patch("asset_intelligence.validate_project",
+                       return_value=((), ())):
+                rows = project_rows(self.projects, str(self.stage))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["status"], "draft")
+        finally:
+            self.patchers[-1].start()
+
     def test_project_catalog_roundtrip_and_changes(self):
         project_id = register_project(
             self.projects, self.workspace, self.stage,
