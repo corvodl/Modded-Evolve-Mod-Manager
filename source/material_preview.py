@@ -408,10 +408,10 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 for child in item.findall('./Textures/Texture')
                 if (child.get('Map') or child.get('map') or '').casefold() == 'diffuse'), None)
             if diffuse_ref:
-                candidate = re.sub(r'(?i)(?:_diffuse|_diff|_dif|_d)(?=\\.(?:dds|tif|tiff|png)(?:\\.\\d+)?$)',
+                candidate = re.sub(r'(?i)(?:_diffuse|_diff|_dif|_d)(?=\.(?:dds|tif|tiff|png)(?:\.\d+)?$)',
                                    '_ddn', diffuse_ref)
                 if candidate == diffuse_ref:
-                    candidate = re.sub(r'(?i)(?=\\.(?:dds|tif|tiff|png)(?:\\.\\d+)?$)',
+                    candidate = re.sub(r'(?i)(?=\.(?:dds|tif|tiff|png)(?:\.\d+)?$)',
                                        '_ddn', diffuse_ref)
                 if candidate != diffuse_ref:
                     ref = candidate
