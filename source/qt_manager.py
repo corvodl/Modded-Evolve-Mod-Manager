@@ -37,14 +37,14 @@ if os.name == 'nt' and getattr(sys, 'frozen', False):
 
 
 from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl, QSize
-from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices, QColor
+from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices, QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout,
     QStackedWidget, QScrollArea, QPushButton, QLineEdit, QComboBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QSplitter, QPlainTextEdit, QMessageBox,
     QFileDialog, QDialog, QDialogButtonBox, QFormLayout, QProgressDialog,
     QCheckBox, QMenu, QAbstractItemView, QSizePolicy, QProgressBar, QTabWidget,
-    QToolButton, QStyle, QInputDialog, QColorDialog, QMenuBar,
+    QToolButton, QStyle, QStyleOptionButton, QInputDialog, QColorDialog, QMenuBar,
 )
 
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
@@ -226,12 +226,12 @@ def qt_style():
     QPushButton:disabled { color:#736e79; background:#201e23; }
     QPushButton#primary { background:#c73649; color:#fff; border:1px solid #cf4858; }
     QPushButton#primary:hover { background:#dc475b; }
-    QPushButton#nav { background:transparent; text-align:left; color:#d9d5dd;
-         border:none; border-radius:9px; padding:9px 12px; }
+    QPushButton#nav { background:transparent; color:#d9d5dd;
+         border:none; border-radius:9px; padding:0px; }
     QPushButton#nav:hover { background:#35262f; }
     QPushButton#nav:focus, QPushButton#navActive:focus { border:2px solid #fa586c; }
     QPushButton#navActive { background:#682734; color:white; border:none;
-         border-radius:9px; text-align:left; padding:9px 12px; }
+         border-radius:9px; padding:0px; }
     QPushButton:focus { border:2px solid #fa586c; }
     QLineEdit:focus, QComboBox:focus, QTableWidget:focus { border:2px solid #fa586c; }
     QLineEdit, QComboBox, QPlainTextEdit, QTableWidget {
@@ -262,6 +262,42 @@ def qt_style():
     QMenu::item { padding:7px 18px; border-radius:7px; }
     QMenu::item:selected { background:#702c3c; }
     """.replace("font-family:'Segoe UI';", f'font-family:"{ui_family()}";')
+
+
+class NavigationButton(QPushButton):
+    """Always paint the full navigation icon in an explicit, inset rectangle.
+
+    Qt's stylesheet-aligned QPushButton icon can be clipped by text/padding
+    calculations on Windows at non-default display scaling. Paint the bevel,
+    icon and elided text separately so the icon never occupies clipped padding
+    or disappears under the label. Keep the QPushButton API/accessibility.
+    """
+
+    def icon_bounds(self):
+        side = min(20, max(0, self.height() - 12))
+        return QRect(12, (self.height() - side) // 2, side, side)
+
+    def paintEvent(self, event):
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        option.text = ''
+        option.icon = QIcon()
+        painter = QPainter(self)
+        self.style().drawControl(QStyle.CE_PushButton, option, painter, self)
+        bounds = self.icon_bounds()
+        x = 12
+        if not self.icon().isNull():
+            mode = QIcon.Normal if self.isEnabled() else QIcon.Disabled
+            self.icon().paint(painter, bounds, Qt.AlignCenter, mode)
+            x = bounds.right() + 10
+        label = QRect(x, 0, max(0, self.width() - x - 8), self.height())
+        painter.setFont(self.font())
+        painter.setPen(QColor('#ffffff' if self.objectName() == 'navActive'
+                              else '#d9d5dd' if self.isEnabled() else '#736e79'))
+        visible = self.fontMetrics().elidedText(
+            self.text().replace('&&', '&'), Qt.ElideRight, label.width())
+        painter.drawText(label, Qt.AlignLeft | Qt.AlignVCenter, visible)
+        painter.end()
 
 
 class TaskSignals(QObject):
@@ -400,8 +436,8 @@ class QtManager(QMainWindow):
         for index, title in enumerate(SECTIONS):
             # Qt interprets & as a keyboard-mnemonic marker in QPushButton.
             # Double it to render a literal "Play & Restore", not "Play _Restore".
-            btn = _button(title.replace('&', '&&'),
-                          lambda idx=index: self.open_page(idx))
+            btn = NavigationButton(title.replace('&', '&&'))
+            btn.clicked.connect(lambda _checked=False, idx=index: self.open_page(idx))
             btn.setAccessibleName(title)
             btn.setToolTip(title)
             btn.setIcon(navigation_icon(
