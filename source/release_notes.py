@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.30', (
+        'Preserve higher-resolution DDS textures in character previews and Blender exports.',
+        'Recover verified streamed texture mipmaps across extracted PAKs.',
+        'Increase bounded GLB texture quality without altering original assets.',
+    )),
     ('1.1.18-beta.29', (
         'Hide non-rendered character surfaces while preserving rigged exports.',
         'Restore character material tints and improve glass previews.',
