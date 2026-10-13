@@ -57,3 +57,44 @@ def choose_highest_resolution(candidates):
     if not valid:
         raise ValueError("No complete decoded normal-map mip")
     return max(valid, key=lambda item: (item.width * item.height, item.width, item.height))
+
+
+def encode_normal_png(normal: NormalMap) -> bytes:
+    """Encode an 8-bit RGBA PNG without Pillow or platform dependencies."""
+    import struct
+    import zlib
+
+    if normal.width <= 0 or normal.height <= 0:
+        raise ValueError("Invalid image dimensions")
+    if len(normal.rgba) != normal.width * normal.height * 4:
+        raise ValueError("Incomplete RGBA image")
+    stride = normal.width * 4
+    scanlines = b"".join(
+        b"\x00" + normal.rgba[row * stride:(row + 1) * stride]
+        for row in range(normal.height)
+    )
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
+
+    header = struct.pack(">IIBBBBB", normal.width, normal.height, 8, 6, 0, 0, 0)
+    return (b"\x89PNG\r\n\\x1a\n"
+            + chunk(b"IHDR", header)
+            + chunk(b"IDAT", zlib.compress(scanlines))
+            + chunk(b"IEND", b""))
+
+
+def export_normal_png(normal: NormalMap, output_dir: Path, stem: str) -> Path:
+    """Write a normal map only within a dedicated output textures directory.
+
+    The caller chooses the destination project; this function never touches
+    source DDS data or game archives.
+    """
+    if not stem or stem in (".", "..") or not re.fullmatch(r"[A-Za-z0-9_-]+", stem):
+        raise ValueError("Unsafe texture name")
+    target = Path(output_dir) / "textures" / (stem + "_normal.png")
+    payload = encode_normal_png(normal)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(payload)
+    return target
