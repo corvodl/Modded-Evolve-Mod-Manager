@@ -40,23 +40,27 @@ def main(argv=None):
                         yield item.id()
             tests = list(cases(suite))
             print(f'[CI TEST {index}/{len(args.modules)}] Isolating {len(tests)} Qt cases', flush=True)
+        failures = []
         try:
             for test in tests:
                 print(f'  CASE {test}', flush=True)
                 result = subprocess.run([sys.executable, '-u', '-m', 'unittest', '-v', test],
                                         env=env, timeout=args.timeout_seconds, check=False)
                 if result.returncode:
-                    break
+                    failures.append((test, result.returncode))
         except subprocess.TimeoutExpired:
             print(f'[CI TEST {index}/{len(args.modules)}] TIMEOUT: {module} exceeded '
                   f'{args.timeout_seconds}s; likely a blocked Windows GUI/modal or slow test.',
                   file=sys.stderr, flush=True)
             return 124
         elapsed = time.monotonic() - start
-        if result.returncode:
+        if failures:
+            for test, code in failures:
+                print(f'[CI TEST {index}/{len(args.modules)}] FAILED CASE: {test} (exit {code})',
+                      file=sys.stderr, flush=True)
             print(f'[CI TEST {index}/{len(args.modules)}] FAIL {module}: '
-                  f'exit {result.returncode} after {elapsed:.1f}s', file=sys.stderr, flush=True)
-            return result.returncode
+                  f'{len(failures)} failing cases after {elapsed:.1f}s', file=sys.stderr, flush=True)
+            return 1
         print(f'[CI TEST {index}/{len(args.modules)}] PASS {module} ({elapsed:.1f}s)', flush=True)
     print(f'\nAll {len(args.modules)} unit-test modules passed in '
           f'{time.monotonic() - started:.1f}s.', flush=True)
