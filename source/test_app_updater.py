@@ -142,6 +142,19 @@ class UpdateTests(unittest.TestCase):
             values = [n for phase, n, _ in progress if phase == stage]
             self.assertEqual(values, sorted(values))
 
+    def test_backup_stage_has_bounded_locked_file_retry_and_diagnostics(self):
+        script = u.APPLY_PS1
+        self.assertIn("UPDATE BACKUP:", script)
+        self.assertIn("UPDATE FAILURE STAGE:", script)
+        self.assertIn("backing up $name", script)
+        self.assertIn("Could not back up ", script)
+        self.assertIn("file may still be in use", script)
+        self.assertIn("for ($attempt = 0; $attempt -lt 6; $attempt++)", script)
+        self.assertIn("Backup state is ambiguous", script)
+        self.assertIn("$Moved.Add($name)", script)
+        self.assertIn("ROLLBACK INCOMPLETE", script)
+        self.assertNotIn("Remove-Item -LiteralPath $Backup -Recurse -Force", script)
+
     def test_detached_installer_has_visible_progress_and_restart(self):
         script = u.APPLY_PS1
         self.assertIn('System.Windows.Forms.ProgressBar', script)
