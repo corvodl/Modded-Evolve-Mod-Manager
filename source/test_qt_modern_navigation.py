@@ -63,6 +63,8 @@ class ModernQtNavigationTests(unittest.TestCase):
         matching = [button for button in settings.findChildren(QPushButton)
                     if button.text() == "Check for Updates"]
         self.assertEqual(matching, [self.win.update_button])
+        self.win.open_page(SECTIONS.index("Settings"))
+        self.app.processEvents()
         self.assertTrue(self.win.update_button.isVisible())
         with patch.object(self.win, "check_updates") as checked:
             # The button connection is the existing bound method, so test
