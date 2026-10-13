@@ -7,7 +7,7 @@ RELEASE_NOTES = (
     ('1.1.18-beta.29', (
         'Hide non-rendered character surfaces while preserving rigged exports.',
         'Restore character material tints and improve glass previews.',
-        'Keep Wasteland Maggie's permanent mask and headgear attached.',
+        "Keep Wasteland Maggie's permanent mask and headgear attached.",
     )),
     ('1.1.18-beta.28', (
         'Discover map PAK dependencies and prepare editable copies for testing.',
