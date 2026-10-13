@@ -169,7 +169,7 @@ def _content_fingerprint(path):
     return (path.stat().st_size, result.digest())
 
 
-def _resolve(index, ref, *, preferred_workspace=None):
+def _resolve(index, ref, *, preferred_workspace=None, build_id=None):
     """Resolve a virtual asset without conflating copies with real conflicts.
 
     The model's own workspace has an explicit, verifiable association with
@@ -184,6 +184,10 @@ def _resolve(index, ref, *, preferred_workspace=None):
     preferred = Path(preferred_workspace).resolve() if preferred_workspace is not None else None
     for name in candidates:
         hits = index.get(name.casefold(), [])
+        if build_id is not None:
+            if build_id == 'all':
+                raise ValueError('All Builds is an inventory filter, not a dependency context.')
+            hits = [hit for hit in hits if hit.get('build_id') == build_id]
         if not hits:
             continue
         # Explicit extracted projects take precedence over background shared
@@ -216,7 +220,7 @@ def _resolve(index, ref, *, preferred_workspace=None):
         return unique, 'ambiguous'
     return [], 'missing'
 
-def resolve_material_texture(index, reference, material_relative, *, preferred_workspace=None):
+def resolve_material_texture(index, reference, material_relative, *, preferred_workspace=None, build_id=None):
     """Resolve the material's real game path before considering global assets.
 
     Relative texture filenames are interpreted within their owning character,
@@ -235,7 +239,7 @@ def resolve_material_texture(index, reference, material_relative, *, preferred_w
     rooted = virtual.casefold().startswith(
         ('characters/', 'objects/', 'materials/', 'textures/', 'levels/', 'libs/'))
     if rooted and not virtual.casefold().startswith('textures/'):
-        return _resolve(index, virtual, preferred_workspace=preferred_workspace)
+        return _resolve(index, virtual, preferred_workspace=preferred_workspace, build_id=build_id)
 
     parent_parts = Path(material_relative).parent.parts
     character_scope = (len(parent_parts) >= 3
@@ -254,7 +258,7 @@ def resolve_material_texture(index, reference, material_relative, *, preferred_w
             candidates.append(parent + '/textures/' + virtual)
         for candidate in dict.fromkeys(candidates):
             hits, state = _resolve(index, candidate,
-                                   preferred_workspace=preferred_workspace)
+                                   preferred_workspace=preferred_workspace, build_id=build_id)
             if state != 'missing':
                 return hits, state
     if character_scope:
@@ -279,7 +283,7 @@ def resolve_material_texture(index, reference, material_relative, *, preferred_w
         # character-local and category-shared candidates have been checked.
         if virtual.casefold().startswith('textures/'):
             return _resolve(index, virtual,
-                            preferred_workspace=preferred_workspace)
+                            preferred_workspace=preferred_workspace, build_id=build_id)
         return [], 'missing'
     return _resolve(index, virtual, preferred_workspace=preferred_workspace)
 
