@@ -1380,9 +1380,15 @@ class QtWorkspaceEditor(QMainWindow):
                                  if slot < len(materials.textures)})
                 mapped = sum(materials.textures[slot] is not None
                              for slot in active) if active else 0
+                sizes = sorted(
+                    {f'{image.width}x{image.height}' for image in materials.textures
+                     if image is not None},
+                    key=lambda value: int(value.split('x')[0]), reverse=True)
+                dimensions = ', '.join(sizes[:5]) or 'none'
                 self.texture_message = (
                     f'Textures: {mapped}/{len(active)} used material slots, '
-                    f'{materials.count} decoded DDS from {materials.source}'
+                    f'{materials.count} decoded DDS from {materials.source} '
+                    f'| decoded image sizes: {dimensions}'
                     + (' | ' + materials.issues[0][:100] if materials.issues else ''))
                 if self.character_preview:
                     self.texture_message += ' | CDF parts: ' + ', '.join(
