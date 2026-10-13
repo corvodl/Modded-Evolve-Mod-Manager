@@ -127,7 +127,8 @@ def inspect_dds_header(data: bytes) -> DDSMetadata:
     if size != 124 or pixel_format_size != 32 or not (0 < width <= 32768 and 0 < height <= 32768):
         raise ValueError("Malformed DDS header")
     mapping = {b"ATI2": ("BC5", 0, 1), b"BC5U": ("BC5", 0, 1),
-               b"DXT5": ("DXT5", None, None), b"DXT1": ("DXT1", None, None)}
+               b"DXT5": ("DXT5", None, None), b"DXT1": ("DXT1", None, None),
+               b"BC5S": ("BC5_SNORM", 0, 1)}
     if fourcc == b"DX10":
         if len(data) < 148:
             raise ValueError("Truncated DDS DX10 header")
@@ -157,13 +158,26 @@ def _decode_bc4_block(block: bytes) -> tuple[int, ...]:
     return tuple(palette[(packed >> (3 * i)) & 7] for i in range(16))
 
 
+def _decode_bc4_signed_block(block: bytes) -> tuple[int, ...]:
+    """BC4_SNORM endpoints are signed, unlike BC4_UNORM."""
+    if len(block) != 8:
+        raise ValueError("Incomplete signed BC4 block")
+    a = max(-127, int.from_bytes(block[:1], "little", signed=True))
+    b = max(-127, int.from_bytes(block[1:2], "little", signed=True))
+    if a > b:
+        palette = (a, b) + tuple(int(((7-i)*a+i*b)/7) for i in range(1, 7))
+    else:
+        palette = (a, b) + tuple(int(((5-i)*a+i*b)/5) for i in range(1, 5)) + (-127, 127)
+    bits = int.from_bytes(block[2:], "little")
+    return tuple(palette[(bits >> (3*i)) & 7] for i in range(16))
+
+
 def decode_bc5_normal(width: int, height: int, blocks: bytes, *,
-                      invert_green: bool = False) -> NormalMap:
+                      invert_green: bool = False, signed: bool = False) -> NormalMap:
     """Decode unsigned BC5 blocks into tangent-space RGBA normals.
 
     Expects only compressed mip payload, not DDS headers or stream sidecars.
-    BC5_SNORM is deliberately excluded because signed endpoint interpolation
-    differs. Partial edge blocks are cropped to the image dimensions.
+    BC5_SNORM requires signed endpoint interpolation. Partial edge blocks are cropped to the image dimensions.
     """
     if width <= 0 or height <= 0 or width > 32768 or height > 32768:
         raise ValueError("Invalid BC5 dimensions")
@@ -175,8 +189,9 @@ def decode_bc5_normal(width: int, height: int, blocks: bytes, *,
     for by in range(blocks_y):
         for bx in range(blocks_x):
             offset = (by * blocks_x + bx) * 16
-            red = _decode_bc4_block(blocks[offset:offset + 8])
-            green = _decode_bc4_block(blocks[offset + 8:offset + 16])
+            decoder = _decode_bc4_signed_block if signed else _decode_bc4_block
+            red = decoder(blocks[offset:offset + 8])
+            green = decoder(blocks[offset + 8:offset + 16])
             for iy in range(4):
                 for ix in range(4):
                     px, py = bx * 4 + ix, by * 4 + iy
@@ -184,7 +199,9 @@ def decode_bc5_normal(width: int, height: int, blocks: bytes, *,
                         continue
                     source = iy * 4 + ix
                     target = (py * width + px) * 4
-                    rgba[target:target + 4] = bytes((red[source], green[source], 0, 255))
+                    red8 = round((red[source]/127+1)*127.5) if signed else red[source]
+                    green8 = round((green[source]/127+1)*127.5) if signed else green[source]
+                    rgba[target:target + 4] = bytes((red8, green8, 0, 255))
     return decode_xy_normal_rgba(width, height, bytes(rgba),
                                  invert_green=invert_green)
 
