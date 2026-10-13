@@ -76,7 +76,7 @@ def discover_game_paks(game, *, library_root=None):
                        sum(str(x) in already for x in found))
 
 
-def stage_source_for_import(import_id, stage, game=None, *, library_root=None):
+def stage_source_for_import(import_id, stage, game=None, *, library_root=None, build_id=None):
     """Return (staged relative PAK path, verified candidate file).
 
     Only exact known signed stage-plan sources can be built and re-signed.
@@ -88,6 +88,15 @@ def stage_source_for_import(import_id, stage, game=None, *, library_root=None):
     if not re.fullmatch(r"[0-9a-f]{20}", str(import_id)):
         raise ValueError("Invalid Asset Library archive ID.")
     root = _home(library_root)
+    from build_collections import catalog
+    builds = catalog(root)["builds"]
+    owners = [bid for bid, entry in builds.items()
+              if bid != "unassigned" and import_id in entry["members"]]
+    if build_id is not None:
+        if build_id not in owners or builds[build_id]["family"] != "stage2":
+            raise ValueError("Historical archives are reference-only; select a Stage 2 build.")
+    elif owners and (len(owners) != 1 or builds[owners[0]]["family"] != "stage2"):
+        raise ValueError("Build identity is ambiguous or historical; no Stage 2 project is inferred.")
     folder = _folder_for_identifier(import_id, root)
     if folder.is_symlink() or not (folder / "asset-library.json").is_file():
         raise ValueError("The selected library archive no longer exists.")
@@ -132,12 +141,12 @@ def stage_source_for_import(import_id, stage, game=None, *, library_root=None):
     return relative, staged_file
 
 
-def project_command(import_id, stage, workspace, game=None, *, library_root=None):
+def project_command(import_id, stage, workspace, game=None, *, library_root=None, build_id=None):
     """Return an ordinary verified workspace extraction command, no mutation."""
     import sys
     from pathlib import Path
     rel, pak = stage_source_for_import(
-        import_id, stage, game, library_root=library_root)
+        import_id, stage, game, library_root=library_root, build_id=build_id)
     target = Path(workspace).resolve()
     if target.exists():
         raise FileExistsError("Editable project folder already exists.")
