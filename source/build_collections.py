@@ -162,7 +162,7 @@ def compare_builds(source_id, target_id, *, root=None):
         return result
     left, right = entries(source_id), entries(target_id)
     return tuple({"path": path, "status": (
-        "added" if path not in right else "removed" if path not in left
+        "added" if path not in left else "removed" if path not in right
         else "identical" if len(left[path]) == len(right[path]) == 1 and left[path] == right[path]
         else "changed" if len(left[path]) == len(right[path]) == 1 else "unknown"),
         "hash_type": "normalized-extracted-sha256"}
@@ -173,7 +173,7 @@ def prepare_transfer(source_id, target_id, paths, *, root=None, target_baseline_
     """Read-only candidate manifest. No replacement, conversion or write occurs."""
     from evolve_pak_workspace import normalized_name
     data = catalog(root)
-    if source_id not in data["builds"] or target_id not in data["builds"] or source_id == target_id:
+    if (source_id not in data["builds"] or target_id not in data["builds"]\n            or source_id == target_id or source_id == UNASSIGNED or target_id == UNASSIGNED):
         raise ValueError("Select distinct registered source and target builds.")
     if data["builds"][target_id]["family"] != "stage2":
         raise ValueError("The target must be a Stage 2 build.")
