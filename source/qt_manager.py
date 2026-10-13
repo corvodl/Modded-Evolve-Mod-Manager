@@ -3468,7 +3468,9 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     capture_mode = next((flag for flag in
-        ('--capture-modding-screenshot','--capture-screenshot')
+        ('--capture-settings-screenshot', '--capture-library-screenshot',
+         '--capture-play-screenshot', '--capture-modding-screenshot',
+         '--capture-screenshot')
         if flag in sys.argv),None)
     family = ensure_readable_ui_font(app, strict=bool(capture_mode))
     if capture_mode:
@@ -3478,8 +3480,14 @@ def main():
     main_window = QtManager()
     main_window.show()
     if capture_mode:
-        if capture_mode == '--capture-modding-screenshot':
-            main_window.open_page(SECTIONS.index('Modding'))
+        capture_sections = {
+            '--capture-modding-screenshot': 'Modding',
+            '--capture-settings-screenshot': 'Settings',
+            '--capture-library-screenshot': 'Asset Library',
+            '--capture-play-screenshot': 'Play & Restore',
+        }
+        if capture_mode in capture_sections:
+            main_window.open_page(SECTIONS.index(capture_sections[capture_mode]))
         try:
             destination = Path(sys.argv[sys.argv.index(capture_mode) + 1])
         except (IndexError, ValueError):
