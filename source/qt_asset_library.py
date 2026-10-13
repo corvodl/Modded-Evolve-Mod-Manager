@@ -75,8 +75,18 @@ class AssetLibraryController(QObject):
                 self.progress.emit("Importing %d/%d: %s" %
                                    (i, len(files), path.name), 0, 1)
                 try:
+                    relative = None
+                    if build_id is not None:
+                        snapshot = catalog()["builds"][build_id]
+                        if snapshot.get("location"):
+                            try:
+                                relative = path.resolve().relative_to(
+                                    Path(snapshot["location"]).resolve()).as_posix()
+                            except ValueError:
+                                relative = None
                     result = import_pak(
                         path, stage=stage, extra_keys=extra_keys, build_id=build_id,
+                        relative_archive_path=relative,
                         cancelled=self._cancel.is_set,
                         progress=lambda name, done, total:
                             self.progress.emit(name, done, total))
