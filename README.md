@@ -1,25 +1,25 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.28
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.29
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.28 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.29 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
 
 ## Latest Stable — v1.1.17.1
 
 - Add a Windows installer with optional Desktop and Start Menu shortcuts.
 - Compare Stable and Beta releases and offer only the newest version.
 
-## Latest Beta — v1.1.18-beta.28
+## Latest Beta — v1.1.18-beta.29
 
-- Discover map PAK dependencies and prepare editable copies for testing.
-- Preview supported map terrain and report missing scene assets.
-- Export independently rigged Blender character assembly parts.
+- Hide non-rendered character surfaces while preserving rigged exports.
+- Restore character material tints and improve glass previews.
+- Keep Wasteland Maggie's permanent mask and headgear attached.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 
-Versioned release: [v1.1.18-beta.28](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.28).
+Versioned release: [v1.1.18-beta.29](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.29).
 
 ## Download and install
 
