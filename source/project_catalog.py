@@ -69,7 +69,9 @@ def register_project(projects_root, workspace, stage, *,
     workspace = Path(workspace).resolve(strict=True)
     if not workspace.is_dir() or workspace == root or not workspace.is_relative_to(root):
         raise ValueError("Project must be an editable workspace inside Projects.")
-    load_workspace(workspace)  # validate workspace manifest
+    info = load_workspace(workspace)  # validate workspace manifest
+    if info.get("reference_only"):
+        raise ValueError("Reference-only workspaces cannot become editable target projects.")
     relative, source = verified_target(workspace, stage)
     data = _catalog(root)
     existing = next((key for key, row in data["projects"].items()
@@ -80,6 +82,7 @@ def register_project(projects_root, workspace, stage, *,
     data["projects"][project_id] = {
         "workspace": str(workspace), "label": str(label or workspace.name)[:120],
         "target_archive": relative, "target_baseline": str(source),
+        "target_baseline_sha256": info.get("source_sha256"),
         "source_build_id": source_build_id, "source_archive_id": archive_id,
         "target_build_family": "stage2"}
     _save(root, data)
@@ -135,6 +138,11 @@ def project_rows(projects_root, stage):
         if workspace.is_dir() and not workspace.is_symlink() and workspace.is_relative_to(root):
             try:
                 info = load_workspace(workspace)
+                if info.get("reference_only"):
+                    raise ValueError("Reference-only project cannot be signed.")
+                if (entry.get("target_baseline_sha256") and
+                        entry["target_baseline_sha256"] != info.get("source_sha256")):
+                    raise ValueError("Workspace source baseline identity changed.")
                 relative, source = verified_target(workspace, stage)
                 from asset_intelligence import validate_project
                 changed, problems = validate_project(workspace)
