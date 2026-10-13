@@ -844,7 +844,63 @@ class QtManager(QMainWindow):
         if not is_level_pak(record['name']):
             self.info('Open Map', 'Select a supported level PAK in Asset Library.')
             return
-        self.edit_selected_library_archive(open_level=True)
+        self.open_library_map_from_archive(
+            record['id'], build_id=self._library_build_context())
+
+    def open_library_map_from_archive(self, identifier, *, build_id=None):
+        """Extract map family as separate editable Stage 2 target workspaces."""
+        try:
+            if self.busy or self.asset_library_controller.busy:
+                raise RuntimeError('Another operation is already running.')
+            from asset_library import imported_archives
+            from asset_library_bulk import stage_source_for_import
+            from build_collections import catalog, resolve_archive_build
+            from level_asset_mount import level_from_source
+            from pak_dependencies import is_level_pak
+            records = {item['id']: item for item in imported_archives()}
+            selected = records.get(identifier)
+            if not selected or not is_level_pak(selected['name']):
+                raise ValueError('Select a supported imported level PAK.')
+            if not build_id or build_id == 'all':
+                build_id = resolve_archive_build(identifier)
+            builds = catalog()['builds']
+            if build_id not in builds or builds[build_id]['family'] != 'stage2':
+                raise ValueError(
+                    'Select a registered Stage 2 build. Historical maps remain '
+                    'reference-only until a verified target mapping is prepared.')
+            if identifier not in builds[build_id]['members']:
+                raise ValueError('Selected map archive does not belong to this build.')
+            map_id = (level_from_source(selected['source']) or
+                      level_from_source(selected['name']))
+            if not map_id:
+                raise ValueError('Map identity could not be established from source paths.')
+            same_map = [
+                item for item in records.values()
+                if item['id'] in builds[build_id]['members']
+                and (level_from_source(item['source']) or
+                     level_from_source(item['name'])) == map_id]
+            if not 1 <= len(same_map) <= 30:
+                raise ValueError('Map family exceeds the 30-PAK bounded extraction limit.')
+            game = self.game_root or self._find_game_root()
+            staged = {}
+            for archive in same_map:
+                relative, _ = stage_source_for_import(
+                    archive['id'], self.stage_path, game, build_id=build_id)
+                if relative in staged and staged[relative] != archive['id']:
+                    raise ValueError('Conflicting archives map to one staged target.')
+                staged[relative] = archive['id']
+            selected_relative, _ = stage_source_for_import(
+                identifier, self.stage_path, game, build_id=build_id)
+            self.refresh_archives()
+            if any(relative not in self.archive_entries for relative in staged):
+                raise ValueError('One or more map PAKs are missing from the staged inventory.')
+            self._pending_map_members = (build_id, staged)
+            started = self._start_batch_with_dependencies(
+                sorted(staged), selected_relative, auto_level=True)
+            if not started:
+                self._pending_map_members = None
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
 
     def _selected_library_id(self):
         table = getattr(self, 'asset_table', None)
@@ -2844,6 +2900,23 @@ class QtManager(QMainWindow):
         data = load_collection(folder)
         self.batch_root = str(folder)
         self._load_batch()
+        pending = getattr(self, '_pending_map_members', None)
+        self._pending_map_members = None
+        if pending:
+            from project_catalog import register_project
+            source_build, members = pending
+            for record in data['archives']:
+                relative = record['archive']
+                workspace = Path(folder) / record['workspace']
+                try:
+                    register_project(
+                        self.projects_path, workspace, self.stage_path,
+                        source_build_id=source_build,
+                        archive_id=members.get(relative),
+                        label=Path(relative).name)
+                except (OSError, ValueError) as exc:
+                    self._log('Map project ' + relative + ': ' + str(exc)[:180])
+            self.refresh_project_list()
         preferred = getattr(self, '_batch_primary', '')
         archive_map = {row['archive']: Path(folder)/row['workspace']
                        for row in data['archives']}
