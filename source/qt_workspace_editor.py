@@ -1900,7 +1900,9 @@ class QtWorkspaceEditor(QMainWindow):
             self._export_native_signals.completed.connect(self._export_animated_ready)
         workspace, relative = self.workspace, self.current
         index, character = self.preview_index, self.character_preview
-        selected_materials = self.materials
+        # Decode export material textures again from the full verified DDS
+        # sources; GPU/preview materials may be cached or downsampled.
+        selected_materials = None
         tex = self.texture_folder
         projects, stage = self.manager.projects_path, self.manager.stage_path
         self._export_native_target = target
