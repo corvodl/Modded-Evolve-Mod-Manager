@@ -127,7 +127,7 @@ def export_archive_layout(identifier, destination_dir, *, root=None, progress=No
     return output, len(files)
 
 
-def texture_image(identifier, relative, *, root=None):
+def texture_image(identifier, relative, *, root=None, build_id=None):
     """Decode whole or complete streamed DDS from its extracted companions."""
     from material_preview import _decode_texture
     relative = normalized_name(relative)
@@ -137,31 +137,35 @@ def texture_image(identifier, relative, *, root=None):
     if not (relative.casefold().endswith('.dds')
             or re.search(r'\.dds\.0$', relative, re.I)):
         raise ValueError('Choose a DDS or first .dds.0 streaming fragment.')
-    from asset_library import extracted_index
+    from build_collections import build_index, resolve_archive_build
+    context = resolve_archive_build(identifier, root=root, build_id=build_id)
     return _decode_texture(
-        {'file': entry, 'workspace': None, 'relative': relative},
-        index=extracted_index(root))
+        {'file': entry, 'workspace': None, 'relative': relative, 'build_id': context},
+        index=build_index(context, root=root))
 
 
-def export_png(identifier, relative, destination, *, root=None):
+def export_png(identifier, relative, destination, *, root=None, build_id=None):
     target = _outside_library(destination, root)
     if target.suffix.casefold() != '.png' or not target.parent.is_dir():
         raise ValueError('Export to a PNG in an existing external directory.')
-    image = texture_image(identifier, relative, root=root)
+    image = texture_image(identifier, relative, root=root, build_id=build_id)
     image.save(target, format='PNG')
     return target
 
 
-def library_model_index(identifier, root=None):
+def library_model_index(identifier, root=None, *, build_id=None):
     """Include all imported dependencies while prioritizing the selected PAK."""
     own = archive_entries(identifier, root)
-    index = {name: list(records) for name, records in extracted_index(root).items()}
+    from build_collections import build_index, resolve_archive_build
+    context = resolve_archive_build(identifier, root=root, build_id=build_id)
+    index = build_index(context, root=root)
     root_folder = archive_folder(identifier, root)
     for relative, path in own.items():
         key = relative.casefold()
         record = {'archive': _load_manifest(root_folder)['name'],
                   'workspace': root_folder,
-                  'file': path, 'relative': relative, '_asset_library': identifier}
+                  'file': path, 'relative': relative, '_asset_library': identifier,
+                  'build_id': context}
         records = index.setdefault(key, [])
         # The selected PAK has verified material and texture ownership.
         records[:] = [r for r in records if str(r.get('file')) != str(path)]
@@ -169,7 +173,7 @@ def library_model_index(identifier, root=None):
     return index
 
 
-def export_glb(identifier, relative, destination, *, root=None):
+def export_glb(identifier, relative, destination, *, root=None, build_id=None):
     """Blender-ready glTF with safely resolved library diffuse maps and rig."""
     from model_preview import read_preview_mesh
     from model_blender_export import glb_bytes
@@ -188,7 +192,7 @@ def export_glb(identifier, relative, destination, *, root=None):
         raise FileNotFoundError('The selected model is not present in this PAK.')
     mesh = read_preview_mesh(files[relative].read_bytes(), relative)
     payload = glb_bytes(mesh)
-    index = library_model_index(identifier, root)
+    index = library_model_index(identifier, root, build_id=build_id)
     report = {'textures': 0, 'rig': 'No compatible compiled skin found'}
     try:
         materials = load_preview_materials(
