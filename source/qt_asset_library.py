@@ -609,8 +609,8 @@ class AssetLibraryDialog(QDialog):
                 "Select a supported level PAK. Unverified historical maps remain reference-only.")
             return
         self.accept()
-        self.parent().create_mod_project_from_asset_library(
-            record['id'], source_build_id=self._import_build(), open_level=True)
+        self.parent().open_library_map_from_archive(
+            record['id'], build_id=self._import_build())
 
     def verify(self):
         self.controller.verify()
