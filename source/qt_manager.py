@@ -36,7 +36,7 @@ if os.name == 'nt' and getattr(sys, 'frozen', False):
         sys.stderr = sys.stderr or open(os.devnull, 'w')
 
 
-from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl
+from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl, QSize
 from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices, QColor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout,
@@ -67,6 +67,7 @@ from developer_access import verify_code
 from developer_memory_panel import DeveloperMemoryPanel
 from online_guard import set_offline, target_executable
 from release_notes import RELEASE_NOTES
+from qt_navigation_icons import navigation_icon
 
 ROOT = Path(__file__).resolve().parent
 COLORS = {'bg':'#0b0b0d','surface':'#17171d','panel':'#202027',
@@ -228,8 +229,11 @@ def qt_style():
     QPushButton#nav { background:transparent; text-align:left; color:#d9d5dd;
          border:none; border-radius:9px; padding:9px 12px; }
     QPushButton#nav:hover { background:#35262f; }
+    QPushButton#nav:focus, QPushButton#navActive:focus { border:2px solid #fa586c; }
     QPushButton#navActive { background:#682734; color:white; border:none;
          border-radius:9px; text-align:left; padding:9px 12px; }
+    QPushButton:focus { border:2px solid #fa586c; }
+    QLineEdit:focus, QComboBox:focus, QTableWidget:focus { border:2px solid #fa586c; }
     QLineEdit, QComboBox, QPlainTextEdit, QTableWidget {
        background:#18171d; color:#f4f2f4; border:1px solid #39353d;
        border-radius:9px; padding:7px; selection-background-color:#87293b;
@@ -399,6 +403,12 @@ class QtManager(QMainWindow):
             btn = _button(title.replace('&', '&&'),
                           lambda idx=index: self.open_page(idx))
             btn.setAccessibleName(title)
+            btn.setToolTip(title)
+            btn.setIcon(navigation_icon(
+                title, palette(self.appearance_mode, self.appearance_overrides)['text']))
+            btn.setIconSize(QSize(20, 20))
+            btn.setMinimumHeight(40)
+            btn.setFocusPolicy(Qt.StrongFocus)
             btn.setObjectName('navActive' if index == 0 else 'nav')
             navlay.addWidget(btn)
             self.nav_buttons.append(btn)
@@ -473,7 +483,9 @@ class QtManager(QMainWindow):
         # Both release channels are verified; beta updates always need approval.
         if (self.build_channel() in ('main','beta') and
                 not any(flag in sys.argv for flag in
-                        ('--capture-screenshot','--capture-modding-screenshot'))):
+                        ('--capture-screenshot','--capture-modding-screenshot',
+                         '--capture-settings-screenshot','--capture-library-screenshot',
+                         '--capture-play-screenshot'))):
             QTimer.singleShot(2500, lambda: self.check_updates(silent=True))
         if self.bundle_error:
             QTimer.singleShot(500, lambda: self.failure(self.bundle_error))
@@ -1191,6 +1203,26 @@ class QtManager(QMainWindow):
         lay.addWidget(_label('Customize the manager without changing your game files.', muted=True))
         self.settings_sections = ()
 
+        _settings_heading(lay, 'UPDATES',
+                          'Manual check for verified Stable and Beta updates.')
+        update_card, update_row = _card('VERSION & UPDATES',
+            'Only newer releases are offered. Installation requires approval.')
+        lay.addWidget(update_card)
+        update_row.addWidget(_label(
+            'Installed: ' + app_version() +
+            ' • Channel: ' + self.build_channel().title(), muted=True))
+        self.update_status = _label('Updates: not checked', muted=True)
+        update_actions = QWidget()
+        update_line = QHBoxLayout(update_actions)
+        update_line.setContentsMargins(0, 0, 0, 0)
+        self.update_button = _button('Check for Updates', self.check_updates, primary=True)
+        self.update_button.setToolTip(ACTION_HINTS['Check for Updates'])
+        update_line.addWidget(self.update_button)
+        update_line.addWidget(_info_icon(ACTION_HINTS['Check for Updates']))
+        update_line.addStretch()
+        update_row.addWidget(update_actions)
+        update_row.addWidget(self.update_status)
+
         _settings_heading(lay, 'GENERAL',
                           'Appearance, navigation animation, and desktop shortcuts.')
         general, general_row = _card('APPEARANCE',
@@ -1334,18 +1366,8 @@ class QtManager(QMainWindow):
             'copying or cryptographic verification. Restoring with Restore Game Files '
             'recycles verified mod files for the next session.', muted=True))
 
-        _settings_heading(lay, 'UPDATES & ADVANCED',
-                          'Compare verified Stable and Beta versions; never install without approval.')
-        update_card, update_row = _card('UPDATES',
-            'Checks both stable and beta releases. Only a strictly newer version is offered. '
-            'Your game files, projects and keys are preserved.')
-        lay.addWidget(update_card)
-        self.update_status = _label('Updates: not checked', muted=True)
-        update_row.addWidget(self.update_status)
-        self.update_button = _button('Check for Updates', self.check_updates)
-        self.update_button.setToolTip(ACTION_HINTS['Check for Updates'])
-        update_row.addWidget(self.update_button)
-        update_row.addWidget(_info_icon(ACTION_HINTS['Check for Updates']))
+        _settings_heading(lay, 'ADVANCED & MAINTENANCE',
+                          'Optional workspace, export and maintenance controls.')
         advanced, advanced_row = _card('ADVANCED FILE OPTIONS',
                                        'Unpack filtering, current workspace, and output location.')
         lay.addWidget(advanced)
@@ -1366,9 +1388,9 @@ class QtManager(QMainWindow):
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['settings'] = scroll
-        self.settings_sections = ('GENERAL', 'GAME & FILES', 'ASSET LIBRARY',
+        self.settings_sections = ('UPDATES', 'GENERAL', 'GAME & FILES', 'ASSET LIBRARY',
                                   'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
-                                  'UPDATES & ADVANCED')
+                                  'ADVANCED & MAINTENANCE')
 
     def _update_appearance_labels(self):
         colors = palette(self.appearance_mode, self.appearance_overrides)
@@ -1510,6 +1532,9 @@ class QtManager(QMainWindow):
         if app:
             app.setStyleSheet(style)
         self.setStyleSheet(style)
+        icon_color = palette(self.appearance_mode, self.appearance_overrides)['text']
+        for index, button in enumerate(getattr(self, 'nav_buttons', ())):
+            button.setIcon(navigation_icon(SECTIONS[index], icon_color))
         for editor in getattr(self, 'editors', []):
             if editor is not None:
                 editor.setStyleSheet(style)
@@ -3648,7 +3673,8 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     capture_mode = next((flag for flag in
-        ('--capture-modding-screenshot','--capture-screenshot')
+        ('--capture-settings-screenshot','--capture-library-screenshot',
+         '--capture-play-screenshot','--capture-modding-screenshot','--capture-screenshot')
         if flag in sys.argv),None)
     family = ensure_readable_ui_font(app, strict=bool(capture_mode))
     if capture_mode:
@@ -3658,8 +3684,14 @@ def main():
     main_window = QtManager()
     main_window.show()
     if capture_mode:
-        if capture_mode == '--capture-modding-screenshot':
-            main_window.open_page(SECTIONS.index('Modding'))
+        capture_sections = {
+            '--capture-modding-screenshot': 'Modding',
+            '--capture-settings-screenshot': 'Settings',
+            '--capture-library-screenshot': 'Asset Library',
+            '--capture-play-screenshot': 'Play & Restore',
+        }
+        if capture_mode in capture_sections:
+            main_window.open_page(SECTIONS.index(capture_sections[capture_mode]))
         try:
             destination = Path(sys.argv[sys.argv.index(capture_mode) + 1])
         except (IndexError, ValueError):
