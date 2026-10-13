@@ -75,6 +75,21 @@ def glb_bytes(mesh, *, name='CryEngine Mesh'):
     if not all(0 <= idx < vertices for idx in all_indices):
         raise ValueError('Invalid mesh indices.')
 
+    # glTF normalTexture requires a tangent frame. CryEngine meshes sometimes
+    # lack a decoded tangent stream, so generate a valid per-vertex basis from
+    # the verified triangles and UVs rather than leaving Blender to guess.
+    from gltf_tangent_basis import gltf_vertex_basis
+    packed_normals, packed_tangents = gltf_vertex_basis(mesh)
+    normal_view = buffer_view(packed_normals, target=34962)
+    accessors.append({'bufferView': normal_view, 'componentType': 5126,
+                      'count': vertices, 'type': 'VEC3'})
+    attribs['NORMAL'] = len(accessors) - 1
+    if packed_tangents is not None:
+        tangent_view = buffer_view(packed_tangents, target=34962)
+        accessors.append({'bufferView': tangent_view, 'componentType': 5126,
+                          'count': vertices, 'type': 'VEC4'})
+        attribs['TANGENT'] = len(accessors) - 1
+
     subsets = mesh.subsets or ((0, len(all_indices), 0),)
     if sum(x[1] for x in subsets) != len(all_indices) or any(
             first % 3 or count % 3 or first+count > len(all_indices)
