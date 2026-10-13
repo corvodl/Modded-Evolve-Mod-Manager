@@ -5,6 +5,8 @@ on:
     branches: [beta]
     paths:
       - "source/level_*"
+      - "source/blender_native_project.py"
+      - "source/ci_blender_scene_roundtrip.py"
       - "source/qt_level_*"
       - "source/material_preview.py"
       - "Build-Windows-EXE.cmd"
@@ -39,3 +41,21 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           xvfb-run -a -s '-screen 0 1280x800x24' env QT_DEBUG_PLUGINS=1 QT_QPA_PLATFORM=xcb PYTHONPATH=source python -m unittest -v test_qt_level_renderer
+
+  blender-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install native Blender binary and exporter requirements
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender
+          python -m pip install numpy Pillow
+      - name: Import and reopen a combined-map GLB as real Blender project
+        env:
+          PYTHONPATH: source
+        run: |
+          python source/ci_blender_scene_roundtrip.py "$(command -v blender)"
