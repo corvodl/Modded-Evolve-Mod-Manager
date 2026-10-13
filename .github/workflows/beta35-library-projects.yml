@@ -27,4 +27,8 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -m compileall -q source
-          python -m unittest -v test_beta35_project_flows test_asset_library_bulk test_build_collections test_qt_asset_preview test_qt_migration
+          Push-Location source
+          try {
+            python ci_test_runner.py --timeout-seconds 90 test_beta35_project_flows test_asset_library_bulk test_build_collections test_qt_asset_preview test_qt_migration test_qt_modern_navigation
+            if ($LASTEXITCODE -ne 0) { throw "Beta.35 isolated regression suites failed" }
+          } finally { Pop-Location }
