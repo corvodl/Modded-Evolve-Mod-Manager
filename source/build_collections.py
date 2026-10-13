@@ -155,6 +155,12 @@ def resolve_archive_build(archive_id, *, root=None, build_id=None):
         if build_id == "all" or build_id not in owners:
             raise ValueError("Selected archive does not belong to that build.")
         return build_id
+    if not owners:
+        # Older extracted archives may predate inventory metadata. Treat
+        # their own contents as Unassigned, never search another build.
+        from asset_library_preview import archive_folder
+        archive_folder(archive_id, root)
+        return UNASSIGNED
     if len(owners) != 1:
         raise ValueError("Archive has multiple build memberships; choose a build explicitly.")
     return owners[0]
