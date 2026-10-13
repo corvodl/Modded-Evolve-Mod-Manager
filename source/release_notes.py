@@ -4,6 +4,10 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.34', (
+        'Improve Level Editor scene assembly, terrain preview, and resource loading.',
+        'Organize assets by build and plan reference-only transfers to Stage 2.',
+    )),
     ('1.1.18-beta.33', (
         'Improve model texture filtering and expose decoded DDS dimensions.',
         'Rebuild original character materials during Blender export.',
