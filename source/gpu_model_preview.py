@@ -147,7 +147,7 @@ class Win32GPUPreview:
         self.materials = None
         self.texture_ids = []
         self._loaded_materials = None
-        self.texture_limit = 768
+        self.texture_limit = 4096
         self._closed = False
         self._create_context()
 
@@ -248,7 +248,7 @@ class Win32GPUPreview:
         self._loaded_materials = None
 
     def set_quality(self, quality):
-        limit = {'Fast':384, 'Balanced':768, 'Detailed':1024}.get(quality,768)
+        limit = {'Fast':512, 'Balanced':2048, 'Detailed':4096}.get(quality,4096)
         if self.texture_limit != limit:
             self.texture_limit = limit
             self._loaded_materials = None

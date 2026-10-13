@@ -1380,9 +1380,15 @@ class QtWorkspaceEditor(QMainWindow):
                                  if slot < len(materials.textures)})
                 mapped = sum(materials.textures[slot] is not None
                              for slot in active) if active else 0
+                sizes = sorted(
+                    {f'{image.width}x{image.height}' for image in materials.textures
+                     if image is not None},
+                    key=lambda value: int(value.split('x')[0]), reverse=True)
+                dimensions = ', '.join(sizes[:5]) or 'none'
                 self.texture_message = (
                     f'Textures: {mapped}/{len(active)} used material slots, '
-                    f'{materials.count} decoded DDS from {materials.source}'
+                    f'{materials.count} decoded DDS from {materials.source} '
+                    f'| decoded image sizes: {dimensions}'
                     + (' | ' + materials.issues[0][:100] if materials.issues else ''))
                 if self.character_preview:
                     self.texture_message += ' | CDF parts: ' + ', '.join(
@@ -1980,14 +1986,24 @@ class QtWorkspaceEditor(QMainWindow):
             self.manager.projects_path, self.manager.stage_path,
             self.texture_folder, self.preview_index)
 
-        selected_materials = self.materials
-
+        # Never pass preview-cached images into export; rebuild from original DDS.
+        # This also avoids retaining an older 768px cached preview mip.
         def work(progress, cancelled):
             progress('Resolving character geometry and textures', 0, 1)
             if source_character is not None:
                 from character_asset_export import assembled_character_glb
+                from character_assembly import assemble_character
+                fresh_character = assemble_character(
+                    workspace, virtual, asset_index,
+                    texture_folder=textures, projects_root=projects,
+                    stage_root=stage,
+                    equipment=source_character.selected_equipment)
+                if fresh_character is None:
+                    raise ValueError('Unable to reconstruct full-quality CDF textures; '
+                                     'ensure the character and shared texture PAKs '
+                                     'are imported into the Asset Library.')
                 payload, report = assembled_character_glb(
-                    source_character, workspace, virtual, asset_index,
+                    fresh_character, workspace, virtual, asset_index,
                     texture_folder=textures, projects_root=projects,
                     stage_root=stage)
                 export_mesh = source_character.mesh
@@ -1997,7 +2013,7 @@ class QtWorkspaceEditor(QMainWindow):
                     export_mesh, workspace, virtual,
                     texture_folder=textures,
                     projects_root=projects, stage_root=stage, index=asset_index,
-                    materials=selected_materials)
+                    materials=None)
             if cancelled():
                 raise InterruptedError('Export cancelled before writing the GLB.')
             temporary = None
@@ -2022,6 +2038,8 @@ class QtWorkspaceEditor(QMainWindow):
             from blender_texture_folder import write_texture_folder
             texture_files = write_texture_folder(payload, target)
             report['external_texture_files'] = len(texture_files)
+            if report.get('texture_count') and not texture_files:
+                raise ValueError('GLB claims textures but none were written to Textures/.')
             progress('Blender model exported', 1, 1)
             return (len(export_mesh.vertices), len(export_mesh.triangles), report)
 

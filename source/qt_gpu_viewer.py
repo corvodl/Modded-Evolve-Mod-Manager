@@ -336,8 +336,8 @@ class QtGLModelCanvas(QOpenGLWidget):
             glGenTextures, glBindTexture, glTexImage2D, glTexParameteri,
             glPixelStorei, GL_TEXTURE_2D, GL_RGB, GL_UNSIGNED_BYTE,
             GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR,
-            GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_REPEAT,
-            GL_UNPACK_ALIGNMENT,
+            GL_LINEAR_MIPMAP_LINEAR, GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T,
+            GL_REPEAT, GL_UNPACK_ALIGNMENT, glGenerateMipmap,
         )
         if not self.materials:
             return
@@ -371,8 +371,34 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glBindTexture(GL_TEXTURE_2D,texid)
                 glTexImage2D(GL_TEXTURE_2D,0,format_id,im.width,im.height,0,
                              format_id,GL_UNSIGNED_BYTE,pixels)
-                for param in (GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER):
-                    glTexParameteri(GL_TEXTURE_2D,param,GL_LINEAR)
+                # Mipmaps and optional anisotropic filtering preserve fine
+                # detail on the oblique surfaces common in character previews.
+                # Never upscale decoded DDS images: the GPU receives the source
+                # resolution selected by the verified material resolver.
+                try:
+                    glGenerateMipmap(GL_TEXTURE_2D)
+                except Exception:
+                    # Some older OpenGL contexts lack a mipmap entry point.
+                    # Keep the model visible at its *original* image size.
+                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR)
+                else:
+                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,
+                                    GL_LINEAR_MIPMAP_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR)
+                try:
+                    from OpenGL.GL import glGetFloatv
+                    from OpenGL.GL.EXT.texture_filter_anisotropic import (
+                        GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                        GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)
+                    maximum=float(glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT))
+                    if maximum >= 2:
+                        from OpenGL.GL import glTexParameterf
+                        glTexParameterf(GL_TEXTURE_2D,
+                                        GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                                        min(maximum,8.))
+                except (ImportError,ValueError,RuntimeError):
+                    # Hardware lacking this extension still uses trilinear mipmaps.
+                    pass
                 for param in (GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T):
                     glTexParameteri(GL_TEXTURE_2D,param,GL_REPEAT)
                 uploads.append(texid)

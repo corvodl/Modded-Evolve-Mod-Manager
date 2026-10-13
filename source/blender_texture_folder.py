@@ -59,8 +59,6 @@ def write_texture_folder(blob, model_file):
     if not model_file.parent.is_dir():
         raise FileNotFoundError("Export destination directory is missing.")
     textures = texture_payloads(blob)
-    if not textures:
-        return ()
     destination = model_file.parent / "Textures"
     if destination.is_symlink():
         raise ValueError("Refusing symlinked texture output directory.")
@@ -70,14 +68,35 @@ def write_texture_folder(blob, model_file):
     prefix = _safe_name(model_file.stem)
     targets = [(destination / ("%s_%03d_%s.png" % (prefix,i+1,name)), raw)
                for i,name,raw in textures]
-    if any(path.exists() or path.is_symlink() for path,_ in targets):
-        raise FileExistsError("Some Blender export texture filenames already exist.")
+    manifest = destination / (prefix + "_texture_manifest.json")
+    if any(path.exists() or path.is_symlink() for path,_ in targets) or manifest.exists():
+        raise FileExistsError("Blender texture export already exists; choose a new destination.")
+    details = []
+    for path,raw in targets:
+        # Embedded PNG IHDR stores exact source dimensions in big-endian order.
+        if len(raw) < 24 or raw[12:16] != b'IHDR':
+            raise ValueError("Embedded PNG is missing a valid IHDR dimension block.")
+        width = int.from_bytes(raw[16:20], 'big')
+        height = int.from_bytes(raw[20:24], 'big')
+        if not (0 < width <= 16384 and 0 < height <= 16384):
+            raise ValueError("Embedded texture dimensions are invalid.")
+        details.append({"file":path.name,"width":width,"height":height})
     created = []
     try:
         for target,raw in targets:
             with target.open("xb") as stream:
                 stream.write(raw)
             created.append(target)
+        with manifest.open("x", encoding="utf-8") as stream:
+            json.dump({
+                "model":model_file.name,"embedded_texture_count":len(targets),
+                "textures":details,
+                "note":("No embedded PNG textures: check missing DDS references "
+                        "and imported texture PAKs." if not details else
+                        "PNG files are exact copies of embedded GLB images; "
+                        "pixel resolution cannot exceed available source DDS.")
+            },stream,indent=2)
+        created.append(manifest)
     except BaseException:
         for target in created:
             target.unlink(missing_ok=True)
