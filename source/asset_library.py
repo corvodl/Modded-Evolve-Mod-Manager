@@ -516,6 +516,11 @@ def remove_archive(identifier, root=None):
     home = _home(root)
     if not re.fullmatch("[0-9a-f]{20}", str(identifier)):
         raise ValueError("Invalid library archive identifier.")
+    from build_collections import catalog
+    memberships = [name for name, build in catalog(home)["builds"].items()
+                   if name != "unassigned" and identifier in build["members"]]
+    if memberships:
+        raise ValueError("Archive belongs to a registered build; remove memberships first.")
     folder = _folder_for_identifier(identifier, home)
     if folder.is_symlink() or not folder.is_dir() or not (folder / MANIFEST).is_file():
         raise ValueError("Selected library archive no longer exists.")
