@@ -13,9 +13,9 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Beta — v1.1.18-beta.35
 
-- Import original PAKs from a chosen source directory and browse Asset Library archives by build.
-- Select and export multiple assets, then create separate editable projects for verified Stage 2 archives and supported maps.
-- Focus Modding on projects and modified files, with refreshed navigation icons and Updates-first Settings.
+- Import PAKs from a selected source directory and browse Asset Library archives by build.
+- Select and export multiple assets; create editable projects from verified Stage 2 PAKs and supported maps.
+- Put projects and modified files first in Modding, with refreshed navigation and Updates-first Settings.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 

@@ -5,9 +5,9 @@ never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
     ('1.1.18-beta.35', (
-        'Import original PAKs from a chosen source directory and browse Asset Library archives by build.',
-        'Select and export multiple assets, then create separate editable projects for verified Stage 2 archives and supported maps.',
-        'Focus Modding on projects and modified files, with refreshed navigation icons and Updates-first Settings.',
+        'Import PAKs from a selected source directory and browse Asset Library archives by build.',
+        'Select and export multiple assets; create editable projects from verified Stage 2 PAKs and supported maps.',
+        'Put projects and modified files first in Modding, with refreshed navigation and Updates-first Settings.',
     )),
     ('1.1.18-beta.34', (
         'Improve Level Editor scene assembly, terrain preview, and resource loading.',
