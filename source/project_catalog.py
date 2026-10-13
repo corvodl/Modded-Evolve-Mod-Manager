@@ -93,13 +93,33 @@ def project_rows(projects_root, stage):
     rows = []
     seen = set()
     candidates = list(data["projects"].items())
-    for candidate in root.iterdir():
-        if candidate.is_dir() and (candidate / ".evolve-pak-workspace.json").is_file():
-            workspace = candidate.resolve()
-            if str(workspace) not in {record["workspace"] for _, record in candidates}:
-                candidates.append(("legacy-" + candidate.name, {
-                    "workspace": str(workspace), "label": candidate.name,
+    # Batch projects contain independent signed-archive workspaces in nested
+    # directories. Discover each owner without treating a collection as one PAK.
+    stack = [(root, 0)]
+    seen_folders = 0
+    registered = {row["workspace"] for _, row in candidates}
+    while stack:
+        directory, depth = stack.pop()
+        seen_folders += 1
+        if seen_folders > MAX_PROJECTS * 8:
+            raise ValueError("Project directory scan limit exceeded.")
+        if (directory / ".evolve-pak-workspace.json").is_file():
+            workspace = directory.resolve()
+            if str(workspace) not in registered:
+                candidates.append(("legacy-" + uuid4().hex, {
+                    "workspace": str(workspace), "label": directory.name,
                     "source_build_id": None, "source_archive_id": None}))
+                registered.add(str(workspace))
+            continue
+        if depth >= 4:
+            continue
+        for child in directory.iterdir():
+            if child.is_symlink() or not child.is_dir():
+                continue
+            if child.name.casefold() in ("built", "backups", "editorbackups", ".build"):
+                continue
+            if child.resolve().is_relative_to(root):
+                stack.append((child, depth + 1))
     if len(candidates) > MAX_PROJECTS:
         raise ValueError("Too many projects to display.")
     for project_id, entry in candidates:
