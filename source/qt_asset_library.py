@@ -11,7 +11,9 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QHeaderView, QFileDialog, QMessageBox,
     QAbstractItemView, QProgressBar, QComboBox, QInputDialog)
 
-from build_collections import catalog, register_build, assign_archive, prepare_transfer
+from build_collections import (catalog, register_build, assign_archive,
+                               remove_membership, update_location, compare_builds,
+                               prepare_transfer)
 from asset_library import (LIBRARY_HOME, import_pak, installed_defaults,
                            imported_archives, verify_library, remove_archive,
                            extracted_index, required_archive_status)
@@ -135,6 +137,15 @@ class AssetLibraryDialog(QDialog):
         build_row.addWidget(self.build_filter, 1)
         build_row.addWidget(self.register_button)
         build_row.addWidget(self.assign_button)
+        self.relocate_button = QPushButton("Update Location…")
+        self.relocate_button.clicked.connect(self.relocate_build)
+        self.detach_button = QPushButton("Remove Membership")
+        self.detach_button.clicked.connect(self.detach_selected)
+        self.compare_button = QPushButton("Compare Builds…")
+        self.compare_button.clicked.connect(self.compare_snapshots)
+        build_row.addWidget(self.relocate_button)
+        build_row.addWidget(self.detach_button)
+        build_row.addWidget(self.compare_button)
         lay.addLayout(build_row)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
@@ -224,7 +235,9 @@ class AssetLibraryDialog(QDialog):
             self, "Build family", "Family:", ["early", "legacy", "stage2", "unknown"], 0, False)
         if ok:
             try:
-                identifier = register_build(label, family)
+                location = QFileDialog.getExistingDirectory(
+                    self, "Optional archive collection directory (Cancel to skip)")
+                identifier = register_build(label, family, location=location or None)
                 self.refresh()
                 self.build_filter.setCurrentIndex(self.build_filter.findData(identifier))
             except (OSError, ValueError) as exc:
@@ -252,6 +265,80 @@ class AssetLibraryDialog(QDialog):
             self.refresh()
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Build membership", str(exc))
+
+    def relocate_build(self):
+        identifier = self.build_filter.currentData()
+        if identifier in (None, "all", "unassigned"):
+            QMessageBox.information(self, "Choose build", "Select a registered build.")
+            return
+        location = QFileDialog.getExistingDirectory(
+            self, "Choose new archive collection location (metadata only)")
+        if location:
+            try:
+                update_location(identifier, location)
+                self.refresh()
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "Build relocation", str(exc))
+
+    def detach_selected(self):
+        record = self._selected_record()
+        identifier = self.build_filter.currentData()
+        if record is None or identifier in (None, "all", "unassigned"):
+            QMessageBox.information(self, "Choose membership",
+                "Select a registered build and one of its archives.")
+            return
+        if QMessageBox.question(
+            self, "Remove build membership?",
+            "Detach this archive from the selected build? Its extracted files "
+            "will remain available to other builds.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            remove_membership(identifier, record["id"])
+            self.refresh()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Remove membership", str(exc))
+
+    def compare_snapshots(self):
+        builds = [(bid, entry["label"]) for bid, entry in catalog()["builds"].items()
+                  if bid != "unassigned"]
+        if len(builds) < 2:
+            QMessageBox.information(self, "Compare builds",
+                "Register at least two snapshots to compare assets.")
+            return
+        options = [label + " [" + bid[:8] + "]" for bid, label in builds]
+        first, ok = QInputDialog.getItem(
+            self, "Compare builds", "Source:", options, 0, False)
+        if not ok:
+            return
+        second, ok = QInputDialog.getItem(
+            self, "Compare builds", "Target:", options, 1, False)
+        if not ok:
+            return
+        source = builds[options.index(first)][0]
+        target = builds[options.index(second)][0]
+        if source == target:
+            QMessageBox.information(self, "Compare builds", "Choose two distinct builds.")
+            return
+        destination, _ = QFileDialog.getSaveFileName(
+            self, "Export build comparison", str(Path.home() / "build-comparison.json"),
+            "JSON files (*.json)")
+        if not destination:
+            return
+        try:
+            output = Path(destination).resolve()
+            if output.exists() or output.is_relative_to(Path(LIBRARY_HOME).resolve()):
+                raise ValueError("Choose a new comparison file outside the Asset Library.")
+            rows = compare_builds(source, target)
+            output.write_text(json.dumps({
+                "source_build": source, "target_build": target,
+                "hash_type": "normalized-extracted-sha256", "assets": rows
+            }, indent=2), encoding="utf-8")
+            QMessageBox.information(self, "Comparison exported",
+                "%d asset paths compared. Review identical, changed, added, removed "
+                "and unknown statuses in the JSON file." % len(rows))
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Build comparison", str(exc))
 
     def refresh(self):
         builds = catalog()["builds"]
@@ -294,7 +381,8 @@ class AssetLibraryDialog(QDialog):
         for button in (self.add_button, self.key_button, self.all_button,
                        self.default_button, self.verify_button,
                        self.remove_button, self.project_button,
-                       self.register_button, self.assign_button, self.transfer_button):
+                       self.register_button, self.assign_button, self.transfer_button,
+                       self.relocate_button, self.detach_button, self.compare_button):
             button.setEnabled(not running)
         self.remove_button.setEnabled(not running and self._selected_record() is not None)
         self.project_button.setEnabled(not running and self._selected_record() is not None)
