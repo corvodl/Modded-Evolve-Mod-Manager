@@ -2,7 +2,7 @@ import unittest
 import struct
 import tempfile
 from pathlib import Path
-from normal_map_utils import NormalMap, is_normal_texture, decode_xy_normal_rgba, choose_highest_resolution, encode_normal_png, export_normal_png
+from normal_map_utils import NormalMap, is_normal_texture, decode_xy_normal_rgba, choose_highest_resolution, encode_normal_png, export_normal_png, inspect_dds_header
 
 
 class NormalMapTests(unittest.TestCase):
@@ -39,6 +39,27 @@ class NormalMapTests(unittest.TestCase):
             self.assertTrue(path.is_file())
             with self.assertRaises(ValueError):
                 export_normal_png(normal, Path(temp), "../bad")
+
+    def test_dds_bc5_header(self):
+        header = bytearray(128)
+        header[:4] = b"DDS "
+        struct.pack_into("<I", header, 4, 124)
+        struct.pack_into("<II", header, 12, 1024, 2048)
+        struct.pack_into("<I", header, 28, 11)
+        struct.pack_into("<I", header, 76, 32)
+        header[84:88] = b"ATI2"
+        result = inspect_dds_header(bytes(header))
+        self.assertEqual((result.width, result.height), (2048, 1024))
+        self.assertEqual((result.x_channel, result.y_channel), (0, 1))
+
+    def test_dds_dxt5_needs_swizzle_evidence(self):
+        header = bytearray(128)
+        header[:4] = b"DDS "
+        struct.pack_into("<I", header, 4, 124)
+        struct.pack_into("<II", header, 12, 4, 4)
+        struct.pack_into("<I", header, 76, 32)
+        header[84:88] = b"DXT5"
+        self.assertIsNone(inspect_dds_header(bytes(header)).x_channel)
 
     def test_largest_mip(self):
         low = NormalMap(1, 1, bytes(4))
