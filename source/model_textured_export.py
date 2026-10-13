@@ -52,6 +52,21 @@ def embed_diffuse_textures(blob, materials):
     if materials is None:
         return blob, 0
     doc, binary = _unpack_glb(blob)
+    # Keep common vertex accessors intact for skinning; omit only hidden draws.
+    hidden_materials = set()
+    for i, material in enumerate(doc.get('materials', [])):
+        name = material.get('name', '')
+        prefix = 'CryEngine material slot '
+        if name.startswith(prefix):
+            try:
+                slot = int(name[len(prefix):].split()[0])
+                if 0 <= slot < len(materials.hidden) and materials.hidden[slot]:
+                    hidden_materials.add(i)
+            except ValueError:
+                pass
+    for mesh in doc.get('meshes', []):
+        mesh['primitives'] = [p for p in mesh.get('primitives', [])
+                              if p.get('material') not in hidden_materials]
     images = doc.setdefault('images', [])
     textures = doc.setdefault('textures', [])
     count = 0

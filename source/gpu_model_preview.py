@@ -327,6 +327,9 @@ class Win32GPUPreview:
             self._call('glColor4f',.75,.83,.95,1)
             fallback=next((x for x in self.texture_ids if x),0)
             for start,count,slot in buf.draws:
+                hidden = getattr(self.materials, 'hidden', ())
+                if slot < len(hidden) and hidden[slot]:
+                    continue
                 tid=self.texture_ids[slot] if slot<len(self.texture_ids) else 0
                 if not tid and len(buf.draws)==1:
                     tid=fallback
