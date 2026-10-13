@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.33', (
+        'Improve model texture filtering and expose decoded DDS dimensions.',
+        'Rebuild original character materials during Blender export.',
+        'Include texture PNGs and resolution manifests in a Textures folder.',
+    )),
     ('1.1.18-beta.32', (
         'Prefer matching streamed character textures over low-resolution DDS fallbacks.',
         'Save exported Blender texture PNGs in a dedicated Textures folder.',
