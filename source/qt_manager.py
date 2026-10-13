@@ -993,9 +993,11 @@ class QtManager(QMainWindow):
         menu_bar = QMenuBar(page)
         menu_bar.setObjectName('moddingMenuBar')
         self.modding_menu = menu_bar
+        self._modding_menus = {}  # Keep Python wrappers for native Qt menu lifetime.
         menu_bar.setNativeMenuBar(False)
         def menu_commands(label, commands):
             menu = menu_bar.addMenu(label)
+            self._modding_menus[label] = menu
             for title, callback in commands:
                 if title is None:
                     menu.addSeparator()
