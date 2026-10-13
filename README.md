@@ -13,9 +13,9 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Beta — v1.1.18-beta.37
 
-- Repair startup for existing editable projects saved by earlier betas.
-- Fix clipped navigation icons at Windows display scaling.
-- Preserve normals and tangents for Blender CDF exports with separate armatures.
+- Repair startup when loading existing mod projects from earlier beta installations.
+- Keep navigation menu icons fully visible at Windows display scaling.
+- Preserve normals and tangents when exporting separate Blender CDF armatures.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 
