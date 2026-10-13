@@ -36,8 +36,27 @@ class BlenderTextureFolderTests(TestCase):
             self.assertEqual(saved[0].parent,root/"Textures")
             self.assertEqual(Image.open(saved[0]).size,(2048,1024))
             self.assertEqual(saved[0].read_bytes(),texture_payloads(blob)[0][2])
+            import json
+            manifest=json.loads((root/"Textures"/"Monster_texture_manifest.json").read_text())
+            self.assertEqual(manifest["embedded_texture_count"],1)
+            self.assertEqual(manifest["textures"][0]["width"],2048)
+            self.assertEqual(manifest["textures"][0]["height"],1024)
             with self.assertRaises(FileExistsError):
                 write_texture_folder(blob,root/"Monster.glb")
+
+    def test_untextured_glb_writes_explanatory_manifest_not_silent_empty_folder(self):
+        from types import SimpleNamespace
+        from model_blender_export import glb_bytes
+        model=SimpleNamespace(vertices=[(0,0,0),(1,0,0),(0,1,0)],
+            triangles=[(0,1,2)],uvs=[(0,0),(1,0),(0,1)],subsets=())
+        with TemporaryDirectory() as folder:
+            root=Path(folder)
+            pngs=write_texture_folder(glb_bytes(model),root/"Missing.glb")
+            self.assertEqual(pngs,())
+            import json
+            result=json.loads((root/"Textures"/"Missing_texture_manifest.json").read_text())
+            self.assertEqual(result["embedded_texture_count"],0)
+            self.assertIn("No embedded PNG textures",result["note"])
 
     def test_two_models_have_distinct_texture_file_names(self):
         blob=sample_glb()
