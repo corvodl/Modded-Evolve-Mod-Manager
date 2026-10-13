@@ -66,13 +66,19 @@ class ModernQtNavigationTests(unittest.TestCase):
         self.win.open_page(SECTIONS.index("Settings"))
         self.app.processEvents()
         self.assertTrue(self.win.update_button.isVisible())
-        with patch.object(self.win, "check_updates") as checked:
-            # The button connection is the existing bound method, so test
-            # the real slot without network access via its configured guard.
+        # The button keeps a connection to the original bound method.
+        # When busy, that method shows a modal information dialog; mock only
+        # the dialog, not check_updates, so the actual guard is exercised.
+        with patch.object(self.win, "info") as info:
             self.win.busy = True
-            self.win.update_button.click()
-            self.assertFalse(self.win.update_running)
-            self.win.busy = False  # Closing the fixture must never prompt for an active task.
+            try:
+                self.win.update_button.click()
+                info.assert_called_once_with(
+                    "Updates", "Finish the current operation before updating.")
+                self.assertFalse(self.win.update_running)
+                self.assertTrue(self.win.update_button.isEnabled())
+            finally:
+                self.win.busy = False
 
     def test_icon_offline_themes(self):
         for tone in ("#ffffff", "#202129"):
