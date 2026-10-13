@@ -473,7 +473,8 @@ def skin_glb_composite_separate(glb, rig_parts, *, part_names=None):
     Each source skin has its own verified rest hierarchy and inverse bindings.
     glTF allows one skin per mesh *node*, not per mesh primitive, so the
     composite is split into contiguous source parts. The original material
-    indices, UVs and texture payloads are retained. This is deliberately not
+    indices, UVs, normals, tangents and texture payloads are retained.
+    This is deliberately not
     presented as one retargetable skeleton or as a synchronized CAF animation.
     """
     from model_textured_export import _unpack_glb, _pack_glb
@@ -498,6 +499,23 @@ def skin_glb_composite_separate(glb, rig_parts, *, part_names=None):
         raise ValueError('Composite UV count differs from vertex count.')
     if len(position) != sum(int(part[2]) for part in rig_parts):
         raise ValueError('Source parts do not match composite vertex count.')
+    # The single-mesh exporter already generates per-vertex NORMAL and
+    # TANGENT. Splitting incompatible CDF bind poses must NOT discard them:
+    # doing so changes Blender lighting and breaks tangent-space normal maps.
+    shading = {}
+    for semantic, width in (('NORMAL', 3), ('TANGENT', 4)):
+        if semantic not in vertex_attrs:
+            continue
+        source_accessor = doc['accessors'][vertex_attrs[semantic]]
+        if (source_accessor.get('componentType') != 5126 or
+                source_accessor.get('type') != 'VEC%d' % width):
+            raise ValueError('Unsupported CDF composite ' + semantic + ' accessor.')
+        values = _accessor(doc, binary, vertex_attrs[semantic]).astype('<f4')
+        if values.shape != (len(position), width):
+            raise ValueError('CDF composite ' + semantic + ' count differs from positions.')
+        shading[semantic] = values
+    if 'TANGENT' in shading and ('NORMAL' not in shading or uvs is None):
+        raise ValueError('Composite tangents require normals and UV coordinates.')
     label_names = tuple(part_names or ())
     if label_names and len(label_names) != len(rig_parts):
         raise ValueError('Part name count must match source skins.')
@@ -548,6 +566,13 @@ def skin_glb_composite_separate(glb, rig_parts, *, part_names=None):
             uv_view = add_view(np.ascontiguousarray(
                 uvs[first:first+count],dtype='<f4').tobytes(),34962)
             attributes['TEXCOORD_0'] = add_accessor(uv_view,'VEC2',count,5126)
+        for semantic, values in shading.items():
+            # Preserve source-normalized directions and tangent handedness.
+            # Recomputing after subdivision can change the visible seams.
+            fragment = np.ascontiguousarray(values[first:first+count], dtype='<f4')
+            view = add_view(fragment.tobytes(), 34962)
+            attributes[semantic] = add_accessor(
+                view, 'VEC3' if semantic == 'NORMAL' else 'VEC4', count, 5126)
         j0 = add_view(ids[:,:4].astype('<u2').tobytes(),34962)
         w0 = add_view(weights[:,:4].tobytes(),34962)
         attributes['JOINTS_0'] = add_accessor(j0,'VEC4',count,5123)
