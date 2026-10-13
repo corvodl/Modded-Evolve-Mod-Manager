@@ -40,6 +40,17 @@ class Beta36NormalPipelineTests(unittest.TestCase):
         self.assertEqual(image.size, (4, 4))
         self.assertGreater(image.getpixel((0, 0))[2], 250)
 
+    def test_signed_bc5_uses_signed_channels(self):
+        # Signed BC5 zero vector yields a flat +Z tangent-space normal.
+        flat = bytes((0, 0)) + bytes(6)
+        image = decode_normal_dds_image(dds(b"BC5S", 4, 4, flat+flat),
+                                        source_name="body_ddn.dds")
+        self.assertGreater(image.getpixel((0, 0))[2], 250)
+        extreme = bytes((129, 129)) + bytes(6)
+        image = decode_normal_dds_image(dds(b"BC5S", 4, 4, extreme+flat),
+                                        source_name="body_ddn.dds")
+        self.assertLess(image.getpixel((0, 0))[0], 10)
+
     def test_dxt5nm_uses_alpha_as_x_and_green_as_y(self):
         # BC3 alpha endpoint 128; RGB565 green endpoint approximately 128.
         block = bytes((128, 128)) + bytes(6) + struct.pack("<HHI", 32 << 5, 32 << 5, 0)
