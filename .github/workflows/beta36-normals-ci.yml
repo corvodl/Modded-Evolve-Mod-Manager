@@ -1,0 +1,34 @@
+name: Verify beta.36 normal-map integration
+on:
+  pull_request:
+    branches: [beta]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: beta36-normals-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  normal-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test requirements
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libegl1 libopengl0 libgcrypt20
+          python -m pip install 'cryptography>=41,<48' 'Pillow>=12.3,<13' 'numpy>=1.26,<3' 'PySide6>=6.8,<6.11' 'PyOpenGL>=3.1.7,<4'
+      - name: Compile packaged implementation
+        run: python -m compileall -q source
+      - name: Normal DDS, material, GLB, texture-folder and GPU regressions
+        working-directory: source
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m unittest -v test_beta36_normal_pipeline test_textured_export test_blender_texture_folder test_gpu_texture_quality
+      - name: Standalone normal helper tests
+        run: python -m unittest discover -s tests -p 'test_*normal*.py' -v

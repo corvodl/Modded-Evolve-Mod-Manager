@@ -33,11 +33,11 @@ class BlenderTextureFolderTests(TestCase):
             root=Path(folder)
             saved=write_texture_folder(blob,root/"Monster.glb")
             self.assertEqual(len(saved),1)
-            self.assertEqual(saved[0].parent,root/"Textures")
+            self.assertEqual(saved[0].parent,root/"textures")
             self.assertEqual(Image.open(saved[0]).size,(2048,1024))
             self.assertEqual(saved[0].read_bytes(),texture_payloads(blob)[0][2])
             import json
-            manifest=json.loads((root/"Textures"/"Monster_texture_manifest.json").read_text())
+            manifest=json.loads((root/"textures"/"Monster_texture_manifest.json").read_text())
             self.assertEqual(manifest["embedded_texture_count"],1)
             self.assertEqual(manifest["textures"][0]["width"],2048)
             self.assertEqual(manifest["textures"][0]["height"],1024)
@@ -54,7 +54,7 @@ class BlenderTextureFolderTests(TestCase):
             pngs=write_texture_folder(glb_bytes(model),root/"Missing.glb")
             self.assertEqual(pngs,())
             import json
-            result=json.loads((root/"Textures"/"Missing_texture_manifest.json").read_text())
+            result=json.loads((root/"textures"/"Missing_texture_manifest.json").read_text())
             self.assertEqual(result["embedded_texture_count"],0)
             self.assertIn("No embedded PNG textures",result["note"])
 
@@ -65,8 +65,8 @@ class BlenderTextureFolderTests(TestCase):
             first=write_texture_folder(blob,root/"Body.glb")
             second=write_texture_folder(blob,root/"Weapon.glb")
             self.assertNotEqual(first[0],second[0])
-            self.assertEqual(len(list((root/"Textures").glob("*.png"))),2)
-            self.assertEqual(len(list((root/"Textures").glob("*_texture_manifest.json"))),2)
+            self.assertEqual(len(list((root/"textures").glob("*.png"))),2)
+            self.assertEqual(len(list((root/"textures").glob("*_texture_manifest.json"))),2)
 
     def test_character_material_prefers_streamed_same_path(self):
         with TemporaryDirectory() as folder:

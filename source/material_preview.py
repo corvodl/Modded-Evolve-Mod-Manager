@@ -174,7 +174,7 @@ def _external_lookup(folder, ref):
     return None
 
 
-def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM):
+def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM, normal_map=False):
     path = item['file']
     if path.stat().st_size > MAX_TEXTURE_BYTES:
         raise ValueError('Texture fragment exceeds the 64 MiB preview limit.')
@@ -253,11 +253,18 @@ def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM):
     info = parse_dds(raw)
     if len(raw) > MAX_TEXTURE_BYTES or info.width * info.height > 16_777_216:
         raise ValueError('DDS texture exceeds preview size limits.')
-    with Image.open(BytesIO(raw)) as im:
-        if im.format != 'DDS':
-            raise ValueError('Unsupported texture encoding for model preview.')
-        im.load()
-        tex = im.convert('RGBA') if 'A' in im.getbands() else im.convert('RGB')
+    # CryEngine normal maps can be BC5 XY or DXT5nm alpha/green, not
+    # directly usable tangent-space RGB. The same normalized pixels feed the
+    # Qt shader and GLB exporter; never rescale a lower mip as a substitute.
+    if normal_map:
+        from normal_map_utils import decode_normal_dds_image
+        tex = decode_normal_dds_image(raw, source_name=relative)
+    else:
+        with Image.open(BytesIO(raw)) as im:
+            if im.format != 'DDS':
+                raise ValueError('Unsupported texture encoding for model preview.')
+            im.load()
+            tex = im.convert('RGBA') if 'A' in im.getbands() else im.convert('RGB')
     # DDS alpha may be auxiliary material data. Pillow RGBA resampling
     # premultiplies it into RGB, destroying opaque colors wherever alpha is 0.
     # Preserve independent channels; the material decides how alpha is used.
@@ -391,12 +398,30 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         ref = next((child.get('File') or child.get('file')
                     for child in item.findall('./Textures/Texture')
                     if (child.get('Map') or child.get('map') or '').casefold() in names),None)
+        normal = 'normal' in names
+        if not ref and normal:
+            # Some extracted materials omit the normal slot but ship a
+            # conventional _ddn source in the same character/Asset Library.
+            # Resolve only via the verified material-relative index; never
+            # select an arbitrary matching basename from another actor.
+            diffuse_ref = next((child.get('File') or child.get('file')
+                for child in item.findall('./Textures/Texture')
+                if (child.get('Map') or child.get('map') or '').casefold() == 'diffuse'), None)
+            if diffuse_ref:
+                candidate = re.sub(r'(?i)(?:_diffuse|_diff|_dif|_d)(?=\.(?:dds|tif|tiff|png)(?:\.\d+)?$)',
+                                   '_ddn', diffuse_ref)
+                if candidate == diffuse_ref:
+                    candidate = re.sub(r'(?i)(?=\.(?:dds|tif|tiff|png)(?:\.\d+)?$)',
+                                       '_ddn', diffuse_ref)
+                if candidate != diffuse_ref:
+                    ref = candidate
         if not ref:
             return None
         hit = find_texture(ref)
         if hit is None:
             return None
-        return _decode_texture(hit, index=index, max_dimension=decode_max)
+        return _decode_texture(hit, index=index, max_dimension=decode_max,
+                               normal_map=normal)
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; sources = []; references = []; hidden = []

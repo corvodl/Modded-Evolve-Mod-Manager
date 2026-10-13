@@ -1,4 +1,4 @@
-"""GLB diffuse texture embedding and honest skinning-readiness diagnostics.
+"""GLB diffuse/normal texture embedding and skinning-readiness diagnostics.
 
 Uses the existing verified material/DDS streaming decoder and extracted-PAK
 project catalog. Unsupported or ambiguous textures remain unbound rather than
@@ -119,7 +119,56 @@ def embed_diffuse_textures(blob, materials):
             if 'KHR_texture_transform' not in extensions:
                 extensions.append('KHR_texture_transform')
         count += 1
-    if not count:
+    # Normal maps were already decoded through material_preview's verified
+    # material/Asset-Library DDS resolver. Preserve them as *linear* tangent
+    # space PNGs, not as sRGB diffuse maps. glTF normalTexture is what Blender
+    # imports into a Normal Map node.
+    from gltf_normal_materials import attach_normal_texture
+    from texture_transform import transform_for, IDENTITY
+    for material in doc.get('materials', []):
+        name = material.get('name', '')
+        prefix = 'CryEngine material slot '
+        if not name.startswith(prefix):
+            continue
+        try:
+            slot = int(name[len(prefix):].split()[0])
+        except ValueError:
+            continue
+        for role, collection in (('normal', getattr(materials, 'normal_maps', ())),
+                                 ('specular', getattr(materials, 'specular_maps', ()))):
+            if slot < 0 or slot >= len(collection) or collection[slot] is None:
+                continue
+            if len(images) >= MAX_TEXTURES:
+                raise ValueError('Exceeded texture export safety limit.')
+            source = collection[slot]
+            with BytesIO() as output:
+                source.convert('RGB').save(output, format='PNG')
+                payload = output.getvalue()
+            if len(payload) > MAX_IMAGE_BYTES:
+                raise ValueError('A material %s PNG is too large to embed.' % role)
+            binary.extend(bytes(-len(binary) % 4))
+            view = {'buffer': 0, 'byteOffset': len(binary), 'byteLength': len(payload)}
+            binary.extend(payload)
+            doc['bufferViews'].append(view)
+            images.append({'bufferView': len(doc['bufferViews']) - 1,
+                           'mimeType': 'image/png',
+                           'name': '%s slot %d' % (role.title(), slot)})
+            textures.append({'source': len(images) - 1})
+            if role == 'normal':
+                attach_normal_texture(doc, doc['materials'].index(material), len(textures) - 1)
+                transform = transform_for(materials, slot)
+                if transform != IDENTITY:
+                    su, sv, ou, ov, angle = transform
+                    material['normalTexture']['extensions'] = {
+                        'KHR_texture_transform': {'scale': [su, sv],
+                                                  'offset': [ou, ov], 'rotation': angle}}
+                    extensions = doc.setdefault('extensionsUsed', [])
+                    if 'KHR_texture_transform' not in extensions:
+                        extensions.append('KHR_texture_transform')
+            # Other optional maps remain explicitly named image resources in
+            # the GLB/textures folder; don't guess glTF PBR packing for CryEngine
+            # specular/gloss maps whose semantics differ between shaders.
+    if not images:
         doc.pop('images', None)
         doc.pop('textures', None)
     return _pack_glb(doc, binary), count

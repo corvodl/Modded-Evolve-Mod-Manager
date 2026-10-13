@@ -1,7 +1,7 @@
 """Write independently editable texture PNGs beside Blender model exports.
 
 GLB remains self-contained for drag-and-drop Blender import. The companion
-Textures/ folder exposes the *same exact* embedded image payloads so artists
+textures/ folder exposes the *same exact* embedded image payloads so artists
 can replace, inspect and relink textures without extracting binary glTF chunks.
 No DDS recompression or downsizing occurs in this pass.
 """
@@ -50,7 +50,7 @@ def texture_payloads(blob):
 
 
 def write_texture_folder(blob, model_file):
-    """Write <export directory>/Textures/<model>_<slot>.png, atomically.
+    """Write <export directory>/textures/<model>_<slot>.png, atomically.
 
     Existing textures are never silently replaced. Return the generated
     paths; names are prefixed by the model stem to avoid folder collisions.
@@ -59,7 +59,7 @@ def write_texture_folder(blob, model_file):
     if not model_file.parent.is_dir():
         raise FileNotFoundError("Export destination directory is missing.")
     textures = texture_payloads(blob)
-    destination = model_file.parent / "Textures"
+    destination = model_file.parent / "textures"
     if destination.is_symlink():
         raise ValueError("Refusing symlinked texture output directory.")
     destination.mkdir(exist_ok=True)
