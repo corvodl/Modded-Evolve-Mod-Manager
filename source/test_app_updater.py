@@ -153,7 +153,8 @@ class UpdateTests(unittest.TestCase):
         self.assertIn("Backup state is ambiguous", script)
         self.assertIn("$Moved.Add($name)", script)
         self.assertIn("ROLLBACK INCOMPLETE", script)
-        self.assertNotIn("Remove-Item -LiteralPath $Backup -Recurse -Force", script)
+        self.assertIn("try { Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction Stop }", script)
+        self.assertIn("ROLLBACK COMPLETE", script)
 
     def test_detached_installer_has_visible_progress_and_restart(self):
         script = u.APPLY_PS1
