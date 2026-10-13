@@ -111,7 +111,8 @@ class BuildCollectionTests(unittest.TestCase):
         folder = self.root / ("shared.pak__" + self.one)
         manifest_path = folder / MANIFEST
         record = json.loads(manifest_path.read_text("utf-8"))
-        outside = self.root.parent / ("build-test-" + self.one + ".pak")
+        source_dir = tempfile.TemporaryDirectory()
+        outside = Path(source_dir.name) / "shared.pak"
         stage = self.root / "stage"
         try:
             outside.write_bytes(b"synthetic-stage-archive")
@@ -128,7 +129,7 @@ class BuildCollectionTests(unittest.TestCase):
             self.assertEqual(rel, "shared.pak")
             self.assertEqual(staged, stage / "paks" / "shared.pak")
         finally:
-            outside.unlink(missing_ok=True)
+            source_dir.cleanup()
 
     def test_target_baseline_guard_and_transfer_cancel(self):
         from asset_library import ImportCanceled
