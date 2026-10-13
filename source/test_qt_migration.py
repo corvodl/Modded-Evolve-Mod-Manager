@@ -184,8 +184,8 @@ class QtMigrationTests(unittest.TestCase):
     def test_info_click_opens_help_without_triggering_adjacent_action(self):
         # The compact Modding page routes help through a menu, rather than
         # eight large inline buttons with separate info icon columns.
-        help_menu = next(x for x in self.win.modding_menu.actions()
-                         if x.title() == 'Help')
+        help_menu = next(x.menu() for x in self.win.modding_menu.actions()
+                         if x.text() == 'Help')
         action = next(x for x in help_menu.actions()
                       if x.text() == 'Modding Help')
         with patch.object(self.win, 'show_help') as help_dialog, \
@@ -316,13 +316,14 @@ class QtMigrationTests(unittest.TestCase):
 
     def test_settings_sections_stay_inside_settings_page(self):
         self.assertEqual(self.win.settings_sections, (
-            'GENERAL', 'GAME & FILES', 'BACKUPS & RECOVERY',
-            'LAUNCH PREFERENCES', 'UPDATES & ADVANCED'))
+            'UPDATES', 'GENERAL', 'GAME & FILES', 'ASSET LIBRARY',
+            'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
+            'ADVANCED & MAINTENANCE'))
         self.assertEqual(len(self.win.nav_buttons), len(SECTIONS))
         self.assertEqual(self.win.stack.count(), len(SECTIONS))
         self.assertEqual([btn.text().replace('&&', '&') for btn in self.win.nav_buttons], list(SECTIONS))
         dividers = self.win.pages['settings'].findChildren(QFrame, 'settingsDivider')
-        self.assertEqual(len(dividers), 5)
+        self.assertEqual(len(dividers), len(self.win.settings_sections))
         section_headings = [
             label.text() for label in self.win.pages['settings'].findChildren(QLabel)
             if label.objectName() == 'settingsHeading'
@@ -419,7 +420,7 @@ class QtMigrationTests(unittest.TestCase):
         self.assertEqual(self.win.table.rowCount(),1)
         descriptions = [self.win.table.item(i,1).text()
                         for i in range(self.win.table.rowCount())]
-        self.assertEqual(descriptions,['Goliath Models'])
+        self.assertEqual(descriptions,['Game'])
         self.assertEqual(self.win.table.item(0,2).text(),
                          'characters_monsters_goliath_data.pak')
 
