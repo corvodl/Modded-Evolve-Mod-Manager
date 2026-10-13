@@ -8,7 +8,7 @@ signature matches either the original or custom stage public RSA key.
 No automatic eviction: imports are retained until the user removes them.
 """
 from __future__ import annotations
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import hashlib
 import json
 import os
@@ -40,8 +40,8 @@ MAX_ENTRIES = 250_000
 MAX_ENTRY_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 100 * 1024 * 1024 * 1024
 _lock = threading.RLock()
-_index_cache = None
-_index_fingerprint = None
+_index_cache = OrderedDict()
+MAX_INDEX_ROOTS = 4
 
 
 class ImportCanceled(RuntimeError):
@@ -61,10 +61,8 @@ def _sha_file(path):
 
 
 def _invalidate():
-    global _index_cache, _index_fingerprint
     with _lock:
-        _index_cache = None
-        _index_fingerprint = None
+        _index_cache.clear()
 
 
 def _archive_identifier(folder):
@@ -257,15 +255,16 @@ def reference_status(virtual, root=None):
 
 def extracted_index(root=None):
     """Read-only catalog of extracted loose files; never decrypts at lookup."""
-    global _index_cache, _index_fingerprint
     home = _home(root)
     folders = _manifest_dirs(home)
     stamp = tuple((folder.name, (folder / MANIFEST).stat().st_mtime_ns)
                   for folder in folders)
     cache_key = (str(home), stamp)
     with _lock:
-        if _index_fingerprint == cache_key and _index_cache is not None:
-            return {key: list(records) for key, records in _index_cache.items()}
+        cached = _index_cache.get(str(home))
+        if cached is not None and cached[0] == cache_key:
+            _index_cache.move_to_end(str(home))
+            return {key: list(records) for key, records in cached[1].items()}
     from evolve_pak_workspace import normalized_name
     index = defaultdict(list)
     for folder in folders:
@@ -291,8 +290,10 @@ def extracted_index(root=None):
             continue
     result = dict(index)
     with _lock:
-        _index_fingerprint = cache_key
-        _index_cache = result
+        _index_cache[str(home)] = (cache_key, result)
+        _index_cache.move_to_end(str(home))
+        while len(_index_cache) > MAX_INDEX_ROOTS:
+            _index_cache.popitem(last=False)
     return {key: list(records) for key, records in result.items()}
 
 

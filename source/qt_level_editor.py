@@ -229,6 +229,7 @@ class UnrealStyleLevelEditor(QMainWindow):
     """UE4/5-like placement workspace for extracted Evolve Stage 2 levels."""
     mapCatalogReady = Signal(int,object)
     mapCopyReady = Signal(int,object,object)
+    mapProgress = Signal(object)
     levelExportReady = Signal(object,object)
 
     def __init__(self,parent,workspace):
@@ -261,12 +262,51 @@ class UnrealStyleLevelEditor(QMainWindow):
         self._export_cancel=Event()
         self._export_running=False
         self.levelExportReady.connect(self._level_export_complete)
+        from PySide6.QtWidgets import QProgressBar
+        self.load_progress = QProgressBar()
+        self.load_progress.setMaximumWidth(220)
+        self.load_progress.setRange(0,0)
+        self.cancel_load = QPushButton('Cancel loading')
+        self.cancel_load.clicked.connect(self._cancel_loading)
+        self.statusBar().addPermanentWidget(self.load_progress)
+        self.statusBar().addPermanentWidget(self.cancel_load)
+        self.mapProgress.connect(self._map_progress)
         self._build_toolbar()
         self._build_workspace()
         self._populate()
         self.refresh_maps()
         self.statusBar().showMessage(
             "Loading source terrain and static meshes • tile textures and vegetation remain unsupported")
+
+    def _terrain_tiles(self, checked):
+        self.viewport.show_terrain_tiles = checked
+        self.viewport.update()
+
+    def _terrain_detail(self, stride):
+        self.viewport.terrain_stride = stride
+        self.viewport.reload_scene()
+
+    def _loading_progress(self, event):
+        total = event.total
+        self.load_progress.setRange(0,total if total else 0)
+        self.load_progress.setValue(event.completed)
+        self.load_progress.setFormat(event.phase + ' %p%')
+        self.cancel_load.setEnabled(event.phase not in ('complete','cancelled'))
+
+    def _map_progress(self, event):
+        if event.generation == self._map_copy_generation:
+            self._loading_progress(event)
+            self.statusBar().showMessage(event.label)
+
+    def _cancel_loading(self):
+        self._map_copy_cancel.set()
+        self._map_copy_generation += 1
+        self.map_selector.setEnabled(True)
+        self.viewport.cancel_loading()
+        self.cancel_load.setEnabled(False)
+        self.load_progress.setRange(0,1)
+        self.load_progress.setValue(0)
+        self.load_progress.setFormat('Cancelled')
 
     def _action(self,label,callback,tip=None,checkable=False):
         action=QAction(label,self)
@@ -295,6 +335,11 @@ class UnrealStyleLevelEditor(QMainWindow):
         view.addAction(self._action("Perspective 3D", lambda: self._projection("Perspective")))
         view.addAction(self._action("Orthographic 3D", lambda: self._projection("Orthographic")))
         view.addAction(self._action("Scene Coverage / Diagnostics", self.scene_diagnostics))
+        view.addAction(self._action("Terrain tiles (unverified mapping)",
+            self._terrain_tiles, checkable=True))
+        detail = view.addMenu('Terrain detail')
+        for label,stride in (('Full source',1),('Half resolution',2),('Quarter resolution',4)):
+            detail.addAction(self._action(label,lambda checked=False,s=stride: self._terrain_detail(s)))
         view.addAction(self._action("Terrain / Vegetation Source Metadata", self.inspect_level_sources))
         help_menu=menu.addMenu("Help")
         help_menu.addAction(self._action("Level Editor Limitations",self.limitations))
@@ -376,6 +421,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.viewport.selected.connect(self.select_object)
         self.viewport.moved.connect(self._viewport_moved)
         self.viewport.statusChanged.connect(self._scene_status)
+        self.viewport.progressChanged.connect(self._loading_progress)
         self.viewport.materialsReady.connect(self._materials_ready)
         horizontal.addWidget(self.viewport)
 
@@ -556,7 +602,22 @@ class UnrealStyleLevelEditor(QMainWindow):
         else:
             self._map_copy_cancel.set()
             self._map_copy_generation += 1
-            self.switch_map(Path(target))
+            self._prepare_existing_map(Path(target))
+
+    def _prepare_existing_map(self, target):
+        self._map_copy_cancel.set()
+        self._map_copy_cancel = Event()
+        self._map_copy_generation += 1
+        token,cancel = self._map_copy_generation,self._map_copy_cancel
+        def job():
+            try:
+                prepared = LevelProject(target)
+                if not cancel.is_set():
+                    self.mapCopyReady.emit(token,prepared,None)
+            except (OSError,ValueError) as exc:
+                if not cancel.is_set():
+                    self.mapCopyReady.emit(token,None,str(exc)[:250])
+        Thread(target=job,name='Evolve-Existing-Map-Parse',daemon=True).start()
 
     def _load_library_map(self,map_id):
         """Import/make an editable copy on a worker; retain previous map on failure."""
@@ -571,6 +632,10 @@ class UnrealStyleLevelEditor(QMainWindow):
         destination=self.project.workspace.parent/("Level-"+map_id)
         self.statusBar().showMessage("Preparing editable map "+map_id+" in background…")
         self.map_selector.setEnabled(False)
+        def report(label,current,total):
+            from level_progress import LoadProgress
+            if not cancel.is_set():
+                self.mapProgress.emit(LoadProgress(token,'map preparation',current,total,label))
         def job():
             try:
                 if game is not None and stage is not None:
@@ -578,13 +643,14 @@ class UnrealStyleLevelEditor(QMainWindow):
                         level_name=map_id,workspace=self.project.workspace,scene=())
                     ensure_map_archives(context,game,stage,
                                         DATA_HOME/"LevelDependencyCache",
-                                        imported_root=LIBRARY_HOME,cancel=cancel)
+                                        imported_root=LIBRARY_HOME,cancel=cancel,progress=report)
                 if cancel.is_set():
                     return
                 folder=copy_editable_map_from_library(
                     map_id,destination,
                     library_roots=(LIBRARY_HOME,DATA_HOME/"LevelDependencyCache"),
-                    cancel=cancel)
+                    cancel=cancel,progress=report)
+                report("Parsing placements",0,None)
                 prepared=LevelProject(folder)
                 self.mapCopyReady.emit(token,prepared,None)
             except (OSError,ValueError,RuntimeError,InterruptedError) as exc:
@@ -755,7 +821,7 @@ class UnrealStyleLevelEditor(QMainWindow):
 
     def scene_diagnostics(self):
         decoded = len(self.viewport.assets)
-        coverage = sum(1 for item in self.project.scene
+        coverage = sum(1 for item in self.viewport.scene
                        if (item.model.casefold(), item.material.casefold())
                        in self.viewport.assets)
         missing = "\n".join(f"• {reason}: {count}" for reason,count
@@ -763,7 +829,7 @@ class UnrealStyleLevelEditor(QMainWindow):
                                       key=lambda x:-x[1])[:25])
         terrain=getattr(self.viewport,"terrain",None)
         terrain_status=(f"{terrain.width}×{terrain.height} source elevations; "
-                        f"{len(terrain.indices)//3:,} triangles (stride {terrain.stride}); "
+                        f"{sum(len(c.indices)//3 for c in self.viewport.terrain_chunks):,} triangles (stride {terrain.stride}); "
                         f"source: {terrain.source}"
                         if terrain is not None else "no supported decoded source terrain")
         dep=getattr(self.viewport,"_dependency_report",{})
@@ -778,16 +844,16 @@ class UnrealStyleLevelEditor(QMainWindow):
         QMessageBox.information(
             self, "Rendered scene diagnostics",
             f"Map: {self.project.level_name}\n"
-            f"Placed scene nodes: {len(self.project.scene):,}\n"
+            f"Placed scene nodes: {len(self.viewport.scene):,}\n"
             f"Rendered instances: {coverage:,}\n"
             f"Decoded material variants: {decoded:,}\n"
-            f"Hierarchy warnings: {len(self.project.scene_diagnostics):,}\n"
+            f"Hierarchy warnings: {len(getattr(self.viewport,'_assembly_diagnostics',())):,}\n"
             f"Terrain: {terrain_status}\n"
             f"PAK dependencies: {archive_status}\n"
             f"Render/lookup problems:\n{missing or '(none reported)'}\n\n"
             f"Missing/conflicting providers:\n{dep_missing or '(none reported)'}\n\n"
-            "Source terrain is rendered read-only without authored terrain tile "
-            "textures. Unsupported vegetation, roads, prefabs and compiled "
+            "Terrain tile previews are opt-in with unverified mapping/color order. "
+            "Unsupported vegetation, roads, prefabs and compiled "
             "terrain are not replaced by fabricated geometry.")
 
     def apply_material_override(self):
@@ -950,6 +1016,7 @@ class UnrealStyleLevelEditor(QMainWindow):
             if node.get("Parent") or node.get("Group"):
                 raise ValueError("Parented objects have local transforms; edit position in the Details panel.")
             self.project.apply(layer,index,"Pos",position)
+            self.viewport.reload_scene()
             self.select_object(layer,index)
             self._dirty_state()
         except ValueError as exc:
@@ -965,6 +1032,7 @@ class UnrealStyleLevelEditor(QMainWindow):
                 if key=="Scale" and any(abs(x)<.000001 for x in vals):
                     raise ValueError("Object scale cannot contain zero.")
                 self.project.apply(layer,index,key,vals)
+            self.viewport.reload_scene()
             self.select_object(layer,index)
             self._dirty_state()
         except (ValueError,OSError) as exc:
