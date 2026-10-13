@@ -1,25 +1,25 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.30
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.31
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.30 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.31 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
 
 ## Latest Stable — v1.1.17.1
 
 - Add a Windows installer with optional Desktop and Start Menu shortcuts.
 - Compare Stable and Beta releases and offer only the newest version.
 
-## Latest Beta — v1.1.18-beta.30
+## Latest Beta — v1.1.18-beta.31
 
-- Preserve higher-resolution DDS textures in character previews and Blender exports.
-- Recover verified streamed texture mipmaps across extracted PAKs.
-- Increase bounded GLB texture quality without altering original assets.
+- Preview combined level terrain and supported objects as editable Blender scenes.
+- Export GLB scenes and optional native Blender projects.
+- Report unresolved map geometry and retry deferred assets during export.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 
-Versioned release: [v1.1.18-beta.30](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.30).
+Versioned release: [v1.1.18-beta.31](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.31).
 
 ## Download and install
 
