@@ -434,36 +434,80 @@ class AssetLibraryDialog(QDialog):
         self.controller.import_files(files, self.stage, build_id=self._import_build())
 
     def import_all_game(self):
-        from asset_library_bulk import discover_game_paks
+        from asset_library_bulk import discover_collection_paks
+        builds = catalog()["builds"]
+        existing = [(bid, entry) for bid, entry in builds.items()
+                    if bid != "unassigned"]
+        choices = [entry["label"] + " [" + bid[:8] + "] (" + entry["family"] + ")"
+                   for bid, entry in existing]
+        choices.append("Register new collection…")
+        selected_id = self.build_filter.currentData()
+        default_index = next((i for i, (bid, _) in enumerate(existing)
+                              if bid == selected_id), len(choices) - 1)
+        selected, ok = QInputDialog.getItem(
+            self, "Source build collection", "Import into build:",
+            choices, default_index, False)
+        if not ok:
+            return
+        if selected == choices[-1]:
+            label, ok = QInputDialog.getText(
+                self, "New build snapshot", "Editable snapshot label:")
+            if not ok or not label.strip():
+                return
+            family, ok = QInputDialog.getItem(
+                self, "Build family", "Source family:",
+                ["stage2", "legacy", "early", "unknown"], 0, False)
+            if not ok:
+                return
+            build_id = None
+            new_snapshot = (label.strip(), family)
+            default = str(self.game or Path.home())
+        else:
+            build_id, record = existing[choices.index(selected)]
+            new_snapshot = None
+            default = record.get("location") or str(self.game or Path.home())
+        source = QFileDialog.getExistingDirectory(
+            self, "Select SOURCE directory containing PAK archives", default)
+        if not source:
+            return
         try:
-            scan = discover_game_paks(self.game)
+            scan = discover_collection_paks(source)
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Full-game scan unavailable", str(exc))
+            QMessageBox.warning(self, "Collection scan", str(exc))
             return
         if not scan.files:
-            QMessageBox.information(
-                self, "No game archives", "No PAKs were found in the EvolveGame folder.")
+            QMessageBox.information(self, "Empty collection",
+                "No .pak files found under the selected directory.")
             return
-        total = scan.packed_bytes / (1024 ** 3)
-        free = scan.available_bytes / (1024 ** 3)
-        todo = len(scan.files) - scan.already_imported
+        if (build_id and record.get("location") and
+                Path(record["location"]).resolve() != Path(source).resolve()):
+            QMessageBox.warning(self, "Snapshot source differs",
+                "This snapshot belongs to another source directory. "
+                "Register a new build instead of silently changing its archive inventory.")
+            return
         if QMessageBox.question(
-            self, "Import ALL Evolve game PAKs?",
-            "This is an OPTIONAL one-time extraction of every .pak found "
-            "inside your installed EvolveGame.\n\n"
-            "%d PAKs found (%d already imported).\n"
-            "%.2f GiB of compressed PAK input.\n"
-            "%.2f GiB free on the Asset Library drive.\n\n"
-            "Extracted data can occupy several times the compressed size. "
-            "Check disk space first. Each PAK is signature-verified, and "
-            "unsupported archives will be reported rather than silently used.\n\n"
-            "Original PAKs will NOT change. You may cancel; completed archives "
-            "will remain and can be reused when you retry.\n\n"
-            "Start importing the remaining %d archives?"
-            % (len(scan.files), scan.already_imported, total, free, todo),
+            self, "Import all archives from chosen source?",
+            "Source (read only):\\n%s\\n\\n%d PAKs found (%d already imported). "
+            "%.2f GiB compressed input, %.2f GiB free library space. "
+            "Archives are verified individually and unsupported files reported. "
+            "The current game/deploy location will NOT change. Continue?" %
+            (source, len(scan.files), scan.already_imported,
+             scan.packed_bytes / (1024 ** 3),
+             scan.available_bytes / (1024 ** 3)),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
-        self.controller.import_all_game(scan, self.stage, build_id=self._import_build())
+        try:
+            if new_snapshot:
+                build_id = register_build(*new_snapshot, location=source)
+            elif not record.get("location"):
+                update_location(build_id, source)
+            self.refresh()
+            idx = self.build_filter.findData(build_id)
+            if idx >= 0:
+                self.build_filter.setCurrentIndex(idx)
+            self.controller.import_all_game(scan, self.stage, build_id=build_id)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Collection import", str(exc))
 
     def prepare_stage2_transfer(self):
         selected = self._selected_record()
