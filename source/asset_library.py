@@ -170,15 +170,24 @@ def imported_archives(root=None):
     return tuple(result)
 
 
-def required_archive_status(root=None):
+def required_archive_status(root=None, *, build_id=None):
     """Report six shared + three animation PAK coverage, not arbitrary PAK count.
 
     Only complete imported manifests with readable extracted files count.
     Missing archives and per-PAK skipped files are visible to the user.
     """
     root = _home(root)
+    allowed = None
+    if build_id is not None:
+        from build_collections import catalog
+        builds = catalog(root)["builds"]
+        if build_id == "all" or build_id not in builds:
+            raise ValueError("An explicit build context is required.")
+        allowed = set(builds[build_id]["members"])
     found = {}
     for folder in _manifest_dirs(root):
+        if allowed is not None and _archive_identifier(folder) not in allowed:
+            continue
         try:
             manifest = _load_manifest(folder)
             name = str(manifest.get("name", "")).casefold()
