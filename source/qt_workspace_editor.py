@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
-    QDockWidget, QTreeWidgetItemIterator, QFrame,
+    QDockWidget, QTreeWidgetItemIterator, QFrame, QAbstractItemView,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
