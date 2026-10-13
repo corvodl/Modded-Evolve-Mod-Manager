@@ -127,7 +127,7 @@ class BuildCollectionTests(unittest.TestCase):
                 rel, staged = stage_source_for_import(
                     self.one, stage, library_root=self.root)
             self.assertEqual(rel, "shared.pak")
-            self.assertEqual(staged, stage / "paks" / "shared.pak")
+            self.assertEqual(staged.resolve(), (stage / "paks" / "shared.pak").resolve())
         finally:
             source_dir.cleanup()
 
