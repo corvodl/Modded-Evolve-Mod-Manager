@@ -79,7 +79,7 @@ def encode_normal_png(normal: NormalMap) -> bytes:
                 + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
 
     header = struct.pack(">IIBBBBB", normal.width, normal.height, 8, 6, 0, 0, 0)
-    return (b"\x89PNG\r\n\\x1a\n"
+    return (b"\x89PNG\r\n\x1a\n"
             + chunk(b"IHDR", header)
             + chunk(b"IDAT", zlib.compress(scanlines))
             + chunk(b"IEND", b""))
