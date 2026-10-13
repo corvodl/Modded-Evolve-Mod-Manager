@@ -184,29 +184,63 @@ def compare_builds(source_id, target_id, *, root=None):
         for path in sorted(left.keys() | right.keys()))
 
 
-def prepare_transfer(source_id, target_id, paths, *, root=None, target_baseline_sha256=None):
-    """Read-only candidate manifest. No replacement, conversion or write occurs."""
+def prepare_transfer(source_id, target_id, paths, *, root=None,
+                     target_baseline_sha256=None, target_project=None):
+    """Build a bounded evidence-only manifest. Never invoke an archive writer."""
     from evolve_pak_workspace import normalized_name
+    from asset_library import _folder_for_identifier, _load_manifest
     data = catalog(root)
     if (source_id not in data["builds"] or target_id not in data["builds"]
-            or source_id == target_id or source_id == UNASSIGNED or target_id == UNASSIGNED):
+            or source_id == target_id or source_id == UNASSIGNED
+            or target_id == UNASSIGNED):
         raise ValueError("Select distinct registered source and target builds.")
     if data["builds"][target_id]["family"] != "stage2":
         raise ValueError("The target must be a Stage 2 build.")
-    source, target = build_index(source_id, root=root), build_index(target_id, root=root)
+    if target_baseline_sha256 is not None and (
+            len(target_baseline_sha256) != 64 or
+            any(ch not in "0123456789abcdefABCDEF" for ch in target_baseline_sha256)):
+        raise ValueError("Expected target baseline must be a SHA-256 digest.")
     if len(paths) > 20000:
         raise ValueError("Too many transfer references.")
+    source, target = build_index(source_id, root=root), build_index(target_id, root=root)
+    fingerprints = {}
+    for bid in (source_id, target_id):
+        for archive_id in data["builds"][bid]["members"]:
+            folder = _folder_for_identifier(archive_id, _root(root))
+            if not folder.is_dir():
+                raise ValueError("Missing content for an assigned archive.")
+            manifest = _load_manifest(folder)
+            fingerprints[archive_id] = {
+                entry["path"].casefold(): entry.get("sha256")
+                for entry in manifest["entries"]}
     mappings = []
-    for path in paths:
-        virtual = normalized_name(path)
-        a, b = source.get(virtual.casefold(), ()), target.get(virtual.casefold(), ())
-        mappings.append({"path": virtual, "source_archives": [r["_asset_library"] for r in a],
-                         "target_archives": [r["_asset_library"] for r in b],
-                         "action": "review" if a else "missing-source",
-                         "compatibility": "reference-only" if a else "unsupported",
-                         "validated_in_game": False})
-    return {"schema": 1, "source_build_id": source_id, "target_build_id": target_id,
-            "inventory_revision": data["revision"],
-            "target_baseline_sha256": target_baseline_sha256,
-            "staging": "none", "mappings": mappings,
-            "warning": "Planning only; no CryEngine conversion or deployment is authorized."}
+    for reference in paths:
+        virtual = normalized_name(reference)
+        key = virtual.casefold()
+        a, b = source.get(key, ()), target.get(key, ())
+        src = [{"archive_id": r["_asset_library"],
+                "extracted_sha256": fingerprints[r["_asset_library"]].get(key)}
+               for r in a]
+        dst = [{"archive_id": r["_asset_library"],
+                "extracted_sha256": fingerprints[r["_asset_library"]].get(key)}
+               for r in b]
+        src_hashes = {r["extracted_sha256"] for r in src}
+        dst_hashes = {r["extracted_sha256"] for r in dst}
+        conflicting = len(src_hashes) > 1 or len(dst_hashes) > 1
+        action = ("missing-source" if not src else
+                  "conflict" if conflicting else
+                  "reuse-candidate" if src_hashes == dst_hashes else
+                  "review-replace" if dst else "review-add")
+        mappings.append({
+            "path": virtual, "source": src, "target": dst, "action": action,
+            "compatibility": "reference-only" if src else "unsupported",
+            "validated_in_game": False, "hash_type": "normalized-extracted-sha256",
+            "dependency_closure_complete": False})
+    return {
+        "schema": 1, "source_build_id": source_id, "target_build_id": target_id,
+        "target_project": str(Path(target_project).resolve()) if target_project else None,
+        "inventory_revision": data["revision"],
+        "target_baseline_sha256": target_baseline_sha256,
+        "baseline_verified": False, "staging": "none", "mappings": mappings,
+        "warning": "Reference-only plan. No dependency closure, conversion, writer staging or in-game verification."
+    }
