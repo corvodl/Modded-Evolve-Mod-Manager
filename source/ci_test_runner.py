@@ -44,7 +44,7 @@ def main(argv=None):
         try:
             for test in tests:
                 print(f'  CASE {test}', flush=True)
-                result = subprocess.run([sys.executable, '-u', '-m', 'unittest', '-v', test],
+                result = subprocess.run([sys.executable, '-X', 'faulthandler', '-u', '-m', 'unittest', '-v', test],
                                         env=env, timeout=args.timeout_seconds, check=False)
                 if result.returncode:
                     failures.append((test, result.returncode))
