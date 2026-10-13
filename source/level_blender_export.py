@@ -183,6 +183,7 @@ def export_level_glb(project, destination, *, game=None, stage=None,
             "source":terrain.source,"decoded_samples":terrain.decoded_samples,
             "stride":terrain.stride})
         report["terrain"]=True
+    emitted={}
     for idx,obj in enumerate(project.scene):
         if cancel.is_set():
             raise InterruptedError("Level export cancelled.")
@@ -201,11 +202,20 @@ def export_level_glb(project, destination, *, game=None, stage=None,
             mesh_id=combined.append_glb(key,blob)
         else:
             mesh_id=combined.mesh_ids[key]
-        combined.add_instance(mesh_id,obj.name,world=obj.world,metadata={
+        node_id=combined.add_instance(mesh_id,obj.name,world=obj.world,metadata={
             "guid":obj.id,"parent_guid":obj.parent_id,
             "model":obj.model,"material":obj.material,
             "source_layer":obj.source,"kind":obj.kind,"status":obj.status})
+        emitted[obj.id]=(node_id,obj)
         report["objects"]+=1
+    # Preserve real object parent-child hierarchy using local transforms.
+    for obj_id,(node_id,obj) in emitted.items():
+        if obj.parent_id not in emitted or obj.parent_id==obj_id:
+            continue
+        parent_id=emitted[obj.parent_id][0]
+        combined.doc["nodes"][node_id]["matrix"]=_world_matrix(obj.local)
+        combined.doc["nodes"][parent_id].setdefault("children",[]).append(node_id)
+        combined.doc["scenes"][0]["nodes"].remove(node_id)
     report["mesh_resources"]=len(combined.mesh_ids)
     blob=combined.finish()
     temp=destination.with_name(destination.name+".partial")
