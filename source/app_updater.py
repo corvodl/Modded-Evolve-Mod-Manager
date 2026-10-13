@@ -451,7 +451,10 @@ try {
   if ($null -eq $script:NewManager) { throw 'Could not start updated manager.' }
   $timer = [System.Diagnostics.Stopwatch]::StartNew()
   $Acknowledged = $false
-  while ($timer.Elapsed.TotalSeconds -lt 45) {
+  # Existing installations can contain large Asset Library catalogs. A clean
+  # CI screenshot starts quickly, but the first real GUI may take longer.
+  # Keep the prior executable safely backed up until startup is acknowledged.
+  while ($timer.Elapsed.TotalSeconds -lt 120) {
     if ($script:NewManager.HasExited) { throw "Updated manager exited during startup (code $($script:NewManager.ExitCode))." }
     if (Test-Path -LiteralPath $AckPath -PathType Leaf) {
       $AckValue = (Get-Content -LiteralPath $AckPath -Raw).Trim()
@@ -469,6 +472,20 @@ try {
 } catch {
   $Failure = $_.Exception.Message
   Write-Output "UPDATE FAILED: $Failure"
+  # PyInstaller's GUI log is preserved outside the app install and user Data.
+  # Emit only the last lines into this private update.log to help diagnose
+  # startup faults that do not display a Windows dialog.
+  try {
+    $StartupLog = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'EvolveModManagerQtPreview\startup.log'
+    if (Test-Path -LiteralPath $StartupLog -PathType Leaf) {
+      Write-Output "Manager startup diagnostics: $StartupLog"
+      Get-Content -LiteralPath $StartupLog -Tail 40 -ErrorAction Stop | ForEach-Object { Write-Output ("STARTUP: " + $_) }
+    } else {
+      Write-Output "Manager startup diagnostics not found at: $StartupLog"
+    }
+  } catch {
+    Write-Output ("Cannot read startup diagnostics: " + $_.Exception.Message)
+  }
   Set-UpdateProgress 'Update failed; restoring previous version...' 0
   $RollbackErrors = New-Object System.Collections.Generic.List[string]
   if ($null -ne $script:NewManager) {
@@ -508,7 +525,9 @@ try {
     Write-Output ('ROLLBACK INCOMPLETE: ' + ($RollbackErrors -join ' | '))
   }
   Write-Output "Recovery backup location (if present): $Backup"
+  Write-Output "Update log: $PSScriptRoot\update.log"
   Write-Output 'The detached updater will not show a blocking error dialog. Details are in update.log.'
+  Write-Output 'Do not delete the original Data directory, signing keys, or any recovery backups.'
   exit 1
 } finally {
   if ($null -ne $script:ProgressWindow) {
