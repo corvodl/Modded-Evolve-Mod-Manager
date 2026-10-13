@@ -113,10 +113,17 @@ def discover_game_paks(game, *, library_root=None):
             raise ValueError("No existing drive found for the Asset Library.")
         probe = probe.parent
     free = shutil.disk_usage(probe).free
-    already = {str(Path(x["source"]).resolve()) for x in imported_archives(library_root)}
+    source_ids = set()
+    for entry in imported_archives(library_root):
+        try:
+            info = Path(entry["source"]).stat()
+        except OSError:
+            continue
+        source_ids.add((info.st_dev, info.st_ino))
     return GamePakScan(tuple(found),
                        sum(x.stat().st_size for x in found), free,
-                       sum(any(os.path.samefile(x, source) for source in already if Path(source).is_file()) for x in found))
+                       sum((info.st_dev, info.st_ino) in source_ids
+                           for x in found for info in (x.stat(),)))
 
 
 def stage_source_for_import(import_id, stage, game=None, *, library_root=None, build_id=None):
