@@ -83,12 +83,12 @@ def stage_source_for_import(import_id, stage, game=None, *, library_root=None):
     The source library may have been imported under the original game key;
     the actual mod workspace must be extracted from the custom-signed stage.
     """
-    from asset_library import _home, _load_manifest
+    from asset_library import _home, _load_manifest, _folder_for_identifier
     from universal_stage import allowed_paks
     if not re.fullmatch(r"[0-9a-f]{20}", str(import_id)):
         raise ValueError("Invalid Asset Library archive ID.")
     root = _home(library_root)
-    folder = root / str(import_id)
+    folder = _folder_for_identifier(import_id, root)
     if folder.is_symlink() or not (folder / "asset-library.json").is_file():
         raise ValueError("The selected library archive no longer exists.")
     manifest = _load_manifest(folder)
