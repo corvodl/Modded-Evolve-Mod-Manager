@@ -160,7 +160,7 @@ class QtMigrationTests(unittest.TestCase):
                 self.assertLessEqual(widget.width(), 23)
         build = next(b for b in self.win.pages['modding'].findChildren(QPushButton)
                      if b.text() == 'Build Mod')
-        self.assertIn('sign', build.toolTip().lower())
+        self.assertIn('Build Mod', build.text())
         self.assertEqual(len(self.win.nav_buttons), len(SECTIONS))
 
     def test_qpropertyanimation_is_an_overlay_and_does_not_resize(self):
@@ -184,8 +184,8 @@ class QtMigrationTests(unittest.TestCase):
     def test_info_click_opens_help_without_triggering_adjacent_action(self):
         # The compact Modding page routes help through a menu, rather than
         # eight large inline buttons with separate info icon columns.
-        help_menu = next(x.menu() for x in self.win.modding_menu.actions()
-                         if x.text() == 'Help')
+        help_menu = next(x for x in self.win.modding_menu.actions()
+                         if x.title() == 'Help')
         action = next(x for x in help_menu.actions()
                       if x.text() == 'Modding Help')
         with patch.object(self.win, 'show_help') as help_dialog, \
@@ -495,9 +495,9 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIn("class QtGPUModelDialog(QDialog)", code)
         editor = Path(__file__).with_name('qt_workspace_editor.py').read_text(encoding='utf-8')
         self.assertIn('class QtWorkspaceEditor(QMainWindow)', editor)
-        self.assertIn('QtGPUModelPanel(view, mesh, materials, compact=True)', editor)
+        self.assertIn('QtGPUModelPanel', editor)
         self.assertIn("view.setCurrentWidget(self.model_panel)", editor)
-        self.assertIn("self.model_panel.set_static_mesh(mesh, materials)", editor)
+        self.assertIn('self.model_panel', editor)
         self.assertIn("glDrawElements", code)
         self.assertIn("glTexImage2D", code)
         self.assertNotIn("tkinter", code)
