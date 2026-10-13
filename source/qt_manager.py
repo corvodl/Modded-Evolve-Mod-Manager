@@ -902,6 +902,40 @@ class QtManager(QMainWindow):
         ))
         menu_commands('Help', (('Modding Help', lambda: self.show_help(0)),))
         root.addWidget(menu_bar)
+        root.addWidget(_label(
+            'Projects contain your editable copies. The Asset Library keeps the original PAKs.',
+            muted=True))
+        self.project_table = QTableWidget(0, 6)
+        self.project_table.setObjectName('moddingProjectTable')
+        self.project_table.setHorizontalHeaderLabels(
+            ('Project', 'Target PAK', 'Changed', 'Source Build', 'State', 'Details'))
+        self.project_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.project_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.project_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.project_table.setAlternatingRowColors(True)
+        self.project_table.setSortingEnabled(True)
+        self.project_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.project_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.project_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        self.project_table.itemDoubleClicked.connect(lambda _: self.open_active_project())
+        root.addWidget(self.project_table, 1)
+        project_actions = QHBoxLayout()
+        for title, handler in (
+            ('Refresh Projects', self.refresh_project_list),
+            ('Continue Editing', self.open_active_project),
+            ('Review Changes', self.diff),
+            ('Build Mod', self.build),
+            ('Asset Library', lambda: self.open_page(SECTIONS.index('Asset Library'))),
+        ):
+            project_actions.addWidget(_button(title, handler), 1)
+        root.addLayout(project_actions)
+        self.legacy_archive_toggle = _button(
+            'Show Advanced Archive Tools', self.toggle_advanced_archive_tools)
+        root.addWidget(self.legacy_archive_toggle)
+        self.legacy_archive_panel = QWidget()
+        archive_box = QVBoxLayout(self.legacy_archive_panel)
+        archive_box.setContentsMargins(0, 0, 0, 0)
+        archive_box.setSpacing(8)
         actions = QHBoxLayout()
         self.search = QLineEdit()
         self.search.setPlaceholderText('Search PAKs, map names, dependency groups…')
@@ -912,7 +946,7 @@ class QtManager(QMainWindow):
         self.file_filter.currentTextChanged.connect(self.refresh_table)
         actions.addWidget(self.file_filter)
         actions.addWidget(_button('Refresh', self.refresh_archives))
-        root.addLayout(actions)
+        archive_box.addLayout(actions)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
             ('Dependency Group', 'Folder', 'Description', 'File', 'Type / Project', 'Size'))
@@ -934,9 +968,9 @@ class QtManager(QMainWindow):
         self.table.itemDoubleClicked.connect(lambda _: self.open_editor_or_unpack())
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.archive_context_menu)
-        root.addWidget(self.table, 1)
+        archive_box.addWidget(self.table, 1)
         self.archive_count = _label('No PAKs loaded', muted=True)
-        root.addWidget(self.archive_count)
+        archive_box.addWidget(self.archive_count)
         # Keep just four high-frequency actions visible; all specialist
         # commands are available through the menu bar and context menu.
         quick = QHBoxLayout()
@@ -950,9 +984,85 @@ class QtManager(QMainWindow):
             button.setToolTip(ACTION_HINTS.get(title,
                 'Unpack selected PAK and known companion archives into separate projects.'))
             quick.addWidget(button, 1)
-        root.addLayout(quick)
+        archive_box.addLayout(quick)
+        root.addWidget(self.legacy_archive_panel)
+        self.legacy_archive_panel.hide()
         self.stack.addWidget(page)
         self.pages['modding'] = page
+
+    def toggle_advanced_archive_tools(self):
+        expanded = not self.legacy_archive_panel.isVisible()
+        self.legacy_archive_panel.setVisible(expanded)
+        self.legacy_archive_toggle.setText(
+            'Hide Advanced Archive Tools' if expanded else 'Show Advanced Archive Tools')
+
+    def refresh_project_list(self):
+        if not hasattr(self, 'project_table'):
+            return
+        from project_catalog import project_rows
+        try:
+            rows = project_rows(self.projects_path, self.stage_path)
+        except (OSError, ValueError, KeyError) as exc:
+            self._log('Project list: ' + str(exc)[:240])
+            rows = ()
+        current = self.current_workspace
+        self._project_rows = {record['workspace']: record for record in rows}
+        table = self.project_table
+        table.setSortingEnabled(False)
+        table.setRowCount(len(rows))
+        for i, item in enumerate(rows):
+            values = (item.get('label', ''), item.get('target_archive', 'unknown'),
+                      str(item['changed']), item.get('source_build_id') or 'Unassigned',
+                      item['status'], item.get('details') or 'Ready')
+            for j, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                if j == 0:
+                    cell.setData(Qt.UserRole, item['workspace'])
+                table.setItem(i, j, cell)
+        table.setSortingEnabled(True)
+        for i in range(table.rowCount()):
+            if table.item(i, 0).data(Qt.UserRole) == current:
+                table.selectRow(i)
+                break
+
+    def selected_project_context(self):
+        if not hasattr(self, 'project_table'):
+            return None
+        item = self.project_table.item(self.project_table.currentRow(), 0)
+        if item is None:
+            return None
+        return getattr(self, '_project_rows', {}).get(item.data(Qt.UserRole))
+
+    def open_active_project(self):
+        record = self.selected_project_context()
+        if record is None:
+            self.info('Mod project', 'Select an editable project first.')
+            return
+        try:
+            if record['status'] in ('unavailable', 'missing'):
+                raise ValueError(record['details'])
+            workspace = Path(record['workspace']).resolve(strict=True)
+            from project_catalog import verified_target
+            relative, _ = verified_target(workspace, self.stage_path)
+            self.current_workspace = str(workspace)
+            self.archive_label = relative
+            self.workspace_input.setText(self.current_workspace)
+            self.output_pak = ''
+            self.output_input.setText('')
+            self.persist()
+            from qt_workspace_editor import QtWorkspaceEditor
+            for existing in self.editors:
+                if existing.isVisible() and getattr(existing, 'workspace', None) == workspace:
+                    existing.raise_()
+                    existing.activateWindow()
+                    return
+            editor = QtWorkspaceEditor(self, workspace)
+            editor.setAttribute(Qt.WA_DeleteOnClose, False)
+            self.editors.append(editor)
+            editor.show()
+            editor.raise_()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
 
     def _play_page(self):
         scroll, lay = _scroll_page()
