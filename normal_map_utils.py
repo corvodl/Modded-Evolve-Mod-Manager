@@ -98,3 +98,47 @@ def export_normal_png(normal: NormalMap, output_dir: Path, stem: str) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(payload)
     return target
+
+
+@dataclass(frozen=True)
+class DDSMetadata:
+    width: int
+    height: int
+    mip_count: int
+    format_name: str
+    x_channel: int | None
+    y_channel: int | None
+
+
+def inspect_dds_header(data: bytes) -> DDSMetadata:
+    """Inspect standard DDS and DX10 headers without decoding compressed pixels.
+
+    Reject truncated/unsupported headers rather than guessing normal channels.
+    BC5 maps to RG; legacy DXT5 needs material evidence before swizzling.
+    """
+    import struct
+
+    if len(data) < 128 or data[:4] != b"DDS ":
+        raise ValueError("Missing DDS header")
+    size, flags, height, width = struct.unpack_from("<4I", data, 4)
+    mip_count = struct.unpack_from("<I", data, 28)[0] or 1
+    pixel_format_size = struct.unpack_from("<I", data, 76)[0]
+    fourcc = data[84:88]
+    if size != 124 or pixel_format_size != 32 or not (0 < width <= 32768 and 0 < height <= 32768):
+        raise ValueError("Malformed DDS header")
+    mapping = {b"ATI2": ("BC5", 0, 1), b"BC5U": ("BC5", 0, 1),
+               b"DXT5": ("DXT5", None, None), b"DXT1": ("DXT1", None, None)}
+    if fourcc == b"DX10":
+        if len(data) < 148:
+            raise ValueError("Truncated DDS DX10 header")
+        dxgi = struct.unpack_from("<I", data, 128)[0]
+        dxgi_formats = {83: ("BC5", 0, 1), 84: ("BC5_SNORM", 0, 1),
+                        77: ("BC3", None, None), 78: ("BC3_SRGB", None, None)}
+        if dxgi not in dxgi_formats:
+            raise ValueError(f"Unsupported DDS DXGI format: {dxgi}")
+        fmt, x_channel, y_channel = dxgi_formats[dxgi]
+    elif fourcc in mapping:
+        fmt, x_channel, y_channel = mapping[fourcc]
+    else:
+        raise ValueError("Unsupported DDS pixel format")
+    return DDSMetadata(width, height, mip_count, fmt, x_channel, y_channel)
