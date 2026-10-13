@@ -338,6 +338,7 @@ $script:ProgressWindow = $null
 $script:ProgressLabel = $null
 $script:ProgressPercent = $null
 $script:ProgressBar = $null
+$script:UpdateStep = 'preflight'
 function Set-UpdateProgress([string]$Stage, [int]$Value) {
   $Value = [Math]::Max(0,[Math]::Min(100,$Value))
   Write-Output ("UPDATE STAGE: " + $Stage + " [" + $Value + "%]")
@@ -403,14 +404,46 @@ try {
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_COMMIT.txt') -Raw).Trim() -ne $ExpectedCommit) { throw 'Update commit mismatch.' }
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_CHANNEL.txt') -Raw).Trim().ToLowerInvariant() -ne $ExpectedChannel) { throw 'Update build channel mismatch.' }
   Set-UpdateProgress 'Backing up current application...' 5
-  New-Item -ItemType Directory -Path $Backup -ErrorAction Stop | Out-Null
+  $script:UpdateStep = 'creating application backup'
+  try {
+    New-Item -ItemType Directory -Path $Backup -ErrorAction Stop | Out-Null
+  } catch {
+    throw ("Unable to create application backup at " + $Backup + ": " + $_.Exception.Message)
+  }
+  Write-Output ("UPDATE BACKUP: " + $Backup)
   foreach ($name in $Names) {
     $original = Join-Path $TargetDir $name
     if (Test-Path -LiteralPath $original) {
-      Move-Item -LiteralPath $original -Destination (Join-Path $Backup $name) -ErrorAction Stop
-      $Moved.Add($name)
+      $script:UpdateStep = "backing up $name"
+      $prior = Join-Path $Backup $name
+      # An older manager or worker can retain a file handle after the GUI
+      # closes. Do not erase it, or proceed with a mixed installation; wait a
+      # short bounded period for Windows to release the original component.
+      $BackedUp = $false
+      for ($attempt = 0; $attempt -lt 6; $attempt++) {
+        try {
+          Move-Item -LiteralPath $original -Destination $prior -ErrorAction Stop
+          $Moved.Add($name)
+          $BackedUp = $true
+          break
+        } catch {
+          $Reason = $_.Exception.Message
+          if ((Test-Path -LiteralPath $prior) -or
+              (-not (Test-Path -LiteralPath $original))) {
+            throw ("Backup state is ambiguous for " + $name +
+                   "; originals and partial backups were preserved: " + $Reason)
+          }
+          if ($attempt -eq 5) {
+            throw ("Could not back up " + $name +
+                   " (file may still be in use): " + $Reason)
+          }
+          Start-Sleep -Milliseconds 500
+        }
+      }
+      if (-not $BackedUp) { throw ("Could not back up " + $name) }
     }
   }
+  $script:UpdateStep = 'installing staged application'
   Set-UpdateProgress 'Installing verified files...' 15
   $Files = New-Object System.Collections.Generic.List[object]
   foreach ($name in $Names) {
@@ -472,6 +505,7 @@ try {
 } catch {
   $Failure = $_.Exception.Message
   Write-Output "UPDATE FAILED: $Failure"
+  Write-Output ("UPDATE FAILURE STAGE: " + $script:UpdateStep)
   # PyInstaller's GUI log is preserved outside the app install and user Data.
   # Emit only the last lines into this private update.log to help diagnose
   # startup faults that do not display a Windows dialog.
