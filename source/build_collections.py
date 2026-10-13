@@ -185,7 +185,8 @@ def compare_builds(source_id, target_id, *, root=None):
 
 
 def prepare_transfer(source_id, target_id, paths, *, root=None,
-                     target_baseline_sha256=None, target_project=None):
+                     target_baseline_sha256=None, target_project=None,
+                     cancelled=None):
     """Build a bounded evidence-only manifest. Never invoke an archive writer."""
     from evolve_pak_workspace import normalized_name
     from asset_library import _folder_for_identifier, _load_manifest
@@ -200,9 +201,16 @@ def prepare_transfer(source_id, target_id, paths, *, root=None,
             len(target_baseline_sha256) != 64 or
             any(ch not in "0123456789abcdefABCDEF" for ch in target_baseline_sha256)):
         raise ValueError("Expected target baseline must be a SHA-256 digest.")
-    if len(paths) > 20000:
+    if len(paths) > 4096:
         raise ValueError("Too many transfer references.")
     source, target = build_index(source_id, root=root), build_index(target_id, root=root)
+    from build_transfer_dependencies import discover_dependencies
+    discovered = discover_dependencies(source, paths, build_id=source_id,
+                                       cancelled=cancelled)
+    if discovered["cancelled"]:
+        from asset_library import ImportCanceled
+        raise ImportCanceled("Transfer planning cancelled.")
+    paths = tuple(dict.fromkeys((*paths, *discovered["found"], *discovered["missing"])))
     fingerprints = {}
     for bid in (source_id, target_id):
         for archive_id in data["builds"][bid]["members"]:
@@ -235,12 +243,13 @@ def prepare_transfer(source_id, target_id, paths, *, root=None,
             "path": virtual, "source": src, "target": dst, "action": action,
             "compatibility": "reference-only" if src else "unsupported",
             "validated_in_game": False, "hash_type": "normalized-extracted-sha256",
-            "dependency_closure_complete": False})
+            "dependency_closure_complete": discovered["closure_complete"]})
     return {
         "schema": 1, "source_build_id": source_id, "target_build_id": target_id,
         "target_project": str(Path(target_project).resolve()) if target_project else None,
         "inventory_revision": data["revision"],
         "target_baseline_sha256": target_baseline_sha256,
         "baseline_verified": False, "staging": "none", "mappings": mappings,
-        "warning": "Reference-only plan. No dependency closure, conversion, writer staging or in-game verification."
+        "dependency_diagnostics": discovered,
+        "warning": "Reference-only plan. Dependency discovery is limited to explicit XML references; no conversion, writer staging or in-game verification."
     }
