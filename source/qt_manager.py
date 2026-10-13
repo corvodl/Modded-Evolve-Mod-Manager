@@ -2231,6 +2231,10 @@ class QtManager(QMainWindow):
         editor.setAttribute(Qt.WA_DeleteOnClose, False)
         self.editors.append(editor)
         editor.show()
+        virtual = getattr(self, '_pending_library_virtual', None)
+        self._pending_library_virtual = None
+        if virtual and virtual in editor.records:
+            editor.load(virtual)
         editor.raise_()
 
     def _warm_asset_library(self):
