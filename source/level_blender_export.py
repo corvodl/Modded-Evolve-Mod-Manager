@@ -175,7 +175,17 @@ def export_level_glb(project, destination, *, game=None, stage=None,
     assets,issues,details=prepared
     combined=SceneAssembler(str(project.level_name))
     report={"map":str(project.level_name),"objects":0,"mesh_resources":0,
-            "terrain":False,"unresolved":dict(issues),"omitted":[]}
+            "terrain":False,"unresolved":dict(issues),"omitted":[],
+            "total_scene_objects":len(project.scene),
+            "selected_objects":sum(1 for obj in project.scene
+                                    if selection is None or obj.id in selection),
+            "terrain_texture_status":"not decoded",
+            "world_content_limitations":[
+                "vegetation instances are not decoded",
+                "compiled terrain tile material mapping is not implemented",
+                "procedural roads and designer geometry are not reconstructed",
+                "prefab and archetype expansion is not implemented",
+                "bounded scene preparation may defer geometry"]}
     terrain=details.get("terrain")
     if terrain is not None and selection is None:
         mesh=combined.append_glb("terrain",terrain_glb(terrain))
@@ -217,6 +227,9 @@ def export_level_glb(project, destination, *, game=None, stage=None,
         combined.doc["nodes"][parent_id].setdefault("children",[]).append(node_id)
         combined.doc["scenes"][0]["nodes"].remove(node_id)
     report["mesh_resources"]=len(combined.mesh_ids)
+    report["omitted_count"]=len(report["omitted"])
+    report["coverage_fraction"]=(report["objects"]/report["selected_objects"]
+                                 if report["selected_objects"] else 0.)
     blob=combined.finish()
     temp=destination.with_name(destination.name+".partial")
     if temp.exists():
@@ -228,4 +241,13 @@ def export_level_glb(project, destination, *, game=None, stage=None,
         temp.replace(destination)
     finally:
         if temp.exists():temp.unlink()
+    sidecar=destination.with_name(destination.name+".coverage.json")
+    sidecar_temp=sidecar.with_name(sidecar.name+".partial")
+    if not sidecar.exists() and not sidecar_temp.exists():
+        try:
+            sidecar_temp.write_text(
+                json.dumps(report,indent=2,ensure_ascii=False),encoding="utf-8")
+            sidecar_temp.replace(sidecar)
+        finally:
+            sidecar_temp.unlink(missing_ok=True)
     return report
