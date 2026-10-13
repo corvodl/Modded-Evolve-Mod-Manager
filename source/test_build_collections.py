@@ -4,6 +4,7 @@ import hashlib
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from asset_library import MANIFEST, extracted_index, _invalidate
 from build_collections import (catalog, register_build, assign_archive, remove_membership,
@@ -74,6 +75,73 @@ class BuildCollectionTests(unittest.TestCase):
         self.assertEqual(_resolve(indexed, "characters/shared.dds", build_id=source)[1], "found")
         with self.assertRaises(ValueError):
             _resolve(indexed, "characters/shared.dds", build_id="all")
+
+    def test_inventory_change_requires_review(self):
+        build = register_build("Snapshot", "legacy", root=self.root)
+        assign_archive(build, self.one, root=self.root)
+        with self.assertRaisesRegex(ValueError, "create a new snapshot"):
+            assign_archive(build, self.two, root=self.root)
+
+    def test_shared_contents_cannot_be_removed_while_assigned(self):
+        from asset_library import remove_archive
+        first = register_build("One", "legacy", root=self.root)
+        second = register_build("Two", "legacy", root=self.root)
+        assign_archive(first, self.one, root=self.root)
+        assign_archive(second, self.one, root=self.root)
+        with self.assertRaises(ValueError):
+            remove_archive(self.one, self.root)
+        remove_membership(first, self.one, root=self.root)
+        self.assertIn("characters/shared.dds", build_index(second, root=self.root))
+        with self.assertRaises(ValueError):
+            remove_archive(self.one, self.root)
+
+    def test_multiple_preview_memberships_require_context(self):
+        from asset_library_preview import library_model_index
+        first = register_build("One", "legacy", root=self.root)
+        second = register_build("Two", "stage2", root=self.root)
+        assign_archive(first, self.one, root=self.root)
+        assign_archive(second, self.one, root=self.root)
+        with self.assertRaisesRegex(ValueError, "multiple build memberships"):
+            library_model_index(self.one, root=self.root)
+        self.assertEqual(len(library_model_index(
+            self.one, root=self.root, build_id=second)["characters/shared.dds"]), 1)
+
+    def test_readable_folder_stage_source(self):
+        from asset_library_bulk import stage_source_for_import
+        folder = self.root / ("shared.pak__" + self.one)
+        manifest_path = folder / MANIFEST
+        record = json.loads(manifest_path.read_text("utf-8"))
+        outside = self.root.parent / ("build-test-" + self.one + ".pak")
+        stage = self.root / "stage"
+        try:
+            outside.write_bytes(b"synthetic-stage-archive")
+            record["source"] = str(outside)
+            manifest_path.write_text(json.dumps(record), encoding="utf-8")
+            (stage / "paks").mkdir(parents=True)
+            (stage / "paks" / "shared.pak").write_bytes(b"synthetic-staged")
+            (stage / "mykeys").mkdir()
+            (stage / "mykeys" / "public_key.bin").write_bytes(b"placeholder")
+            (stage / "mykeys" / "private_key.pem").write_bytes(b"placeholder")
+            with patch("universal_stage.allowed_paks", return_value={"file": "shared.pak"}):
+                rel, staged = stage_source_for_import(
+                    self.one, stage, library_root=self.root)
+            self.assertEqual(rel, "shared.pak")
+            self.assertEqual(staged, stage / "paks" / "shared.pak")
+        finally:
+            outside.unlink(missing_ok=True)
+
+    def test_target_baseline_guard_and_transfer_cancel(self):
+        from asset_library import ImportCanceled
+        first = register_build("Legacy", "legacy", root=self.root)
+        second = register_build("Stage 2", "stage2", root=self.root)
+        assign_archive(first, self.one, root=self.root)
+        assign_archive(second, self.two, root=self.root)
+        with self.assertRaises(ValueError):
+            prepare_transfer(first, second, ["characters/shared.dds"],
+                             root=self.root, target_baseline_sha256="invalid")
+        with self.assertRaises(ImportCanceled):
+            prepare_transfer(first, second, ["characters/shared.dds"], root=self.root,
+                             cancelled=lambda: True)
 
     def test_invalid_contexts(self):
         with self.assertRaises(ValueError):
