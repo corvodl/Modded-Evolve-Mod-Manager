@@ -2,7 +2,7 @@ import unittest
 import struct
 import tempfile
 from pathlib import Path
-from normal_map_utils import NormalMap, is_normal_texture, decode_xy_normal_rgba, choose_highest_resolution, encode_normal_png, export_normal_png, inspect_dds_header
+from normal_map_utils import NormalMap, is_normal_texture, decode_xy_normal_rgba, choose_highest_resolution, encode_normal_png, export_normal_png, inspect_dds_header, decode_bc5_normal, decode_bc5_dds
 
 
 class NormalMapTests(unittest.TestCase):
@@ -60,6 +60,17 @@ class NormalMapTests(unittest.TestCase):
         struct.pack_into("<I", header, 76, 32)
         header[84:88] = b"DXT5"
         self.assertIsNone(inspect_dds_header(bytes(header)).x_channel)
+
+    def test_bc5_flat_normal_block(self):
+        red = bytes((128, 128)) + bytes(6)
+        green = bytes((128, 128)) + bytes(6)
+        result = decode_bc5_normal(4, 4, red + green)
+        self.assertEqual((result.width, result.height), (4, 4))
+        self.assertTrue(all(result.rgba[i + 2] >= 250 for i in range(0, 64, 4)))
+
+    def test_bc5_incomplete_mip_rejected(self):
+        with self.assertRaises(ValueError):
+            decode_bc5_normal(4, 4, bytes(15))
 
     def test_largest_mip(self):
         low = NormalMap(1, 1, bytes(4))
