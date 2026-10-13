@@ -21,6 +21,11 @@ from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QTreeWidgetItem
 from qt_asset_preview import QtAssetPreviewWindow
 
 
+def same_directory(left: Path, right: Path) -> bool:
+    """Compare filesystem identity across Windows long and 8.3 short paths."""
+    return os.path.samefile(left, right)
+
+
 class ReadOnlyAssetPreviewUITests(TestCase):
     @classmethod
     def setUpClass(cls):
@@ -96,7 +101,7 @@ class ReadOnlyAssetPreviewUITests(TestCase):
 
     def test_text_preview_and_noneditable_controls(self):
         self.window.show()
-        self.assertEqual(self.window.folder, self.folder)
+        self.assertTrue(same_directory(self.window.folder, self.folder))
         iterator = QTreeWidgetItemIterator(self.window.tree)
         choice = None
         while iterator.value():
@@ -145,9 +150,9 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         self.window.file_tree.setCurrentItem(folder_item)
         self.assertEqual(
             self.window._current_model_folder_relative(), 'characters/scrap')
-        self.assertEqual(
+        self.assertTrue(same_directory(
             self.window._current_model_source_folder(),
-            self.folder / 'files' / 'characters' / 'scrap')
+            self.folder / 'files' / 'characters' / 'scrap'))
         output = Path(self.temp.name) / 'BlenderExports'
         output.mkdir()
         # Run the queued worker body in-process for this source-selection
@@ -180,9 +185,9 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         self.window.file_tree.setCurrentItem(model_item)
         self.assertEqual(
             self.window._current_model_folder_relative(), 'characters/scrap')
-        self.assertEqual(
+        self.assertTrue(same_directory(
             self.window._current_model_source_folder(),
-            self.folder / 'files' / 'characters' / 'scrap')
+            self.folder / 'files' / 'characters' / 'scrap'))
 
     def test_same_modding_editor_model_tools_but_no_import_or_save(self):
         from qt_workspace_editor import QtWorkspaceEditor

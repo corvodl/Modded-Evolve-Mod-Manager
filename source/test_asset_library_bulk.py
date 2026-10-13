@@ -68,7 +68,7 @@ class BulkGamePAKTests(unittest.TestCase):
         with patch("asset_library.imported_archives", return_value=[]):
             result = discover_game_paks(self.game, library_root=self.library)
         self.assertEqual(len(result.files), 2)
-        self.assertEqual(set(result.files), {self.original, self.other})
+        self.assertEqual(set(result.files), {self.original.resolve(), self.other.resolve()})
         self.assertEqual(result.packed_bytes,
                          self.original.stat().st_size + self.other.stat().st_size)
         self.assertGreater(result.available_bytes, 0)

@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
-    QDockWidget, QTreeWidgetItemIterator, QFrame,
+    QDockWidget, QTreeWidgetItemIterator, QFrame, QAbstractItemView,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
@@ -139,10 +139,17 @@ class QtWorkspaceEditor(QMainWindow):
         if self.read_only_library:
             from asset_library import imported_archives
             from asset_library_preview import archive_folder, archive_entries
+            build_id = library_archive.get('build_id')
+            if build_id is not None and build_id != 'all':
+                from build_collections import catalog
+                owned = set(catalog()['builds'][build_id]['members'])
+            else:
+                owned = None
             self.archive_map = {
                 entry['name'] + ' [' + entry['id'][:8] + ']':
                     archive_folder(entry['id'])
                 for entry in imported_archives()
+                if owned is None or entry['id'] in owned
             }
             self.records = {
                 relative: {'path': relative, 'format': 'raw'}
@@ -331,6 +338,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.file_tree.setColumnWidth(0, 260)
         self.file_tree.setColumnWidth(1, 75)
         self.file_tree.setAlternatingRowColors(True)
+        if self.read_only_library:
+            self.file_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.file_tree.itemSelectionChanged.connect(self.load_selection)
         self.file_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.file_tree.customContextMenuRequested.connect(
