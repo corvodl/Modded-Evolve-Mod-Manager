@@ -1,0 +1,32 @@
+name: Build-scoped asset library tests
+
+on:
+  pull_request:
+    branches: [beta]
+    paths:
+      - 'source/build_collections.py'
+      - 'source/test_build_collections.py'
+      - 'source/multi_pak_assets.py'
+      - 'source/asset_library_bulk.py'
+      - '.github/workflows/build-scoped-asset-library.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install bounded test dependencies
+        run: python -m pip install cryptography Pillow numpy
+      - name: Execute synthetic build tests
+        shell: pwsh
+        env:
+          PYTHONPATH: ${{ github.workspace }}/source
+        run: python -m unittest -v test_build_collections
