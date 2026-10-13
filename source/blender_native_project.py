@@ -29,13 +29,23 @@ terrain = bpy.data.collections.new("Terrain")
 objects = bpy.data.collections.new("Placed Objects")
 root.children.link(terrain)
 root.children.link(objects)
+layers = {}
 for obj in list(bpy.context.scene.objects):
+    if obj.name.lower().startswith("terrain"):
+        parent = terrain
+    else:
+        layer = str(obj.get("source_layer", "")).replace("\\", "/")
+        if layer and len(layers) < 1000:
+            if layer not in layers:
+                group = bpy.data.collections.new("Layer - " + Path(layer).stem[:55])
+                objects.children.link(group)
+                layers[layer] = group
+            parent = layers[layer]
+        else:
+            parent = objects
     for collection in list(obj.users_collection):
         collection.objects.unlink(obj)
-    if obj.name.lower().startswith("terrain"):
-        terrain.objects.link(obj)
-    else:
-        objects.objects.link(obj)
+    parent.objects.link(obj)
 bpy.context.view_layer.update()
 if not any(x.type == "MESH" for x in bpy.context.scene.objects):
     raise RuntimeError("Imported GLB has no mesh objects")
