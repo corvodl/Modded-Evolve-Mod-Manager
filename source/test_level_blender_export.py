@@ -102,6 +102,30 @@ class CombinedMapExportTests(TestCase):
             self.assertEqual(doc["nodes"][root]["children"],[1])
             self.assertEqual(doc["nodes"][1]["matrix"][12],2.)
 
+    def test_full_export_recovers_mesh_deferred_by_viewer_budget(self):
+        with TemporaryDirectory() as temp:
+            root=Path(temp)
+            model_file=root/"rock.cgf"
+            model_file.write_bytes(b"verified synthetic mesh bytes")
+            output=root/"Recovered.glb"
+            obj=SimpleNamespace(name="Rock",id="r",parent_id="",
+                source="layer",kind="Brush",model="objects/rock.cgf",material="",
+                local=WorldTransform(),world=WorldTransform(),status="deferred")
+            project=SimpleNamespace(level_name="Tutorial",workspace=root,scene=(obj,))
+            with patch("qt_level_scene_render.prepare_scene",
+                       return_value=({},{"deferred by memory budget":1},
+                                     {"terrain":None})), \
+                 patch("level_asset_mount.mount_map_index",
+                       return_value=({"objects/rock.cgf":[]},{})), \
+                 patch("level_asset_mount.resolve_scoped",
+                       return_value=({"file":model_file},"found")), \
+                 patch("model_preview.read_preview_mesh",return_value=mesh()), \
+                 patch("material_preview.load_preview_materials",return_value=None):
+                report=export_level_glb(project,output)
+            self.assertEqual(report["objects"],1)
+            self.assertEqual(report["recovered_preview_deferred_meshes"],1)
+            self.assertTrue(output.exists())
+
     def test_selected_mesh_does_not_include_entire_map_terrain(self):
         from qt_level_scene_render import RenderAsset
         with TemporaryDirectory() as temp:
