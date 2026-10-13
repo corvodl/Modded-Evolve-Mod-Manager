@@ -103,10 +103,18 @@ class FlatCharacterFolderTests(unittest.TestCase):
             'relative': virtual, 'file': file,
         })
 
+    @staticmethod
+    def _glb():
+        from types import SimpleNamespace
+        from model_blender_export import glb_bytes
+        mesh = SimpleNamespace(vertices=[(0,0,0),(1,0,0),(0,1,0)],
+            triangles=[(0,1,2)],uvs=[(0,0),(1,0),(0,1)],subsets=())
+        return glb_bytes(mesh)
+
     def test_export_has_one_readable_folder_no_characters_prefix(self):
         report = export_character_asset_folder(
             self.workspace, self.prefix, self.output, index=self.index,
-            full_model=(b'GLB assembled', {
+            full_model=(self._glb(), {
                 'texture_count': 2, 'bone_count': 16, 'rig_status': 'Rigged'}))
         dest = Path(report['folder'])
         self.assertEqual(dest.parent, self.output)
@@ -114,7 +122,7 @@ class FlatCharacterFolderTests(unittest.TestCase):
         self.assertEqual((dest / 'parnelltank_3p.skinm').read_bytes(), b'MODEL')
         self.assertEqual((dest / 'textures/body_diff.dds.0').read_bytes(),
                          b'DDS-sibling-TS')
-        self.assertEqual((dest / 'Full_Character.glb').read_bytes(), b'GLB assembled')
+        self.assertEqual((dest / 'Full_Character.glb').read_bytes(), self._glb())
         self.assertFalse((dest / 'characters').exists())
         self.assertFalse((dest / 'merc_val').exists())
         manifest = json.loads((dest / 'asset_sources.json').read_text('utf-8'))
@@ -148,7 +156,7 @@ class FlatCharacterFolderTests(unittest.TestCase):
             seen.append(selected)
             return SimpleNamespace(cdf=selected)
         def glb(model, workspace, rel, index, **kwargs):
-            return b'glTF' + rel.encode(), {
+            return self._glb(), {
                 'texture_count': 2, 'bone_count': 8,
                 'rig_status': 'Rigged CDF assembly'}
         with (patch('character_assembly.assemble_character', side_effect=assemble),
