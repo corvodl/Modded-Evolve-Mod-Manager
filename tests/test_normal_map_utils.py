@@ -1,5 +1,8 @@
 import unittest
-from normal_map_utils import NormalMap, is_normal_texture, decode_xy_normal_rgba, choose_highest_resolution
+import struct
+import tempfile
+from pathlib import Path
+from normal_map_utils import NormalMap, is_normal_texture, decode_xy_normal_rgba, choose_highest_resolution, encode_normal_png, export_normal_png
 
 
 class NormalMapTests(unittest.TestCase):
@@ -21,6 +24,21 @@ class NormalMapTests(unittest.TestCase):
     def test_invalid_pixels(self):
         with self.assertRaises(ValueError):
             decode_xy_normal_rgba(2, 2, bytes(4))
+
+    def test_png_header_and_dimensions(self):
+        normal = NormalMap(2, 1, bytes((128, 128, 255, 255)) * 2)
+        png = encode_normal_png(normal)
+        self.assertEqual(png[:8], bytes((137, 80, 78, 71, 13, 10, 26, 10)))
+        self.assertEqual(struct.unpack(">II", png[16:24]), (2, 1))
+
+    def test_export_folder_and_sanitization(self):
+        with tempfile.TemporaryDirectory() as temp:
+            normal = NormalMap(1, 1, bytes((128, 128, 255, 255)))
+            path = export_normal_png(normal, Path(temp), "goliath")
+            self.assertEqual(path.parent.name, "textures")
+            self.assertTrue(path.is_file())
+            with self.assertRaises(ValueError):
+                export_normal_png(normal, Path(temp), "../bad")
 
     def test_largest_mip(self):
         low = NormalMap(1, 1, bytes(4))
