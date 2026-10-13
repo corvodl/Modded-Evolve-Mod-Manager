@@ -2017,6 +2017,9 @@ class QtWorkspaceEditor(QMainWindow):
             finally:
                 if temporary is not None:
                     temporary.unlink(missing_ok=True)
+            from blender_texture_folder import write_texture_folder
+            texture_files = write_texture_folder(payload, target)
+            report['external_texture_files'] = len(texture_files)
             progress('Blender model exported', 1, 1)
             return (len(export_mesh.vertices), len(export_mesh.triangles), report)
 
@@ -2025,6 +2028,8 @@ class QtWorkspaceEditor(QMainWindow):
             message = (
                 'Exported %d vertices, %d triangles, %d diffuse textures. %s.' %
                 (vertices, triangles, report['texture_count'], report['rig_status']))
+            if report.get('external_texture_files'):
+                message += ' Saved %d editable PNGs in Textures/.' % report['external_texture_files']
             if not report['texture_count']:
                 message += ' Missing: ' + report['texture_status'][:180]
             elif report.get('texture_warnings'):
