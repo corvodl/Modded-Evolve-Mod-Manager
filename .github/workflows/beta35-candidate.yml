@@ -1,0 +1,87 @@
+name: Verify beta.35 Windows candidate (no publication)
+on:
+  pull_request:
+    branches: [beta]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: beta35-windows-candidate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  candidate:
+    runs-on: windows-2022
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - name: Full Windows regressions and real package
+        shell: cmd
+        run: call Build-Windows-EXE.cmd
+      - name: Capture actual compiled Qt pages
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = 'windows'
+          $exe=(Resolve-Path '.build/app-dist/EvolveModManager/EvolveModManager.exe').Path
+          $work=Split-Path $exe -Parent
+          foreach ($entry in @(
+            @('--capture-screenshot','EvolveModManager-compiled-screenshot.png'),
+            @('--capture-settings-screenshot','EvolveModManager-Settings-screenshot.png'),
+            @('--capture-library-screenshot','EvolveModManager-Library-screenshot.png'),
+            @('--capture-modding-screenshot','EvolveModManager-Modding-screenshot.png'),
+            @('--capture-play-screenshot','EvolveModManager-Play-screenshot.png'))) {
+            $output=Join-Path (Resolve-Path 'dist').Path $entry[1]
+            $process=Start-Process -FilePath $exe -ArgumentList @($entry[0],$output) -WorkingDirectory $work -PassThru
+            if (!$process.WaitForExit(60000)) {
+              $process.Kill()
+              throw "Compiled Qt capture timeout: $($entry[0])"
+            }
+            if ($process.ExitCode -ne 0 -or !(Test-Path $output)) {
+              throw "Compiled Qt capture failed: $($entry[0])"
+            }
+            & '.build/venv/Scripts/python.exe' -c "from PIL import Image,ImageStat; im=Image.open(r'$output').convert('RGB'); assert im.width>=850 and im.height>=600 and max(ImageStat.Stat(im).stddev)>14"
+            if ($LASTEXITCODE -ne 0) { throw "Invalid screenshot: $output" }
+          }
+      - name: Verify candidate ZIP contents
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression
+          $zip=[IO.Compression.ZipFile]::OpenRead((Resolve-Path 'dist/EvolveModManager-Windows.zip'))
+          try {
+            $names=@($zip.Entries | ForEach-Object FullName)
+            foreach ($name in @('EvolveModManager/EvolveModManager.exe',
+                                'EvolveModManager/EvolveModWorker.exe',
+                                'EvolveModManager/BUILD_COMMIT.txt',
+                                'EvolveModManager/BUILD_CHANNEL.txt')) {
+              if ($name -notin $names) { throw "Missing required package file: $name" }
+            }
+            if ($names | Where-Object { $_ -match '(?i)(^|/)Data/|private_key\.pem$|\.pak$' }) {
+              throw 'Private game data included in candidate package'
+            }
+          } finally { $zip.Dispose() }
+      - name: Install Inno Setup 6
+        shell: pwsh
+        run: |
+          $compiler=Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (!(Test-Path $compiler)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+          }
+      - name: Build installer without publishing
+        shell: pwsh
+        run: |
+          & './installer/Build-Installer.ps1'
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path 'dist/EvolveModManager-Setup.exe')) {
+            throw 'Candidate installer build failed'
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta35-review-candidate
+          path: |
+            dist/EvolveModManager-Windows.zip
+            dist/EvolveModManager-Setup.exe
+            dist/EvolveModManager-*-screenshot.png
+          if-no-files-found: error
