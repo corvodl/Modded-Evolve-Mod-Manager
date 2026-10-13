@@ -465,10 +465,15 @@ class QtManager(QMainWindow):
         self.version_label.setObjectName('version')
         footer.addWidget(self.version_label)
         body.addLayout(footer)
+        # Beta.34 workspaces can yield review warnings during migration.
+        # Previously this ran above, before self.status/self.log_lines existed,
+        # causing Qt startup to abort on existing installations.
+        self.refresh_project_list()
         self._apply_appearance()
         self._load_batch()
         self.refresh_archives()
-        self.refresh_project_list()
+        # Project scanning can log errors or show warnings. Run it only after
+        # the activity log and footer status widget exist (below).
         self.refresh_swap_status()
         # Verify the six Shared asset directories off the GUI thread.
         QTimer.singleShot(150, self._warm_shared_assets)
