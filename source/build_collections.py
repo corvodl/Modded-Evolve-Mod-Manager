@@ -8,12 +8,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from pathlib import Path
 from uuid import uuid4
 
 FILENAME = "build-collections.json"
 FAMILIES = frozenset(("early", "legacy", "stage2", "unknown"))
 UNASSIGNED = "unassigned"
+_write_lock = threading.RLock()
 
 
 def _root(root=None):
@@ -33,6 +35,8 @@ def _empty():
 
 def _read(root=None):
     path = _path(root)
+    if path.is_symlink():
+        raise ValueError("Build catalog must not be a symbolic link.")
     data = json.loads(path.read_text("utf-8")) if path.exists() else _empty()
     if data.get("version") != 1 or not isinstance(data.get("builds"), dict):
         raise ValueError("Unsupported build catalog.")
@@ -41,18 +45,24 @@ def _read(root=None):
 
 def _write(data, root=None):
     path = _path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + "." + uuid4().hex + ".tmp")
-    try:
-        with temp.open("x", encoding="utf-8") as out:
-            json.dump(data, out, indent=2, sort_keys=True)
-            out.flush()
-            os.fsync(out.fileno())
-        os.replace(temp, path)
-    finally:
-        temp.unlink(missing_ok=True)
-    from asset_library import _invalidate
-    _invalidate()
+    with _write_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_symlink():
+            raise ValueError("Build catalog must not be a symbolic link.")
+        current = _read(root)
+        if data["revision"] != current["revision"] + 1:
+            raise ValueError("Build inventory changed; reload before editing.")
+        temp = path.with_name(path.name + "." + uuid4().hex + ".tmp")
+        try:
+            with temp.open("x", encoding="utf-8") as out:
+                json.dump(data, out, indent=2, sort_keys=True)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
+        from asset_library import _invalidate
+        _invalidate()
 
 
 def catalog(root=None):
@@ -114,6 +124,9 @@ def assign_archive(build_id, archive_id, *, root=None, relative_path=None,
               "provenance": provenance}
     if old is not None and old != member:
         raise ValueError("Inventory change requires explicit review.")
+    for other_id, existing in data["builds"][build_id]["members"].items():
+        if other_id != archive_id and existing["relative_path"].casefold() == relative.casefold():
+            raise ValueError("Archive at this relative path changed; create a new snapshot.")
     data["builds"][build_id]["members"][archive_id] = member
     data["builds"][UNASSIGNED]["members"].pop(archive_id, None)
     data["revision"] += 1
