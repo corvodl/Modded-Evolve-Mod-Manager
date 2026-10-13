@@ -6,6 +6,8 @@ silent 60-minute build hang into a named failing/timeout module.
 from __future__ import annotations
 
 import argparse
+import importlib
+import unittest
 import os
 import subprocess
 import sys
@@ -15,6 +17,8 @@ import time
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--timeout-seconds', type=int, default=90)
+    parser.add_argument('--isolate-module', action='append', default=[],
+                        help='Run each unittest case in its own process to isolate Qt native state')
     parser.add_argument('modules', nargs='+')
     args = parser.parse_args(argv)
     if args.timeout_seconds <= 0:
@@ -25,9 +29,24 @@ def main(argv=None):
     for index, module in enumerate(args.modules, 1):
         print(f'\n[CI TEST {index}/{len(args.modules)}] START {module}', flush=True)
         start = time.monotonic()
+        tests = [module]
+        if module in args.isolate_module:
+            suite = unittest.defaultTestLoader.loadTestsFromModule(importlib.import_module(module))
+            def cases(node):
+                for item in node:
+                    if isinstance(item, unittest.TestSuite):
+                        yield from cases(item)
+                    else:
+                        yield item.id()
+            tests = list(cases(suite))
+            print(f'[CI TEST {index}/{len(args.modules)}] Isolating {len(tests)} Qt cases', flush=True)
         try:
-            result = subprocess.run([sys.executable, '-u', '-m', 'unittest', '-v', module],
-                                    env=env, timeout=args.timeout_seconds, check=False)
+            for test in tests:
+                print(f'  CASE {test}', flush=True)
+                result = subprocess.run([sys.executable, '-u', '-m', 'unittest', '-v', test],
+                                        env=env, timeout=args.timeout_seconds, check=False)
+                if result.returncode:
+                    break
         except subprocess.TimeoutExpired:
             print(f'[CI TEST {index}/{len(args.modules)}] TIMEOUT: {module} exceeded '
                   f'{args.timeout_seconds}s; likely a blocked Windows GUI/modal or slow test.',
