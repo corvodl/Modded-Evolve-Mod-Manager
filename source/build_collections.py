@@ -132,6 +132,21 @@ def remove_membership(build_id, archive_id, *, root=None):
     _write(data, root)
 
 
+
+def resolve_archive_build(archive_id, *, root=None, build_id=None):
+    """Select the owning build, never combine two memberships implicitly."""
+    data = catalog(root)
+    owners = [bid for bid, record in data["builds"].items()
+              if archive_id in record["members"]]
+    if build_id is not None:
+        if build_id == "all" or build_id not in owners:
+            raise ValueError("Selected archive does not belong to that build.")
+        return build_id
+    if len(owners) != 1:
+        raise ValueError("Archive has multiple build memberships; choose a build explicitly.")
+    return owners[0]
+
+
 def build_index(build_id, *, root=None):
     """Fail-closed index; never fall back to assets from another build."""
     from asset_library import extracted_index
