@@ -277,11 +277,16 @@ def decode_normal_dds_image(data: bytes, *, source_name: str = "",
         if not parsed.pixel_format.endswith("RGB/luminance"):
             raise
         info = None
-    if info is not None and info.format_name == "BC5":
-        decoded = decode_bc5_dds(data, invert_green=invert_green)
-        return Image.frombytes("RGBA", (decoded.width, decoded.height), decoded.rgba)
-    if info is not None and info.format_name == "BC5_SNORM":
-        raise ValueError("Signed BC5_SNORM normal maps require signed endpoint decoding")
+    if info is not None and info.format_name in ("BC5", "BC5_SNORM"):
+        offset = 148 if data[84:88] == b"DX10" else 128
+        count = ((info.width+3)//4)*((info.height+3)//4)*16
+        if len(data) < offset + count:
+            raise ValueError("Missing highest-resolution BC5 mip data")
+        normal = decode_bc5_normal(info.width, info.height,
+                                   data[offset:offset+count],
+                                   signed=(info.format_name == "BC5_SNORM"),
+                                   invert_green=invert_green)
+        return Image.frombytes("RGBA", (normal.width, normal.height), normal.rgba)
     if info is not None and info.format_name in ("DXT5", "BC3", "BC3_SRGB"):
         off = 148 if data[84:88] == b"DX10" else 128
         expected = ((info.width + 3)//4)*((info.height + 3)//4)*16
