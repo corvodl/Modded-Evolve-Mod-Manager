@@ -10,7 +10,7 @@ from model_preview import find_preview_mesh
 from model_blender_export import glb_bytes
 from model_textured_export import (
     embed_diffuse_textures, textured_model_from_workspace)
-from model_rigging import skin_glb_composite
+from model_rigging import skin_glb_composite, skin_glb_composite_separate
 from native_caf import append_caf_animations, decode_caf
 from model_textured_export import _unpack_glb
 import zlib
@@ -48,9 +48,29 @@ def create_character_glb(workspace, relative, index, *, character=None,
             parts.append((render.read_bytes(), skin.read_bytes(), count))
         blob = glb_bytes(character.mesh, name=Path(character.cdf).stem)
         blob, textures = embed_diffuse_textures(blob,character.materials)
-        blob, rig = skin_glb_composite(blob,parts,skeleton)
-        details = {'texture_count':textures,'rig_status':'Rigged CDF assembly',
+        try:
+            blob, rig = skin_glb_composite(blob,parts,skeleton)
+            layout = 'shared'
+        except ValueError as exc:
+            if not any(hint in str(exc).casefold() for hint in (
+                    'conflicting bind poses', 'hierarchy differs',
+                    'bind/rest pose')):
+                raise
+            # The same skinned mesh cannot have per-primitive inverse binds.
+            # Export separate native armatures rather than silently stripping
+            # all bones or inventing a common bind pose for attachments.
+            blob, rig = skin_glb_composite_separate(
+                blob,parts,part_names=character.included)
+            layout = 'independent'
+        details = {'texture_count':textures,
+                   'rig_status':('Rigged CDF assembly' if layout == 'shared'
+                                 else 'Rigged CDF assembly: independent Blender armatures'),
+                   'rig_layout':layout,
                    'bone_count':rig['bone_count'],'part_count':rig['part_count']}
+        if layout == 'independent' and (clip is not None or clips):
+            raise ValueError('This CDF has multiple distinct native bind poses; '
+                             'its Blender armatures are poseable independently '
+                             'but shared CAF/DBA playback has not been verified.')
     if clip is not None and (clip.kind == 'dba' or
                              (not clip.available and clip.dba_file is not None)):
         from database_animation import convert_database_motion

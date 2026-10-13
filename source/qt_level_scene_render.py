@@ -65,19 +65,52 @@ def look_at_matrix(eye, center):
     return np.ascontiguousarray(matrix.T,dtype=np.float32)
 
 
-def prepare_scene(project, cancel, progress=None):
+def prepare_scene(project, cancel, progress=None, *, game=None, stage=None, cache_root=None):
     """CPU-only preparation. Return shared geometry and explicit diagnostics."""
     from level_asset_mount import mount_map_index, resolve_scoped
     from model_preview import read_preview_mesh
     from gpu_model_preview import prepare_geometry
     from material_preview import load_preview_materials
 
-    index, details = mount_map_index(project.workspace, project.level_name)
+    dependency = {}
+    if game is not None and stage is not None and cache_root is not None:
+        from level_dependency_loader import ensure_map_archives
+        try:
+            dependency = ensure_map_archives(
+                project, game, stage, cache_root, cancel=cancel,
+                progress=(lambda label, current, total:
+                          progress(label, current, total)) if progress else None)
+        except (OSError, ValueError, RuntimeError) as exc:
+            dependency = {"errors": ["Dependency import: " + str(exc)[:200]]}
+    if cancel.is_set():
+        return None
+    index, details = mount_map_index(project.workspace, project.level_name,
+                                     cache_root=cache_root)
+    details["dependencies"] = dependency
     material_names = sorted(
         (name for name in index if name.endswith(".mtl")), key=str.casefold)
     details["materials"] = tuple(material_names[:20000])
     details["material_catalog_truncated"] = len(material_names) > 20000
     assets, issues, models = {}, Counter(), {}
+    details["terrain"] = None
+    height_source = "levels/" + str(project.level_name) + "/leveldata/heightmap.dat"
+    source_record, terrain_state = resolve_scoped(
+        index, height_source, project.workspace)
+    if source_record is not None:
+        from level_terrain_decode import decode_terrain, MAX_SOURCE_BYTES
+        try:
+            source_file = Path(source_record["file"])
+            if source_file.is_symlink() or not 0 < source_file.stat().st_size <= MAX_SOURCE_BYTES:
+                raise ValueError("Unsafe or oversized source terrain payload")
+            details["terrain"] = decode_terrain(
+                source_file.read_bytes(),
+                source=str(source_record.get("relative") or height_source))
+        except (OSError, ValueError) as exc:
+            issues["Terrain HeightmapData: " + str(exc)[:180]] += 1
+    elif "terrain/terrain.dat" in index:
+        issues["compiled terrain present, but no verified source Heightmap.dat"] += 1
+    else:
+        issues["terrain source " + terrain_state + ": " + height_source] += 1
     candidates = {_asset_key(o): o for o in project.scene if o.model}
     total = len(candidates)
     size = 0
@@ -88,11 +121,11 @@ def prepare_scene(project, cancel, progress=None):
             progress(i, total)
         extension = PurePosixPath(obj.model).suffix.casefold()
         if extension not in SUPPORTED_STATIC:
-            issues["unsupported geometry format " + extension] += 1
+            issues["unsupported geometry: " + obj.model + " (" + extension + ")"] += 1
             continue
         record, status = resolve_scoped(index, obj.model, project.workspace)
         if record is None:
-            issues["asset " + status] += 1
+            issues["model " + status + ": " + obj.model] += 1
             continue
         try:
             path = Path(record["file"])
@@ -125,7 +158,7 @@ def prepare_scene(project, cancel, progress=None):
                 # decode cache merely because decoding was attempted.
                 if not any(a.model_file == cache_key for a in assets.values()):
                     models.pop(cache_key,None)
-                issues["bounded memory budget (not rendered)"] += 1
+                issues["deferred by memory budget: " + obj.model] += 1
                 continue
             size += cost
             lower = tuple(float(v) for v in geometry.vertices.min(axis=0))
@@ -133,7 +166,7 @@ def prepare_scene(project, cancel, progress=None):
             assets[key] = RenderAsset(mesh, geometry, materials, cost, cache_key,
                                       (lower, upper))
         except (OSError, ValueError, TypeError) as exc:
-            issues[str(exc)[:130]] += 1
+            issues[obj.model + ": " + str(exc)[:130]] += 1
     if progress:
         progress(total, total)
     return assets, dict(issues), details
@@ -146,7 +179,7 @@ class LevelGLViewport(QOpenGLWidget):
     statusChanged = Signal(str)
     materialsReady = Signal(object)
 
-    def __init__(self, project, parent=None):
+    def __init__(self, project, parent=None, *, game=None, stage=None, cache_root=None):
         super().__init__(parent)
         fmt = QSurfaceFormat()
         fmt.setRenderableType(QSurfaceFormat.OpenGL)
@@ -157,6 +190,9 @@ class LevelGLViewport(QOpenGLWidget):
         self.setMinimumSize(300, 260)
         self.setFocusPolicy(Qt.StrongFocus)
         self.project = project
+        self.game_root = game
+        self.stage_root = stage
+        self.cache_root = cache_root
         self.mode = "select"
         self.active = None
         self.yaw = .6
@@ -165,6 +201,7 @@ class LevelGLViewport(QOpenGLWidget):
         self.distance = 500.
         self.projection_mode = "Perspective"
         self.assets = {}
+        self.terrain = None
         self._textures = {}
         self._cancel = Event()
         self._results = Queue(maxsize=2)
@@ -180,19 +217,35 @@ class LevelGLViewport(QOpenGLWidget):
             self._lookup.setdefault(guid, (item.layer, item.index))
         self._visible = ()
         self._issues = {}
+        self._dependency_report = {}
         self.frame_all()
         self._poll = QTimer(self)
         self._poll.timeout.connect(self._receive)
         self._poll.start(80)
-        token = self._generation
+        token, cancel, results = self._generation, self._cancel, self._results
 
         def job():
             try:
-                value = prepare_scene(project, self._cancel)
+                def report(*args):
+                    if cancel.is_set():
+                        return
+                    if len(args) == 3:
+                        label,current,total = args
+                        self.statusChanged.emit(
+                            f"{label} ({current+1}/{max(1,total)})")
+                    elif len(args) == 2:
+                        current,total = args
+                        step=max(1,total//10)
+                        if current % step == 0 or current == total:
+                            self.statusChanged.emit(
+                                f"Preparing mesh/materials {current:,} / {total:,}")
+                value = prepare_scene(project, cancel, report,
+                                      game=self.game_root, stage=self.stage_root,
+                                      cache_root=self.cache_root)
             except Exception as exc:
                 value = (None, {"scene initialization: " + str(exc)[:160]: 1}, {})
-            if not self._cancel.is_set():
-                self._results.put((token, value))
+            if not cancel.is_set():
+                results.put((token, value))
         self._loader = Thread(target=job, name="Evolve-Level-CPU-Loader", daemon=True)
         self._loader.start()
         self.statusChanged.emit("Preparing map meshes and textures in background…")
@@ -204,6 +257,7 @@ class LevelGLViewport(QOpenGLWidget):
         self._cancel = Event()
         self._results = Queue(maxsize=2)
         self.assets = {}
+        self.terrain = None
         self._lookup.clear()
         for item in self.project.objects:
             node = self.project._node(item.layer, item.index)
@@ -213,7 +267,22 @@ class LevelGLViewport(QOpenGLWidget):
         project = self.project
         def job():
             try:
-                result = prepare_scene(project, cancel)
+                def report(*args):
+                    if cancel.is_set():
+                        return
+                    if len(args)==3:
+                        label,current,total=args
+                        self.statusChanged.emit(
+                            f"{label} ({current+1}/{max(1,total)})")
+                    elif len(args)==2:
+                        current,total=args
+                        step=max(1,total//10)
+                        if current % step==0 or current==total:
+                            self.statusChanged.emit(
+                                f"Preparing mesh/materials {current:,} / {total:,}")
+                result = prepare_scene(project, cancel, report,
+                                       game=self.game_root, stage=self.stage_root,
+                                       cache_root=self.cache_root)
             except Exception as exc:
                 result = ({}, {"scene initialization: " + str(exc)[:160]: 1}, {})
             if not cancel.is_set():
@@ -232,6 +301,7 @@ class LevelGLViewport(QOpenGLWidget):
             return
         assets, issues, details = result
         self._issues = issues
+        self._dependency_report = details.get('dependencies', {})
         if details.get("materials"):
             self.materialsReady.emit(details["materials"])
         if self._textures and self.isValid():
@@ -242,13 +312,16 @@ class LevelGLViewport(QOpenGLWidget):
             finally:
                 self.doneCurrent()
         self.assets = assets or {}
+        self.terrain = details.get('terrain')
         self._textures.clear()
         count = sum(1 for obj in self.project.scene if _asset_key(obj) in self.assets)
         detail = ", ".join(f"{k}: {v}" for k, v in list(issues.items())[:5])
         self.statusChanged.emit(
             f"3D geometry: {count:,} / {len(self.project.scene):,} placed nodes; "
             f"{len(self.assets)} decoded material variants; "
-            f"{details.get('mounts',0)} scoped map archives. "
+            + (f"Terrain {len(self.terrain.indices)//3:,} verified triangles; "
+               if self.terrain is not None else "Terrain unavailable; ")
+            + f"{details.get('mounts',0)} scoped map archives. "
             + (("Issues: " + detail) if detail else "No decoding warnings."))
         self.update()
 
@@ -369,6 +442,20 @@ class LevelGLViewport(QOpenGLWidget):
         up=(right[1]*forward[2]-right[2]*forward[1],
             right[2]*forward[0]-right[0]*forward[2],
             right[0]*forward[1]-right[1]*forward[0])
+        # The real source HeightmapData is drawn in authored world coordinates.
+        # No flat proxy, inferred terrain texture, or generated collision.
+        terrain = self.terrain
+        if terrain is not None:
+            glDisable(GL_TEXTURE_2D)
+            glColor3f(.52,.59,.51)  # Explicit untextured preview until tile format verified.
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glEnableClientState(GL_NORMAL_ARRAY)
+            glVertexPointer(3,GL_FLOAT,0,terrain.vertices)
+            glNormalPointer(GL_FLOAT,0,terrain.normals)
+            glDrawElements(GL_TRIANGLES,len(terrain.indices),
+                           GL_UNSIGNED_INT,terrain.indices)
+            glDisableClientState(GL_NORMAL_ARRAY)
+            glDisableClientState(GL_VERTEX_ARRAY)
         visible=[]
         for item in self.project.scene:
             key=_asset_key(item)

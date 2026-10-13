@@ -7,10 +7,12 @@ navigation/collision/lighting recompilation is implied.
 from __future__ import annotations
 
 from collections import defaultdict
+from threading import Event, Thread
+from types import SimpleNamespace
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QPointF
+from PySide6.QtCore import Qt, Signal, QPointF, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QAction
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QFrame, QLabel, QVBoxLayout,
@@ -225,6 +227,8 @@ class LevelSceneViewport(QWidget):
 
 class UnrealStyleLevelEditor(QMainWindow):
     """UE4/5-like placement workspace for extracted Evolve Stage 2 levels."""
+    mapCatalogReady = Signal(int,object)
+    mapCopyReady = Signal(int,object,object)
 
     def __init__(self,parent,workspace):
         super().__init__(parent)
@@ -248,12 +252,17 @@ class UnrealStyleLevelEditor(QMainWindow):
         """)
         self.selected=None
         self._refreshing=False
+        self._map_catalog_generation=0
+        self._map_copy_generation=0
+        self._map_copy_cancel=Event()
+        self.mapCatalogReady.connect(self._apply_map_catalog)
+        self.mapCopyReady.connect(self._complete_map_copy)
         self._build_toolbar()
         self._build_workspace()
         self._populate()
         self.refresh_maps()
         self.statusBar().showMessage(
-            "3D static mesh preview loading • terrain/vegetation and collision not reconstructed")
+            "Loading source terrain and static meshes • tile textures and vegetation remain unsupported")
 
     def _action(self,label,callback,tip=None,checkable=False):
         action=QAction(label,self)
@@ -348,7 +357,14 @@ class UnrealStyleLevelEditor(QMainWindow):
         lay.addWidget(tip)
         horizontal.addWidget(left)
 
-        self.viewport=LevelGLViewport(self.project)
+        from app_runtime import DATA_HOME
+        manager = self.parent()
+        manager_game = getattr(manager, "_find_game_root", None)
+        game_root = manager_game() if callable(manager_game) else None
+        stage_root = getattr(manager, "stage_path", None)
+        self.viewport=LevelGLViewport(
+            self.project, game=game_root, stage=stage_root,
+            cache_root=DATA_HOME / "LevelDependencyCache")
         self.viewport.selected.connect(self.select_object)
         self.viewport.moved.connect(self._viewport_moved)
         self.viewport.statusChanged.connect(self._scene_status)
@@ -463,30 +479,130 @@ class UnrealStyleLevelEditor(QMainWindow):
         return projects
 
     def refresh_maps(self):
+        """Show extracted projects immediately; discover game/library maps off-thread."""
         self._map_projects=self._available_projects()
         self.map_selector.blockSignals(True)
         self.map_selector.clear()
         for name,path in sorted(self._map_projects.items(),key=lambda pair:pair[0].casefold()):
             self.map_selector.addItem(name+"  ·  Ready",str(path))
-        self.map_selector.setCurrentIndex(self.map_selector.findData(str(self.project.workspace)))
+        self.map_selector.setCurrentIndex(
+            self.map_selector.findData(str(self.project.workspace)))
         self.map_selector.blockSignals(False)
-        completer=QCompleter([self.map_selector.itemText(i) for i in range(self.map_selector.count())],self.map_selector)
+        self._set_map_completer()
+        self._map_catalog_generation += 1
+        token = self._map_catalog_generation
+        game = getattr(self.viewport,"game_root",None)
+        workspaces = tuple(self._map_projects.values())
+        def scan():
+            try:
+                from app_runtime import DATA_HOME
+                from asset_library import LIBRARY_HOME
+                from level_dependency_loader import discover_map_status
+                status = discover_map_status(
+                    game,library_roots=(LIBRARY_HOME,DATA_HOME/"LevelDependencyCache"),
+                    projects=workspaces)
+            except (OSError, ValueError) as exc:
+                status = {"_error":str(exc)[:180]}
+            try:
+                self.mapCatalogReady.emit(token,status)
+            except RuntimeError:
+                pass
+        Thread(target=scan,name="Evolve-Map-Catalog",daemon=True).start()
+
+    def _set_map_completer(self):
+        completer=QCompleter(
+            [self.map_selector.itemText(i) for i in range(self.map_selector.count())],
+            self.map_selector)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         completer.setFilterMode(Qt.MatchContains)
         self.map_selector.setCompleter(completer)
 
-    def _map_selected(self,index):
-        path=self.map_selector.itemData(index)
-        if path:
-            self.switch_map(Path(path))
+    def _apply_map_catalog(self,token,status):
+        if token != self._map_catalog_generation:
+            return
+        if "_error" in status:
+            self.statusBar().showMessage("Map catalog: "+status["_error"],8000)
+            return
+        known = {self.map_selector.itemData(i) for i in range(self.map_selector.count())}
+        current = str(self.project.workspace)
+        self.map_selector.blockSignals(True)
+        for map_id,entry in status.items():
+            label = map_id.replace("_"," ").title()
+            workspace = entry.get("workspace")
+            target = workspace or "map:"+map_id
+            if target in known:
+                continue
+            state = entry.get("status","unavailable").title()
+            self.map_selector.addItem(label+"  ·  "+state,target)
+            known.add(target)
+        self.map_selector.setCurrentIndex(self.map_selector.findData(current))
+        self.map_selector.blockSignals(False)
+        self._set_map_completer()
 
-    def switch_map(self,workspace):
+    def _map_selected(self,index):
+        target=self.map_selector.itemData(index)
+        if not target:
+            return
+        if target.startswith("map:"):
+            self._load_library_map(target[4:])
+        else:
+            self._map_copy_cancel.set()
+            self._map_copy_generation += 1
+            self.switch_map(Path(target))
+
+    def _load_library_map(self,map_id):
+        """Import/make an editable copy on a worker; retain previous map on failure."""
+        from app_runtime import DATA_HOME
+        from asset_library import LIBRARY_HOME
+        from level_dependency_loader import ensure_map_archives,copy_editable_map_from_library
+        self._map_copy_cancel.set()
+        self._map_copy_cancel=Event()
+        self._map_copy_generation += 1
+        token, cancel = self._map_copy_generation,self._map_copy_cancel
+        game,stage=self.viewport.game_root,self.viewport.stage_root
+        destination=self.project.workspace.parent/("Level-"+map_id)
+        self.statusBar().showMessage("Preparing editable map "+map_id+" in background…")
+        self.map_selector.setEnabled(False)
+        def job():
+            try:
+                if game is not None and stage is not None:
+                    context=SimpleNamespace(
+                        level_name=map_id,workspace=self.project.workspace,scene=())
+                    ensure_map_archives(context,game,stage,
+                                        DATA_HOME/"LevelDependencyCache",
+                                        imported_root=LIBRARY_HOME,cancel=cancel)
+                if cancel.is_set():
+                    return
+                folder=copy_editable_map_from_library(
+                    map_id,destination,
+                    library_roots=(LIBRARY_HOME,DATA_HOME/"LevelDependencyCache"),
+                    cancel=cancel)
+                prepared=LevelProject(folder)
+                self.mapCopyReady.emit(token,prepared,None)
+            except (OSError,ValueError,RuntimeError,InterruptedError) as exc:
+                try:
+                    self.mapCopyReady.emit(token,None,str(exc)[:250])
+                except RuntimeError:
+                    pass
+        Thread(target=job,name="Evolve-Map-Project-Prep",daemon=True).start()
+
+    def _complete_map_copy(self,token,project,error):
+        if token != self._map_copy_generation:
+            return
+        self.map_selector.setEnabled(True)
+        if error:
+            QMessageBox.warning(self,"Cannot load discovered map",error)
+            self.refresh_maps()
+            return
+        self.switch_map(project.workspace,prepared=project)
+
+    def switch_map(self,workspace,*,prepared=None):
         """Swap projects in place with saved-edit and loader-generation protection."""
         try:
             target=Path(workspace).resolve(strict=True)
             if target==self.project.workspace:
                 return True
-            next_project=LevelProject(target)
+            next_project=prepared if prepared is not None else LevelProject(target)
         except (OSError,ValueError) as exc:
             QMessageBox.warning(self,"Map load failed",str(exc))
             self.refresh_maps()
@@ -554,28 +670,46 @@ class UnrealStyleLevelEditor(QMainWindow):
             message=json.dumps(sections,ensure_ascii=False,indent=2)[:13000]
         QMessageBox.information(
             self, "Level terrain / vegetation source metadata",
-            message + "\\n\\nThese are SOURCE DESCRIPTORS only. Elevation, vegetation "
-            "instance placement and cooked terrain tiles are not decoded or "
-            "paintable in the current editor.")
+            message + "\\n\\nVerified source height samples can now be previewed "
+            "as read-only terrain. Vegetation instances, cooked terrain tiles "
+            "and terrain painting remain unsupported.")
 
     def scene_diagnostics(self):
         decoded = len(self.viewport.assets)
         coverage = sum(1 for item in self.project.scene
                        if (item.model.casefold(), item.material.casefold())
                        in self.viewport.assets)
-        missing = "\\n".join(f"• {reason}: {count}" for reason,count
-                              in sorted(self.viewport._issues.items(), key=lambda x:-x[1])[:25])
+        missing = "\n".join(f"• {reason}: {count}" for reason,count
+                            in sorted(self.viewport._issues.items(),
+                                      key=lambda x:-x[1])[:25])
+        terrain=getattr(self.viewport,"terrain",None)
+        terrain_status=(f"{terrain.width}×{terrain.height} source elevations; "
+                        f"{len(terrain.indices)//3:,} triangles (stride {terrain.stride}); "
+                        f"source: {terrain.source}"
+                        if terrain is not None else "no supported decoded source terrain")
+        dep=getattr(self.viewport,"_dependency_report",{})
+        archive_status=(f"{len(dep.get('imported',()))} imported; "
+                        f"{len(dep.get('reused',()))} reused; "
+                        f"{len(dep.get('ambiguous',()))} ambiguous; "
+                        f"{len(dep.get('missing',()))} missing"
+                        if dep else "not checked")
+        dep_missing=("\n".join("• "+v for v in (
+                     dep.get('missing',())[:12] + dep.get('ambiguous',())[:8] +
+                     dep.get('errors',())[:8])) if dep else "")
         QMessageBox.information(
             self, "Rendered scene diagnostics",
-            f"Map: {self.project.level_name}\\n"
-            f"Placed scene nodes: {len(self.project.scene):,}\\n"
-            f"Rendered instances: {coverage:,}\\n"
-            f"Decoded material variants: {decoded:,}\\n"
-            f"Hierarchy warnings: {len(self.project.scene_diagnostics):,}\\n"
-            f"Render/lookup problems:\\n{missing or '(none reported)'}\\n\\n"
-            "Only verified static CryEngine mesh streams are rendered. "
-            "Terrain, vegetation, roads, prefabs and unsupported CDF actors "
-            "are not silently replaced with fake terrain or meshes.")
+            f"Map: {self.project.level_name}\n"
+            f"Placed scene nodes: {len(self.project.scene):,}\n"
+            f"Rendered instances: {coverage:,}\n"
+            f"Decoded material variants: {decoded:,}\n"
+            f"Hierarchy warnings: {len(self.project.scene_diagnostics):,}\n"
+            f"Terrain: {terrain_status}\n"
+            f"PAK dependencies: {archive_status}\n"
+            f"Render/lookup problems:\n{missing or '(none reported)'}\n\n"
+            f"Missing/conflicting providers:\n{dep_missing or '(none reported)'}\n\n"
+            "Source terrain is rendered read-only without authored terrain tile "
+            "textures. Unsupported vegetation, roads, prefabs and compiled "
+            "terrain are not replaced by fabricated geometry.")
 
     def apply_material_override(self):
         if self.selected is None:
@@ -837,7 +971,7 @@ class UnrealStyleLevelEditor(QMainWindow):
             "Unresolved/unsupported content is listed in Scene Diagnostics.\\n\\n"
             "Edit source-layer transforms and explicit material overrides in a copied workspace; "
             "undo/redo and safe atomic layer saves retain original backups.\\n\\n"
-            "Not yet implemented: terrain elevation/tiles, vegetation instances, procedural roads, "
+            "Not yet implemented: terrain tiles/painting, vegetation instances, procedural roads, "
             "animated CDF characters, source-designer remeshing, game runtime collision, "
             "lighting/navigation rebuilds or engine-ready export. The editor must not be treated "
             "as a CryEngine map compiler.")
@@ -851,4 +985,6 @@ class UnrealStyleLevelEditor(QMainWindow):
             if answer!=QMessageBox.Yes:
                 event.ignore()
                 return
+        self._map_copy_cancel.set()
+        self._map_catalog_generation += 1
         event.accept()
