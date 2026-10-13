@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.29', (
+        'Hide non-rendered character surfaces while preserving rigged exports.',
+        'Restore character material tints and improve glass previews.',
+        'Keep Wasteland Maggie's permanent mask and headgear attached.',
+    )),
     ('1.1.18-beta.28', (
         'Discover map PAK dependencies and prepare editable copies for testing.',
         'Preview supported map terrain and report missing scene assets.',
