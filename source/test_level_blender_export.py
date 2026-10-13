@@ -17,7 +17,7 @@ from model_textured_export import _unpack_glb
 def mesh():
     return SimpleNamespace(
         vertices=np.asarray([(0.,0.,0.),(1.,0.,0.),(0.,1.,0.)],dtype=np.float32),
-        triangles=np.asarray([(0,1,2)],dtype=np.uint32),
+        triangles=[(0,1,2)],
         uvs=np.asarray([(0.,0.),(1.,0.),(0.,1.)],dtype=np.float32),
         subsets=())
 
