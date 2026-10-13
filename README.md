@@ -1,24 +1,25 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.34
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.35
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.34 · **Platform:** Windows x64 · **Distribution:** self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.35 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
 ## Latest Stable — v1.1.17.1
 
 - Add a Windows installer with optional Desktop and Start Menu shortcuts.
 - Compare Stable and Beta releases and offer only the newest version.
 
-## Latest Beta — v1.1.18-beta.34
+## Latest Beta — v1.1.18-beta.35
 
-- Improve Level Editor scene assembly, terrain preview, and resource loading.
-- Organize assets by build and plan reference-only transfers to Stage 2.
+- Import original PAKs from a chosen source directory and browse Asset Library archives by build.
+- Select and export multiple assets, then create separate editable projects for verified Stage 2 archives and supported maps.
+- Focus Modding on projects and modified files, with refreshed navigation icons and Updates-first Settings.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 
-Versioned release: [v1.1.18-beta.34](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.34).
+Versioned release: [v1.1.18-beta.35](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.35).
 
 ## Download and install
 

@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.35', (
+        'Import original PAKs from a chosen source directory and browse Asset Library archives by build.',
+        'Select and export multiple assets, then create separate editable projects for verified Stage 2 archives and supported maps.',
+        'Focus Modding on projects and modified files, with refreshed navigation icons and Updates-first Settings.',
+    )),
     ('1.1.18-beta.34', (
         'Improve Level Editor scene assembly, terrain preview, and resource loading.',
         'Organize assets by build and plan reference-only transfers to Stage 2.',
