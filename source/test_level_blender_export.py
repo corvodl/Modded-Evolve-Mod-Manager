@@ -65,6 +65,14 @@ class CombinedMapExportTests(TestCase):
                                      {"terrain":terrain})):
                 report=export_level_glb(project,output)
             self.assertEqual(report["objects"],2)
+            self.assertEqual(report["selected_objects"],2)
+            self.assertEqual(report["omitted_count"],0)
+            self.assertEqual(report["coverage_fraction"],1.)
+            import json
+            coverage=json.loads(Path(str(output)+".coverage.json").read_text())
+            self.assertEqual(coverage["map"],"Tutorial")
+            self.assertIn("vegetation instances are not decoded",
+                          coverage["world_content_limitations"])
             self.assertEqual(report["mesh_resources"],2)
             doc,_=_unpack_glb(output.read_bytes())
             self.assertEqual(len(doc["meshes"]),2)
