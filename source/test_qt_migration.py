@@ -205,35 +205,26 @@ class QtMigrationTests(unittest.TestCase):
 
 
     def test_memory_panel_requires_developer_unlock_and_auto_attaches(self):
-        print('QT MEMORY: begin', flush=True)
         from developer_memory_panel import DeveloperMemoryPanel
         self.assertEqual(self.win.findChildren(DeveloperMemoryPanel), [])
         index = SECTIONS.index('Developer')
         with patch('qt_manager.QInputDialog.getText', return_value=('test-input', True)), \
              patch('qt_manager.verify_code', return_value=True), \
              patch('developer_memory_panel.list_evolve_processes', return_value=[39832]), \
-             patch.object(DeveloperMemoryPanel, '_run'):
-            print('QT MEMORY: before unlock', flush=True)
+             patch.object(DeveloperMemoryPanel, '_run',
+                          new=lambda self, *_args: None):
             self.win.open_page(index)
-            print('QT MEMORY: after unlock', flush=True)
-            print('QT MEMORY: before events', flush=True)
             self.application.processEvents()
-            print('QT MEMORY: after events', flush=True)
             panel = self.win.pages['developer'].findChild(DeveloperMemoryPanel)
             self.assertIsNotNone(panel)
-            print('QT MEMORY: before refresh', flush=True)
             panel.refresh_processes()
-            print('QT MEMORY: after refresh', flush=True)
             self.assertEqual(panel._pid, 39832)
             self.assertEqual(panel.processes.currentData(), 39832)
             self.assertIn('39832', panel.connection.text())
             self.assertEqual(panel.tabs.count(), 4)
-            print('QT MEMORY: before leave', flush=True)
             self.win.open_page(0)
-            print('QT MEMORY: after leave', flush=True)
             self.assertTrue(panel._closed)
             self.assertEqual(self.win.pages['developer'].findChildren(DeveloperMemoryPanel), [])
-            print('QT MEMORY: end assertions', flush=True)
 
     def test_developer_write_switches_require_acknowledgment_and_reset(self):
         from developer_memory_panel import DeveloperMemoryPanel
