@@ -458,6 +458,7 @@ class QtManager(QMainWindow):
         self._apply_appearance()
         self._load_batch()
         self.refresh_archives()
+        self.refresh_project_list()
         self.refresh_swap_status()
         # Verify the six Shared asset directories off the GUI thread.
         QTimer.singleShot(150, self._warm_shared_assets)
@@ -2107,23 +2108,8 @@ class QtManager(QMainWindow):
             game = self.game_root or self._find_game_root()
             relative, command = project_command(
                 library_id, self.stage_path, folder, game)
-            # Build Mod must use the SAME staged PAK as the new workspace;
-            # select its exact signed relative path in the PAK browser.
-            self.search.clear()
-            self.file_filter.setCurrentIndex(0)
-            self.external_pak = ''
-            self.refresh_table()
-            selected = False
-            for row in range(self.table.rowCount()):
-                item = self.table.item(row, 0)
-                if item and item.data(Qt.UserRole) == relative:
-                    self.table.selectRow(row)
-                    selected = True
-                    break
-            if not selected:
-                raise ValueError(
-                    'Matching staged PAK is not present in the Modding browser: ' +
-                    relative)
+            # Store explicit signed baseline ownership in the resulting project.
+            self._pending_library_archive = library_id
             self.archive_label = relative
             self.run_steps(
                 [('Creating editable project from verified staged PAK', command)],
@@ -2146,11 +2132,33 @@ class QtManager(QMainWindow):
         self.output_pak = ''
         self.output_input.setText('')
         self.persist()
+        try:
+            from project_catalog import register_project
+            register_project(self.projects_path, folder, self.stage_path,
+                             archive_id=getattr(self, '_pending_library_archive', None))
+            self.refresh_project_list()
+        except (OSError, ValueError) as exc:
+            self._log('Project catalog: ' + str(exc)[:200])
         self._log(
             'Editable project ready: ' + str(folder) +
             '\\nThe Asset Library is unchanged. Edit project copies and use Build Mod '
             'to sign modified entries using the existing custom key.')
-        self.open_editor()
+        self._open_project_workspace(folder)
+
+    def _open_project_workspace(self, folder):
+        from qt_workspace_editor import QtWorkspaceEditor
+        workspace = Path(folder).resolve(strict=True)
+        for editor in self.editors:
+            if (isinstance(editor, QtWorkspaceEditor) and editor.isVisible()
+                    and editor.workspace == workspace):
+                editor.raise_()
+                editor.activateWindow()
+                return
+        editor = QtWorkspaceEditor(self, workspace)
+        editor.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.editors.append(editor)
+        editor.show()
+        editor.raise_()
 
     def _warm_asset_library(self):
         from asset_library import installed_defaults, imported_archives
@@ -2559,9 +2567,11 @@ class QtManager(QMainWindow):
         return dest
 
     def _workspace(self):
-        path = Path(self.current_workspace)
-        if not self.current_workspace or not (path/'.evolve-pak-workspace.json').is_file():
-            raise ValueError('Unpack a signed PAK first.')
+        record = self.selected_project_context()
+        candidate = record['workspace'] if record else self.current_workspace
+        path = Path(candidate)
+        if not candidate or not (path/'.evolve-pak-workspace.json').is_file():
+            raise ValueError('Select or create an editable project first.')
         return path
 
     def _start_batch_with_dependencies(self, selected, primary, auto_level=False):
@@ -2883,7 +2893,8 @@ class QtManager(QMainWindow):
             if not self.flush_editors():
                 return
             ws = self._workspace()
-            pak, rel = self._selected_stage_pak()
+            from project_catalog import verified_target
+            rel, pak = verified_target(ws, self.stage_path)
             pub, priv = self._pub_priv()
             if not priv.is_file():
                 raise FileNotFoundError('Private signing key missing.')
