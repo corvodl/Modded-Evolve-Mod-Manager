@@ -441,6 +441,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Open File Folder', self.explore)
         action('File', 'Export Native Model…', self.export_model)
         action('File', 'Export for Blender (.glb)…', self.export_blender_model)
+        action('File', 'Export Blender Project (.blend)…', lambda: self.export_blender_model(native=True))
         action('File', 'Export Animated Character (.glb)…', self.export_animated_character)
         action('File', 'Export Model Folder…', self.export_blender_folder)
         action('File', 'Export Individual Meshes as GLB…', self.export_individual_glbs)
@@ -1941,18 +1942,19 @@ class QtWorkspaceEditor(QMainWindow):
             'Exported %d animated clips into %s' %
             (report.get('animations',0),self._export_native_target))
 
-    def export_blender_model(self):
+    def export_blender_model(self,native=False):
         """Export Blender GLB off-thread so the conversion UI stays responsive."""
         if self.mode != 'models' or not self.current or self.mesh is None:
             QMessageBox.information(
                 self, 'Export for Blender', 'Select a supported model first.')
             return
-        name = (Path(self.current).stem + '_Full_Character.glb'
-                if self.character_preview else Path(self.current).stem + '.glb')
+        extension = '.blend' if native else '.glb'
+        name = ((Path(self.current).stem + '_Full_Character' if self.character_preview
+                 else Path(self.current).stem) + extension)
         destination, _ = QFileDialog.getSaveFileName(
             self, 'Export Blender model (geometry and available textures)',
             str(Path(self.manager.projects_path) / name),
-            'Blender glTF 2.0 (*.glb)')
+            'Blender project (*.blend)' if native else 'Blender glTF 2.0 (*.glb)')
         if not destination:
             return
         from qt_background_exports import begin_file_operation, exports_busy
@@ -1961,8 +1963,8 @@ class QtWorkspaceEditor(QMainWindow):
                 self, 'Export already running', 'Finish the current export first.')
             return
         target = Path(destination)
-        if target.suffix.casefold() != '.glb':
-            target = target.with_suffix('.glb')
+        if target.suffix.casefold() != extension:
+            target = target.with_suffix(extension)
         if not target.parent.is_dir():
             QMessageBox.warning(
                 self, 'Blender export', 'Choose an existing export folder.')
@@ -1999,11 +2001,17 @@ class QtWorkspaceEditor(QMainWindow):
             temporary = None
             try:
                 with tempfile.NamedTemporaryFile(
-                        prefix='.evolve-glb-', dir=target.parent,
+                        prefix='.evolve-glb-', suffix='.glb', dir=target.parent,
                         delete=False) as file:
                     temporary = Path(file.name)
                     file.write(payload)
-                os.replace(temporary, target)
+                if native:
+                    from blender_native_project import convert_glb_to_blend
+                    if cancelled():
+                        raise InterruptedError('Export cancelled before Blender conversion.')
+                    convert_glb_to_blend(temporary,target)
+                else:
+                    os.replace(temporary, target)
                 temporary = None
             finally:
                 if temporary is not None:
