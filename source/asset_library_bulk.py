@@ -34,6 +34,47 @@ def _validated_game(game):
     return root
 
 
+def discover_collection_paks(location, *, library_root=None):
+    """Read-only inventory of a user-selected archive collection.
+
+    Registration is not installation validation. Enforce selected-root
+    confinement, symlink exclusion, depth and archive-count bounds.
+    """
+    from asset_library import imported_archives, LIBRARY_HOME
+    root = Path(location).resolve(strict=True)
+    if not root.is_dir() or Path(location).is_symlink():
+        raise ValueError("Select a real archive collection directory.")
+    found, seen = [], set()
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        here = Path(directory)
+        depth = len(here.relative_to(root).parts)
+        dirs[:] = sorted((d for d in dirs if depth < MAX_SCAN_DEPTH
+                          and not (here / d).is_symlink()), key=str.casefold)
+        for name in files:
+            if Path(name).suffix.casefold() != ".pak":
+                continue
+            path = here / name
+            if path.is_symlink() or not path.is_file():
+                continue
+            resolved = path.resolve()
+            if not resolved.is_relative_to(root) or resolved in seen:
+                continue
+            seen.add(resolved)
+            found.append(resolved)
+            if len(found) > MAX_GAME_PAKS:
+                raise ValueError("Collection exceeds 4,096 PAKs; select a smaller directory.")
+    found.sort(key=lambda p: p.relative_to(root).as_posix().casefold())
+    disk = Path(library_root or LIBRARY_HOME)
+    while not disk.exists():
+        if disk.parent == disk:
+            raise ValueError("No existing library drive found.")
+        disk = disk.parent
+    available = shutil.disk_usage(disk).free
+    already = {str(item["source"]) for item in imported_archives(library_root)}
+    return GamePakScan(tuple(found), sum(p.stat().st_size for p in found),
+                       available, sum(str(p) in already for p in found))
+
+
 def discover_game_paks(game, *, library_root=None):
     """List EVERY .pak under EvolveGame, without scanning outside the install."""
     from asset_library import imported_archives, LIBRARY_HOME
