@@ -35,7 +35,7 @@ class BrowserLogicTests(unittest.TestCase):
         self.assertEqual(archive_description('Game/unknown_archive.pak'), 'Unknown Archive')
         self.assertEqual(matching_archives(
             ['Game/characters_monsters_goliath_data.pak',
-             'Game/characters_monsters_goliath_ts.pak'], 'Goliath Models / Skeletons / Animation References'),
+             'Game/characters_monsters_goliath_ts.pak'], 'Goliath Models'),
             ['Game/characters_monsters_goliath_data.pak'])
 
     def test_search_sort_and_case_insensitivity(self):
@@ -102,7 +102,7 @@ class BrowserInterfaceTests(unittest.TestCase):
         self.root.update()
         self.assertEqual(self.manager.visible, [
             'Game/characters_monsters_goliath_data.pak', 'Game/goliath.pak'])
-        self.manager.search.set('Goliath Models / Skeletons / Animation References')
+        self.manager.search.set('Goliath Models')
         self.root.update()
         self.assertEqual(self.manager.visible, [
             'Game/characters_monsters_goliath_data.pak'])
