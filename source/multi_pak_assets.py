@@ -275,7 +275,7 @@ def resolve_material_texture(index, reference, material_relative, *, preferred_w
             shared = category + '/shared/textures/' + virtual
         if shared:
             hits, state = _resolve(index, shared,
-                                   preferred_workspace=preferred_workspace)
+                                   preferred_workspace=preferred_workspace, build_id=build_id)
             if state != 'missing':
                 return hits, state
         # CryEngine materials can also explicitly address a genuine global
@@ -285,7 +285,7 @@ def resolve_material_texture(index, reference, material_relative, *, preferred_w
             return _resolve(index, virtual,
                             preferred_workspace=preferred_workspace, build_id=build_id)
         return [], 'missing'
-    return _resolve(index, virtual, preferred_workspace=preferred_workspace)
+    return _resolve(index, virtual, preferred_workspace=preferred_workspace, build_id=build_id)
 
 
 MAX_DISCOVERY_PROJECTS = 200
