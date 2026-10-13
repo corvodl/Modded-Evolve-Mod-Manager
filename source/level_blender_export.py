@@ -147,7 +147,8 @@ class SceneAssembler:
 def terrain_glb(terrain):
     """Convert a validated source heightmap into one independent editable mesh."""
     vertices=terrain.vertices
-    triangles=terrain.indices.reshape(-1,3)
+    triangles=[tuple(int(value) for value in face)
+               for face in terrain.indices.reshape(-1,3)]
     uvs=np.column_stack((vertices[:,0]/max(terrain.unit*(terrain.width-1),1),
                           vertices[:,1]/max(terrain.unit*(terrain.height-1),1)))
     mesh=SimpleNamespace(vertices=vertices,triangles=triangles,uvs=uvs,subsets=())
