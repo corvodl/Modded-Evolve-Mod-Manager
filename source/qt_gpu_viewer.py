@@ -375,9 +375,15 @@ class QtGLModelCanvas(QOpenGLWidget):
                 # detail on the oblique surfaces common in character previews.
                 # Never upscale decoded DDS images: the GPU receives the source
                 # resolution selected by the verified material resolver.
-                glGenerateMipmap(GL_TEXTURE_2D)
-                glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,
-                                GL_LINEAR_MIPMAP_LINEAR)
+                try:
+                    glGenerateMipmap(GL_TEXTURE_2D)
+                except Exception:
+                    # Some older OpenGL contexts lack a mipmap entry point.
+                    # Keep the model visible at its *original* image size.
+                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR)
+                else:
+                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,
+                                    GL_LINEAR_MIPMAP_LINEAR)
                 glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR)
                 try:
                     from OpenGL.GL import glGetFloatv
