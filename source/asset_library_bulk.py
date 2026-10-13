@@ -71,7 +71,7 @@ def discover_collection_paks(location, *, library_root=None):
         if target.parent == target:
             raise ValueError("Library drive not found.")
         target = target.parent
-    already = {str(x["source"]) for x in imported_archives(library_root)}
+    already = {str(Path(x["source"]).resolve()) for x in imported_archives(library_root)}
     return GamePakScan(tuple(found), sum(p.stat().st_size for p in found),
                        shutil.disk_usage(target).free,
                        sum(str(p) in already for p in found))
