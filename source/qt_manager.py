@@ -3081,9 +3081,9 @@ class QtManager(QMainWindow):
             if self.busy or not self.flush_editors():
                 return
             from asset_intelligence import validate_project
-            workspace=self._workspace_for_selected_archive()
+            workspace=self._workspace() if self.selected_project_context() else self._workspace_for_selected_archive()
             if workspace is None:
-                raise ValueError('Unpack the selected signed PAK first.')
+                raise ValueError('Select a valid editable project first.')
             st=self.refresh_swap_status()
             if st.phase not in ('missing','prepared','restored'):
                 raise RuntimeError('Restore originals before an offline test.')
@@ -3092,7 +3092,11 @@ class QtManager(QMainWindow):
                 raise ValueError('Preflight found problems:\n'+'\n'.join(problems[:8]))
             if not changed:
                 raise ValueError('There are no modified assets to test.')
-            pak,relative=self._selected_stage_pak()
+            if self.selected_project_context():
+                from project_catalog import verified_target
+                relative,pak=verified_target(workspace,self.stage_path)
+            else:
+                pak,relative=self._selected_stage_pak()
             pub,priv=self._pub_priv()
             if not priv.is_file():
                 raise FileNotFoundError('Signing private key not configured.')
@@ -3154,13 +3158,17 @@ class QtManager(QMainWindow):
         try:
             if not self.flush_editors():
                 return
-            pak, rel = self._selected_stage_pak()
+            ws = self._workspace()
+            if self.selected_project_context():
+                from project_catalog import verified_target
+                rel, pak = verified_target(ws, self.stage_path)
+            else:
+                pak, rel = self._selected_stage_pak()
             if not rel:
-                raise ValueError('Select a PAK from the verified list.')
+                raise ValueError('Select a verified target archive.')
             modified = Path(self.output_pak)
             if not modified.is_file() or modified.name.casefold() != pak.name.casefold():
                 raise ValueError('Build the selected PAK first.')
-            ws = self._workspace()
             meta = json.loads((ws/'.evolve-pak-workspace.json').read_text(encoding='utf-8'))
             if Path(meta['source_pak']).resolve() != pak.resolve():
                 raise ValueError('Build belongs to another PAK.')
