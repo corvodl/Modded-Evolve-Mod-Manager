@@ -42,7 +42,7 @@ def _manifest_source(manifest):
             or manifest.get("archive_source") or "")
 
 
-def mount_map_index(workspace, map_name, *, library_root=None, cache_root=None):
+def mount_map_index(workspace, map_name, *, library_root=None, cache_root=None, build_id=None):
     """Return a normal full-path lookup index with map-local collision fencing.
 
     The editable project is first, then only archives whose *original PAK
@@ -73,7 +73,11 @@ def mount_map_index(workspace, map_name, *, library_root=None, cache_root=None):
                 matching_archives.add(str(folder.resolve()))
         except (ValueError, OSError, KeyError, TypeError):
             continue
-    indexes = [extracted_index(library) for library in roots]
+    if build_id is not None:
+        from build_collections import build_index
+        indexes = [build_index(build_id, root=library) for library in roots]
+    else:
+        indexes = [extracted_index(library) for library in roots]
     for original_index in indexes:
       for key, records in original_index.items():
           is_scoped = map_relative_asset(key)
@@ -103,18 +107,19 @@ def mount_map_index(workspace, map_name, *, library_root=None, cache_root=None):
             imported[virtual.casefold()].insert(0, {
                 "file": file, "relative": virtual, "workspace": base,
                 "archive": "editable project",
+                **({"build_id": build_id} if build_id is not None else {}),
             })
-    return dict(imported), {"map": selected, "mounts": len(matching_archives),
+    return dict(imported), {"map": selected, "build_id": build_id, "mounts": len(matching_archives),
                              "indexed_paths": len(imported)}
 
 
-def resolve_scoped(index, virtual, workspace=None):
+def resolve_scoped(index, virtual, workspace=None, *, build_id=None):
     """Reject ambiguous model bytes instead of picking an arbitrary archive."""
     from multi_pak_assets import _resolve
     if map_relative_asset(virtual):
         # The index was already scoped by original archive source.
         pass
-    hits, state = _resolve(index, virtual, preferred_workspace=workspace)
+    hits, state = _resolve(index, virtual, preferred_workspace=workspace, build_id=build_id)
     if state != "found":
         return None, state
     record = hits[0]
