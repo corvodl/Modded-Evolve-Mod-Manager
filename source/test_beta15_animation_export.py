@@ -137,7 +137,12 @@ class AsyncProgressTests(unittest.TestCase):
         def work(progress, cancelled):
             progress('Converting model', 0, 2)
             started.set()
-            time.sleep(.15)
+            # Wait for cancellation with a bounded deadline: fixed sleeps can
+            # race a delayed Windows Qt timer on overloaded CI runners.
+            from time import monotonic
+            deadline = monotonic() + 2.0
+            while not cancelled() and monotonic() < deadline:
+                time.sleep(.01)
             if cancelled():
                 raise InterruptedError('Cancelled between model exports')
             return 2
