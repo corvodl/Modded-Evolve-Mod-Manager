@@ -64,6 +64,17 @@ class BuildCollectionTests(unittest.TestCase):
         self.assertEqual(len(build_index(second, root=self.root)), 1)
         self.assertTrue((self.root / ("shared.pak__" + self.one)).exists())
 
+    def test_foreign_dependency_rejected(self):
+        from multi_pak_assets import _resolve
+        source = register_build("Historical", "legacy", root=self.root)
+        target = register_build("Target", "stage2", root=self.root)
+        assign_archive(source, self.one, root=self.root)
+        indexed = build_index(source, root=self.root)
+        self.assertEqual(_resolve(indexed, "characters/shared.dds", build_id=target)[1], "missing")
+        self.assertEqual(_resolve(indexed, "characters/shared.dds", build_id=source)[1], "found")
+        with self.assertRaises(ValueError):
+            _resolve(indexed, "characters/shared.dds", build_id="all")
+
     def test_invalid_contexts(self):
         with self.assertRaises(ValueError):
             build_index("all", root=self.root)
