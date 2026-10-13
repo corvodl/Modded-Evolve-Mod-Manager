@@ -90,9 +90,9 @@ def mount_map_index(workspace, map_name, *, library_root=None, cache_root=None):
                   owner = sources.get(mount)
                   if is_scoped:
                       if owner == selected:
-                          imported[key].append(entry)
+                          imported[key].append(dict(entry, map_owner=owner))
                   elif owner is None or owner == selected:
-                      imported[key].append(entry)
+                      imported[key].append(dict(entry, map_owner=owner))
               except (OSError, KeyError, TypeError, ValueError):
                   continue
     for entry in load_workspace(base)["entries"]:

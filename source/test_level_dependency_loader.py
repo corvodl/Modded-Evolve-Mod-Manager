@@ -113,6 +113,8 @@ class LevelDependencyTests(unittest.TestCase):
         materials.return_value=(('objects/tree/diff.dds.0',),)
         providers.return_value={'objects/tree/diff.dds.0':[shared]}
         importer.return_value={'status':'imported','name':shared.name}
+        mounted.side_effect=lambda *a,**kw: ({'objects/tree/tree.cgf':[{'file':'imported'}],
+            **({'objects/tree/diff.dds.0':[{'file':'imported texture'}]} if importer.called else {})}, {})
         project=SimpleNamespace(level_name='Tutorial',workspace=Path('/project'),
                                 scene=(SimpleNamespace(model='objects/tree/tree.cgf',
                                                       material=''),))

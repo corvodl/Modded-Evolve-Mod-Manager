@@ -109,6 +109,42 @@ class TestRenderedLevelViewport(TestCase):
             finally:
                 canvas.close()
 
+    def test_chunked_terrain_tile_preview_and_stale_progress(self):
+        from PIL import Image
+        from level_progress import LoadProgress
+        from level_terrain_decode import decode_terrain_chunks
+        from test_level_terrain_decode import synthetic_heightmap
+        terrain=tuple(decode_terrain_chunks(synthetic_heightmap(32,32,maximum=256,unit=2),chunk_cells=16))
+        project=SimpleNamespace(scene=(),objects=(),level_name='synthetic')
+        details={'terrain':terrain[0],'terrain_chunks':terrain,
+                 'terrain_atlas':Image.new('RGB',(16,16),(230,30,20))}
+        with patch('qt_level_scene_render.prepare_scene',return_value=({}, {}, details)):
+            canvas=LevelGLViewport(project)
+            try:
+                canvas.resize(600,420)
+                canvas.camera=[32.,32.,62.]
+                canvas.distance=110.
+                canvas.pitch=.8
+                canvas.show_terrain_tiles=True
+                canvas.show()
+                for _ in range(80):
+                    self.app.processEvents()
+                    canvas._receive()
+                    if canvas.terrain is not None and canvas.isValid():break
+                    time.sleep(.02)
+                image=canvas.grabFramebuffer()
+                pixels=[image.pixelColor(x,y) for y in range(50,370,20) for x in range(50,550,20)]
+                self.assertTrue(any(p.red()>p.green()*2 for p in pixels))
+                events=[]
+                canvas.progressChanged.connect(events.append)
+                canvas._apply_progress(LoadProgress(canvas._generation-1,'decode',1,2,'stale'))
+                self.assertFalse(events)
+                canvas.cancel_loading()
+                canvas._apply_progress(LoadProgress(canvas._generation,'decode',1,2,'cancelled'))
+                self.assertFalse(events)
+            finally:
+                canvas.close()
+
 
 
 if __name__=="__main__":

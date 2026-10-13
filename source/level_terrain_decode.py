@@ -126,3 +126,43 @@ def decode_terrain(data, *, source='source Heightmap.dat',
         array.setflags(write=False)
     return TerrainMesh(vertices,normals,indices,width,height,unit,maximum,
                        width*height,stride,source)
+
+
+def decode_terrain_chunks(data, *, source='source Heightmap.dat', stride=1,
+                          chunk_cells=64, cancel=None):
+    """Yield bounded meshes with identical shared edges and source normals.
+
+    Uniform configurable detail avoids T-junctions; adaptive LOD is deliberately
+    deferred until cross-resolution stitching is implemented.
+    """
+    grid, width, height, unit, maximum = _samples(data)
+    if stride not in (1, 2, 4, 8) or not 16 <= chunk_cells <= 128:
+        raise ValueError('Invalid terrain chunk detail')
+    x = np.unique(np.r_[np.arange(0, width, stride), width-1])
+    y = np.unique(np.r_[np.arange(0, height, stride), height-1])
+    for start_x in range(0, len(x)-1, chunk_cells):
+        for start_y in range(0, len(y)-1, chunk_cells):
+            if cancel is not None and cancel.is_set():
+                raise InterruptedError('Terrain decoding cancelled')
+            xx, yy = np.meshgrid(x[start_x:start_x+chunk_cells+1],
+                                 y[start_y:start_y+chunk_cells+1], indexing='ij')
+            z = grid[xx, yy].astype(np.float32) * (maximum / 65535.)
+            vertices = np.stack((xx*unit, yy*unit, z), axis=-1).reshape(-1,3).astype(np.float32)
+            lo_x, hi_x = np.maximum(xx-1,0), np.minimum(xx+1,width-1)
+            lo_y, hi_y = np.maximum(yy-1,0), np.minimum(yy+1,height-1)
+            gx = (grid[hi_x,yy].astype(np.float32)-grid[lo_x,yy]) * (maximum/65535.) / ((hi_x-lo_x)*unit)
+            gy = (grid[xx,hi_y].astype(np.float32)-grid[xx,lo_y]) * (maximum/65535.) / ((hi_y-lo_y)*unit)
+            normals = np.stack((-gx,-gy,np.ones_like(z)),axis=-1).reshape(-1,3).astype(np.float32)
+            normals /= np.maximum(np.linalg.norm(normals,axis=1,keepdims=True),1e-8)
+            nx,ny = xx.shape
+            a = (np.arange(nx-1,dtype=np.uint32)[:,None]*ny + np.arange(ny-1,dtype=np.uint32)).ravel()
+            indices = np.stack((a,a+ny,a+1,a+ny,a+ny+1,a+1),axis=-1).ravel()
+            for array in (vertices,normals,indices):
+                array.setflags(write=False)
+            yield TerrainMesh(vertices,normals,indices,width,height,unit,maximum,
+                              width*height,stride,source)
+
+
+def terrain_uvs(terrain):
+    return np.ascontiguousarray(terrain.vertices[:,:2] /
+        (terrain.unit * np.asarray((terrain.width-1,terrain.height-1))), dtype=np.float32)

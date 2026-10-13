@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import math
 from pathlib import Path, PurePosixPath
 
-RENDERABLE = {".cgf", ".cga", ".cdf", ".chr", ".skin", ".skinm", ".chrm"}
+RENDERABLE = {".cgf", ".cga", ".cdf", ".chr", ".skin", ".skinm", ".chrm", ".cgam", ".cgfm"}
 MODEL_FIELDS = ("Prefab", "Geometry", "Model", "FileName")
 
 
@@ -77,6 +77,20 @@ class SceneObject:
     status: str
 
 
+def element_model_reference(element):
+    direct = model_reference(element.attrib)
+    if direct:
+        return direct
+    # Only explicit entity property containers. Do not steal child placements.
+    for child in element:
+        if child.tag.split('}')[-1].casefold() in ('properties', 'properties2'):
+            for prop in child.iter():
+                found = model_reference(prop.attrib)
+                if found:
+                    return found
+    return ''
+
+
 def model_reference(attrs):
     """Brush Prefab is a mesh path, not an entity archetype name."""
     for key in MODEL_FIELDS:
@@ -138,7 +152,7 @@ def _scene_node(record, layer, idx):
         "source": layer, "id": guid, "parent_id": parent,
         "name": attrs.get("Name", guid),
         "kind": attrs.get("Type", record.tag.split("}")[-1]),
-        "model": model_reference(attrs),
+        "model": element_model_reference(record),
         "material": attrs.get("Material", ""),
         "local": local,
         "hidden": attrs.get("Hidden") == "1",
@@ -154,11 +168,25 @@ def build_scene(layers):
     pending = {}
     diagnostics = []
     for source, nodes in layers:
+        nodes = tuple(nodes)
+        ids = {id(element): (element.get('Id') or element.get('EntityId') or f'{source}#{i}').casefold()
+               for i,element in enumerate(nodes)}
+        parents = {}
+        def children(element, parent):
+            for child in element:
+                if id(child) in ids:
+                    parents[id(child)] = parent
+                else:
+                    children(child,parent)
+        for element in nodes:
+            children(element,ids[id(element)])
         for i, element in enumerate(nodes):
             value = _scene_node(element, source, i)
+            if not value["parent_id"]:
+                value["parent_id"] = parents.get(id(element), "")
             guid = value["id"]
             if guid in pending:
-                diagnostics.append(f"duplicate object ID: {guid}")
+                diagnostics.append(f"duplicate object ID: {guid}; kept {pending[guid]['source']}; ignored {source}")
                 continue
             pending[guid] = value
     done = {}
@@ -186,8 +214,8 @@ def build_scene(layers):
         world = base.combine(node["local"])
         if not node["model"]:
             status = status or "no explicit renderable model reference"
-        if node["hidden"]:
-            status = status or "hidden in editor"
+        if node["hidden"] or (parent in done and done[parent].status == "hidden in editor"):
+            status = "hidden in editor"
         obj = SceneObject(node["source"], guid, parent, node["name"],
                           node["kind"], node["model"], node["material"],
                           node["local"], world, status or "model reference available")

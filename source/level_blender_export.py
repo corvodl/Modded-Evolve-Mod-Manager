@@ -169,15 +169,18 @@ def export_level_glb(project, destination, *, game=None, stage=None,
         raise ValueError("Select an existing output folder and .glb filename.")
     cancel=cancel or Event()
     prepared=prepare_scene(project,cancel,progress,game=game,stage=stage,
-                           cache_root=cache_root)
+                           cache_root=cache_root, preview=False)
     if prepared is None or cancel.is_set():
         raise InterruptedError("Level export cancelled.")
     assets,issues,details=prepared
+    scene=details.get("scene",project.scene)
     combined=SceneAssembler(str(project.level_name))
     report={"map":str(project.level_name),"objects":0,"mesh_resources":0,
             "terrain":False,"unresolved":dict(issues),"omitted":[],
-            "total_scene_objects":len(project.scene),
-            "selected_objects":sum(1 for obj in project.scene
+            "total_scene_objects":len(scene),
+            "assembly_diagnostics":list(details.get("assembly_diagnostics",())),
+            "dependencies":details.get("dependencies",{}),
+            "selected_objects":sum(1 for obj in scene
                                     if selection is None or obj.id in selection),
             "terrain_texture_status":"not decoded",
             "world_content_limitations":[
@@ -185,10 +188,11 @@ def export_level_glb(project, destination, *, game=None, stage=None,
                 "compiled terrain tile material mapping is not implemented",
                 "procedural roads and designer geometry are not reconstructed",
                 "prefab and archetype expansion is not implemented",
-                "bounded scene preparation may defer geometry"]}
+                "terrain tile color mapping awaits local landmark validation"]}
     terrain=details.get("terrain")
-    if terrain is not None and selection is None:
-        mesh=combined.append_glb("terrain",terrain_glb(terrain))
+    chunks=details.get("terrain_chunks", (terrain,) if terrain is not None else ())
+    for chunk_index,terrain in enumerate(chunks if selection is None else ()):
+        mesh=combined.append_glb("terrain-"+str(chunk_index),terrain_glb(terrain))
         combined.add_instance(mesh,"Terrain",metadata={
             "source":terrain.source,"decoded_samples":terrain.decoded_samples,
             "stride":terrain.stride})
@@ -196,7 +200,7 @@ def export_level_glb(project, destination, *, game=None, stage=None,
     emitted={}
     map_index=None
     late_resolved=0
-    for idx,obj in enumerate(project.scene):
+    for idx,obj in enumerate(scene):
         if cancel.is_set():
             raise InterruptedError("Level export cancelled.")
         if selection is not None and obj.id not in selection:

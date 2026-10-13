@@ -142,7 +142,7 @@ class LevelProject:
                 continue
             if name.casefold().endswith(".lyr"):
                 nodes = [node for node in root.iter()
-                         if node.tag.split("}")[-1].casefold() == "object"
+                         if node.tag.split("}")[-1].casefold() in ("object", "entity", "brush", "prefab")
                          and ("Pos" in node.attrib or "Name" in node.attrib)]
             else:
                 containers = [el for el in root

@@ -39,6 +39,8 @@ def needed_virtual_paths(project):
             if not path:
                 continue
             try:
+                if path == getattr(item, "material", "") and not str(path).casefold().endswith(".mtl"):
+                    path = str(path) + ".mtl"
                 result.add(_virtual(path))
             except (ValueError, TypeError):
                 continue
@@ -46,7 +48,7 @@ def needed_virtual_paths(project):
 
 
 def providers_for_missing(sources, missing, *, stage, cancel=None, progress=None,
-                          stream_roots=()):
+                          stream_roots=(), inventory_cache=None):
     """Return verified candidate PAKs for exact virtual names.
 
     Other maps are completely excluded (including their root-relative files).
@@ -67,9 +69,18 @@ def providers_for_missing(sources, missing, *, stage, cancel=None, progress=None
         if progress:
             progress("Scanning verified " + Path(source).name, offset, len(candidates))
         try:
-            info, _, _ = _verify_pak(Path(source), keys)
+            path = Path(source)
+            # Cache only within this load, after signature verification. A
+            # changed archive must be reverified before its inventory is reused.
+            stamp = (str(path.resolve()), path.stat().st_size, path.stat().st_mtime_ns) if inventory_cache is not None else None
+            entries = inventory_cache.get(stamp) if inventory_cache is not None else None
+            if entries is None:
+                info, _, _ = _verify_pak(path, keys)
+                entries = tuple(info['entries'])
+                if inventory_cache is not None:
+                    inventory_cache[stamp] = entries
             present = set()
-            for name in info["entries"]:
+            for name in entries:
                 try:
                     key = _virtual(name)
                 except (ValueError, TypeError):
@@ -136,7 +147,13 @@ def material_dependency_candidates(project, index):
     from model_material_resolve import find_model_material
     from xml.etree import ElementTree as ET
     output = []
+    inspected = set()
+    variants_seen = set()
     for item in project.scene:
+        identity = (getattr(item, "model", ""), getattr(item, "material", ""))
+        if identity in variants_seen:
+            continue
+        variants_seen.add(identity)
         if not getattr(item, "model", ""):
             continue
         try:
@@ -146,8 +163,18 @@ def material_dependency_candidates(project, index):
         if model not in index:
             continue
         try:
-            material, _, attempted = find_model_material(
-                index, model, preferred_workspace=project.workspace)
+            override = getattr(item, "material", "")
+            if override:
+                from model_material_resolve import _material_path
+                from level_asset_mount import resolve_scoped
+                exact = _material_path(override, '')
+                if not exact:
+                    continue
+                material, state = resolve_scoped(index, exact, project.workspace)
+                attempted = (exact,)
+            else:
+                material, _, attempted = find_model_material(
+                    index, model, preferred_workspace=project.workspace)
         except (OSError, ValueError):
             continue
         if material is None:
@@ -155,6 +182,9 @@ def material_dependency_candidates(project, index):
                 output.append(tuple(_virtual(x) for x in attempted[:24]))
             continue
         source = Path(material["file"])
+        if source in inspected:
+            continue
+        inspected.add(source)
         try:
             if source.stat().st_size > 12*1024*1024:
                 continue
@@ -206,7 +236,8 @@ def ensure_map_archives(project, game, stage, cache_root, *,
                 result["reused"].append(source.name)
             else:
                 state = import_pak(source, stage=stage, root=cache_root,
-                                   cancelled=cancel.is_set if cancel else None)
+                                   cancelled=cancel.is_set if cancel else None,
+                                   progress=progress)
                 result["imported" if state["status"] == "imported" else "reused"].append(source.name)
                 prior.add(str(source))
             return True
@@ -219,105 +250,89 @@ def ensure_map_archives(project, game, stage, cache_root, *,
     if cancel is not None and cancel.is_set():
         return result
     from level_asset_mount import mount_map_index
-    index, _ = mount_map_index(project.workspace, project.level_name,
-                               library_root=imported_root, cache_root=cache_root)
-    missing = needed_virtual_paths(project) - set(index)
-    others = [p for p in scan.files if str(p) not in prior
-              and level_from_source(p) is None]
-    result["scanned"] = len(others)
-    if missing:
+    # Each successful import can reveal another material or texture. Rebuild the
+    # scoped view until the queue reaches a fixed point, with hard pass bounds.
+    attempted_sources = set()
+    inventory_cache = {}
+    for iteration in range(32):
+        if cancel is not None and cancel.is_set():
+            return result
+        index, _ = mount_map_index(project.workspace, project.level_name,
+                                   library_root=imported_root, cache_root=cache_root)
+        if hasattr(project, "layers"):
+            from level_map_assembly import assemble_map_scene
+            scene, diagnostics = assemble_map_scene(project, index, cancel=cancel)
+            from types import SimpleNamespace
+            context = SimpleNamespace(workspace=project.workspace, scene=scene)
+        else:
+            context = project
+        groups = tuple((name,) for name in sorted(needed_virtual_paths(context)))
+        groups += material_dependency_candidates(context, index)
+        remaining = [p for p in scan.files if str(p) not in prior
+                     and p not in attempted_sources and level_from_source(p) is None]
+        needs = {x for group in groups for x in group if x not in index}
+        # Include already present stream headers, even with a fallback DDS.
+        roots = {x[:-2] for group in groups for x in group if x.endswith('.dds.0')}
         try:
-            provider_map = providers_for_missing(others, missing, stage=stage,
-                                                 cancel=cancel, progress=progress)
+            providers = providers_for_missing(
+                remaining, needs, stage=stage, cancel=cancel, progress=progress,
+                stream_roots=roots, inventory_cache=inventory_cache) if remaining and (needs or roots) else {}
         except (OSError, ValueError) as exc:
             result["errors"].append("Provider inventory: " + str(exc)[:180])
             return result
-    else:
-        provider_map = {}
-    if provider_map is None:
-        return result
-    chosen = set()
-    for virtual in sorted(missing):
-        providers = provider_map.get(virtual, [])
-        if len(providers) == 1:
-            chosen.add(providers[0])
-        elif len(providers) > 1:
-            result["ambiguous"].append(
-                virtual + " from " + ", ".join(str(p) for p in providers[:8]))
-        else:
-            result["missing"].append(virtual)
-    for source in sorted(chosen, key=lambda p:p.as_posix().casefold()):
-        if cancel is not None and cancel.is_set():
-            break
-        imported(source)
-    if cancel is not None and cancel.is_set():
-        return result
-    # Follow already-resolved model links into material XML and cooked DDS
-    # candidates, without decoding textures or importing the whole game.
-    index, _ = mount_map_index(project.workspace, project.level_name,
-                               library_root=imported_root, cache_root=cache_root)
-    groups = material_dependency_candidates(project, index)
-    needs = set(x for group in groups for x in group if x not in index)
-    stream_roots = {x[:-2] for group in groups for x in group
-                    if x.endswith('.dds.0') and x[:-2] not in index}
-    existing_streams = {x[:-2] for group in groups for x in group
-                        if x.endswith('.dds.0') and x in index}
-    if needs or existing_streams:
-        remaining = [p for p in scan.files if str(p) not in prior
-                     and level_from_source(p) is None]
-        try:
-            next_providers = providers_for_missing(
-                remaining, needs, stage=stage, cancel=cancel, progress=progress,
-                stream_roots=stream_roots)
-        except (OSError, ValueError) as exc:
-            result["errors"].append("Material inventory: " + str(exc)[:180])
+        if providers is None:
             return result
-        if next_providers is None:
-            return result
-        extra = set()
-        selected_streams = set(existing_streams)
+        result["scanned"] = max(result["scanned"], len(remaining))
+        chosen = set()
+        missing, ambiguous = [], []
+        selected_streams = set()
+        def select(key):
+            if key in index:
+                return True
+            hits = providers.get(key, ())
+            if len(hits) == 1:
+                chosen.add(hits[0])
+                return True
+            if len(hits) > 1:
+                ambiguous.append(key + " from " + ", ".join(str(p) for p in hits[:8]))
+            return False
         for alternatives in groups:
-            if any(name in index for name in alternatives):
+            # A resident fallback must not prevent discovery of a stream.
+            streams = [x for x in alternatives if x.endswith('.dds.0')]
+            for stream in streams:
+                if select(stream):
+                    selected_streams.add(stream[:-2])
+                    break
+            if any(len(providers.get(x,())) > 1 for x in streams):
                 continue
-            for key in alternatives:
-                providers = next_providers.get(key, [])
-                if len(providers) == 1:
-                    extra.add(providers[0])
-                    if key.endswith('.dds.0'):
-                        selected_streams.add(key[:-2])
-                    break
-                if len(providers) > 1:
-                    result["ambiguous"].append(
-                        key + " from " + ", ".join(str(p) for p in providers[:8]))
-                    break
-            else:
-                result["missing"].append("material/texture: " + alternatives[0])
-        # Streaming DDS fragments may be in different verified PAKs from
-        # part zero. Import their exact providers, never a similarly named
-        # fragment from a different texture or another map.
+            if not any(x[:-2] in selected_streams for x in streams):
+                for key in alternatives:
+                    if select(key):
+                        break
+                    if len(providers.get(key, ())) > 1:
+                        break  # Never resolve ambiguity by choosing a fallback.
+                else:
+                    missing.append(alternatives[0])
         for root in sorted(selected_streams):
-            found_numbers = set()
-            for key,providers in next_providers.items():
-                if not key.startswith(root + '.'):
-                    continue
-                suffix = key[len(root)+1:]
-                if not suffix.isdigit():
-                    continue
-                found_numbers.add(int(suffix))
-                if len(providers) == 1:
-                    extra.add(providers[0])
-                elif len(providers) > 1:
-                    result['ambiguous'].append(key + ' from ' +
-                        ', '.join(str(p) for p in providers[:8]))
-            if found_numbers:
-                for number in range(min(max(found_numbers),9999) + 1):
-                    key = root + '.' + str(number)
-                    if number not in found_numbers and key not in index:
-                        result['missing'].append('DDS fragment: ' + key)
-        for source in sorted(extra, key=lambda p:p.as_posix().casefold()):
-            if cancel is not None and cancel.is_set():
-                break
+            numbers = set()
+            for key in set(index) | set(providers):
+                suffix = key[len(root)+1:] if key.startswith(root + '.') else ''
+                if suffix.isdigit() and int(suffix) <= 9999:
+                    numbers.add(int(suffix))
+                    select(key)
+            for number in range(max(numbers, default=0) + 1):
+                if number not in numbers:
+                    missing.append('DDS fragment: ' + root + '.' + str(number))
+        result["missing"] = sorted(set(missing))[:20000]
+        result["ambiguous"] = sorted(set(ambiguous))[:20000]
+        if not chosen:
+            break
+        for source in sorted(chosen, key=lambda p:p.as_posix().casefold()):
+            attempted_sources.add(source)
             imported(source)
+    else:
+        result["errors"].append("Dependency closure reached the 32-pass limit")
+
     return result
 
 
@@ -363,7 +378,7 @@ def discover_map_status(game=None, *, library_roots=(), projects=()):
 
 
 def copy_editable_map_from_library(map_name, destination, *, library_roots=(),
-                                   cancel=None):
+                                   cancel=None, progress=None):
     """Atomically copy a selected map's extracted *placement* PAK for editing.
 
     The copy is a read-only source-derived workspace, NOT automatically
@@ -415,7 +430,9 @@ def copy_editable_map_from_library(map_name, destination, *, library_roots=(),
         root = (folder/"files").resolve(strict=True)
         output = temp/"files"
         total = 0
-        for entry in manifest["entries"]:
+        for position, entry in enumerate(manifest["entries"]):
+            if progress:
+                progress("Copying " + entry["path"], position, len(manifest["entries"]))
             if cancel is not None and cancel.is_set():
                 raise InterruptedError("Map copy cancelled.")
             rel = normalized_name(entry["path"])
@@ -433,6 +450,8 @@ def copy_editable_map_from_library(map_name, destination, *, library_roots=(),
             hash_obj = hashlib.sha256()
             with target.open('rb') as stream:
                 for block in iter(lambda: stream.read(1024*1024), b''):
+                    if cancel is not None and cancel.is_set():
+                        raise InterruptedError('Map copy cancelled.')
                     hash_obj.update(block)
             digest=hash_obj.hexdigest()
             if size != entry["bytes"] or digest != entry["sha256"]:
