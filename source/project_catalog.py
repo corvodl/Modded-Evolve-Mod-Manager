@@ -4,6 +4,7 @@ Only editable workspaces are registered; immutable library imports are never
 used as output workspaces. Registry metadata cannot grant writer permissions.
 """
 from __future__ import annotations
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -106,7 +107,9 @@ def project_rows(projects_root, stage):
         if (directory / ".evolve-pak-workspace.json").is_file():
             workspace = directory.resolve()
             if str(workspace) not in registered:
-                candidates.append(("legacy-" + uuid4().hex, {
+                candidates.append(("legacy-" + hashlib.sha256(
+                    workspace.relative_to(root).as_posix().encode("utf-8")
+                ).hexdigest()[:20], {
                     "workspace": str(workspace), "label": directory.name,
                     "source_build_id": None, "source_archive_id": None}))
                 registered.add(str(workspace))
