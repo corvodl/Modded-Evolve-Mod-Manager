@@ -134,7 +134,10 @@ def inspect_dds_header(data: bytes) -> DDSMetadata:
             raise ValueError("Truncated DDS DX10 header")
         dxgi = struct.unpack_from("<I", data, 128)[0]
         dxgi_formats = {83: ("BC5", 0, 1), 84: ("BC5_SNORM", 0, 1),
-                        77: ("BC3", None, None), 78: ("BC3_SRGB", None, None)}
+                        77: ("BC3", None, None), 78: ("BC3_SRGB", None, None),
+                        28: ("RGBA8", None, None), 29: ("RGBA8_SRGB", None, None),
+                        87: ("BGRA8", None, None), 91: ("BGRA8_SRGB", None, None),
+                        98: ("BC7", None, None), 99: ("BC7_SRGB", None, None)}
         if dxgi not in dxgi_formats:
             raise ValueError(f"Unsupported DDS DXGI format: {dxgi}")
         fmt, x_channel, y_channel = dxgi_formats[dxgi]
@@ -287,6 +290,14 @@ def decode_normal_dds_image(data: bytes, *, source_name: str = "",
                                    signed=(info.format_name == "BC5_SNORM"),
                                    invert_green=invert_green)
         return Image.frombytes("RGBA", (normal.width, normal.height), normal.rgba)
+    if info is not None and info.format_name in ("RGBA8", "RGBA8_SRGB",
+                                                   "BGRA8", "BGRA8_SRGB"):
+        needed = info.width * info.height * 4
+        if len(data) < 148 + needed:
+            raise ValueError("Missing highest-resolution uncompressed normal mip")
+        fmt = "BGRA" if info.format_name.startswith("BGRA") else "RGBA"
+        return Image.frombytes("RGBA", (info.width, info.height),
+                               data[148:148+needed], "raw", fmt).convert("RGB")
     if info is not None and info.format_name in ("DXT5", "BC3", "BC3_SRGB"):
         off = 148 if data[84:88] == b"DX10" else 128
         expected = ((info.width + 3)//4)*((info.height + 3)//4)*16
