@@ -65,7 +65,8 @@ class BlenderTextureFolderTests(TestCase):
             first=write_texture_folder(blob,root/"Body.glb")
             second=write_texture_folder(blob,root/"Weapon.glb")
             self.assertNotEqual(first[0],second[0])
-            self.assertEqual(len(list((root/"Textures").iterdir())),2)
+            self.assertEqual(len(list((root/"Textures").glob("*.png"))),2)
+            self.assertEqual(len(list((root/"Textures").glob("*_texture_manifest.json"))),2)
 
     def test_character_material_prefers_streamed_same_path(self):
         with TemporaryDirectory() as folder:
