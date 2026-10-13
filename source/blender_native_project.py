@@ -74,7 +74,7 @@ def convert_glb_to_blend(source, destination, *, blender=None, timeout=1800):
                 raise RuntimeError(
                     "Blender scene import failed: "+(process.stderr or process.stdout)[-1800:])
             if not partial.is_file() or partial.stat().st_size < 20:
-                raise RuntimeError("Blender did not save an output project.")
+                raise RuntimeError("Blender did not save an output project. stdout: " + (process.stdout or "")[-1400:] + " stderr: " + (process.stderr or "")[-1400:])
             if partial.open("rb").read(7)!=b"BLENDER":
                 raise RuntimeError("Blender project signature was invalid.")
             partial.replace(destination)
