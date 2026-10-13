@@ -83,6 +83,17 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         })
         self.addCleanup(self.window.close)
 
+    def test_legacy_archive_preview_uses_unassigned_context(self):
+        # A readable legacy manifest without build membership must still
+        # support read-only preview, while never pulling foreign dependencies.
+        from asset_library_preview import library_model_index
+        from build_collections import resolve_archive_build
+        self.assertEqual(resolve_archive_build(
+            self.identifier, root=self.library_root), "unassigned")
+        index = library_model_index(self.identifier, root=self.library_root)
+        self.assertIn(self.models[0], index)
+        self.assertEqual(index[self.models[0]][0]["_asset_library"], self.identifier)
+
     def test_text_preview_and_noneditable_controls(self):
         self.window.show()
         self.assertEqual(self.window.folder, self.folder)
