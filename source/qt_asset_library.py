@@ -203,6 +203,9 @@ class AssetLibraryDialog(QDialog):
             "custom-signed staging copy; the reference library stays unchanged.")
         self.project_button.clicked.connect(self.create_mod_project)
         project_controls.addWidget(self.project_button)
+        self.map_button = QPushButton("Open Map in Level Editor…")
+        self.map_button.clicked.connect(self.open_selected_map)
+        project_controls.addWidget(self.map_button)
         self.transfer_button = QPushButton("Prepare Transfer to Stage 2…")
         self.transfer_button.setToolTip(
             "Write a reference-only transfer manifest for a selected asset. "
@@ -394,12 +397,13 @@ class AssetLibraryDialog(QDialog):
         running = self.controller.busy
         for button in (self.add_button, self.key_button, self.all_button,
                        self.default_button, self.verify_button,
-                       self.remove_button, self.project_button,
+                       self.remove_button, self.project_button, self.map_button,
                        self.register_button, self.assign_button, self.transfer_button,
                        self.relocate_button, self.detach_button, self.compare_button):
             button.setEnabled(not running)
         self.remove_button.setEnabled(not running and self._selected_record() is not None)
         self.project_button.setEnabled(not running and self._selected_record() is not None)
+        self.map_button.setEnabled(not running and self._selected_record() is not None)
         self.cancel_button.setEnabled(running)
 
     def _import_build(self):
@@ -575,7 +579,7 @@ class AssetLibraryDialog(QDialog):
         try:
             from asset_library_bulk import stage_source_for_import
             relative, staged = stage_source_for_import(
-                record["id"], self.stage, self.game)
+                record["id"], self.stage, self.game, build_id=self._import_build())
         except (OSError, ValueError, RuntimeError) as exc:
             QMessageBox.warning(
                 self, "Archive is reference-only",
@@ -592,7 +596,21 @@ class AssetLibraryDialog(QDialog):
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         self.accept()
-        self.parent().create_mod_project_from_asset_library(record["id"])
+        self.parent().create_mod_project_from_asset_library(
+            record["id"], source_build_id=self._import_build())
+
+    def open_selected_map(self):
+        record = self._selected_record()
+        if record is None:
+            return
+        from pak_dependencies import is_level_pak
+        if not is_level_pak(record['name']):
+            QMessageBox.information(self, "Open map",
+                "Select a supported level PAK. Unverified historical maps remain reference-only.")
+            return
+        self.accept()
+        self.parent().create_mod_project_from_asset_library(
+            record['id'], source_build_id=self._import_build(), open_level=True)
 
     def verify(self):
         self.controller.verify()
