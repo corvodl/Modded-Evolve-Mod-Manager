@@ -150,8 +150,10 @@ class Legacy2012RigTests(unittest.TestCase):
                     read_legacy_rig(fixture(**kwargs),fixture(master=True),4)
 
     def test_invalid_record_names_hierarchy_and_truncation(self):
-        for kwargs in ({'duplicate_name':True},{'corrupt_hierarchy':True},
-                       {'version':0x744}):
+        # Duplicate LABELS and multiple original roots occur in real 2012
+        # wildlife/Teleporter accessories and have dedicated positive tests.
+        # Unsupported source versions must still reject.
+        for kwargs in ({'version':0x744},):
             with self.subTest(kwargs=kwargs):
                 with self.assertRaises(ValueError):
                     read_legacy_bones(fixture(**kwargs))
