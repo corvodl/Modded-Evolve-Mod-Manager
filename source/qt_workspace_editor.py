@@ -455,6 +455,7 @@ class QtWorkspaceEditor(QMainWindow):
 
         action('File', 'Open File Folder', self.explore)
         action('File', 'Export Rendered GFX PNG…', self.export_png)
+        action('File', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('File', 'Export Native Model…', self.export_model)
         action('File', 'Export for Blender (.glb)…', self.export_blender_model)
         action('File', 'Export Blender Project (.blend)…', lambda: self.export_blender_model(native=True))
@@ -470,6 +471,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('Edit', 'Global Search & Replace…', self.open_global_search)
         action('Edit', 'Material Properties 2.0…', self.open_material_properties)
         action('Edit', 'Import / Replace File…', self.import_raw)
+        action('Edit', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('Edit', 'Restore Original', self.restore_original)
         self.equipment_menu = menus['Model'].addMenu('Equipped Skin')
         self.equipment_menu.setEnabled(False)
@@ -1754,6 +1756,28 @@ class QtWorkspaceEditor(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, 'File edit rejected', str(exc))
 
+    def edit_gfx(self):
+        """Start a private FFDec authoring session; never mutate Library."""
+        if self.read_only_library:
+            QMessageBox.information(
+                self, 'Read-only Asset Library',
+                'Choose Edit / Add to Mod Project to make a separate editable '
+                'project. Original Asset Library PAKs cannot be edited.')
+            return
+        if self.mode != 'gfx' or not self.current:
+            QMessageBox.information(
+                self, 'Select a GFX movie',
+                'Open an extracted .gfx asset before choosing the editor.')
+            return
+        try:
+            if self.manager.busy:
+                raise RuntimeError('Finish the current manager operation first.')
+            from qt_gfx_editor import GfxEditorDialog
+            dialog = GfxEditorDialog(self, self.current)
+            dialog.exec()
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, 'GFX editor', str(exc))
+
     def import_raw(self):
         def replace(rel):
             target, _ = QFileDialog.getOpenFileName(self,'Replace extracted file')
@@ -1855,6 +1879,9 @@ class QtWorkspaceEditor(QMainWindow):
             menu.addAction('Visual Gameplay Values…', self.open_gameplay_editor)
         if section=='images':
             menu.addAction('Advanced Texture Adjustments…', self.open_texture_editor)
+        if section=='gfx':
+            menu.addAction('Edit full Scaleform GFX…', self.edit_gfx)
+            menu.addAction('Export rendered PNG…', self.export_png)
         menu.addAction('Reveal Extracted File in Explorer', self.explore)
         menu.addAction('Open Extracted File in External App', self.open_extracted_external)
         menu.addAction('Copy Extracted Absolute Path', self.copy_extracted_path)
