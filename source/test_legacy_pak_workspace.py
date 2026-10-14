@@ -139,7 +139,7 @@ class LegacyPAKTests(unittest.TestCase):
         textures = self.root / "Textures.pak"
         with zipfile.ZipFile(textures, "w") as pak:
             pak.writestr("Textures/red.dds.0",
-                         _dds_header() + bytes((0, 0, 255, 255)))
+                         _dds_header() + bytes((0, 0, 255, 255)) * 4)
             pak.writestr("Textures/red.dds.1",
                          bytes((0, 0, 255, 255)) * 16)
             pak.writestr("Textures/red_ddn.dds.0a",
