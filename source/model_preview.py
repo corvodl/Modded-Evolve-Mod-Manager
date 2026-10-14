@@ -89,7 +89,7 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
                 raise ValueError('Multiple mesh position/index streams; grouped meshes are not yet supported.')
             streams[stream_type] = (count, stride, offset + 24)
     if (0 not in streams and 15 not in streams) or 5 not in streams:
-        raise ValueError('No supported render mesh: select its .skinm or .chrm companion, if available.')
+        raise ValueError('No supported position/index render streams in this model; a compatible mesh companion or LOD may be needed.')
     packed_stream = 0 not in streams
     vertex_count, vertex_stride, vertex_at = streams[15 if packed_stream else 0]
     index_count, index_stride, index_at = streams[5]
@@ -181,51 +181,111 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
 
 
 def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_root=None, index=None):
-    """Resolve only the selected model's exact render companions, read-only.
+    """Preview a model from its real render streams or explicit companions.
 
-    A CryEngine .chr commonly represents character/skeleton data. The usual
-    render companion is .chrm, but some characters instead have a same-stem
-    .skinm. A CDF-defined differently named skin is handled upstream by
-    assemble_character(), not guessed via a global filename search.
+    Older character archives may contain renderable .chr LODs with no .skinm.
+    Never guess unrelated characters by basename, mix build indexes, or
+    modify the original reference files.
     """
-    suffix = Path(relative).suffix.lower()
-    if suffix in ('.skin', '.chr', '.cgf', '.cga'):
-        from evolve_pak_workspace import normalized_name
-        candidates = [normalized_name(relative + 'm')]
-        if suffix == '.chr':
-            candidates.append(normalized_name(str(Path(relative).with_suffix('.skinm')).replace('\\', '/')))
-        root = (Path(workspace) / 'files').resolve()
-        for companion_rel in candidates:
-            # Do not resolve before checking links; an imported read-only
-            # library must never be tricked into loading outside its folder.
-            local = root.joinpath(*companion_rel.split('/'))
-            if (not local.is_symlink() and local.is_file()
-                    and local.resolve().is_relative_to(root)):
-                return read_preview_mesh(local.read_bytes(), companion_rel)
-            # An explicitly scoped Asset Library index is authoritative.
-            # Never fall back to project discovery across other builds.
-            if index is not None:
-                from multi_pak_assets import _resolve
-                hits, state = _resolve(index, companion_rel,
-                                       preferred_workspace=workspace)
-                if state == 'ambiguous':
-                    raise ValueError('Multiple different render companion meshes: ' + companion_rel)
-                linked = hits[0]['file'] if state == 'found' else None
-            else:
-                from multi_pak_assets import locate_related_asset
-                linked = locate_related_asset(
-                    workspace, companion_rel, projects_root, stage_root)
-            if linked is not None:
-                linked = Path(linked)
-                if linked.is_symlink() or not linked.is_file():
-                    raise ValueError('Companion render mesh is not a safe regular file: ' + companion_rel)
-                return read_preview_mesh(linked.read_bytes(), companion_rel)
+    suffix = Path(relative).suffix.casefold()
+    if suffix not in ('.skin', '.chr', '.cgf', '.cga'):
+        return read_preview_mesh(raw, relative)
+
+    from evolve_pak_workspace import normalized_name
+    root = (Path(workspace) / 'files').resolve()
+    errors = []
+    if suffix == '.chr':
+        # Some .chr files contain the geometry itself. The prior code skipped
+        # this possibility and immediately demanded a .chrm companion.
+        try:
+            return read_preview_mesh(raw, relative)
+        except ValueError as exc:
+            errors.append((relative, str(exc)))
+
+    def resolve_exact(virtual):
+        """Look only in this workspace or the explicitly provided index."""
+        name = normalized_name(virtual)
+        local = root.joinpath(*name.split('/'))
+        if (local.is_file() and
+                not any(p.is_symlink() for p in (local, *local.parents)
+                        if p == root or root in p.parents) and
+                local.resolve().is_relative_to(root)):
+            return local
+        if index is not None:
+            from multi_pak_assets import _resolve
+            matches, state = _resolve(index, name, preferred_workspace=workspace)
+            if state == 'ambiguous':
+                raise ValueError('Conflicting model companions: ' + name)
+            candidate = Path(matches[0]['file']) if state == 'found' else None
+        else:
+            from multi_pak_assets import locate_related_asset
+            candidate = locate_related_asset(
+                workspace, name, projects_root, stage_root)
+            candidate = Path(candidate) if candidate is not None else None
+        if candidate is not None and candidate.is_file() and not candidate.is_symlink():
+            return candidate
+        return None
+
+    candidates = [normalized_name(relative + 'm')]
+    if suffix == '.chr':
+        import re
+        base = re.sub(r'(?i)_lod[0-9]+(?=\.chr$)', '', relative)
+        cdf = normalized_name(str(Path(base).with_suffix('.cdf')).replace('\\', '/'))
+        cdf_file = resolve_exact(cdf)
+        if cdf_file is not None:
+            # CDF references are authoritative; only use actual bindings.
+            from character_assembly import _parse_cdf
+            from xml.etree import ElementTree as ET
+            try:
+                _, skins, _ = _parse_cdf(cdf_file.read_bytes())
+            except (OSError, ValueError, ET.ParseError):
+                skins = ()
+            for _, skin in skins[:16]:
+                if skin.casefold().endswith('.skin'):
+                    candidates.append(normalized_name(skin + 'm'))
+        candidates.append(normalized_name(str(Path(base).with_suffix('.skinm')).replace('\\', '/')))
+        # A character with no .skinm may keep render geometry in a numbered
+        # .chr LOD. Only exact same-stem LODs, lowest index first.
+        for lod in range(5):
+            candidate = normalized_name(str(Path(base).with_suffix('')).replace('\\', '/')
+                                        + '_LOD' + str(lod) + '.chr')
+            if candidate.casefold() != relative.casefold():
+                candidates.append(candidate)
+
+    tried = []
+    seen = {relative.casefold()}
+    for candidate in candidates:
+        if candidate.casefold() in seen:
+            continue
+        seen.add(candidate.casefold())
+        linked = resolve_exact(candidate)
+        if linked is None:
+            continue
+        tried.append(candidate)
+        try:
+            return read_preview_mesh(linked.read_bytes(), candidate)
+        except ValueError as exc:
+            errors.append((candidate, str(exc)))
+
+    old_format = []
+    for name, issue in errors:
+        if 'CrChF v7 geometry only' in issue:
+            old_format.append(name)
+    if old_format:
         raise ValueError(
-            'No render mesh found for this character metadata. Checked: '
-            + ', '.join(candidates)
-            + '. For differently named body skins, import its matching .cdf'
-            ' and referenced .skinm into the selected build.')
-    return read_preview_mesh(raw, relative)
+            'Found model files using an older CryTek layout that this viewer '
+            'cannot render yet: ' + ', '.join(old_format[:4])
+            + '. Only CrChF v7 mesh streams are decoded. Raw export is still available.')
+    if tried:
+        raise ValueError(
+            'Found character companion files but none contain a supported '
+            'render mesh: ' + '; '.join(name + ': ' + error for name, error in errors[:3]))
+    raise ValueError(
+        'No supported render geometry for ' + relative
+        + '. Checked its direct .chr data, same-stem .chrm/.skinm, '
+          'CDF skin bindings, and same-stem .chr LODs. '
+          'Do not assume this character must have a .skinm.')
+
 
 
 def render_mesh(mesh: PreviewMesh, width=720, height=480, yaw=-0.5, elevation=0.24,
