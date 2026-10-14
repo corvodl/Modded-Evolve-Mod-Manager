@@ -7,7 +7,7 @@ RELEASE_NOTES = (
     ('1.1.18-beta.39', (
         'Add consistent icons across file explorers, texture, model and GFX controls.',
         'Show the official FFDec download link when selecting a GFX movie without a configured renderer.',
-        'Keep raw GFX browsing available without installing FFDec.',
+        'Keep FFDec and Java external to the app, installer and portable ZIP.',
     )),
     ('1.1.18-beta.38', (
         'Preview and edit Scaleform GFX movies with frame/sprite rendering and PNG export.',

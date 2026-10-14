@@ -42,19 +42,19 @@ class UiIconFfdecTests(unittest.TestCase):
     def test_download_notice_contains_official_page(self):
         self.assertEqual(FFDEC_DOWNLOAD,
                          "https://github.com/jindrapetrik/jpexs-decompiler/releases")
-        captured = {}
-        def fake_exec(dialog):
-            captured["title"] = dialog.windowTitle()
-            captured["text"] = dialog.text()
-            captured["detail"] = dialog.informativeText()
-            captured["buttons"] = [b.text() for b in dialog.buttons()]
-            return QMessageBox.Rejected
-        with patch.object(QMessageBox, "exec", fake_exec):
-            show_ffdec_requirement(None)
-        self.assertIn("FFDec", captured["title"])
-        self.assertIn("needed", captured["text"])
-        self.assertIn(FFDEC_DOWNLOAD, captured["detail"])
-        self.assertTrue(any("download" in text.lower() for text in captured["buttons"]))
+        # Real Qt modal window, but the call must return synchronously
+        # without requiring a user click or starting a nested event loop.
+        dialog = show_ffdec_requirement(None)
+        self.app.processEvents()
+        try:
+            self.assertIn("FFDec", dialog.windowTitle())
+            self.assertIn("needed", dialog.text())
+            self.assertIn(FFDEC_DOWNLOAD, dialog.informativeText())
+            self.assertTrue(any("download" in button.text().lower()
+                                for button in dialog.buttons()))
+            self.assertTrue(dialog.isVisible())
+        finally:
+            dialog.close()
 
 
 if __name__ == "__main__":

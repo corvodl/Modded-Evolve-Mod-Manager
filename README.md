@@ -15,7 +15,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 - Add consistent icons across file explorers, texture, model and GFX controls.
 - Show the official FFDec download link when selecting a GFX movie without a configured renderer.
-- Keep raw GFX browsing available without installing FFDec.
+- Keep FFDec and Java external to the app, installer and portable ZIP.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 
