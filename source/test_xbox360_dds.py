@@ -135,6 +135,59 @@ class Xbox2012DecodeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'NEW output'):
                 decode_fragment_files(model,paths,png)
 
+    def test_512_body_texture_split_between_low_and_high_paks(self):
+        """Exact 2012 ParasiteHost layout: low holds .0-.4, high holds .5.
+
+        No game texture bytes are used. The test proves the actual file split
+        cannot accidentally fall back to the 32px low-mip header and that the
+        highest 512px mip is untiled from the separately indexed high PAK.
+        """
+        from material_preview import _decode_texture
+        from dds_streaming import _mip_sizes
+
+        prefix = 'objects/characters/monsters/parasitehost/'
+        name = 'parasitehost.dds'
+        original = fixture_dds('DXT1', (512, 512), 8)
+        info = parse_dds(original)
+        sizes = _mip_sizes(info, original)
+        self.assertEqual(sizes, [131072, 32768, 8192, 2048, 512, 128, 32, 8])
+        mip = []
+        cursor = info.data_offset
+        for length in sizes:
+            mip.append(original[cursor:cursor+length])
+            cursor += length
+        header = bytearray(xboxify(original)[:info.data_offset])
+        pieces = [bytes(header) + b''.join(mip[5:]),
+                  mip[4], mip[3], mip[2], mip[1],
+                  xboxify(original)[info.data_offset:]]
+        self.assertEqual([len(p) for p in pieces],
+                         [296, 512, 2048, 8192, 32768, 131072])
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            low = root / 'dds_low.pak_import' / 'files'
+            high = root / 'dds_high.pak_import' / 'files'
+            index = {}
+            paths = []
+            for n, data in enumerate(pieces):
+                workspace = low if n < 5 else high
+                relative = prefix + name + '.' + str(n)
+                file = workspace / relative
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(data)
+                paths.append(file)
+                index[relative.casefold()] = [{
+                    'file': file, 'relative': relative,
+                    'workspace': workspace.parent,
+                    'archive': 'dds_low' if n < 5 else 'dds_high'}]
+            item = index[(prefix+name+'.0').casefold()][0]
+            result = _decode_texture(item, index=index, historical_2012=True)
+            self.assertEqual(result.size, (512, 512))
+            with Image.open(BytesIO(original)) as expected:
+                self.assertEqual(result.convert('RGB').tobytes(),
+                                 expected.convert('RGB').tobytes())
+            self.assertEqual([p.read_bytes() for p in paths], pieces)
+
     def test_model_gate_does_not_transform_stage2_or_unknown_character(self):
         with tempfile.TemporaryDirectory() as td:
             name='Objects/characters/monsters/ParasiteHost/ParasiteHost3.chr'
