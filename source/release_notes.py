@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.39', (
+        'Bundle FFDec and Java for Scaleform GFX preview, editing and export without a separate install.',
+        'Find matching GFX/SWF dependencies in same-build FlashAssets folders and report unresolved imports.',
+        'Show UI_Data.pak screen registrations, callbacks and texture references in GFX previews.',
+    )),
     ('1.1.18-beta.38', (
         'Preview and edit Scaleform GFX movies with frame/sprite rendering and PNG export.',
         'Replace GFX images, shapes, text and scripts with FFDec-backed rebuild and external authoring.',
