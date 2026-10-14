@@ -88,7 +88,42 @@ def _palette_report(body, rig):
     return result
 
 
-def inspect(body_path, skeleton_path, dba_path=None, export_glb=None):
+def _animation_config(data):
+    """Metadata-only 2012 chrparams: never execute game-supplied scripts."""
+    from xml.etree import ElementTree as ET
+    if (len(data) > 2 * 1024 * 1024 or
+            b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper()):
+        raise ValueError('Unsafe or oversized historical animation configuration.')
+    try:
+        root=ET.fromstring(data)
+    except ET.ParseError as exc:
+        return {'status':'cannot parse as XML','reason':str(exc)[:180]}
+    entries=root.findall('.//AnimationList/Animation')
+    if len(entries)>8192:
+        raise ValueError('Historical animation alias table too large.')
+    databases=[]
+    paths=[]
+    aliases=[]
+    for row in entries:
+        name=(row.get('name') or '').strip()
+        path=(row.get('path') or '').strip()
+        if name.casefold()=='$tracksdatabase':
+            databases.append(path)
+        elif name.casefold()=='#filepath':
+            paths.append(path)
+        elif name and path:
+            aliases.append({'name':name[:96],'path':path[:256]})
+    return {'status':'metadata only',
+            'database_declarations':databases[:128],
+            'path_rules':paths[:128],
+            'alias_count':len(aliases),
+            'aliases_sample':aliases[:128],
+            'controller_coverage':None,
+            'reason':'Controller identities cannot be inferred from alias names alone.'}
+
+
+def inspect(body_path, skeleton_path, dba_path=None, export_glb=None,
+            chrparams_path=None):
     body, skeleton = _bytes(body_path), _bytes(skeleton_path)
     vertices, triangles, uvs, materials = read_crytek_geometry(body)
     rig = read_legacy_rig(body,skeleton,len(vertices))
@@ -122,6 +157,10 @@ def inspect(body_path, skeleton_path, dba_path=None, export_glb=None):
                       'playback_available':False,
                       'reason':'No validated historical 0x905 clip decoder.'}
     }
+    if chrparams_path is not None:
+        configuration = _bytes(chrparams_path, maximum=2*1024*1024)
+        report['animation']['configuration'] = _animation_config(configuration)
+        report['source']['chrparams_sha256'] = _sha(configuration)
     if dba_path is not None:
         raw = _bytes(dba_path)
         report['animation'].update(probe_legacy_dba(raw))
@@ -144,11 +183,13 @@ def main(argv=None):
     parser.add_argument('--body',type=Path,required=True)
     parser.add_argument('--skeleton',type=Path,required=True)
     parser.add_argument('--dba',type=Path)
+    parser.add_argument('--chrparams',type=Path)
     parser.add_argument('--report',type=Path)
     parser.add_argument('--export-glb',type=Path)
     args=parser.parse_args(argv)
     try:
-        result=inspect(args.body,args.skeleton,args.dba,args.export_glb)
+        result=inspect(args.body,args.skeleton,args.dba,args.export_glb,
+                       args.chrparams)
         output=json.dumps(result,indent=2)
         if args.report:
             with args.report.open('x',encoding='utf-8') as dest:
