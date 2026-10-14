@@ -243,3 +243,30 @@ def probe_legacy_dba(raw):
             'database_chunk_version': hex(entries[0][1]),
             'clips_decoded': 0, 'playback_available': False,
             'reason': 'Historical 0x905 DBA clip/controller encoding remains unverified.'}
+
+
+def skin_glb_legacy(glb, body_raw, skeleton_raw):
+    """Export validated native .chr geometry as a *real* glTF skeleton/skin.
+
+    No placeholder/rigid-to-root influences are permitted. The existing
+    common exporter validates the complete rest pose again after writing.
+    """
+    from model_textured_export import _unpack_glb
+    from model_rigging import skin_glb_verified
+    document, _ = _unpack_glb(glb)
+    meshes = document.get('meshes', ())
+    if len(meshes) != 1 or not meshes[0].get('primitives'):
+        raise ValueError('Expected one full historical character GLB mesh.')
+    positions = {p['attributes'].get('POSITION')
+                 for p in meshes[0]['primitives']}
+    if len(positions) != 1 or None in positions:
+        raise ValueError('Historical GLB has no shared POSITION accessor.')
+    vertex_count = document['accessors'][positions.pop()]['count']
+    rig = read_legacy_rig(body_raw, skeleton_raw, vertex_count)
+    payload, summary = skin_glb_verified(
+        glb, rig.names, rig.parents, rig.rest, rig.inverse,
+        rig.joints, rig.weights, rig.subset_count)
+    summary['source_format'] = 'CryTek 0x745'
+    summary['body_bones'] = len(rig.body_bones)
+    summary['master_bones'] = len(rig.names)
+    return payload, summary
