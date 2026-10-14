@@ -22,15 +22,15 @@ def legacy_project_root(path, projects_root):
 
 
 def try_import_legacy(path, projects_root):
-    """Return an indexed legacy project or None for non-legacy PAKs.
+    """Index safe ZIP members for the unified editor without trusting payloads.
 
-    A ZIP whose entries are invalid is reported as an error rather than
-    swallowed as a signed-PAK fallback.
+    Invalid virtual paths, methods and symlinks still fail immediately.
+    Member CRC remains verified on access. Damaged files are not exported.
     """
     candidate = Path(path)
     if candidate.suffix.casefold() != ".pak" or not zipfile.is_zipfile(candidate):
         return None
-    inspect_archive(candidate)  # methods 0/8, no encryption, safe virtual paths
+    inspect_archive(candidate, verify_crc=False)  # Validate directory metadata first
     folder = legacy_project_root(candidate, projects_root)
     if folder.exists():
         existing = load_project(folder)
@@ -38,9 +38,10 @@ def try_import_legacy(path, projects_root):
             raise ValueError("Legacy project collision for a different archive.")
     else:
         folder.parent.mkdir(parents=True, exist_ok=True)
-        create_project(candidate, folder)
+        create_project(candidate, folder, verify_crc=False)
     return {
         "status": "legacy-project", "name": candidate.name,
         "folder": str(folder), "count": len(load_project(folder)["entries"]),
         "kind": "unsigned-ZIP",
+        "integrity": "metadata-checked; member CRC validated on access",
     }
