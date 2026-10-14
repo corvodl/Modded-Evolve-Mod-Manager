@@ -150,6 +150,14 @@ class GfxPreviewWidget(QWidget):
         self.export.setEnabled(False)
         self.export.clicked.connect(owner.export_png)
         bar.addWidget(self.export)
+        self.edit_movie = QPushButton(
+            "Edit in Mod Project…" if getattr(owner, "read_only_library", False)
+            else "Edit full GFX…")
+        self.edit_movie.setObjectName("gfxOpenEditor")
+        self.edit_movie.clicked.connect(
+            owner.edit_in_project if getattr(owner, "read_only_library", False)
+            else owner.edit_gfx)
+        bar.addWidget(self.edit_movie)
         bar.addStretch(1)
         layout.addLayout(bar)
         self.symbol.currentIndexChanged.connect(self._symbol_changed)
