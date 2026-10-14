@@ -87,7 +87,7 @@ class ContextualToolbarTests(unittest.TestCase):
             self.assertTrue(buttons["Open Asset Library Folder"].isHidden())
             manager._library_rows = {
                 "legacy-test": {"id": "legacy-test", "name": "textures.pak",
-                                "source": r"C:\\Temp\\textures.pak"}}
+                                "source": r"C:\Temp\textures.pak"}}
             table = manager.asset_table
             table.insertRow(0)
             first = QTableWidgetItem("Textures")
@@ -103,12 +103,12 @@ class ContextualToolbarTests(unittest.TestCase):
             # A level-looking name alone is not proof of map ownership.
             self.assertTrue(buttons["Open Map"].isHidden())
             manager._library_rows["legacy-test"]["source"] = (
-                r"C:\\Games\\ModdedEvolve\\EvolveGame\\Game\\levels_canyon.pak")
+                r"C:\Games\ModdedEvolve\EvolveGame\Game\levels_canyon.pak")
             manager._sync_library_quick_actions()
             self.assertFalse(buttons["Open Map"].isHidden())
             manager._library_rows["legacy-test"]["name"] = "level.pak"
             manager._library_rows["legacy-test"]["source"] = (
-                r"C:\\Games\\ModdedEvolve\\EvolveGame\\Game\\levels\\Tutorial\\level.pak")
+                r"C:\Games\ModdedEvolve\EvolveGame\Game\levels\Tutorial\level.pak")
             manager._sync_library_quick_actions()
             self.assertFalse(buttons["Open Map"].isHidden())
 
