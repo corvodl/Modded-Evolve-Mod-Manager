@@ -36,7 +36,7 @@ if os.name == 'nt' and getattr(sys, 'frozen', False):
         sys.stderr = sys.stderr or open(os.devnull, 'w')
 
 
-from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl, QSize
+from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl, QSize, QItemSelectionModel
 from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices, QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout,
@@ -804,7 +804,8 @@ class QtManager(QMainWindow):
             return
         from asset_library import imported_archives
         from pak_dependencies import group_title
-        selected = self._selected_library_id()
+        selected_ids = self._selected_library_ids()
+        focused_id = self._selected_library_id()
         archives = imported_archives()
         from build_collections import catalog
         builds = catalog()['builds']
@@ -872,12 +873,19 @@ class QtManager(QMainWindow):
                 table.setItem(row, col, cell)
         table.setSortingEnabled(True)
         table.sortItems(0, Qt.AscendingOrder)
-        if selected:
+        if selected_ids:
+            # Refreshes can occur while shared PAK imports finish. Preserve
+            # visible multi-selection by archive ID even after sorting or
+            # filtering; selectRow() would collapse Shift/Ctrl selections.
+            model = table.selectionModel()
             for row in range(table.rowCount()):
                 cell = table.item(row, 0)
-                if cell and cell.data(Qt.UserRole) == selected:
-                    table.selectRow(row)
-                    break
+                if cell and cell.data(Qt.UserRole) in selected_ids:
+                    index = table.model().index(row, 0)
+                    model.select(index, QItemSelectionModel.Select |
+                                        QItemSelectionModel.Rows)
+                    if cell.data(Qt.UserRole) == focused_id:
+                        model.setCurrentIndex(index, QItemSelectionModel.NoUpdate)
         self.asset_count.setText(
             '%d of %d imported PAKs • %.1f GiB extracted • read-only previews' %
             (len(visible), len(archives),
