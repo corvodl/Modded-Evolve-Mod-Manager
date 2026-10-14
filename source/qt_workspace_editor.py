@@ -1634,7 +1634,11 @@ class QtWorkspaceEditor(QMainWindow):
             self.model_panel.set_native_catalog(
                 refs, idle, config, loader=build_native_clip,
                 refresh_library=self.refresh_model_asset_references,
-                character=anim_model)
+                character=anim_model,
+                historical_character=bool(
+                    self.character_preview is not None and
+                    any(virtual.casefold().endswith('.chr') and skin is None
+                        for virtual, _, skin, _ in self.character_preview.rig_parts)))
             if self.read_only_library:
                 # Same native animation timeline; don't offer loaders that
                 # import external clips in the reference-only browser.
