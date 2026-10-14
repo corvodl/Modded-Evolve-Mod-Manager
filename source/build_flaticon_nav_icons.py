@@ -1,4 +1,4 @@
-"""Build eight nav SVGs from Flaticon's official Uicons regular-rounded font.
+"""Build navigation and explorer SVGs from Flaticon's official Uicons regular-rounded font.
 
 The input is pinned to Flaticon's public GitHub repo, not scraped from the
 Flaticon website. Only eight SVG paths are emitted; the full webfont is never
@@ -32,6 +32,24 @@ NAV_GLYPHS = {
     "developer": ("terminal", 0xFD78),
 }
 
+# File explorer, action and resource controls use the same Flaticon family as
+# the sidebar. Never swap these for platform-dependent QFileIconProvider icons.
+ASSET_GLYPHS = {
+    "asset-folder": ("folder", 0xF6BA),
+    "asset-folder-open": ("folder-open", 0xF6B5),
+    "asset-file": ("file", 0xF675),
+    "asset-file-code": ("file-code", 0xF65B),
+    "asset-image": ("file-image", 0xF663),
+    "asset-mesh": ("cube", 0xF500),
+    "asset-animation": ("film", 0xF67A),
+    "asset-assembly": ("layers", 0xF87C),
+    "asset-material": ("paint-brush", 0xF9EA),
+    "asset-gfx": ("file-video", 0xF672),
+    "asset-audio": ("file-audio", 0xF655),
+    "asset-favorite": ("star", 0xFCE9),
+    "asset-search": ("search", 0xFBBA),
+}
+
 
 def read_pinned_upstream():
     request = Request(SOURCE_URL, headers={"User-Agent": "EvolveModManager-Build"})
@@ -61,7 +79,7 @@ def generate_nav_icons(target, source=None):
     dest = Path(target)
     dest.mkdir(parents=True, exist_ok=True)
     completed = []
-    for file_stem, (glyph_title, codepoint) in NAV_GLYPHS.items():
+    for file_stem, (glyph_title, codepoint) in (NAV_GLYPHS | ASSET_GLYPHS).items():
         name = cmap.get(codepoint)
         if not name or name not in glyphs:
             raise ValueError(f"Missing Flaticon Uicons glyph {glyph_title} ({codepoint:#x})")
@@ -91,7 +109,7 @@ def generate_nav_icons(target, source=None):
         file.write_text(svg, encoding="utf-8")
         completed.append(file)
     font.close()
-    print("Generated %d Flaticon Uicons navigation SVGs" % len(completed))
+    print("Generated %d Flaticon Uicons navigation + explorer SVGs" % len(completed))
     return completed
 
 
