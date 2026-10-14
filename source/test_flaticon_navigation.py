@@ -48,6 +48,25 @@ class FlaticonNavigationTests(unittest.TestCase):
                 self.assertGreater(max(y for x, y in alpha_pixels) -
                                    min(y for x, y in alpha_pixels), 10, section)
 
+    def test_semantic_glyphs_use_official_regular_rounded_codepoints(self):
+        # Prevent a later build from silently switching back to the opaque
+        # solid glyphs that rendered ambiguously at sidebar sizes.
+        from build_flaticon_nav_icons import NAV_GLYPHS, UPSTREAM_PATH
+        self.assertIn("regular-rounded.woff", UPSTREAM_PATH)
+        self.assertEqual(NAV_GLYPHS, {
+            "instructions": ("book-alt", 0xF274),
+            "asset-library": ("archive", 0xF16D),
+            "modding": ("tools", 0xFDCB),
+            "play-restore": ("play", 0xFA9E),
+            "settings": ("settings", 0xFBD2),
+            "credits": ("users", 0xFEA6),
+            "whats-new": ("newspaper", 0xF9A5),
+            "developer": ("terminal", 0xFD78),
+        })
+        paths = [(NAV_ASSETS / (name + ".svg")).read_bytes()
+                 for name in NAV_STEMS.values()]
+        self.assertEqual(len(paths), len(set(paths)))
+
     def test_flaticon_attribution_is_bundled(self):
         root = Path(__file__).resolve().parent.parent
         info = root / "Docs" / "FLATICON-UICONS-ATTRIBUTION.txt"
