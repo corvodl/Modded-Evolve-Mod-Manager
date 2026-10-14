@@ -675,10 +675,11 @@ class AssetLibraryDialog(QDialog):
         record = self._selected_record()
         if record is None:
             return
-        from pak_dependencies import is_level_pak
-        if not is_level_pak(record['name']):
+        from library_map_actions import library_map_identity
+        if not library_map_identity(record):
             QMessageBox.information(self, "Open map",
-                "Select a supported level PAK. Unverified historical maps remain reference-only.")
+                "Select a PAK whose original source belongs to a map folder. "
+                "Unverified historical maps remain reference-only.")
             return
         self.accept()
         self.parent().open_library_map_from_archive(
