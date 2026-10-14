@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.45', (
+        'Preview compatible 2012 CryTek .chr character geometry, CDFs and material subsets.',
+        'Review cross-build assets and dependencies with detached, hash-verified transfer candidates.',
+        'Keep Asset Library originals read-only and Stage 2 deployment isolated for verification.',
+    )),
     ('1.1.18-beta.44', (
         'Browse 2012 Evolve PAKs and their contents in the default Asset Library.',
         'Fix historical ZIP path separators without weakening corruption checks.',

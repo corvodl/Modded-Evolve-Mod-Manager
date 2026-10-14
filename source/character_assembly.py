@@ -47,7 +47,9 @@ def _parse_cdf(raw):
             binding = normalized_name(row.get('Binding'))
         except ValueError:
             continue
-        if binding.casefold().endswith('.skin'):
+        # Some retail Legacy CDFs use a CA_SKIN binding to a renderable
+        # .chr rather than to .skin. Do not manufacture a .skinm name.
+        if binding.casefold().endswith(('.skin', '.chr')):
             refs.append((row.get('AName', '') or Path(binding).stem, binding))
     sets = {}
     for group in root.findall('./SkinSets/SkinSet'):
@@ -239,7 +241,7 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         return None
     included, omitted, parts, rig_parts = [], [], [], []
     for label, skin in requested[:8]:
-        render = skin + 'm'
+        render = skin if skin.casefold().endswith('.chr') else skin + 'm'
         path = _resolve_file(index, render, workspace)
         if path is None:
             omitted.append(label + ': missing ' + render)
@@ -257,7 +259,10 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
             materials = None
             omitted.append(label + ' textures: ' + str(exc))
         parts.append((label, mesh, materials))
-        skin_path = _resolve_file(index, skin, workspace)
+        skin_path = (_resolve_file(index, skin, workspace)
+                     if skin.casefold().endswith('.skin') else None)
+        # Legacy .chr body geometry must not be misrepresented as .skin
+        # rigging; animated GLB export still requires separate validation.
         rig_parts.append((render, Path(path), Path(skin_path) if skin_path else None,
                           len(mesh.vertices)))
         included.append(label)

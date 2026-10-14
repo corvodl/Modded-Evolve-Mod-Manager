@@ -1,25 +1,25 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.44
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.45
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.44 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.45 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
 ## Latest Stable — v1.1.17.1
 
 - Add a Windows installer with optional Desktop and Start Menu shortcuts.
 - Compare Stable and Beta releases and offer only the newest version.
 
-## Latest Beta — v1.1.18-beta.44
+## Latest Beta — v1.1.18-beta.45
 
-- Browse 2012 Evolve PAKs and their contents in the default Asset Library.
-- Fix historical ZIP path separators without weakening corruption checks.
-- Older model formats may still be unsupported by the 3D preview.
+- Preview compatible 2012 CryTek .chr character geometry, CDFs and material subsets.
+- Review cross-build assets and dependencies with detached, hash-verified transfer candidates.
+- Keep Asset Library originals read-only and Stage 2 deployment isolated for verification.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 
-Versioned release: [v1.1.18-beta.44](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.44).
+Versioned release: [v1.1.18-beta.45](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.45).
 
 ## Download and install
 
