@@ -11,7 +11,8 @@ from unittest.mock import patch
 from gfx_edit_backend import (
     create_gfx_session, read_gfx_session, use_edited_gfx_file,
     undo_gfx_session, apply_gfx_session, replace_gfx_resource,
-    export_gfx_xml, rebuild_gfx_from_xml, launch_gfx_gui, GfxError,
+    export_gfx_xml, rebuild_gfx_from_xml, export_gfx_scripts,
+    rebuild_gfx_scripts, launch_gfx_gui, GfxError,
 )
 from gfx_synthetic_fixtures import synthetic_gfx
 
@@ -183,6 +184,36 @@ class GfxEditingTests(unittest.TestCase):
         undone = undo_gfx_session(self.project, snap.session)
         self.assertFalse(undone.changed)
         self.assertEqual(undone.working_file.read_bytes(), self.original)
+
+    def test_actionscript_sources_export_recompile_without_project_write(self):
+        snap = create_gfx_session(self.project, self.virtual)
+        dest = self.root / "script-sources"
+        def fake_export(args, *, configured, folder, cancelled=None):
+            self.assertEqual(args[0:2], ["-export", "script"])
+            scripts = Path(args[2])
+            scripts.joinpath("scripts").mkdir(parents=True)
+            scripts.joinpath("scripts", "main.as").write_text("trace('start')")
+        with patch("gfx_edit_backend._ffdec", side_effect=fake_export):
+            exported = export_gfx_scripts(
+                self.project, snap.session, dest, configured="mock.jar")
+        self.assertEqual(exported["count"], 1)
+        self.assertTrue((dest / "scripts" / "main.as").exists())
+        (dest / "scripts" / "main.as").write_text("trace('new')")
+        def fake_import(args, *, configured, folder, cancelled=None):
+            self.assertEqual(args[0], "-importScript")
+            self.assertTrue(
+                Path(args[-1], "scripts", "main.as").is_file())
+            Path(args[2]).write_bytes(self.modified)
+        with patch("gfx_edit_backend._ffdec", side_effect=fake_import):
+            result = rebuild_gfx_scripts(
+                self.project, snap.session, dest, configured="mock.jar")
+        self.assertEqual(result.edits, 1)
+        self.assertTrue(result.changed)
+        self.assertEqual(self.target.read_bytes(), self.original)
+        (dest / "unknown.bin").write_bytes(b"unsafe")
+        with self.assertRaisesRegex(GfxError, "only contain .as"):
+            rebuild_gfx_scripts(self.project, snap.session, dest,
+                                configured="mock.jar")
 
     def test_xml_export_is_only_an_external_copy(self):
         snap = create_gfx_session(self.project, self.virtual)
