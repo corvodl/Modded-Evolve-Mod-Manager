@@ -355,7 +355,7 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
     with tempfile.TemporaryDirectory(prefix="evolve-gfx-") as temporary:
         root = Path(temporary)
         target = root.joinpath(*name.split("/"))
-        target.parent.mkdir(parents=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
         # Never follow URL/absolute or parent traversal imports.
         for rel, blob in checked.items():
