@@ -92,7 +92,7 @@ def _dir(workspace):
     return base
 
 
-def create_gfx_session(workspace, relative):
+def create_gfx_session(workspace, relative, *, dependencies=None):
     """Create a private project-local copy. Never opens or edits live game data."""
     ws, virtual, src = _source_path(workspace, relative)
     original = src.read_bytes()
@@ -102,6 +102,26 @@ def create_gfx_session(workspace, relative):
     folder.mkdir(mode=0o700)
     editable = folder / "movie.gfx"
     editable.write_bytes(original)
+    # Only imports explicitly referenced by this movie may accompany the
+    # editable copy. Keep relative names inside the external editor sandbox.
+    from gfx_preview_backend import _validate_imported_movie
+    info = inspect_gfx(original)
+    accepted = {
+        safe_import_path(url, virtual): url
+        for url in info.imports
+    }
+    dependencies = dependencies or {}
+    if len(dependencies) > len(accepted):
+        raise GfxError("Unexpected external GFX editor dependencies.")
+    for full_name, payload in dependencies.items():
+        if full_name not in accepted:
+            raise GfxError("Unreferenced movie dependency is not part of this editing session.")
+        _validate_imported_movie(payload, full_name)
+        dest = (folder / accepted[full_name]).resolve()
+        if dest == editable or not dest.is_relative_to(folder.resolve()):
+            raise GfxError("Unsafe imported movie filename.")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(payload)
     digest = hashlib.sha256(original).hexdigest()
     record = {
         "version": 1, "relative": virtual, "original_sha256": digest,
