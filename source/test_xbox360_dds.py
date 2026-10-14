@@ -102,7 +102,7 @@ class Xbox2012DecodeTests(unittest.TestCase):
             source=root/'library';source.mkdir()
             output=root/'exports';output.mkdir()
             model=source/'test.chr'
-            model.write_bytes(b'CryTek\\0\\0'+struct.pack('<2I',0xffff0000,0x745))
+            model.write_bytes(b'CryTek\0\0'+struct.pack('<2I',0xffff0000,0x745))
             original=fixture_dds('DXT1',(128,128),5)
             info=parse_dds(original)
             lengths=[8192,2048,512,128,32]
