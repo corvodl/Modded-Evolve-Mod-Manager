@@ -127,7 +127,7 @@ if (!(Test-Path -LiteralPath (Join-Path $root 'license.txt')) -and
     !(Test-Path -LiteralPath (Join-Path $root 'LICENSE'))) {
   throw 'FFDec GPL-3.0 license is not present in downloaded release.'
 }
-if (!(Test-Path -LiteralPath $runtime 'legal')) {
+if (!(Test-Path -LiteralPath (Join-Path $runtime 'legal'))) {
   throw 'Temurin runtime legal notices are missing.'
 }
 @"
