@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.48', (
+        'Improve validated historical CryTek rig exports with body-local bind poses and multipart assemblies.',
+        'Group and select matching map PAKs in the Asset Library and open verified map families.',
+        'Preserve multi-selection and display larger, unclipped sidebar navigation icons.',
+    )),
     ('1.1.18-beta.47', (
         'Preview Xbox 360 DXT1 and CTX1 textures from split high/low DDS archives.',
         'Export validated historical CryTek character armatures and weights to Blender.',
