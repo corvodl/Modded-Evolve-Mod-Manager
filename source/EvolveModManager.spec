@@ -15,6 +15,19 @@ for name in ('cgf-converter.exe', 'Cryengine-Converter-source-v2.0.0.zip', 'NOTI
     if not asset.is_file():
         raise FileNotFoundError('Bundled Cryengine-Converter missing: ' + str(asset))
     datas.append((str(asset), 'third_party/Cryengine-Converter'))
+# FFDec is an independent GPLv3 tool. Distribute its full upstream
+# application, corresponding source, license, and a private Temurin JRE with
+# corresponding OpenJDK sources and legal notices in BOTH installer and ZIP.
+scaleform = root / 'third_party' / 'FFDec'
+for name in ('ffdec.jar', 'NOTICE.txt', 'BUNDLED-READY.txt',
+             'Sources/FFDec-source-b2ef2d3.zip',
+             'Sources/OpenJDK21U-jdk-sources_21.0.12_8.tar.gz',
+             'jre/bin/java.exe', 'jre/bin/javaw.exe'):
+    if not (scaleform / name).is_file():
+        raise FileNotFoundError('Bundled Scaleform dependency missing: ' + str(scaleform / name))
+if not (scaleform / 'jre' / 'legal').is_dir():
+    raise FileNotFoundError('Bundled Temurin JRE legal notices missing.')
+datas.append((str(scaleform), 'third_party/FFDec'))
 datas += [(str(root/'launcher_support'), 'launcher_support'),
           (str(root/'assets'), 'assets'),
           (str(root/'reference'), 'reference'),
@@ -33,7 +46,7 @@ hidden = [
     'workspace_file_actions', 'pak_browser', 'portable_bundle',
     'first_run_setup', 'old_prepared', 'loose_game_files',
     'loose_file_editor', 'qt_manager', 'qt_workspace_editor',
-    'qt_asset_library', 'qt_asset_preview', 'asset_library_preview', 'gfx_preview_backend', 'qt_gfx_preview', 'gfx_edit_backend', 'qt_gfx_editor', 'animation_converter_bridge', 'converted_motion', 'character_aliases',
+    'qt_asset_library', 'qt_asset_preview', 'asset_library_preview', 'gfx_preview_backend', 'gfx_dependency_resolver', 'qt_gfx_preview', 'gfx_edit_backend', 'qt_gfx_editor', 'animation_converter_bridge', 'converted_motion', 'character_aliases',
     'qt_gpu_viewer', 'qt_asset_studio', 'studio_tools', 'qt_asset_intelligence', 'asset_intelligence', 'qt_workflow_lab', 'workflow_lab', 'qt_task_queue', 'asset_geometry_cache', 'operation_progress', 'qt_operation_progress', 'qt_background_exports', 'material_editor_v2', 'qt_developer_lab', 'developer_runtime_lab', 'developer_network_lab', 'developer_private_services', 'developer_support_lab', 'developer_write_policy', 'project_lifecycle', 'project_selection', 'qt_theme_116', 'quality_lab_116', 'studio_polish_117', 'renderer_3', 'developer_diagnostics_116', 'qt_font_health', 'desktop_shortcut', 'orphaned_swap_recovery',
 ]
 for package in ('cryptography', 'frida', 'twofish', 'PIL'):
