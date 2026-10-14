@@ -378,7 +378,10 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
         _execute(args, cwd=root, cancelled=cancelled, timeout=TIMEOUT)
         files = [p for p in out.rglob("*.png") if p.is_file() and not p.is_symlink()]
         if len(files) != 1:
-            raise GfxError("FFDec must generate exactly one PNG for the selected frame/sprite; got " + str(len(files)) + ".")
+            labels = [p.relative_to(out).as_posix() for p in files[:20]]
+            raise GfxError("FFDec produced " + str(len(files)) +
+                           " PNGs for the selected frame/sprite; outputs: " +
+                           repr(labels))
         path = files[0]
         if path.stat().st_size > MAX_OUTPUT:
             raise GfxError("Rendered PNG exceeds the size limit.")
