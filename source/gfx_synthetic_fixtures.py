@@ -38,6 +38,7 @@ def _tag(code, content=b""):
 
 
 def synthetic_gfx(*, scripts=False, imports=False, sprites=True,
+                  nonvisual_sprite=False, exported_names=False,
                   width=64, height=48, compressed=False):
     shape = [0, 0, 0, 1, 0, 1]  # Change style: move + FillStyle1
     shape += _uint(1, 5) + [0, 0] + [1]  # moveBits=1, x=0,y=0, fill=1
@@ -57,6 +58,11 @@ def synthetic_gfx(*, scripts=False, imports=False, sprites=True,
     if sprites:
         nested = _tag(4, place_shape) + _tag(1) + _tag(0)
         body += _tag(39, struct.pack("<HH", 2, 1) + nested)
+    if nonvisual_sprite:
+        # Library class symbols can have no frames; main_menu.gfx uses many.
+        body += _tag(39, struct.pack("<HH", 3, 0) + _tag(0))
+    if exported_names:
+        body += _tag(56, struct.pack("<HH", 1, 2) + b"mcButtonMainMenu\x00")
     if imports:
         body += _tag(71, b"gfxfontlib_locfont.gfx\x00\x01\x00\x00\x00")
     if scripts:
