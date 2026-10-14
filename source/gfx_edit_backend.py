@@ -282,6 +282,86 @@ def rebuild_gfx_from_xml(workspace, session, imported_xml, *,
     return _replace_edit_copy(snap, content)
 
 
+def export_gfx_scripts(workspace, session, destination, *,
+                       configured=None, cancelled=None):
+    """Export ActionScript source files for outside editing; never game paths.
+
+    FFDec uses its own AS1/2/3 decompiler. The manager copies the result to a
+    separate new folder after checking generated paths and total byte limits.
+    """
+    snap = read_gfx_session(workspace, session)
+    target = Path(destination).expanduser().resolve()
+    if target.exists() or not target.parent.is_dir():
+        raise GfxError("Choose a new ActionScript export folder.")
+    with tempfile.TemporaryDirectory(prefix="gfx-scripts-export-") as tmp:
+        root = Path(tmp)
+        generated = root / "source"
+        generated.mkdir()
+        _ffdec(["-export", "script", str(generated),
+                str(snap.working_file)], configured=configured,
+               folder=root, cancelled=cancelled)
+        files = []
+        total = 0
+        for entry in generated.rglob("*"):
+            if entry.is_symlink() or not entry.resolve().is_relative_to(generated):
+                raise GfxError("Unsafe generated ActionScript path.")
+            if not entry.is_file():
+                continue
+            total += entry.stat().st_size
+            if total > MAX_XML or len(files) > 2000:
+                raise GfxError("FFDec ActionScript export exceeds safety limit.")
+            files.append(entry)
+        if not files:
+            raise GfxError("FFDec found no exportable ActionScript sources in this movie.")
+        target.mkdir(mode=0o700)
+        for entry in files:
+            relative = entry.relative_to(generated)
+            destination_file = target / relative
+            destination_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(entry, destination_file)
+    return {"directory": str(target), "count": len(files), "bytes": total}
+
+
+def rebuild_gfx_scripts(workspace, session, scripts_directory, *,
+                        configured=None, cancelled=None):
+    """Compile modified ActionScript sources through FFDec into a session copy."""
+    snap = read_gfx_session(workspace, session)
+    source = Path(scripts_directory).expanduser().resolve(strict=True)
+    if not source.is_dir() or source.is_symlink():
+        raise GfxError("Select the exported ActionScript source folder.")
+    with tempfile.TemporaryDirectory(prefix="gfx-scripts-import-") as tmp:
+        root = Path(tmp)
+        isolated = root / "scripts"
+        isolated.mkdir()
+        count, amount = 0, 0
+        for entry in source.rglob("*"):
+            if entry.is_symlink() or not entry.resolve().is_relative_to(source):
+                raise GfxError("ActionScript source contains linked or unsafe files.")
+            if not entry.is_file():
+                continue
+            rel = entry.relative_to(source)
+            if entry.suffix.casefold() != ".as" or any(p in (".", "..") for p in rel.parts):
+                raise GfxError("ActionScript source folder must only contain .as files.")
+            count += 1
+            amount += entry.stat().st_size
+            if count > 2000 or amount > MAX_XML:
+                raise GfxError("ActionScript source import exceeds safety limit.")
+            destination_file = isolated / rel
+            destination_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(entry, destination_file)
+        if not count:
+            raise GfxError("No edited ActionScript .as sources found.")
+        before = root / "before.gfx"
+        before.write_bytes(snap.working_file.read_bytes())
+        output = root / "script-rebuilt.gfx"
+        _ffdec(["-importScript", str(before), str(output), str(isolated)],
+               configured=configured, folder=root, cancelled=cancelled)
+        if not output.is_file() or output.stat().st_size > MAX_SOURCE:
+            raise GfxError("FFDec did not compile a bounded GFX movie.")
+        result = output.read_bytes()
+    return _replace_edit_copy(snap, result)
+
+
 def use_edited_gfx_file(workspace, session, candidate):
     """Import a GFX authored in FFDec GUI or another external editor."""
     snap = read_gfx_session(workspace, session)
