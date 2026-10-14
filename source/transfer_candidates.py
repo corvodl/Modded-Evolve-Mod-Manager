@@ -52,7 +52,7 @@ def _check_destination(destination, root, target_project):
         raise ValueError("Choose a new external directory, not the Asset Library.")
     if target_project is not None:
         target = Path(target_project).resolve()
-        if output.is_relative_to(target) or target.is_relative_to(output):
+        if resolved.is_relative_to(target) or target.is_relative_to(resolved):
             raise ValueError("Candidate exports cannot modify the target project.")
     return output
 
