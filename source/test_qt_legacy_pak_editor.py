@@ -54,6 +54,19 @@ class LegacyPAKQtTests(unittest.TestCase):
         self.assertIn(b"new", read_member(self.editor.project, "Entities/Spawn.ent"))
         self.assertFalse(self.editor.save_button.isEnabled())
 
+    def test_legacy_editor_uses_contextual_menus_not_six_button_row(self):
+        self.assertEqual(list(self.editor.editor_menus),
+                         ["File", "Edit", "View", "Tools"])
+        self._select("Entities/Spawn.ent")
+        self.assertTrue(self.editor.png_button.isHidden())
+        self.assertTrue(self.editor.build_button.isHidden())
+        self.assertTrue(self.editor.tool_buttons["Replace File…"].isHidden())
+        self.editor.text.setPlainText("<Entity modified='yes'/>")
+        self.app.processEvents()
+        self.assertFalse(self.editor.save_button.isHidden())
+        self.assertIn("Build Legacy PAK…",
+                      [a.text() for a in self.editor.editor_menus["File"].actions()])
+
     def test_binary_selection_offers_safe_raw_replacement(self):
         self._select("Sounds/Monster.fsb")
         self.assertIn("Binary file", self.editor.info.text())
