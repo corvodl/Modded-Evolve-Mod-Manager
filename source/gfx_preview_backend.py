@@ -181,9 +181,31 @@ def inspect_gfx(data):
                    tuple(dict.fromkeys(imports)), script, places, tags)
 
 
+_INVALID_COMPONENT = re.compile(r'[<>:"|?*]')
+_RESERVED = frozenset(("CON", "PRN", "AUX", "NUL") +
+                      tuple(f"COM{i}" for i in range(1, 10)) +
+                      tuple(f"LPT{i}" for i in range(1, 10)))
+
+
+def _virtual_path(value):
+    """Pure, bounded CryEngine path sanitizer (no encryption imports needed).
+
+    A GFX preview in the isolated renderer must not import private signing
+    dependencies simply to normalize a virtual filename.
+    """
+    if (not isinstance(value, str) or not 1 <= len(value) <= 1024 or
+            value.startswith(("/", "\\")) or "\\" in value or "\x00" in value):
+        raise GfxError("Unsafe movie virtual path.")
+    parts = value.split("/")
+    if any(not p or p in (".", "..") or p.endswith((".", " ")) or
+           _INVALID_COMPONENT.search(p) or
+           p.split(".")[0].upper() in _RESERVED for p in parts):
+        raise GfxError("Unsafe movie virtual path.")
+    return "/".join(parts)
+
+
 def safe_import_path(url, virtual):
     """Allow only a normalized relative movie from the same virtual folder."""
-    from evolve_pak_workspace import normalized_name
     if (not isinstance(url, str) or not url or
             url.startswith(("/", "\\")) or
             re.match(r"^[a-zA-Z][\w+.-]*:", url) or
@@ -194,8 +216,8 @@ def safe_import_path(url, virtual):
         raise GfxError("Parent-relative GFX imports are disabled.")
     if not url.casefold().endswith((".gfx", ".swf")):
         raise GfxError("Unsupported external GFX import type.")
-    name = normalized_name(virtual)
-    return normalized_name(str(PurePosixPath(name).parent / url))
+    name = _virtual_path(virtual)
+    return _virtual_path(str(PurePosixPath(name).parent / url))
 
 
 def resolve_imports(info, virtual, resolver):
@@ -305,8 +327,7 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
     if not isinstance(frame, int) or not 1 <= frame <= maxframe:
         raise GfxError("Selected timeline/sprite frame is unavailable.")
     command = ffdec_command(backend)
-    from evolve_pak_workspace import normalized_name
-    name = normalized_name(virtual)
+    name = _virtual_path(virtual)
     if not name.casefold().endswith(".gfx"):
         raise GfxError("Only supported GFX source paths can be rasterized.")
     dependencies = imports or {}
@@ -314,7 +335,7 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
         raise GfxError("Too many staged external movies.")
     checked = {}
     for key, blob in dependencies.items():
-        virtual_dep = normalized_name(key)
+        virtual_dep = _virtual_path(key)
         if not virtual_dep.casefold().endswith((".gfx", ".swf")):
             raise GfxError("Invalid external dependency type.")
         if not isinstance(blob, bytes) or len(blob) > MAX_SOURCE:
