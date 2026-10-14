@@ -162,6 +162,65 @@ def gfx_movie(identifier, relative, *, root=None):
     return inspect_gfx(raw)
 
 
+def library_gfx_ui_data(identifier, relative, *, root=None, build_id=None):
+    """Find GFx bindings only in UIData.pak imported for this exact game build.
+
+    This is an informational XML link. Texture preloads are not sprite atlas
+    assignments. Unassigned archives cannot borrow XML from another build.
+    """
+    from build_collections import catalog, resolve_archive_build, UNASSIGNED
+    from gfx_uidata_references import (
+        is_ui_data_archive, parse_ui_data_references, _UI_PATH, MAX_XML_BYTES)
+    context = resolve_archive_build(identifier, root=root, build_id=build_id)
+    if context == UNASSIGNED:
+        return {
+            "status": "unassigned-build",
+            "source_archive": None, "screens": [],
+            "warnings": [
+                "Register UI Assets and UIData PAKs in the same Stage 2 build "
+                "before linking UI XML references. Unassigned imports are isolated."
+            ],
+        }
+    collection = catalog(root)["builds"].get(context)
+    if not collection:
+        raise ValueError("Selected game build is no longer registered.")
+    archive_ids = [
+        aid for aid, record in collection["members"].items()
+        if is_ui_data_archive(record["relative_path"])
+    ]
+    if not archive_ids:
+        return {
+            "status": "ui-data-not-imported",
+            "source_archive": None, "screens": [],
+            "warnings": [
+                "Import Game/UIData.pak (or UI_Data.pak) into this same game "
+                "build to display GFx screen bindings and UI texture references."
+            ],
+        }
+    if len(archive_ids) != 1:
+        return {
+            "status": "ambiguous-ui-data-archives",
+            "source_archive": None, "screens": [],
+            "warnings": [
+                "Multiple UIData PAKs are registered in this build. Choose "
+                "one unambiguous build/PAK snapshot before resolving metadata."
+            ],
+        }
+    aid = archive_ids[0]
+    records = archive_entries(aid, root)
+    docs = {}
+    for name, file in records.items():
+        if not _UI_PATH.fullmatch(name):
+            continue
+        if file.is_symlink() or file.stat().st_size > MAX_XML_BYTES:
+            continue
+        docs[name] = file.read_bytes()
+    report = parse_ui_data_references(relative, docs, archive=aid)
+    report["source_build_id"] = context
+    report["source_archive_id"] = aid
+    return report
+
+
 def library_gfx_imports(identifier, relative, *, root=None, build_id=None):
     """Resolve movie imports only from same library PAK or same registered build.
 
