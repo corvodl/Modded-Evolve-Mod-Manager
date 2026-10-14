@@ -19,7 +19,8 @@ from multi_pak_assets import _resolve
 
 def create_character_glb(workspace, relative, index, *, character=None,
                          texture_folder=None, projects_root=None, stage_root=None,
-                         clip=None, clips=None, allow_layered=False, materials=None):
+                         clip=None, clips=None, allow_layered=False, materials=None,
+                         cancelled=None):
     """Return (GLB bytes, details), optionally containing an original CAF clip.
 
     The preview and rigged export use the same character assembly selection.
@@ -100,7 +101,9 @@ def create_character_glb(workspace, relative, index, *, character=None,
         selected = clip if clip is not None else tuple(clips)[0]
         if selected.kind == 'dba' or (not selected.available and selected.dba_file is not None):
             from database_animation import convert_historical_database_motion
-            blob = convert_historical_database_motion(blob, selected, index, character, preferred_workspace=workspace)
+            blob = convert_historical_database_motion(
+                blob, selected, index, character,
+                preferred_workspace=workspace, cancelled=cancelled)
             motion_doc, _ = _unpack_glb(blob)
             details['animation_source'] = 'Pinned converter output verified against historical CDF rig'
             details['bone_channels'] = sum(len(a['channels']) for a in motion_doc['animations'])
