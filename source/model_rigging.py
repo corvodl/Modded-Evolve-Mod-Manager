@@ -201,8 +201,10 @@ def skin_glb_verified(glb, names, parents, world, inverse, bone_ids, weights, su
         raise ValueError('Verified skin data does not match GLB mesh or skeleton.')
     if (np.any(weights.astype(np.uint16).sum(axis=1) != 255)
             or np.any(bone_ids[weights > 0] >= len(names))
-            or parents.count(-1) != 1):
-        raise ValueError('Invalid verified bone weights or root.')
+            or parents.count(-1) < 1
+            or any(parent >= i or parent < -1
+                   for i, parent in enumerate(parents))):
+        raise ValueError('Invalid verified bone weights or root hierarchy.')
     mesh_nodes = [i for i, node in enumerate(document.get('nodes', []))
                   if node.get('mesh') == 0]
     if len(mesh_nodes) != 1:
@@ -219,8 +221,9 @@ def skin_glb_verified(glb, names, parents, world, inverse, bone_ids, weights, su
         if not node['children']:
             del node['children']
     document['nodes'].extend(nodes)
-    root = parents.index(-1)
-    document['scenes'][document.get('scene', 0)]['nodes'].append(first+root)
+    roots = [i for i, parent in enumerate(parents) if parent == -1]
+    document['scenes'][document.get('scene', 0)]['nodes'].extend(
+        first+i for i in roots)
 
     def add_view(data, target=None):
         binary.extend(b'\x00' * (-len(binary) % 4))
@@ -255,12 +258,18 @@ def skin_glb_verified(glb, names, parents, world, inverse, bone_ids, weights, su
         primitive['attributes']['JOINTS_0'] = joints_acc
         primitive['attributes']['WEIGHTS_0'] = weight_acc
     _extra_influences(document, add_view, primitives, bone_ids, weights)
-    document['skins'] = [{
-        'name': 'CryEngine ' + names[root],
+    skin = {
+        'name': 'CryEngine ' + names[roots[0]],
         'joints': [first+i for i in range(len(names))],
         'inverseBindMatrices': inverse_acc,
-        'skeleton': first+root,
-    }]
+    }
+    # glTF's optional skeleton field must identify one common skeleton root.
+    # Early accessory files can contain two independent bone roots, so omit
+    # that field instead of selecting a misleading single root. Both trees
+    # remain in the scene; no game bone is invented or dropped.
+    if len(roots) == 1:
+        skin['skeleton'] = first+roots[0]
+    document['skins'] = [skin]
     document['nodes'][mesh_nodes[0]]['skin'] = 0
     document.setdefault('extras', {})['rigging'] = (
         'Original CryEngine bone transforms and subset bone palettes. '
