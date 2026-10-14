@@ -10,7 +10,7 @@ from io import BytesIO
 from pathlib import Path
 import re
 
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import QSize, Qt, Signal, QThread
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -80,27 +80,42 @@ class LegacyPAKEditor(QMainWindow):
         notice.setWordWrap(True)
         notice.setObjectName("legacyPakWarning")
         outer.addWidget(notice)
+        menu = self.menuBar()
+        menu.setNativeMenuBar(False)
+        self.editor_menus = {section: menu.addMenu(section)
+                             for section in ("File", "Edit", "View", "Tools")}
         toolbar = QHBoxLayout()
-        for label, callback in (
-            ("Save Text", self.save_text),
-            ("Replace File…", self.replace_file),
-            ("Restore Original", self.restore_file),
-            ("Export File…", self.export_file),
-            ("Export Texture PNG…", self.export_png),
-            ("Build Legacy PAK…", self.build),
+        toolbar.setSpacing(8)
+        self.tool_buttons = {}
+        for label, callback, section in (
+            ("Save Text", self.save_text, "Edit"),
+            ("Replace File…", self.replace_file, "Edit"),
+            ("Restore Original", self.restore_file, "Edit"),
+            ("Export File…", self.export_file, "File"),
+            ("Export Texture PNG…", self.export_png, "File"),
+            ("Build Legacy PAK…", self.build, "File"),
         ):
-            button = QPushButton(label)
+            button = QPushButton(label, shell)
             button.setObjectName("legacy" + re.sub(r"\W", "", label))
-            button.setIcon(action_icon(label))
             button.setToolTip(label)
+            button.setIconSize(QSize(15, 15))
             button.clicked.connect(callback)
-            toolbar.addWidget(button)
+            self.editor_menus[section].addAction(label, callback)
+            self.tool_buttons[label] = button
+            # Context-only shortcuts: large import/rebuild tools stay in menus.
+            if label in ("Save Text", "Export Texture PNG…"):
+                toolbar.addWidget(button)
+            else:
+                button.hide()
             if label == "Save Text":
                 self.save_button = button
             if label == "Build Legacy PAK…":
                 self.build_button = button
             if label == "Export Texture PNG…":
                 self.png_button = button
+        self.editor_menus["View"].addAction("Refresh File Explorer", self.refresh_tree)
+        self.editor_menus["Tools"].addAction("Verify Source CRC", self.verify_source)
+        toolbar.addStretch(1)
         outer.addLayout(toolbar)
         split = QSplitter(Qt.Horizontal)
         files = QWidget()
@@ -259,10 +274,22 @@ class LegacyPAKEditor(QMainWindow):
         self._dirty()
 
     def _dirty(self):
-        self.save_button.setEnabled(
-            self.active is not None and self.text_encoding is not None
-            and self.stack.currentWidget() is self.text
-            and self.loaded_text != self.text.toPlainText())
+        changed = (self.active is not None and self.text_encoding is not None
+                   and self.stack.currentWidget() is self.text
+                   and self.loaded_text != self.text.toPlainText())
+        self.save_button.setEnabled(changed)
+        self.save_button.setVisible(changed)
+        self.png_button.setVisible(bool(self.active and
+                                        TEXTURE.search(self.active)))
+
+    def verify_source(self):
+        try:
+            from legacy_pak_workspace import inspect_archive
+            result = inspect_archive(self.project["source_path"], verify_crc=True)
+            QMessageBox.information(self, "Legacy PAK integrity",
+                                    f"Verified {result['count']} archive members.")
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Legacy PAK integrity", str(exc))
 
     def save_text(self):
         if not self.active or not self.text_encoding:
