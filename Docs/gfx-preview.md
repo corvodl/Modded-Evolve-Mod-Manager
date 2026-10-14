@@ -1,4 +1,4 @@
-# Scaleform GFX static preview and PNG export
+# Scaleform GFX preview, full FFDec editing, and GFX rebuild
 
 The file explorer in **Modding** and the **read-only Asset Library** recognizes
 compiled CryEngine / Scaleform `.gfx` files and opens a graphical *static*
@@ -39,6 +39,52 @@ outside the scoped virtual folder are not fetched. Missing imports are shown
 as diagnostics; font/image data from different builds are not substituted.
 Cache entries include source and dependency hashes plus build and frame
 selection.
+
+## Edit and rebuild a GFX inside a Mod Project
+
+Only an **editable Modding PAK workspace** supports write actions. Asset
+Library originals stay read-only; choose **Edit / Add to Mod Project** first.
+Select the desired `.gfx` in the file explorer and click **Edit full GFX…**
+(or choose **Edit → Edit Scaleform GFX Movie…**). The manager makes a private,
+hash-bound `GfxEditSessions/<id>/movie.gfx` copy. No archive is rewritten.
+
+There are several supported authoring paths, all using pinned FFDec 26.3.0:
+
+- **Replace selected resource:** choose an existing image (PNG/JPEG), SVG
+  vector shape, text (.txt), audio, or binary-data tag by real character ID.
+  FFDec replaces that tag and writes a new compiled GFX edit copy.
+- **Export / rebuild ActionScript:** export editable AS sources to a new
+  folder, modify the `.as` code, then use **Rebuild from edited
+  ActionScript…**. FFDec decompiles/recompiles the movie; scripts may use
+  APIs and native callbacks not present in Stage 2.
+- **Export tag XML / rebuild XML:** FFDec round-trip for lower-level sprite,
+  button, timeline, symbol, and tag metadata changes. XML input is bounded
+  and rejects DTD/external entities. Keep a clean XML copy for rollback.
+- **Open full FFDec editor…:** launches the external FFDec graphical authoring
+  UI on the private session copy for additional editing of fonts, buttons,
+  ActionScript, timelines, image/shape tags, and supported native objects.
+  After saving there, select **Reload FFDec changes** in the manager.
+- **Import edited GFX…:** bring back another edited `.gfx` result; the
+  manager validates GFX headers, bounds, imports, and file size.
+- **Undo staged edit:** reverse the last internal session rebuild. Ordinary
+  project original bytes are untouched until approval.
+
+Review the updated frame/symbol preview. When ready, click **Apply to Mod
+Project** and explicitly approve. The manager checks that the original
+extracted project GFX still has its original SHA-256, validates the staged
+movie, creates a verified timestamped copy in **EditorBackups**, then
+atomically replaces only the extracted project entry. Only the regular
+**Build Mod / sign / offline test** workflow can place those edits into an
+actual Evolve mod. No editing step automatically replaces an installed game
+PAK. If the edited file breaks the game, restore its original via the
+editor's existing **Restore Original Extraction** or project undo.
+
+This is broad authoring through an **external FFDec dependency**, not a
+claim that every Scaleform extension, font, script API, interactive state,
+or game-specific compiled object is editable natively in Qt. FFDec can
+fail on unsupported engine-specific tags; in that case the original project
+remains safe and the edit is rejected or left isolated. No final game
+compatibility can be claimed until the changed movie is tested offline.
 
 ## Actual supported output and limits
 
@@ -84,5 +130,7 @@ against those proprietary bytes, and the actual on-screen in-game main
 menu cannot be certified from this analysis. The real-renderer CI tests
 use only redistributed synthetic shapes and sprites.
 
-This feature never changes the user's game, project files, Asset Library
-archive contents or signed PAKs. If output exists, select a new PNG name.
+Static preview and draft GFX editing do not change installed game PAKs,
+Asset Library originals, or signing keys. Explicitly approved GFX edits do
+change one extracted **Modding project** file with a verified original in
+EditorBackups. Existing PNG outputs are never silently overwritten.
