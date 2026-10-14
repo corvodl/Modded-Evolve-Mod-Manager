@@ -444,6 +444,10 @@ class QtManager(QMainWindow):
                 title, palette(self.appearance_mode, self.appearance_overrides)['text'], 32))
             btn.setIconSize(QSize(30, 30))
             btn.setFixedHeight(48)
+            # The drawer is a fixed 194 logical pixels wide with 10px margins.
+            # Reserve a stable button width even before Qt lays out the
+            # collapsed drawer; otherwise the icon shrinks to 18px at startup.
+            btn.setMinimumWidth(164)
             btn.setFocusPolicy(Qt.StrongFocus)
             btn.setObjectName('navActive' if index == 0 else 'nav')
             navlay.addWidget(btn)
