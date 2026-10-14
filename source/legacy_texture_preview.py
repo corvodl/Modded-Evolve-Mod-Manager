@@ -108,7 +108,7 @@ def decode_legacy_texture(project, relative):
         if fourcc == b"CTX1":
             raise ValueError("CTX1 is preserved for editing/export, but preview decoding needs a CTX1 codec.")
         raw = first[:offset] + highest_to_smallest
-        image = preview_dds(raw, max_size=(900, 700))
+        image = preview_dds(raw, max_size=(16384, 16384))
     kind = "auxiliary 8-bit plane" if auxiliary else info.pixel_format
     return image, f"{info.width} × {info.height} | {kind} | {info.mipmaps} mips"
 
