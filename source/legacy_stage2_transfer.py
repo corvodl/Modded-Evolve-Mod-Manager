@@ -242,6 +242,7 @@ def export_map_review_bundle(source_build, target_build, map_id, destination, *,
                     progress("Exporting map review files", completed,
                              plan["extracted_file_count"])
         plan["exported_files"] = manifest_rows
+        plan["bundle_output"] = str(target)
         (target / "transfer-review.json").write_text(
             json.dumps(plan, indent=2), encoding="utf-8")
         (target / "READ-ME-FIRST.txt").write_text(
