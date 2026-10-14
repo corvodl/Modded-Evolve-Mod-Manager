@@ -10,6 +10,10 @@ on:
       - 'source/qt_asset_preview.py'
       - 'source/asset_library_preview.py'
       - 'source/test_gfx_preview.py'
+      - 'source/gfx_edit_backend.py'
+      - 'source/qt_gfx_editor.py'
+      - 'source/test_gfx_edit_backend.py'
+      - 'source/test_qt_gfx_editor.py'
       - 'source/test_gfx_library_scope.py'
       - 'source/test_qt_unified_explorer.py'
       - 'source/test_qt_asset_preview.py'
@@ -35,7 +39,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -m compileall -q source
-          python -m unittest -v test_gfx_preview test_qt_unified_explorer test_qt_asset_preview test_gfx_library_scope
+          python -m unittest -v test_gfx_preview test_qt_unified_explorer test_qt_asset_preview test_gfx_library_scope test_gfx_edit_backend test_qt_gfx_editor
   real-renderer:
     runs-on: windows-2022
     timeout-minutes: 20
@@ -71,4 +75,4 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/source
           QT_QPA_PLATFORM: offscreen
-        run: python -m unittest -v test_gfx_preview.GfxStaticPreviewTests.test_real_ffdec_renders_red_vector_and_transparent_second_frame
+        run: python -m unittest -v test_gfx_preview.GfxStaticPreviewTests.test_real_ffdec_renders_red_vector_and_transparent_second_frame test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_shape_replace_produces_green_render_and_undo
