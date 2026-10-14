@@ -169,10 +169,13 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             QMessageBox.warning(self, 'Asset Library', str(error))
             return
         self._model_generation += 1
+        self.gfx_view.cancel_pending()
         self.identifier = archive_id
         self.workspace = Path(candidate).resolve()
         self.folder = self.workspace
         self.name = name
+        self.library_archive = {
+            'id': archive_id, 'name': name, 'build_id': self.build_id}
         self.entries = files
         self.records = {rel: {'path': rel, 'format': 'raw'} for rel in files}
         self.preview_index = None
@@ -231,6 +234,8 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             QMessageBox.warning(self, 'Asset export', str(error))
 
     def export_png(self):
+        if self.mode == 'gfx':
+            return super().export_png()
         if self.mode != 'images' or not self.current:
             return
         stem = Path(self.current).name.split('.dds')[0]

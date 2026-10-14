@@ -88,6 +88,45 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         })
         self.addCleanup(self.window.close)
 
+    def test_gfx_library_preview_and_rgba_png_export_preserve_source(self):
+        import io
+        from PIL import Image
+        from gfx_preview_backend import GfxError
+        from gfx_synthetic_fixtures import synthetic_gfx
+        from asset_library_preview import gfx_movie
+        relative = "Libs/UI/film.gfx"
+        movie = synthetic_gfx(scripts=True)
+        path = self.folder / "files" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(movie)
+        manifest = self.folder / "asset-library.json"
+        data = json.loads(manifest.read_text("utf-8"))
+        data["entries"].append({"path": relative, "bytes": len(movie)})
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        self.window.refresh()
+        with patch("qt_gfx_preview.ffdec_command",
+                   side_effect=GfxError("Configure FFDec 26.3.0")):
+            self.window.preview(relative)
+        self.assertEqual(self.window.mode, "gfx")
+        self.assertEqual(self.window.tabs.currentIndex(), 3)
+        self.assertEqual(gfx_movie(self.identifier, relative).frames, 2)
+        self.assertFalse(self.window.gfx_view.export.isEnabled())
+        picture = io.BytesIO()
+        Image.new("RGBA", (64, 48), (200, 30, 10, 90)).save(picture, "PNG")
+        self.window.gfx_view._finished(
+            self.window.gfx_view._serial, picture.getvalue(), None)
+        output = Path(self.temp.name) / "frame.png"
+        with patch("qt_workspace_editor.QFileDialog.getSaveFileName",
+                   return_value=(str(output), "PNG (*.png)")):
+            self.window.export_png()
+        with Image.open(output) as result:
+            self.assertEqual(result.mode, "RGBA")
+            self.assertEqual(result.getpixel((20, 20))[3], 90)
+        self.assertEqual(path.read_bytes(), movie)
+        self.window.gfx_view._finished(
+            self.window.gfx_view._serial - 1, b"invalid old PNG", None)
+        self.assertEqual(self.window.gfx_view.selected_png(), picture.getvalue())
+
     def test_legacy_archive_preview_uses_unassigned_context(self):
         # A readable legacy manifest without build membership must still
         # support read-only preview, while never pulling foreign dependencies.

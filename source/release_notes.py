@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.38', (
+        'Preview and edit Scaleform GFX movies with frame/sprite rendering and PNG export.',
+        'Replace GFX images, shapes, text and scripts with FFDec-backed rebuild and external authoring.',
+        'Apply validated GFX edits to Modding projects with hash checks, undo and automatic backups.',
+    )),
     ('1.1.18-beta.37', (
         'Repair startup when loading existing mod projects from earlier beta installations.',
         'Keep navigation menu icons fully visible at Windows display scaling.',

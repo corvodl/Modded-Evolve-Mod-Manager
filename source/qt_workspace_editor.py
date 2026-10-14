@@ -30,6 +30,8 @@ from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
 from dds_png_import import encode_png_as_dds, compression_for_dds
 from model_asset import is_model, inspect_model, export_model, replace_model
+from qt_gfx_preview import GfxPreviewWidget
+from gfx_preview_backend import MAX_SOURCE as MAX_GFX_SOURCE, export_gfx_png
 from model_preview import find_preview_mesh, render_mesh
 from qt_cpu_model_viewer import QtCPUModelCanvas
 from model_blender_export import glb_bytes, convert_folder
@@ -128,7 +130,7 @@ class QtLooseFileEditor(QMainWindow):
 
 
 class QtWorkspaceEditor(QMainWindow):
-    TABS = ('files', 'images', 'models')
+    TABS = ('files', 'images', 'models', 'gfx')
 
     def __init__(self, manager, workspace, archive_map=None, *, library_archive=None):
         super().__init__(manager)
@@ -238,7 +240,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.tabs.setStyleSheet('QTabWidget::pane { border: 0; }')
         self.trees, self.views, self.actions = {}, {}, {}
         self.splitters = {section: self.editor_split for section in self.TABS}
-        for section, label in zip(self.TABS, ('Text', 'Textures', '3D Model')):
+        for section, label in zip(self.TABS, ('Text', 'Textures', '3D Model', 'Scaleform GFX')):
             tab = QWidget()
             box = QVBoxLayout(tab)
             box.setContentsMargins(0, 0, 0, 0)
@@ -267,6 +269,9 @@ class QtWorkspaceEditor(QMainWindow):
                 view = QLabel('Choose a DDS texture in File Explorer.')
                 view.setAlignment(Qt.AlignCenter)
                 view.setWordWrap(True)
+            elif section == 'gfx':
+                view = GfxPreviewWidget(self)
+                self.gfx_view = view
             else:
                 view = QStackedWidget()
                 self.model_fallback = QLabel(
@@ -392,7 +397,8 @@ class QtWorkspaceEditor(QMainWindow):
     def _enforce_library_read_only_ui(self):
         """Same editor/viewer, with no reachable editing or import commands."""
         permitted = {
-            'File': {'Open File Folder', 'Export Native Model…',
+            'File': {'Open File Folder', 'Export Rendered GFX PNG…',
+                     'Export Native Model…',
                      'Export for Blender (.glb)…',
                      'Export Animated Character (.glb)…',
                      'Export Model Folder…'},
@@ -448,6 +454,8 @@ class QtWorkspaceEditor(QMainWindow):
             return act
 
         action('File', 'Open File Folder', self.explore)
+        action('File', 'Export Rendered GFX PNG…', self.export_png)
+        action('File', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('File', 'Export Native Model…', self.export_model)
         action('File', 'Export for Blender (.glb)…', self.export_blender_model)
         action('File', 'Export Blender Project (.blend)…', lambda: self.export_blender_model(native=True))
@@ -463,6 +471,7 @@ class QtWorkspaceEditor(QMainWindow):
         action('Edit', 'Global Search & Replace…', self.open_global_search)
         action('Edit', 'Material Properties 2.0…', self.open_material_properties)
         action('Edit', 'Import / Replace File…', self.import_raw)
+        action('Edit', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('Edit', 'Restore Original', self.restore_original)
         self.equipment_menu = menus['Model'].addMenu('Equipped Skin')
         self.equipment_menu.setEnabled(False)
@@ -959,6 +968,8 @@ class QtWorkspaceEditor(QMainWindow):
         return entries
 
     def _category(self, rel):
+        if rel.casefold().endswith('.gfx'):
+            return 'gfx'
         if is_dds(rel) or is_split_dds(rel):
             return 'images'
         if is_model(rel):
@@ -1170,6 +1181,8 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode != 'models':
             self.dependency_button.setText('Dependencies…')
         self._model_generation += 1
+        if self.mode != 'gfx':
+            self.gfx_view.cancel_pending()
         path = checked_path(self.workspace, rel)
         if self.read_only_library:
             from asset_library_preview import archive_entries
@@ -1179,8 +1192,23 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode == 'models':
             self._load_model_background(rel)
             return
+        if self.mode == 'gfx' and path.stat().st_size > MAX_GFX_SOURCE:
+            self.gfx_view.cancel_pending()
+            self.status.setText('GFX movie exceeds safe 12 MiB preview limit. Raw export is still available.')
+            return
         self.raw = path.read_bytes()
-        if self.mode == 'files':
+        if self.mode == 'gfx':
+            context = (
+                'asset-library:' + str(self.library_archive.get('build_id'))
+                if self.read_only_library else
+                'project:' + str(self.workspace.resolve()))
+            self.gfx_view.open_movie(
+                self.raw, rel, resolve=self._gfx_dependency,
+                context=context,
+                backend=self.manager.settings.get('gfx_ffdec_path'))
+            self.status.setText(
+                'Static Scaleform GFX preview — game ActionScript callbacks are not simulated.')
+        elif self.mode == 'files':
             control = self.views['files']
             control.setReadOnly(True)
             if path.stat().st_size > MAX_TEXT:
@@ -1218,6 +1246,40 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(rel + ' | ' + info.description +
                                 ' | largest mip only' +
                                 (' | streaming fragments' if self.stream else ''))
+
+    def _gfx_dependency(self, virtual):
+        """Resolve an external movie only from this project or selected build."""
+        from gfx_preview_backend import MAX_SOURCE
+        from evolve_pak_workspace import normalized_name
+        name = normalized_name(virtual).casefold()
+        if self.read_only_library:
+            from asset_library_preview import archive_entries
+            from build_collections import resolve_archive_build, build_index
+            identifier = self.library_archive['id']
+            context = resolve_archive_build(
+                identifier, build_id=self.library_archive.get('build_id'))
+            # The current imported PAK takes precedence only for an exact
+            # path. For other imports, an ambiguous build result is blocked.
+            local = [(virtual_path, path) for virtual_path, path in
+                     archive_entries(identifier).items()
+                     if virtual_path.casefold() == name]
+            if len(local) == 1:
+                file = local[0][1]
+            else:
+                hits = build_index(context).get(name, [])
+                if len(hits) != 1:
+                    return None
+                file = Path(hits[0]['file'])
+            if file.is_symlink() or not file.is_file() or file.stat().st_size > MAX_SOURCE:
+                return None
+            return file.read_bytes()
+        matching = [item for item in self.records if item.casefold() == name]
+        if len(matching) != 1:
+            return None
+        source = checked_path(self.workspace, matching[0])
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > MAX_SOURCE:
+            return None
+        return source.read_bytes()
 
     def refresh_model_asset_references(self):
         """Rebuild references after any newly completed Asset Library imports."""
@@ -1575,6 +1637,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.character_skin_choice = None
         self.current, self.loaded_text, self.raw = None, '', b''
+        self.gfx_view.cancel_pending()
         if not self.read_only_library:
             self.manager.current_workspace = str(target)
             self.manager.archive_label = name
@@ -1602,6 +1665,7 @@ class QtWorkspaceEditor(QMainWindow):
                 return
         self._capture_playback_preferences()
         self._model_generation += 1
+        self.gfx_view.cancel_pending()
         self.current, self.mode = None, None
 
     def save(self):
@@ -1691,6 +1755,28 @@ class QtWorkspaceEditor(QMainWindow):
             self.load(rel)
         except Exception as exc:
             QMessageBox.critical(self, 'File edit rejected', str(exc))
+
+    def edit_gfx(self):
+        """Start a private FFDec authoring session; never mutate Library."""
+        if self.read_only_library:
+            QMessageBox.information(
+                self, 'Read-only Asset Library',
+                'Choose Edit / Add to Mod Project to make a separate editable '
+                'project. Original Asset Library PAKs cannot be edited.')
+            return
+        if self.mode != 'gfx' or not self.current:
+            QMessageBox.information(
+                self, 'Select a GFX movie',
+                'Open an extracted .gfx asset before choosing the editor.')
+            return
+        try:
+            if self.manager.busy:
+                raise RuntimeError('Finish the current manager operation first.')
+            from qt_gfx_editor import GfxEditorDialog
+            dialog = GfxEditorDialog(self, self.current)
+            dialog.exec()
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, 'GFX editor', str(exc))
 
     def import_raw(self):
         def replace(rel):
@@ -1793,6 +1879,9 @@ class QtWorkspaceEditor(QMainWindow):
             menu.addAction('Visual Gameplay Values…', self.open_gameplay_editor)
         if section=='images':
             menu.addAction('Advanced Texture Adjustments…', self.open_texture_editor)
+        if section=='gfx':
+            menu.addAction('Edit full Scaleform GFX…', self.edit_gfx)
+            menu.addAction('Export rendered PNG…', self.export_png)
         menu.addAction('Reveal Extracted File in Explorer', self.explore)
         menu.addAction('Open Extracted File in External App', self.open_extracted_external)
         menu.addAction('Copy Extracted Absolute Path', self.copy_extracted_path)
@@ -1801,6 +1890,24 @@ class QtWorkspaceEditor(QMainWindow):
         menu.exec(tree.mapToGlobal(position))
 
     def export_png(self):
+        if self.mode == 'gfx' and self.current:
+            try:
+                payload = self.gfx_view.selected_png()
+                name = (Path(self.current).stem + '-'
+                        + str(self.gfx_view.symbol.currentData()[0]) + '-frame'
+                        + str(self.gfx_view.frame.value()) + '.png')
+                output, _ = QFileDialog.getSaveFileName(
+                    self, 'Export rendered Scaleform frame/sprite as PNG', name,
+                    'PNG (*.png)')
+                if output:
+                    if self.read_only_library:
+                        from asset_library_preview import _outside_library
+                        output = str(_outside_library(output))
+                    target = export_gfx_png(payload, output)
+                    self.status.setText('Exported rendered GFX PNG: ' + str(target))
+            except (ValueError, OSError) as exc:
+                QMessageBox.warning(self, 'GFX PNG export', str(exc))
+            return
         if self.mode != 'images' or not self.current:
             return
         path, _ = QFileDialog.getSaveFileName(self,'Export as PNG',
@@ -2511,6 +2618,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         self._save_project_session()
         self._model_generation += 1
+        self.gfx_view.cancel_pending()
         if self.model_panel is not None and not self.model_panel.close():
             event.ignore()
             return
