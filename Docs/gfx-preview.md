@@ -126,6 +126,23 @@ invalidations and collisions. A dedicated Windows CI job downloads the pinned
 FFDec test dependency in CI only and exercises real vector-frame rendering.
 No proprietary Evolve files or keys are committed.
 
+## UI configuration from Game/UI_Data.pak
+
+The canonical archive is **Game/UI_Data.pak** (underscore retained).
+Import it into the **same registered Evolve build** as `UI_Assets.pak`.
+When a GFX is opened from that Asset Library build, **UIData references…**
+uses only this build's manifest-listed XML to show the matching
+`UI/UIElements/*.xml` screen registration, GFx filename/layer/alignment,
+game-callable functions, button commands, localized font source filenames,
+preload groups and explicitly named news DDS images.
+
+It does **not** present those entries as a proven mapping of sprite IDs to
+DDS atlas UV rectangles, does not load assets from another game build,
+and does not execute `openScreen`, `updateNews`, or other game callbacks.
+Compiled GFX and DDS remain read-only in the Asset Library; edits belong
+in an explicit Modding project with backups. If `UI_Data.pak` is absent,
+the viewer reports which archive to import.
+
 ## Supplied main-menu sample: structure-only check
 
 The user supplied `main_menu.gfx` privately for this PR. It was NOT added
