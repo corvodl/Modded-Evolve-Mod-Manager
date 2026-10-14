@@ -19,7 +19,7 @@ NAV_STEMS = {
     "What's New": 'whats-new',
     'Developer': 'developer',
 }
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, Qt, QRectF
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
@@ -101,7 +101,13 @@ def navigation_icon(section, color="#f5f3f6", size=24):
     pixmap.fill(Qt.transparent)
     pixmap.setDevicePixelRatio(2)
     painter = QPainter(pixmap)
-    renderer.render(painter)
+    painter.setRenderHint(QPainter.Antialiasing)
+    # Explicit logical painting bounds prevent high-DPI Qt from clipping a
+    # source SVG to its intrinsic width/height instead of the icon's 18–24px
+    # surface. A little uniform padding leaves clear button/label spacing.
+    inset = max(1.0, size * 0.07)
+    renderer.render(painter, QRectF(inset, inset, size - 2 * inset,
+                                  size - 2 * inset))
     painter.end()
     return QIcon(pixmap)
 
