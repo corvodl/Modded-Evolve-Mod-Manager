@@ -31,7 +31,23 @@ def parse_crytek_chunks(data, *, max_chunks=MAX_CHUNKS):
     count, = struct.unpack_from('<I', data, table_at)
     start = table_at + 4
     end = start + count * CHUNK_STRUCT.size
-    if not 0 < count <= max_chunks or end > len(data):
+    if not 0 < count <= max_chunks:
+        raise ValueError('Missing, incomplete or oversized CryTek chunk directory.')
+    # Retain the older terminal 16-byte chunk table used by existing Evolve
+    # CGF files. It has no explicit sizes; derive them only when the directory
+    # consumes the entire file tail.
+    if start + count * 16 == len(data):
+        records = tuple(struct.iter_unpack('<4I', data[start:]))
+        offsets = sorted(rec[2] for rec in records)
+        if (len(set(offsets)) != count or
+                len({rec[3] for rec in records}) != count or
+                any(at < 20 or at >= table_at for at in offsets)):
+            raise ValueError('Unsafe terminal CryTek chunk directory.')
+        end_at = {at: offsets[i + 1] if i + 1 < count else table_at
+                  for i, at in enumerate(offsets)}
+        rows = tuple((*rec, end_at[rec[2]] - rec[2]) for rec in records)
+        return filetype, version, table_at, data[table_at:], rows
+    if end > len(data):
         raise ValueError('Missing, incomplete or oversized CryTek chunk directory.')
     rows = tuple(CHUNK_STRUCT.iter_unpack(data[start:end]))
     ranges, ids = [], set()
