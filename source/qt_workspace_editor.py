@@ -1154,6 +1154,11 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             chosen = self.selected()
+            if self._category(chosen) == 'gfx':
+                from qt_ffdec_prompt import ffdec_is_ready, show_ffdec_requirement
+                if not ffdec_is_ready(self.manager) and not getattr(self, '_gfx_requirement_notified', False):
+                    self._gfx_requirement_notified = True
+                    show_ffdec_requirement(self)
             item = self.file_tree.currentItem()
             full_character = bool(
                 item and item.data(0, Qt.UserRole + 2) == 'full-character')
@@ -1781,6 +1786,10 @@ class QtWorkspaceEditor(QMainWindow):
                 'Open an extracted .gfx asset before choosing the editor.')
             return
         try:
+            from qt_ffdec_prompt import ffdec_is_ready, show_ffdec_requirement
+            if not ffdec_is_ready(self.manager):
+                show_ffdec_requirement(self)
+                return
             if self.manager.busy:
                 raise RuntimeError('Finish the current manager operation first.')
             from qt_gfx_editor import GfxEditorDialog
