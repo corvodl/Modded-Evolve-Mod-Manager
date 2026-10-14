@@ -321,7 +321,13 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
     A cache key includes imported movie payload digests and build identity.
     """
     info = inspect_gfx(data)
-    if scale not in SUPPORTED_SCALE or (info.width * info.height * scale * scale > MAX_PIXELS):
+    # FFDec itself understands ImportAssets2. Reject unsafe URLs before
+    # invoking the third-party process, not merely in the UI resolver.
+    for external in info.imports:
+        safe_import_path(external, virtual)
+    if (scale not in SUPPORTED_SCALE or
+            info.width * scale > MAX_DIM or info.height * scale > MAX_DIM or
+            info.width * info.height * scale * scale > MAX_PIXELS):
         raise GfxError("Requested raster resolution exceeds the 36-million-pixel limit.")
     maxframe = info.frames if symbol == 0 else dict(info.sprites).get(symbol, 0)
     if not isinstance(frame, int) or not 1 <= frame <= maxframe:
@@ -381,8 +387,10 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
         else:
             args.extend(["-select", str(frame), "-format", "frame:png"])
             output_kind = "frame"
-        if checked:
-            args.extend(["-importAssets", "yes,local"])
+        # Explicitly prohibit remote HTTP(S) imports regardless of the
+        # user's persisted FFDec preferences. Relative lookups see only the
+        # isolated temporary virtual-path layout populated above.
+        args.extend(["-importAssets", "yes,local"])
         args.extend(["-export", output_kind, str(out), str(target)])
         _execute(args, cwd=root, cancelled=cancelled, timeout=TIMEOUT)
         files = [p for p in out.rglob("*.png") if p.is_file() and not p.is_symlink()]
@@ -395,11 +403,11 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
         if path.stat().st_size > MAX_OUTPUT:
             raise GfxError("Rendered PNG exceeds the size limit.")
         rendered = path.read_bytes()
-        Image.MAX_IMAGE_PIXELS = MAX_PIXELS
         with Image.open(io.BytesIO(rendered)) as image:
-            image.load()
-            if image.width * image.height > MAX_PIXELS:
+            if (image.width * image.height > MAX_PIXELS or
+                    image.width > MAX_DIM or image.height > MAX_DIM):
                 raise GfxError("Rendered image exceeds pixel limit.")
+            image.load()
             if image.width < 1 or image.height < 1:
                 raise GfxError("Renderer returned empty image.")
             with io.BytesIO() as stream:
