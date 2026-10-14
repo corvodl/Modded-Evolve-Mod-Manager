@@ -124,6 +124,23 @@ class AssetLibraryController(QObject):
                 progress=lambda name, done, total:
                     self.progress.emit(name, done, total)))
 
+    def export_legacy_build(self, source_id, target_id, destination, *,
+                            source_archive=None, prefix="",
+                            include_identical=False, plan_only=False,
+                            protected_roots=()):
+        """Run build-wide inventory or review export away from the UI thread."""
+        from legacy_bulk_transfer import export_legacy_build_bundle
+        return self._start(
+            "build-transfer-review",
+            lambda: export_legacy_build_bundle(
+                source_id, target_id, destination,
+                source_archive=source_archive, prefix=prefix,
+                include_identical=include_identical, plan_only=plan_only,
+                protected_roots=protected_roots,
+                cancelled=self._cancel.is_set,
+                progress=lambda title, done, total:
+                    self.progress.emit(title, done, total)))
+
     def cancel(self):
         self._cancel.set()
 
@@ -249,6 +266,13 @@ class AssetLibraryDialog(QDialog):
             "editing project after strict source/target hash and chunk checks.")
         self.model_transfer_button.clicked.connect(self.review_legacy_model)
         transfer_controls.addWidget(self.model_transfer_button)
+        self.bulk_transfer_button = QPushButton("Export Legacy Build → Stage 2…")
+        self.bulk_transfer_button.setToolTip(
+            "Use ALL imported PAKs or one selected archive in a registered "
+            "Legacy build to prepare a Stage 2-targeted review package. "
+            "Never writes to the game or signs a PAK.")
+        self.bulk_transfer_button.clicked.connect(self.export_legacy_build)
+        transfer_controls.addWidget(self.bulk_transfer_button)
         transfer_controls.addStretch(1)
         lay.addLayout(transfer_controls)
 
@@ -426,7 +450,8 @@ class AssetLibraryDialog(QDialog):
                        self.remove_button, self.project_button, self.map_button,
                        self.register_button, self.assign_button, self.transfer_button,
                        self.relocate_button, self.detach_button, self.compare_button,
-                       self.legacy_map_button, self.model_transfer_button):
+                       self.legacy_map_button, self.model_transfer_button,
+                       self.bulk_transfer_button):
             button.setEnabled(not running)
         self.remove_button.setEnabled(not running and self._selected_record() is not None)
         self.project_button.setEnabled(not running and self._selected_record() is not None)
@@ -599,14 +624,18 @@ class AssetLibraryDialog(QDialog):
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Transfer planning", str(exc))
 
-    def _historical_target(self):
+    def _historical_target(self, *, require_archive=True):
         """Require explicit build identities; never use the All Builds index."""
         source_id = self.build_filter.currentData()
         selected = self._selected_record()
         builds = catalog()["builds"]
-        if (selected is None or source_id in (None, "all", "unassigned")
+        if (source_id in (None, "all", "unassigned")
+                or source_id not in builds
                 or builds[source_id]["family"] not in ("legacy", "early")):
-            raise ValueError("Select an imported archive in a registered Legacy/early build.")
+            raise ValueError("Choose a registered Legacy/early source build in the Build filter.")
+        if require_archive and (selected is None or
+                selected["id"] not in builds[source_id]["members"]):
+            raise ValueError("Select an imported Legacy PAK in that source build.")
         targets = [(bid, item["label"]) for bid, item in builds.items()
                    if item["family"] == "stage2" and bid != source_id]
         if not targets:
@@ -617,6 +646,83 @@ class AssetLibraryDialog(QDialog):
         if not ok:
             return None
         return source_id, targets[choices.index(choice)][0], selected
+
+    def export_legacy_build(self):
+        """Whole-build or selected-PAK source exports for registered builds.
+
+        Exports are not signed or installed. A source library with 380 PAKs
+        can be inventoried without asking users to type 270,000 file paths.
+        """
+        try:
+            selection = self._historical_target(require_archive=False)
+            if selection is None:
+                return
+            source_id, target_id, selected = selection
+            from build_collections import catalog
+            builds = catalog()["builds"]
+            scope, ok = QInputDialog.getItem(
+                self, "Export Legacy build → Stage 2",
+                "Source scope:", [
+                    "All imported PAKs in this Legacy build",
+                    "Only the selected Legacy PAK",
+                ], 0, False)
+            if not ok:
+                return
+            archive_id = None
+            if scope.startswith("Only"):
+                if selected is None or selected["id"] not in builds[source_id]["members"]:
+                    raise ValueError("Select the exact Legacy PAK you want to export.")
+                archive_id = selected["id"]
+            prefix, ok = QInputDialog.getText(
+                self, "Optional path filter",
+                "Virtual folder prefix (leave blank to include all assets):")
+            if not ok:
+                return
+            choice, ok = QInputDialog.getItem(
+                self, "Review export type", "Output:",
+                ["Compare entire selection (manifest only, no files)",
+                 "Export changed / absent-in-target files for review",
+                 "Export ALL selected files for review (including identical)"],
+                0, False)
+            if not ok:
+                return
+            plan_only = choice.startswith("Compare")
+            include_identical = choice.startswith("Export ALL")
+            parent = QFileDialog.getExistingDirectory(
+                self, "Choose output parent OUTSIDE both EvolveGame folders",
+                str(Path.home()))
+            if not parent:
+                return
+            scope_name = "all-paks" if archive_id is None else "pak-" + archive_id[:8]
+            folder = ("Legacy-to-Stage2-Review-" +
+                      source_id[:8] + "-" + target_id[:8] + "-" + scope_name)
+            output = Path(parent) / folder
+            if output.exists():
+                raise ValueError("Output already exists; choose a different destination.")
+            message = (
+                "Source: %s\nTarget: %s\nScope: %s\n\n"
+                "The operation compares ONLY imported build snapshots.\n"
+                "A full-build payload export can copy many gigabytes. "
+                "Files remain in a separate, verified review folder, "
+                "not the game or signing stage.\n\n"
+                "No source PAKs, game files, game modes or signed Stage 2 "
+                "archives will be modified. No Legacy map is made playable.\n\n"
+                "Continue?" %
+                (builds[source_id]["label"], builds[target_id]["label"], scope)
+            )
+            if QMessageBox.question(
+                self, "Confirm research-only transfer export", message,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            ) != QMessageBox.Yes:
+                return
+            if not self.controller.export_legacy_build(
+                source_id, target_id, output,
+                source_archive=archive_id, prefix=prefix.strip(),
+                include_identical=include_identical, plan_only=plan_only,
+                protected_roots=(self.stage,)):
+                raise ValueError("Finish the current import/export operation first.")
+        except (ValueError, OSError, KeyError, RuntimeError) as exc:
+            QMessageBox.warning(self, "Legacy build export", str(exc))
 
     def prepare_legacy_map(self):
         """Prepare compiled map research content only; no map registration."""
@@ -776,6 +882,15 @@ class AssetLibraryDialog(QDialog):
         self.refresh()
         if error:
             QMessageBox.warning(self, "Asset Library", str(error)[:1200])
+        elif action == "build-transfer-review" and isinstance(result, dict):
+            QMessageBox.information(
+                self, "Legacy → Stage 2 review exported",
+                ("Compared %d virtual paths and exported %d files.\n\n"
+                 "Review package: %s\n\n"
+                 "This is NOT an installed Stage 2 mod or playable map. "
+                 "The manifest identifies missing entries and compatibility "
+                 "questions for future mod projects." %
+                 (result["file_count"], result["files_exported"], result["output"])))
         elif action == "map-review" and isinstance(result, dict):
             QMessageBox.information(
                 self, "Legacy map review exported",
