@@ -215,6 +215,16 @@ def export_map_review_bundle(source_build, target_build, map_id, destination, *,
             if target.is_relative_to(parent) or parent.is_relative_to(target):
                 raise ValueError("Review bundle must be outside either game installation.")
     selected = _members_for_map(snapshot[source_build], map_id, library_root=library)
+    for _aid, _member, manifest, _folder, _original, _role_name in selected:
+        # An archive imported from an unregistered Legacy installation still
+        # carries its physical EvolveGame origin in the library manifest.
+        # Never create review exports inside that game root.
+        original = Path(str(manifest.get("source") or "")).resolve()
+        for candidate in original.parents:
+            if candidate.name.casefold() == "evolvegame":
+                if target.is_relative_to(candidate) or candidate.is_relative_to(target):
+                    raise ValueError("Research export must not be inside an EvolveGame installation.")
+                break
     target.mkdir(mode=0o700)
     marker = target / "INCOMPLETE.txt"
     marker.write_text("Map review export incomplete. Do not load or deploy files.\n",
