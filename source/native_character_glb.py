@@ -56,23 +56,28 @@ def create_character_glb(workspace, relative, index, *, character=None,
                 raise ValueError('Missing native skin companion for ' + virtual)
             parts.append((render.read_bytes(), skin.read_bytes(), count))
         if historical:
+            if any(skin is not None for _, skin, _ in parts):
+                raise ValueError('Mixed historical/modern CDF skins need separate validated export.')
             from legacy_crytek_rig import read_legacy_rig
             try:
-                if len(parts) != 1 or parts[0][1] is not None:
-                    raise ValueError('Single body CDF binding required.')
-                read_legacy_rig(parts[0][0], skeleton, parts[0][2])
+                # All attached source parts must validate before emitting
+                # any GLB. Their palette and skeleton binding may differ.
+                for body, _, count in parts:
+                    read_legacy_rig(body, skeleton, count)
             except ValueError as exc:
-                raise ValueError('Legacy bone/weight decoding validation failed: ' + str(exc)) from exc
+                raise ValueError(
+                    'Legacy bone/weight decoding validation failed: ' + str(exc)) from exc
         blob = glb_bytes(character.mesh, name=Path(character.cdf).stem)
         blob, textures = embed_diffuse_textures(blob, character.materials)
         if historical:
-            if len(parts) != 1 or parts[0][1] is not None:
+            from legacy_crytek_rig import skin_glb_legacy_composite
+            try:
+                blob, rig = skin_glb_legacy_composite(
+                    blob, [(body, count) for body, _, count in parts], skeleton)
+            except ValueError as exc:
                 raise ValueError(
-                    'Mixed/multipart 2012 CDF rigs are not validated yet; '
-                    'select the single matching .chr body.')
-            from legacy_crytek_rig import skin_glb_legacy
-            blob, rig = skin_glb_legacy(blob, parts[0][0], skeleton)
-            layout = 'historical-validated'
+                    'Legacy CDF armature assembly failed: ' + str(exc)) from exc
+            layout = 'historical-' + rig['binding_source']
         else:
             try:
                 blob, rig = skin_glb_composite(blob, parts, skeleton)
@@ -92,12 +97,23 @@ def create_character_glb(workspace, relative, index, *, character=None,
                                   'Rigged CDF assembly' if layout == 'shared'
                                   else 'Rigged CDF assembly: independent Blender armatures'),
                    'rig_layout': layout,
+                   'animation_rest_compatible': (not historical or
+                      rig.get('binding_source') == 'master'),
                    'bone_count': rig['bone_count'], 'part_count': len(parts)}
         if layout == 'independent' and (clip is not None or clips):
             raise ValueError('This CDF has multiple distinct native bind poses; '
                              'its Blender armatures are poseable independently '
                              'but shared CAF/DBA playback has not been verified.')
     if character is not None and 'historical' in locals() and historical and (clip is not None or clips):
+        if rig.get('binding_source') == 'body':
+            raise ValueError(
+                'This character variant uses its own weighted bind pose. '
+                'Rigged GLB export is supported, but master-skeleton DBA '
+                'motion needs verified rest-pose retargeting before playback.')
+        if len(parts) != 1:
+            raise ValueError(
+                'Multi-part historical GLB export is supported; DBA playback '
+                'needs verified combined-mesh controller conversion.')
         selected = clip if clip is not None else tuple(clips)[0]
         if selected.kind == 'dba' or (not selected.available and selected.dba_file is not None):
             from database_animation import convert_historical_database_motion
