@@ -11,10 +11,7 @@ if errorlevel 1 goto failed
 rem Pin and bundle the independent GPLv2 converter and its complete source.
 powershell -NoProfile -ExecutionPolicy Bypass -File "source\Prepare-Cryengine-Converter.ps1"
 if errorlevel 1 goto failed
-rem Bundle the independent FFDec GPLv3 renderer and Temurin OpenJDK runtime
-rem together with complete corresponding source and license notices.
-powershell -NoProfile -ExecutionPolicy Bypass -File "source\Prepare-FFDec.ps1"
-if errorlevel 1 goto failed
+rem FFDec is optional and external: no Java or FFDec downloads in this build.
 rem Always derive the Windows taskbar/EXE icon from the tracked black/red PNG.
 "%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" source\build_brand_icons.py
 if errorlevel 1 goto failed
