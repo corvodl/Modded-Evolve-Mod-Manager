@@ -1809,6 +1809,11 @@ class QtManager(QMainWindow):
         icon_color = palette(self.appearance_mode, self.appearance_overrides)['text']
         for index, button in enumerate(getattr(self, 'nav_buttons', ())):
             button.setIcon(navigation_icon(SECTIONS[index], icon_color, 32))
+            # Qt's stylesheet re-polish can reset a button's pre-style
+            # 48px height to its 30px size hint on Windows. Restore the
+            # fixed geometry *after* applying the global stylesheet so
+            # all 30px navigation icons stay unclipped.
+            button.setFixedSize(174, 48)
         for editor in getattr(self, 'editors', []):
             if editor is not None:
                 editor.setStyleSheet(style)
