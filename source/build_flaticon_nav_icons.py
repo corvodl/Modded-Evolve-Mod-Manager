@@ -73,17 +73,26 @@ def generate_nav_icons(target, source=None):
         x0, y0, x1, y1 = bounds.bounds
         if x1 <= x0 or y1 <= y0:
             raise ValueError("Invalid Flaticon glyph bounds: " + glyph_title)
-        pad = max(x1 - x0, y1 - y0) * .018
-        width, height = x1 - x0 + 2 * pad, y1 - y0 + 2 * pad
+        # Font units can have thousands of units of advance-space and unusual
+        # bounds. Convert every actual glyph outline into the SAME centered
+        # 24x24 pixel coordinate space; do not rely on QtSvg interpreting a
+        # dynamically sized font-unit viewBox on a high-DPI 18px pixmap.
+        width, height = x1 - x0, y1 - y0
+        padding = 1.5
+        scale = (24 - 2 * padding) / max(width, height)
+        xpadding = (24 - width * scale) / 2
+        ypadding = (24 - height * scale) / 2
         pen = SVGPathPen(glyphs)
-        flip = TransformPen(pen, (1, 0, 0, -1, -x0 + pad, y1 + pad))
-        glyph.draw(flip)
+        normalized = TransformPen(
+            pen, (scale, 0, 0, -scale,
+                  xpadding - x0 * scale, ypadding + y1 * scale))
+        glyph.draw(normalized)
         drawing = pen.getCommands()
         if not drawing:
             raise ValueError("Missing Flaticon path data: " + glyph_title)
         svg = (
-            f'<svg xmlns="http://www.w3.org/2000/svg" '
-            f'width="32" height="32" viewBox="0 0 {width:.3f} {height:.3f}" '
+            '<svg xmlns="http://www.w3.org/2000/svg" '
+            'width="24" height="24" viewBox="0 0 24 24" '
             'preserveAspectRatio="xMidYMid meet">'
             f'<path fill="#f5f3f6" d="{drawing}"/></svg>\n'
         )
