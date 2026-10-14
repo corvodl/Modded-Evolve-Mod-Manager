@@ -39,7 +39,7 @@ class BundledFFDecTests(unittest.TestCase):
                 other.write_bytes(b"other")
                 self.assertEqual(ffdec_command(other),
                                  (str(java), "-Djava.awt.headless=true",
-                                  "-jar", str(other)))
+                                  "-jar", str(other.resolve())))
             java.unlink()
             self.assertIsNone(bundled_ffdec_paths(bundle=root))
 
