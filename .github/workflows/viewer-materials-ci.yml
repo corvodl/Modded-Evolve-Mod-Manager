@@ -36,7 +36,7 @@ jobs:
           test_beta17_character_library test_beta18_flat_character_models
           test_beta13_layered_aliases test_beta16_wraith_shared_textures
           test_character_preview_pipeline test_material_preview test_textured_export
-          test_native_caf test_model_animation test_model_rigging test_legacy_crytek_rig test_historical_animation_handoff test_gpu_preview
+          test_native_caf test_model_animation test_model_rigging test_legacy_crytek_rig test_historical_animation_handoff test_xbox360_dds test_gpu_preview
           test_beta23_animation_autoplay test_beta13_overlay_layout test_native_animation_browser
           test_dds0_selection test_asset_streaming_models test_legacy_material_texture_resolve test_multi_pak_assets
           test_gpu_texture_quality test_blender_texture_folder test_texture_resolution test_asset_library_preview test_beta24_texture_provenance test_beta25_texture_rig test_blender_cdf_rigs
