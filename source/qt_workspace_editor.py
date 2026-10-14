@@ -417,6 +417,7 @@ class QtWorkspaceEditor(QMainWindow):
         """Same editor/viewer, with no reachable editing or import commands."""
         permitted = {
             'File': {'Open File Folder', 'Export Rendered GFX PNG…',
+                     'Export Texture as PNG…',
                      'Export Native Model…',
                      'Export for Blender (.glb)…',
                      'Export Animated Character (.glb)…',
