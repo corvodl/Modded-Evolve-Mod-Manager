@@ -688,6 +688,8 @@ class QtManager(QMainWindow):
         bar.setNativeMenuBar(False)
         file_menu = bar.addMenu('File')
         file_menu.addAction('Import PAKs / Manage Library…', self.open_asset_library)
+        file_menu.addAction('Edit Legacy Evolve (2012) PAK…', self.open_legacy_pak)
+        file_menu.addAction('Open Legacy PAK Project…', self.open_legacy_project)
         file_menu.addAction('Preview Selected PAK…', self.preview_library_archive)
         file_menu.addAction('Edit / Add to Mod Project…', self.edit_selected_library_archive)
         file_menu.addAction('Open Map in Level Editor…', self.edit_selected_library_map)
@@ -1049,6 +1051,8 @@ class QtManager(QMainWindow):
             ('Unpack PAK + known dependencies', self.extract),
             ('Unpack selected PAKs + dependencies', self.extract_batch),
             ('Import External PAK…', self.browse_external_pak),
+            ('Edit Legacy Evolve (2012) PAK…', self.open_legacy_pak),
+            ('Open Legacy PAK Project…', self.open_legacy_project),
             (None, None),
             ('Projects…', self.open_project_dashboard),
             ('Open Unpacked Files', self.open_unpacked),
@@ -2340,6 +2344,62 @@ class QtManager(QMainWindow):
                         for entry in data['archives']}
         except (ValueError, KeyError, TypeError, OSError):
             pass
+
+    def _show_legacy_pak_editor(self, folder):
+        """Keep historical ZIP PAK projects separate from signed Stage 2 mods."""
+        from qt_legacy_pak_editor import LegacyPAKEditor
+        folder = Path(folder).resolve(strict=True)
+        for editor in tuple(self.editors):
+            if isinstance(editor, LegacyPAKEditor) and editor.project['folder'] == folder:
+                if editor.isVisible():
+                    editor.raise_()
+                    editor.activateWindow()
+                    return editor
+        editor = LegacyPAKEditor(self, folder)
+        editor.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.editors.append(editor)
+        editor.show()
+        editor.raise_()
+        return editor
+
+    def open_legacy_pak(self):
+        """Open unsigned ZIP-compatible 2012 PAK without game setup or injection."""
+        source, _ = QFileDialog.getOpenFileName(
+            self, 'Open Historical Evolve (2012) PAK',
+            str(Path.home()), 'Legacy PAK (*.pak);;All files (*)')
+        if not source:
+            return
+        try:
+            from legacy_pak_workspace import create_project
+            import hashlib
+            path = Path(source).resolve(strict=True)
+            folder = Path(self.projects_path).resolve() / 'Legacy_PAK_Projects'
+            folder.mkdir(parents=True, exist_ok=True)
+            safe = ''.join(ch if ch.isalnum() or ch in '-_' else '_'
+                           for ch in path.stem)[:48] or 'Archive'
+            label = hashlib.sha256(str(path).casefold().encode()).hexdigest()[:9]
+            root = folder / (safe + '_' + label)
+            if root.exists():
+                from legacy_pak_workspace import load_project
+                manifest = load_project(root)
+                if manifest['source_path'] != path:
+                    raise ValueError('Existing legacy project refers to a different PAK.')
+            else:
+                create_project(path, root)
+            self._show_legacy_pak_editor(root)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def open_legacy_project(self):
+        directory = QFileDialog.getExistingDirectory(
+            self, 'Open Existing Legacy PAK Project',
+            str(Path(self.projects_path).resolve() / 'Legacy_PAK_Projects'))
+        if not directory:
+            return
+        try:
+            self._show_legacy_pak_editor(directory)
+        except (OSError, ValueError, KeyError) as exc:
+            self.failure(exc)
 
     def open_asset_library(self):
         from qt_asset_library import AssetLibraryDialog
