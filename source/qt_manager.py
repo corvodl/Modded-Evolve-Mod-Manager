@@ -1801,7 +1801,7 @@ class QtManager(QMainWindow):
         self.setStyleSheet(style)
         icon_color = palette(self.appearance_mode, self.appearance_overrides)['text']
         for index, button in enumerate(getattr(self, 'nav_buttons', ())):
-            button.setIcon(navigation_icon(SECTIONS[index], icon_color))
+            button.setIcon(navigation_icon(SECTIONS[index], icon_color, 32))
         for editor in getattr(self, 'editors', []):
             if editor is not None:
                 editor.setStyleSheet(style)
