@@ -52,8 +52,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: Install Pillow for RGBA pixel assertions
-        run: python -m pip install 'Pillow>=12,<13'
+      - name: Install GFX editing test dependencies
+        run: python -m pip install 'Pillow>=12,<13' 'cryptography>=41,<48'
       - name: Download exact pinned FFDec 26.3.0 ZIP and verify GitHub release SHA-256
         shell: pwsh
         run: |
