@@ -11,6 +11,7 @@ import struct
 
 CHUNK_STRUCT = struct.Struct('<5I')
 STREAM_CHUNK = 0xCCCC0016
+SUBSETS_CHUNK = 0xCCCC0017
 SUPPORTED_VERSION = 0x745
 MAX_CHUNKS = 100_000
 MAX_VERTICES = 250_000
@@ -47,7 +48,7 @@ def parse_crytek_chunks(data, *, max_chunks=MAX_CHUNKS):
 
 
 def read_crytek_geometry(data):
-    """Return (positions, triangles, uvs) for a non-rigged preview."""
+    """Return (positions, triangles, uvs, verified material subsets)."""
     filetype, version, _, _, chunks = parse_crytek_chunks(data)
     if filetype != 0xFFFF0000 or version != SUPPORTED_VERSION:
         raise ValueError('Legacy CryTek mesh preview supports geometry version 0x745 only.')
@@ -91,4 +92,31 @@ def read_crytek_geometry(data):
         uvs = tuple(struct.iter_unpack('<2f', memoryview(data)[at:at + 8 * num]))
         if not all(math.isfinite(v) and abs(v) <= 1e4 for row in uvs for v in row):
             raise ValueError('Invalid legacy UV coordinates.')
-    return positions, triangles, uvs
+    subsets = ()
+    for kind, chunk_version, offset, ident, size in chunks:
+        if kind != SUBSETS_CHUNK:
+            continue
+        if subsets:
+            raise ValueError('Multiple historical material subset chunks.')
+        if (chunk_version != 0x800 or size < 68
+                or struct.unpack_from('<4I', data, offset) !=
+                (kind, chunk_version, offset, ident)):
+            raise ValueError('Unsupported historical material subset chunk.')
+        flags, n, reserved_a, reserved_b = struct.unpack_from('<4I', data, offset + 16)
+        if (flags not in (0, 2) or not 1 <= n <= 128
+                or reserved_a or reserved_b or 32 + n * 36 > size):
+            raise ValueError('Invalid historical material subset table.')
+        rows, cursor = [], 0
+        for i in range(n):
+            first, count_indices, first_vertex, num_vertices, material = (
+                struct.unpack_from('<5I', data, offset + 32 + i * 36))
+            if (first != cursor or first % 3 or not count_indices
+                    or count_indices % 3 or first + count_indices > index_count
+                    or material >= 128 or first_vertex + num_vertices > count):
+                raise ValueError('Historical material subset has invalid index/vertex bounds.')
+            cursor += count_indices
+            rows.append((first, count_indices, material))
+        if cursor != index_count:
+            raise ValueError('Historical material subset coverage is incomplete.')
+        subsets = tuple(rows)
+    return positions, triangles, uvs, subsets
