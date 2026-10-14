@@ -76,8 +76,22 @@ def _skinned_node_transform(data, info):
 def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
     """Decode known stream types, validating all mesh bounds before rendering."""
     info = inspect_model(data)
+    if info.format_name == 'CryTek':
+        from legacy_crytek_mesh import read_crytek_geometry
+        positions, triangles, uvs = read_crytek_geometry(data)
+        xs, ys, zs = zip(*positions)
+        center = ((max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2,
+                  (max(zs) + min(zs)) / 2)
+        radius = max(max(xs) - min(xs), max(ys) - min(ys),
+                     max(zs) - min(zs)) / 2
+        if radius <= 1e-7:
+            raise ValueError('Legacy render geometry has degenerate bounds.')
+        # Historical material subsets/rigging are not inferred. Positions
+        # and validated UVs can be displayed without changing source bytes.
+        return PreviewMesh(positions, triangles, center, radius, source_name,
+                           uvs, ())
     if info.format_name != 'CrChF' or info.version != 7:
-        raise ValueError('3D preview currently supports CrChF v7 geometry only.')
+        raise ValueError('3D preview supports CrChF v7 or validated CryTek 0x745 geometry only.')
     streams = {}
     for i in range(info.chunks):
         kind, chunk_id, size, offset = struct.unpack_from('<4I', info.chunk_table, i * 16)
@@ -243,6 +257,8 @@ def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_roo
             for _, skin in skins[:16]:
                 if skin.casefold().endswith('.skin'):
                     candidates.append(normalized_name(skin + 'm'))
+                elif skin.casefold().endswith('.chr'):
+                    candidates.append(normalized_name(skin))
         candidates.append(normalized_name(str(Path(base).with_suffix('.skinm')).replace('\\', '/')))
         # A character with no .skinm may keep render geometry in a numbered
         # .chr LOD. Only exact same-stem LODs, lowest index first.
@@ -269,13 +285,13 @@ def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_roo
 
     old_format = []
     for name, issue in errors:
-        if 'CrChF v7 geometry only' in issue:
+        if 'supports geometry version 0x745 only' in issue:
             old_format.append(name)
     if old_format:
         raise ValueError(
-            'Found model files using an older CryTek layout that this viewer '
-            'cannot render yet: ' + ', '.join(old_format[:4])
-            + '. Only CrChF v7 mesh streams are decoded. Raw export is still available.')
+            'CryTek model files require a supported geometry layout (0x745). '
+            'Unsupported files: ' + ', '.join(old_format[:4])
+            + '. Native raw export remains available.')
     if tried:
         raise ValueError(
             'Found character companion files but none contain a supported '
