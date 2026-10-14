@@ -89,7 +89,7 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
                 raise ValueError('Multiple mesh position/index streams; grouped meshes are not yet supported.')
             streams[stream_type] = (count, stride, offset + 24)
     if (0 not in streams and 15 not in streams) or 5 not in streams:
-        raise ValueError('No supported position/index render streams in this model; a compatible mesh companion or LOD may be needed.')
+        raise ValueError('No supported render mesh: position/index streams are missing; a compatible render companion or LOD may be needed.')
     packed_stream = 0 not in streams
     vertex_count, vertex_stride, vertex_at = streams[15 if packed_stream else 0]
     index_count, index_stride, index_at = streams[5]
@@ -282,8 +282,8 @@ def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_roo
             'render mesh: ' + '; '.join(name + ': ' + error for name, error in errors[:3]))
     raise ValueError(
         'No supported render geometry for ' + relative
-        + '. Checked its direct .chr data, same-stem .chrm/.skinm, '
-          'CDF skin bindings, and same-stem .chr LODs. '
+        + '. Checked direct model data, same-stem render companions '
+          '(.chrm/.skinm), CDF skin bindings, and same-stem .chr LODs. 
           'Do not assume this character must have a .skinm.')
 
 
