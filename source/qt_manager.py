@@ -688,6 +688,8 @@ class QtManager(QMainWindow):
         bar.setNativeMenuBar(False)
         file_menu = bar.addMenu('File')
         file_menu.addAction('Import PAKs / Manage Library…', self.open_asset_library)
+        file_menu.addAction('Edit Legacy Evolve (2012) PAK…', self.open_legacy_pak)
+        file_menu.addAction('Open Legacy PAK Project…', self.open_legacy_project)
         file_menu.addAction('Preview Selected PAK…', self.preview_library_archive)
         file_menu.addAction('Edit / Add to Mod Project…', self.edit_selected_library_archive)
         file_menu.addAction('Open Map in Level Editor…', self.edit_selected_library_map)
@@ -753,10 +755,15 @@ class QtManager(QMainWindow):
         self.asset_table.setColumnWidth(1, 150)
         self.asset_table.itemDoubleClicked.connect(
             lambda _item: self.preview_library_archive())
+        self.asset_table.itemSelectionChanged.connect(self._sync_library_quick_actions)
         layout.addWidget(self.asset_table, 1)
         self.asset_count = _label('No imported PAKs', muted=True)
         layout.addWidget(self.asset_count)
+        # Keep actions discoverable in File/Tools, but only show quick actions
+        # for a selected archive. The old six-button row clipped at 880 px.
         actions = QHBoxLayout()
+        actions.setSpacing(8)
+        self.asset_quick = {}
         for title, callback, primary in (
             ('Import / Manage PAKs…', self.open_asset_library, False),
             ('Preview Files', self.preview_library_archive, False),
@@ -765,8 +772,19 @@ class QtManager(QMainWindow):
             ('Export PAK Layout…', self.export_selected_library_archive, False),
             ('Open Asset Library Folder', self.open_library_folder, False),
         ):
-            actions.addWidget(_button(title, callback, primary=primary), 1)
+            button = _button(title, callback, primary=primary)
+            button.setToolTip(title + ' (also available from the menu bar)')
+            self.asset_quick[title] = button
+            if title in ('Preview Files', 'Edit / Add to Mod Project', 'Open Map'):
+                actions.addWidget(button)
+            else:
+                # Preserve action objects for migration compatibility, but the
+                # corresponding commands live under File rather than a huge row.
+                button.setParent(page)
+                button.hide()
+        actions.addStretch(1)
         layout.addLayout(actions)
+        self._sync_library_quick_actions()
         self.stack.addWidget(page)
         self.pages['asset_library'] = page
 
@@ -861,6 +879,23 @@ class QtManager(QMainWindow):
             '%d of %d imported PAKs • %.1f GiB extracted • read-only previews' %
             (len(visible), len(archives),
              sum(a['bytes'] for a in archives) / (1024 ** 3)))
+        self._sync_library_quick_actions()
+
+    def _sync_library_quick_actions(self):
+        """Only offer asset actions applicable to the selected library PAK."""
+        buttons = getattr(self, 'asset_quick', {})
+        if not buttons:
+            return
+        selected = self._selected_library_id()
+        record = getattr(self, '_library_rows', {}).get(selected)
+        has_pak = record is not None
+        is_map = (has_pak and record['name'].casefold().startswith(
+            ('levels_', 'level_', 'levels2_', 'level')))
+        for label in ('Preview Files', 'Edit / Add to Mod Project', 'Open Map'):
+            button = buttons[label]
+            relevant = bool(is_map if label == 'Open Map' else has_pak)
+            button.setVisible(relevant)
+            button.setEnabled(relevant)
 
     def _library_build_context(self):
         if hasattr(self, 'asset_view_tabs') and self.asset_view_tabs.currentIndex() == 1:
@@ -1049,8 +1084,11 @@ class QtManager(QMainWindow):
             ('Unpack PAK + known dependencies', self.extract),
             ('Unpack selected PAKs + dependencies', self.extract_batch),
             ('Import External PAK…', self.browse_external_pak),
+            ('Edit Legacy Evolve (2012) PAK…', self.open_legacy_pak),
+            ('Open Legacy PAK Project…', self.open_legacy_project),
             (None, None),
             ('Projects…', self.open_project_dashboard),
+            ('Refresh Project List', self.refresh_project_list),
             ('Open Unpacked Files', self.open_unpacked),
         ))
         menu_commands('Edit', (
@@ -1110,7 +1148,10 @@ class QtManager(QMainWindow):
         self.project_changes_table.itemDoubleClicked.connect(
             lambda _: self.open_modified_project_file())
         root.addWidget(self.project_changes_table, 1)
+        # Only the selected project's frequent actions belong on the page.
+        # Refresh/review/library remain in File/Edit/Tools and sidebar.
         project_actions = QHBoxLayout()
+        self.project_quick = {}
         for title, handler in (
             ('Refresh Projects', self.refresh_project_list),
             ('Continue Editing', self.open_active_project),
@@ -1118,8 +1159,16 @@ class QtManager(QMainWindow):
             ('Build Mod', self.build),
             ('Asset Library', lambda: self.open_page(SECTIONS.index('Asset Library'))),
         ):
-            project_actions.addWidget(_button(title, handler), 1)
+            button = _button(title, handler)
+            self.project_quick[title] = button
+            if title in ('Continue Editing', 'Build Mod'):
+                project_actions.addWidget(button)
+            else:
+                button.setParent(page)
+                button.hide()
+        project_actions.addStretch(1)
         root.addLayout(project_actions)
+        self._sync_project_quick_actions()
         self.legacy_archive_toggle = _button(
             'Show Advanced Archive Tools', self.toggle_advanced_archive_tools)
         root.addWidget(self.legacy_archive_toggle)
@@ -1217,6 +1266,16 @@ class QtManager(QMainWindow):
                 break
         self.refresh_project_changes()
 
+    def _sync_project_quick_actions(self):
+        buttons = getattr(self, 'project_quick', {})
+        if not buttons:
+            return
+        record = self.selected_project_context()
+        ready = bool(record and record['status'] not in ('missing', 'unavailable'))
+        for title in ('Continue Editing', 'Build Mod'):
+            buttons[title].setVisible(ready)
+            buttons[title].setEnabled(ready)
+
     def selected_project_context(self):
         if not hasattr(self, 'project_table'):
             return None
@@ -1280,6 +1339,7 @@ class QtManager(QMainWindow):
             except (OSError, ValueError, KeyError) as exc:
                 self._log('Project changes: ' + str(exc)[:200])
         table.setSortingEnabled(True)
+        self._sync_project_quick_actions()
 
     def open_modified_project_file(self):
         current = self.project_changes_table.item(
@@ -2340,6 +2400,62 @@ class QtManager(QMainWindow):
                         for entry in data['archives']}
         except (ValueError, KeyError, TypeError, OSError):
             pass
+
+    def _show_legacy_pak_editor(self, folder):
+        """Keep historical ZIP PAK projects separate from signed Stage 2 mods."""
+        from qt_legacy_pak_editor import LegacyPAKEditor
+        folder = Path(folder).resolve(strict=True)
+        for editor in tuple(self.editors):
+            if isinstance(editor, LegacyPAKEditor) and editor.project['folder'] == folder:
+                if editor.isVisible():
+                    editor.raise_()
+                    editor.activateWindow()
+                    return editor
+        editor = LegacyPAKEditor(self, folder)
+        editor.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.editors.append(editor)
+        editor.show()
+        editor.raise_()
+        return editor
+
+    def open_legacy_pak(self):
+        """Open unsigned ZIP-compatible 2012 PAK without game setup or injection."""
+        source, _ = QFileDialog.getOpenFileName(
+            self, 'Open Historical Evolve (2012) PAK',
+            str(Path.home()), 'Legacy PAK (*.pak);;All files (*)')
+        if not source:
+            return
+        try:
+            from legacy_pak_workspace import create_project
+            import hashlib
+            path = Path(source).resolve(strict=True)
+            folder = Path(self.projects_path).resolve() / 'Legacy_PAK_Projects'
+            folder.mkdir(parents=True, exist_ok=True)
+            safe = ''.join(ch if ch.isalnum() or ch in '-_' else '_'
+                           for ch in path.stem)[:48] or 'Archive'
+            label = hashlib.sha256(str(path).casefold().encode()).hexdigest()[:9]
+            root = folder / (safe + '_' + label)
+            if root.exists():
+                from legacy_pak_workspace import load_project
+                manifest = load_project(root)
+                if manifest['source_path'] != path:
+                    raise ValueError('Existing legacy project refers to a different PAK.')
+            else:
+                create_project(path, root)
+            self._show_legacy_pak_editor(root)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def open_legacy_project(self):
+        directory = QFileDialog.getExistingDirectory(
+            self, 'Open Existing Legacy PAK Project',
+            str(Path(self.projects_path).resolve() / 'Legacy_PAK_Projects'))
+        if not directory:
+            return
+        try:
+            self._show_legacy_pak_editor(directory)
+        except (OSError, ValueError, KeyError) as exc:
+            self.failure(exc)
 
     def open_asset_library(self):
         from qt_asset_library import AssetLibraryDialog

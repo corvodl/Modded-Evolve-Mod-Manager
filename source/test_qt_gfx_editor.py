@@ -77,6 +77,24 @@ class GfxQtEditorTests(unittest.TestCase):
         self.assertEqual(backups[0].read_bytes(), self.original)
         self.assertFalse((self.project / "GfxEditSessions").is_symlink())
 
+    def test_advanced_gfx_commands_fit_under_menus(self):
+        dialog = GfxEditorDialog(self.win, self.relative)
+        self.addCleanup(dialog.close)
+        self.assertEqual(
+            [menu.title() for menu in (dialog.file_menu, dialog.edit_menu,
+                                       dialog.tools_menu)],
+            ["File", "Edit", "Tools"])
+        menu_labels = {menu.title(): {a.text() for a in menu.actions()}
+                       for menu in (dialog.file_menu, dialog.edit_menu,
+                                    dialog.tools_menu)}
+        self.assertIn("Rebuild from edited XML…", menu_labels["Tools"])
+        self.assertIn("Export ActionScript sources…", menu_labels["File"])
+        self.assertIn("Undo staged edit", menu_labels["Edit"])
+        for button in (dialog.open_ffdec, dialog.xml_export, dialog.xml_import,
+                       dialog.import_movie, dialog.reload_movie, dialog.undo,
+                       dialog.script_export, dialog.script_import):
+            self.assertTrue(button.isHidden())
+
     def test_library_read_only_cannot_open_mutable_session(self):
         self.win.read_only_library = True
         try:

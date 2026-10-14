@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.41', (
+        'Open and edit 2012 Evolve ZIP PAKs in isolated projects with verified unsigned rebuilds.',
+        'Inspect legacy DDS streams and export compatible textures without touching Stage 2 files.',
+        'Make editing commands contextual and move advanced actions into File, View and Tools menus.',
+    )),
     ('1.1.18-beta.40', (
         'Replace sidebar symbols with matching Flaticon Uicons across all eight sections.',
         'Improve sidebar icon size, alignment and visibility on Windows displays.',

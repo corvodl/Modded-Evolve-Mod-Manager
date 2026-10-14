@@ -16,6 +16,9 @@ import dds_streaming
 import model_asset
 import model_preview
 import gfx_preview_backend
+import legacy_pak_workspace
+import legacy_texture_preview
+import qt_legacy_pak_editor
 import qt_gfx_preview
 import gfx_edit_backend
 import qt_gfx_editor
@@ -46,6 +49,8 @@ assert Image and ImageTk and dds_texture.parse_dds and dds_png_import.encode_png
 assert frida.__version__ and numpy.__version__ and material_preview.render_textured_mesh
 assert gpu_model_preview.prepare_geometry and gpu_model_preview.Win32GPUPreview
 assert gfx_preview_backend.inspect_gfx and gfx_preview_backend.render_gfx
+assert legacy_pak_workspace.create_project and legacy_pak_workspace.rebuild_pak
+assert legacy_texture_preview.decode_legacy_texture and qt_legacy_pak_editor.LegacyPAKEditor
 assert qt_gfx_preview.GfxPreviewWidget
 assert gfx_edit_backend.create_gfx_session and gfx_edit_backend.apply_gfx_session
 assert qt_gfx_editor.GfxEditorDialog
