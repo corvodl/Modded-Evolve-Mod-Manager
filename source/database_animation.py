@@ -190,6 +190,8 @@ def convert_historical_database_motion(blob, reference, index, character, *,
                                 preferred_workspace=preferred_workspace)
     if status != 'found':
         raise ValueError('Historical master skeleton is missing or ambiguous.')
+    if cancelled and cancelled():
+        raise ValueError('Historical DBA conversion cancelled.')
     config_name, config_path = selected_character_params(
         character.skeleton, index, preferred_workspace)
     if config_path is None:
