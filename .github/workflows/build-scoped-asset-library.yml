@@ -9,6 +9,9 @@ on:
       - 'source/test_build_collections_qt.py'
       - 'source/test_build_transfer_dependencies.py'
       - 'source/build_transfer_dependencies.py'
+      - 'source/legacy_stage2_transfer.py'
+      - 'source/legacy_model_transfer.py'
+      - 'source/test_legacy_stage2_transfer.py'
       - 'source/level_asset_mount.py'
       - 'source/qt_asset_library.py'
       - 'source/asset_library_preview.py'
@@ -37,4 +40,4 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/source
           QT_QPA_PLATFORM: offscreen
-        run: python -m unittest -v test_build_collections test_build_collections_qt test_build_transfer_dependencies
+        run: python -m unittest -v test_build_collections test_build_collections_qt test_build_transfer_dependencies test_legacy_stage2_transfer
