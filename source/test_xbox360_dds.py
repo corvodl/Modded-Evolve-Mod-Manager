@@ -188,6 +188,49 @@ class Xbox2012DecodeTests(unittest.TestCase):
                                  expected.convert('RGB').tobytes())
             self.assertEqual([p.read_bytes() for p in paths], pieces)
 
+    def test_512_normal_ctx1_split_low_high_maintains_source_bytes(self):
+        """Test the supplied ParasiteHost _ddn.dds.0-.4/.5 arrangement."""
+        from material_preview import _decode_texture
+        from dds_streaming import _mip_sizes
+
+        header = bytearray(empty_dds(b'CTX1', 512, 512))
+        struct.pack_into('<I', header, 28, 8)
+        struct.pack_into('<I', header, 36, 0x1040)
+        info = parse_dds(header)
+        sizes = _mip_sizes(info, header)
+        neutral = bytes((128, 128, 128, 128, 0, 0, 0, 0))
+        mips = [neutral * (size//8) for size in sizes]
+        tiled = bytearray(xboxify(bytes(header) + b''.join(mips)))
+        struct.pack_into('<I', tiled, 36, 0x1040)
+        pieces = [
+            bytes(tiled[:128]) + b''.join(mips[5:]),
+            mips[4], mips[3], mips[2], mips[1], bytes(tiled[128:])]
+        self.assertEqual([len(x) for x in pieces],
+                         [296, 512, 2048, 8192, 32768, 131072])
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            name = 'objects/characters/monsters/parasitehost/parasitehost_ddn.dds'
+            index, paths = {}, []
+            for n, fragment in enumerate(pieces):
+                workspace = root / ('dds_low' if n < 5 else 'dds_high')
+                file = workspace / 'files' / (name + '.' + str(n))
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(fragment)
+                paths.append(file)
+                index[(name + '.' + str(n)).casefold()] = [{
+                    'file': file, 'relative': name + '.' + str(n),
+                    'workspace': workspace,
+                    'archive': workspace.name}]
+            diffuse = index[(name + '.0').casefold()][0]
+            preview = _decode_texture(
+                diffuse, index=index, historical_2012=True, normal_map=True)
+            self.assertEqual(preview.size, (512, 512))
+            r, g, b, a = preview.getpixel((55, 91))
+            self.assertTrue(119 <= r <= 137 and 119 <= g <= 137)
+            self.assertGreater(b, 240)
+            self.assertEqual(a, 255)
+            self.assertEqual([f.read_bytes() for f in paths], pieces)
+
     def test_model_gate_does_not_transform_stage2_or_unknown_character(self):
         with tempfile.TemporaryDirectory() as td:
             name='Objects/characters/monsters/ParasiteHost/ParasiteHost3.chr'
