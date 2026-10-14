@@ -79,7 +79,7 @@ class LegacyMaterialsTests(unittest.TestCase):
 
     def test_missing_visible_cooked_texture_is_reported_despite_nodraw(self):
         self.add(PREFIX + 'parasitehost.tif', b'legacy TIFF input')
-        with self.assertRaisesRegex(ValueError, 'No visible diffuse DDS'):
+        with self.assertRaisesRegex(ValueError, 'No diffuse DDS.*visible'):
             self.load()
 
     def test_old_chr_dba_requires_real_rig_instead_of_fake_skin(self):
@@ -100,7 +100,7 @@ class LegacyMaterialsTests(unittest.TestCase):
 
     def test_unique_wrong_character_basename_is_not_borrowed(self):
         self.add(OTHER + 'parasitehost.dds', self.dds((255, 0, 0)))
-        with self.assertRaisesRegex(ValueError, 'No visible diffuse DDS'):
+        with self.assertRaisesRegex(ValueError, 'No diffuse DDS.*visible'):
             self.load()
 
 
