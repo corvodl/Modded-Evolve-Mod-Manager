@@ -1,4 +1,4 @@
-"""Read-only UIData.pak XML references for CryEngine Scaleform GFX.
+"""Read-only Game/UI_Data.pak XML references for CryEngine Scaleform GFX.
 
 UIData defines the GFx screen/movie binding and game-called functions.
 TexturePreload and menu news XML contain separate texture references, but
@@ -26,9 +26,9 @@ class UIDataError(ValueError):
 
 
 def is_ui_data_archive(relative):
-    """Accept Game/UIData.pak and Game/UI_Data.pak from registered builds."""
+    """Recognize the actual Evolve archive Game/UI_Data.pak (or basename)."""
     name = PurePosixPath(str(relative).replace("\\", "/")).name
-    return name.casefold().replace("_", "").replace("-", "") == "uidata.pak"
+    return name.casefold() == "ui_data.pak"
 
 
 def _document(relative, raw):
@@ -53,7 +53,7 @@ def _movie_matches(requested, declared):
     return PurePosixPath(movie).name == name
 
 
-def parse_ui_data_references(movie, documents, *, archive="UIData.pak"):
+def parse_ui_data_references(movie, documents, *, archive="Game/UI_Data.pak"):
     """Parse bounded UIData XML documents, preserving evidence/provenance.
 
     Callbacks do not simulate ActionScript and texture preloads are explicitly
