@@ -1,25 +1,25 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.39
+# Evolve Stage 2 Mod Manager — v1.1.18-beta.40
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.39 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.1.18-beta.40 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
 ## Latest Stable — v1.1.17.1
 
 - Add a Windows installer with optional Desktop and Start Menu shortcuts.
 - Compare Stable and Beta releases and offer only the newest version.
 
-## Latest Beta — v1.1.18-beta.39
+## Latest Beta — v1.1.18-beta.40
 
-- Add consistent icons across file explorers, texture, model and GFX controls.
-- Show the official FFDec download link when selecting a GFX movie without a configured renderer.
-- Keep FFDec and Java external to the app, installer and portable ZIP.
+- Replace sidebar symbols with matching Flaticon Uicons across all eight sections.
+- Improve sidebar icon size, alignment and visibility on Windows displays.
+- Include icon attribution in Credits while keeping navigation icons available offline.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 
-Versioned release: [v1.1.18-beta.39](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.39).
+Versioned release: [v1.1.18-beta.40](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.40).
 
 ## Download and install
 
