@@ -91,25 +91,12 @@ def inspect_model(data: bytes) -> ModelInfo:
         return _inspect_crchf(data)
     if len(data) < 24 or data[:8] != b'CryTek\0\0':
         raise ValueError('Unrecognized model header (expected CrChF or CryTek). Raw export remains available; model reimport is disabled.')
-    filetype, version, table_offset = struct.unpack_from('<III', data, 8)
-    if filetype not in (0xFFFF0000, 0xFFFF0001):
-        raise ValueError('Unknown CryTek geometry/animation file type.')
-    if table_offset < 20 or table_offset > len(data) - 4:
-        raise ValueError('Invalid CryTek chunk table offset.')
-    count, = struct.unpack_from('<I', data, table_offset)
-    if not count or count > MAX_CHUNKS or table_offset + 4 + 16 * count > len(data):
-        raise ValueError('Missing, incomplete, or oversized CryTek chunk table.')
-    table = data[table_offset:table_offset + 4 + 16*count]
-    offsets = []
-    for index in range(count):
-        kind, chunk_version, offset, chunk_id = struct.unpack_from('<IIII', table, 4 + 16*index)
-        if offset < 20 or offset >= len(data) or (table_offset <= offset < table_offset + len(table)):
-            raise ValueError('Invalid model chunk offset.')
-        offsets.append(offset)
-    if len(set(offsets)) != len(offsets):
-        raise ValueError('Overlapping or repeated model chunk offsets.')
+    from legacy_crytek_mesh import parse_crytek_chunks
+    filetype, version, table_offset, table, rows = parse_crytek_chunks(
+        data, max_chunks=MAX_CHUNKS)
     return ModelInfo('Geometry' if filetype == 0xFFFF0000 else 'Animation',
-                     version, count, table_offset, table, len(data))
+                     version, len(rows), table_offset, table, len(data))
+
 
 
 def validate_model_replacement(original: bytes, candidate: bytes) -> ModelInfo:
@@ -125,6 +112,14 @@ def validate_model_replacement(original: bytes, candidate: bytes) -> ModelInfo:
             kind, _, size, offset = struct.unpack_from('<4I', before.chunk_table, i * 16)
             if kind == DATA_STREAM_CHUNK and original[offset:offset+24] != candidate[offset:offset+24]:
                 raise ValueError('Vertex/index stream header changed; refusing experimental replacement.')
+    elif before.format_name == 'CryTek':
+        # Historical chunks are five-dword records; stream metadata occupies
+        # 40 bytes including the chunk header. Do not weaken replacement checks.
+        from legacy_crytek_mesh import parse_crytek_chunks, STREAM_CHUNK
+        _, _, _, _, rows = parse_crytek_chunks(original)
+        for kind, _, offset, _, size in rows:
+            if kind == STREAM_CHUNK and original[offset:offset+40] != candidate[offset:offset+40]:
+                raise ValueError('Legacy vertex/index stream header changed.')
     return after
 
 

@@ -1035,6 +1035,10 @@ class QtWorkspaceEditor(QMainWindow):
         return entries
 
     def _category(self, rel):
+        # In the read-only Asset Library, a CDF is a visual character
+        # assembly entry. Editable mod projects retain the XML text editor.
+        if self.read_only_library and rel.casefold().endswith('.cdf'):
+            return 'models'
         if rel.casefold().endswith('.gfx'):
             return 'gfx'
         if is_dds(rel) or is_split_dds(rel):
