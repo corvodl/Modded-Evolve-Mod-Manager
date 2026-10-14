@@ -114,7 +114,7 @@ class LegacyBulkTransferTests(unittest.TestCase):
         self.assertEqual(by_key["map:desert_harsh", "terrain/terrain.dat"]["action"],
                          "not-in-imported-stage2-catalog")
         self.assertNotIn(("map:desert_canyon", "terrain/terrain.dat"), by_key)
-        self.assertEqual(plan["files_to_copy"], 6)
+        self.assertEqual(plan["files_to_copy"], 7)
 
     def test_full_build_review_export_preserves_sidecars_and_map_owners(self):
         self.assets()
@@ -123,7 +123,7 @@ class LegacyBulkTransferTests(unittest.TestCase):
             self.legacy, self.stage2, destination,
             root=self.lib, protected_roots=(self.stage,))
         self.assertFalse(result["installed"])
-        self.assertEqual(result["files_exported"], 6)
+        self.assertEqual(result["files_exported"], 7)
         self.assertTrue((destination / "stage2-transfer-review.json").is_file())
         self.assertFalse((destination / "INCOMPLETE.txt").exists())
         self.assertEqual(
