@@ -163,7 +163,7 @@ def gfx_movie(identifier, relative, *, root=None):
 
 
 def library_gfx_ui_data(identifier, relative, *, root=None, build_id=None):
-    """Find GFx bindings only in UIData.pak imported for this exact game build.
+    """Find GFx bindings only in Game/UI_Data.pak for this exact build.
 
     This is an informational XML link. Texture preloads are not sprite atlas
     assignments. Unassigned archives cannot borrow XML from another build.
@@ -177,7 +177,7 @@ def library_gfx_ui_data(identifier, relative, *, root=None, build_id=None):
             "status": "unassigned-build",
             "source_archive": None, "screens": [],
             "warnings": [
-                "Register UI Assets and UIData PAKs in the same Stage 2 build "
+                "Register UI_Assets.pak and UI_Data.pak in the same Stage 2 build "
                 "before linking UI XML references. Unassigned imports are isolated."
             ],
         }
@@ -193,7 +193,7 @@ def library_gfx_ui_data(identifier, relative, *, root=None, build_id=None):
             "status": "ui-data-not-imported",
             "source_archive": None, "screens": [],
             "warnings": [
-                "Import Game/UIData.pak (or UI_Data.pak) into this same game "
+                "Import Game/UI_Data.pak into this same game "
                 "build to display GFx screen bindings and UI texture references."
             ],
         }
@@ -202,7 +202,7 @@ def library_gfx_ui_data(identifier, relative, *, root=None, build_id=None):
             "status": "ambiguous-ui-data-archives",
             "source_archive": None, "screens": [],
             "warnings": [
-                "Multiple UIData PAKs are registered in this build. Choose "
+                "Multiple UI_Data.pak archives are registered in this build. Choose "
                 "one unambiguous build/PAK snapshot before resolving metadata."
             ],
         }
