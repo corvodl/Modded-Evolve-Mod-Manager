@@ -1,0 +1,35 @@
+name: Verify Flaticon Uicons navigation
+on:
+  pull_request:
+    branches: [beta]
+    paths:
+      - 'source/build_flaticon_nav_icons.py'
+      - 'source/qt_navigation_icons.py'
+      - 'source/qt_manager.py'
+      - 'source/test_flaticon_navigation.py'
+      - 'source/requirements.txt'
+      - '.github/workflows/verify-flaticon-nav.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  navigation:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Qt and Flaticon conversion tools
+        run: python -m pip install "PySide6>=6.8,<6.11" "fonttools>=4.50,<5"
+      - name: Generate and render eight genuine Flaticon Uicons glyphs
+        shell: pwsh
+        env:
+          PYTHONPATH: ${{ github.workspace }}/source
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python source/build_flaticon_nav_icons.py
+          if ($LASTEXITCODE -ne 0) { throw 'Flaticon nav generation failed' }
+          python -m unittest -v test_flaticon_navigation
+          if ($LASTEXITCODE -ne 0) { throw 'Flaticon nav rendering failed' }
