@@ -99,6 +99,7 @@ class GfxPreviewWidget(QWidget):
         self._warnings = ()
         self._info = None
         self._backend = None
+        self._ui_data = {}
         layout = QVBoxLayout(self)
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Symbol:"))
@@ -132,6 +133,16 @@ class GfxPreviewWidget(QWidget):
         self.details.setObjectName("gfxMovieInfo")
         self.details.setWordWrap(True)
         layout.addWidget(self.details)
+        meta_row = QHBoxLayout()
+        self.ui_data_summary = QLabel("UIData: no matching metadata loaded")
+        self.ui_data_summary.setObjectName("gfxUIDataSummary")
+        self.ui_data_summary.setWordWrap(True)
+        meta_row.addWidget(self.ui_data_summary, 1)
+        self.ui_data_button = QPushButton("UIData references…")
+        self.ui_data_button.setObjectName("gfxUIDataReferences")
+        self.ui_data_button.clicked.connect(self.show_ui_data)
+        meta_row.addWidget(self.ui_data_button)
+        layout.addLayout(meta_row)
         self.area = QScrollArea()
         self.area.setWidgetResizable(True)
         self.area.setAlignment(Qt.AlignCenter)
@@ -175,8 +186,10 @@ class GfxPreviewWidget(QWidget):
         self.export.setEnabled(False)
 
     def open_movie(self, data, relative, *, resolve=None, context=None,
-                   backend=None):
+                   backend=None, ui_data=None):
         self.cancel_pending()
+        self._ui_data = ui_data or {}
+        self._refresh_ui_data()
         self._raw = None
         self._virtual = relative
         self._context = context
@@ -223,6 +236,65 @@ class GfxPreviewWidget(QWidget):
             self._info = None
             self.note.setText(str(exc))
             self.details.setText("Unsupported or damaged Scaleform movie.")
+
+    def _refresh_ui_data(self):
+        info = self._ui_data
+        screens = info.get("screens") or []
+        if screens:
+            names = ", ".join(x.get("ui_element", "") for x in screens[:3])
+            self.ui_data_summary.setText(
+                "UIData: " + names +
+                " · " + str(len(info.get("callbacks", []))) +
+                " game callbacks · " +
+                str(len(info.get("texture_preloads", []))) +
+                " general texture preloads")
+        else:
+            warning = (info.get("warnings") or [
+                "Import UIData.pak into the same registered game build."])[0]
+            self.ui_data_summary.setText("UIData: " + warning)
+        self.ui_data_summary.setToolTip(
+            "UIData provides screen bindings and resource paths, "
+            "not sprite atlas UV coordinates or in-game runtime scripting.")
+
+    def show_ui_data(self):
+        """Display provenance and confirmed XML references, never guessed UVs."""
+        data = self._ui_data
+        lines = [
+            "Source: " + str(data.get("source_archive") or "Not linked"),
+            "Status: " + str(data.get("status") or "unknown"),
+            "Movie: " + str(data.get("movie") or self._virtual),
+        ]
+        for screen in data.get("screens", [])[:12]:
+            lines.append(
+                "Screen: " + str(screen.get("ui_element", "")) +
+                " · GFX: " + str(screen.get("movie", "")) +
+                " · Layer: " + str(screen.get("layer", "")) +
+                " · XML: " + str(screen.get("xml", "")))
+        callbacks = data.get("callbacks", [])
+        if callbacks:
+            lines.append("Engine-driven movie callbacks: " +
+                         ", ".join(x.get("name", "") for x in callbacks[:35]))
+        textures = data.get("named_texture_references", [])
+        for t in textures[:20]:
+            lines.append("Explicit XML DDS reference: " + t["path"] +
+                         " (" + t["relation"] + ")")
+        for t in data.get("texture_preloads", [])[:25]:
+            lines.append("General preload [" + str(t["scope"]) +
+                         "]: " + t["path"])
+        for font in data.get("font_sources", [])[:8]:
+            lines.append("Localization font [" + str(font["language"]) +
+                         "]: " + font["movie"])
+        commands = data.get("menu_commands", [])
+        if commands:
+            lines.append("Menu commands (engine, not individual sprites): " +
+                         ", ".join(x.get("command") or "" for x in commands[:25]))
+        for warning in data.get("warnings", [])[:6]:
+            lines.append("Note: " + str(warning))
+        lines.append(
+            "There is no verified DDS-atlas UV/sprite mapping in UIData XML. "
+            "Static FFDec rendering does not run game ActionScript.")
+        QMessageBox.information(
+            self, "UIData / Scaleform references", "\n".join(lines)[:7000])
 
     def _symbol_changed(self, *_):
         selected = self.symbol.currentData()
