@@ -6,6 +6,7 @@ accessible as raw files, not silently converted into damaged textures.
 """
 from __future__ import annotations
 from io import BytesIO
+from types import SimpleNamespace
 import re
 
 from PIL import Image
@@ -26,9 +27,14 @@ def _mip_sizes(header, *, aux=False):
     else:
         if len(header) < 124 or header[:4] != b"\x7c\x00\x00\x00":
             raise ValueError("Unsupported legacy auxiliary DDS header.")
-        info = parse_dds(b"DDS " + header)
-        w, h, count, offset = info.width, info.height, info.mipmaps, 124
-    if count < 1 or count > 20 or w * h > 100_000_000:
+        # The old auxiliary header stores an 8-bit alpha plane (pf_flags=1),
+        # not a DDS RGB/luminance surface accepted by Stage 2 decoders.
+        w, h = (int.from_bytes(header[12:16], "little"),
+                int.from_bytes(header[8:12], "little"))
+        count = int.from_bytes(header[24:28], "little") or 1
+        info = SimpleNamespace(width=w, height=h, mipmaps=count)
+        offset = 124
+    if count < 1 or count > 20 or w <= 0 or h <= 0 or w * h > 100_000_000:
         raise ValueError("Unsupported legacy texture dimensions/mipmaps.")
     dds_header = b"DDS " + header if aux else header
     fourcc = dds_header[84:88]
