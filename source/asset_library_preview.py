@@ -224,6 +224,38 @@ def export_glb(identifier, relative, destination, *, root=None, build_id=None):
     from model_rigging import skin_glb, skin_companion_path
     from multi_pak_assets import _resolve
     relative = normalized_name(relative)
+    if relative.casefold().endswith(('.chr', '.cdf')):
+        # A 2012 CA_SKIN body is itself .chr. CDF is the source of the
+        # verified master skeleton; never invent an associated .skin file.
+        from character_assembly import assemble_character
+        from native_character_glb import create_character_glb
+        from model_preview import find_preview_mesh
+        target = _outside_library(destination, root)
+        if target.suffix.casefold() != '.glb' or not target.parent.is_dir():
+            raise ValueError('Export to .glb outside the read-only Asset Library.')
+        files = archive_entries(identifier, root)
+        if relative not in files:
+            raise FileNotFoundError('The selected model is not present in this PAK.')
+        context = archive_folder(identifier, root)
+        index = library_model_index(identifier, root, build_id=build_id)
+        character = assemble_character(context, relative, index)
+        if character is not None:
+            payload, details = create_character_glb(
+                context, relative, index, character=character)
+            report = {'textures': details['texture_count'],
+                      'rig': details['rig_status'],
+                      'bone_count': details['bone_count'],
+                      'animation_clips': 0}
+        else:
+            if relative.casefold().endswith('.cdf'):
+                raise ValueError('No supported CDF body binding for rigged export.')
+            mesh = find_preview_mesh(context,relative,files[relative].read_bytes(),
+                                     index=index)
+            payload = glb_bytes(mesh)
+            report = {'textures':0,
+                      'rig':'Unrigged: no validated CDF and master skeleton'}
+        target.write_bytes(payload)
+        return target, report
     if not relative.casefold().endswith(('.skinm', '.chrm', '.cgfm', '.cgam')):
         raise ValueError('Select a supported CryEngine render mesh for GLB export.')
     target = _outside_library(destination, root)
