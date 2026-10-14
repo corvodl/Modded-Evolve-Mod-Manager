@@ -239,6 +239,35 @@ class GfxEditingTests(unittest.TestCase):
         self.assertEqual(actual.sprites, expected.sprites)
         self.assertEqual(actual.exports, expected.exports)
 
+    @unittest.skipUnless(
+        __import__("os").environ.get("EVOLVE_GFX_FFDEC"),
+        "Pinned FFDec is unavailable; ActionScript must use the real tool")
+    def test_real_ffdec_edits_actionscript_and_recompiles_gfx(self):
+        import os
+        from gfx_preview_backend import inspect_gfx
+        installed = os.environ["EVOLVE_GFX_FFDEC"]
+        source = synthetic_gfx(action_message="OLD")
+        self.target.write_bytes(source)
+        snap = create_gfx_session(self.project, self.virtual)
+        directory = self.root / "as2"
+        report = export_gfx_scripts(
+            self.project, snap.session, directory, configured=installed)
+        self.assertGreater(report["count"], 0)
+        scripts = list(directory.rglob("*.as"))
+        self.assertTrue(scripts)
+        text = "\n".join(x.read_text(encoding="utf-8-sig") for x in scripts)
+        self.assertIn("OLD", text)
+        for file in scripts:
+            source_code = file.read_text(encoding="utf-8-sig")
+            file.write_text(source_code.replace("OLD", "NEW"), encoding="utf-8")
+        updated = rebuild_gfx_scripts(
+            self.project, snap.session, directory, configured=installed)
+        self.assertTrue(updated.changed)
+        self.assertEqual(updated.edits, 1)
+        self.assertIn(b"NEW", updated.working_file.read_bytes())
+        self.assertIn(b"OLD", self.target.read_bytes())
+        self.assertTrue(inspect_gfx(updated.working_file.read_bytes()).scripts)
+
     def test_xml_export_is_only_an_external_copy(self):
         snap = create_gfx_session(self.project, self.virtual)
         xml = self.root / "edit.xml"
