@@ -104,9 +104,22 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         data["entries"].append({"path": relative, "bytes": len(movie)})
         manifest.write_text(json.dumps(data), encoding="utf-8")
         self.window.refresh()
+        uidata = {
+            "status": "ui-data-bindings-found",
+            "source_archive": "Game/UI_Data.pak",
+            "screens": [{"ui_element": "MainMenuNew", "movie": "main_menu.gfx"}],
+            "callbacks": [{"name": "openScreen"}], "texture_preloads": [],
+        }
         with patch("qt_gfx_preview.ffdec_command",
-                   side_effect=GfxError("Configure FFDec 26.3.0")):
+                   side_effect=GfxError("Configure FFDec 26.3.0")), \
+             patch("asset_library_preview.library_gfx_ui_data",
+                   return_value=uidata) as references:
             self.window.preview(relative)
+        references.assert_called_once_with(
+            self.identifier, relative, build_id=None)
+        self.assertIn("MainMenuNew", self.window.gfx_view.ui_data_summary.text())
+        self.assertEqual(self.window.gfx_view._ui_data["source_archive"],
+                         "Game/UI_Data.pak")
         self.assertEqual(self.window.mode, "gfx")
         self.assertEqual(self.window.tabs.currentIndex(), 3)
         self.assertEqual(gfx_movie(self.identifier, relative).frames, 2)
