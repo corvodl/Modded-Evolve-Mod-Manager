@@ -755,10 +755,15 @@ class QtManager(QMainWindow):
         self.asset_table.setColumnWidth(1, 150)
         self.asset_table.itemDoubleClicked.connect(
             lambda _item: self.preview_library_archive())
+        self.asset_table.itemSelectionChanged.connect(self._sync_library_quick_actions)
         layout.addWidget(self.asset_table, 1)
         self.asset_count = _label('No imported PAKs', muted=True)
         layout.addWidget(self.asset_count)
+        # Keep actions discoverable in File/Tools, but only show quick actions
+        # for a selected archive. The old six-button row clipped at 880 px.
         actions = QHBoxLayout()
+        actions.setSpacing(8)
+        self.asset_quick = {}
         for title, callback, primary in (
             ('Import / Manage PAKs…', self.open_asset_library, False),
             ('Preview Files', self.preview_library_archive, False),
@@ -767,8 +772,19 @@ class QtManager(QMainWindow):
             ('Export PAK Layout…', self.export_selected_library_archive, False),
             ('Open Asset Library Folder', self.open_library_folder, False),
         ):
-            actions.addWidget(_button(title, callback, primary=primary), 1)
+            button = _button(title, callback, primary=primary)
+            button.setToolTip(title + ' (also available from the menu bar)')
+            self.asset_quick[title] = button
+            if title in ('Preview Files', 'Edit / Add to Mod Project', 'Open Map'):
+                actions.addWidget(button)
+            else:
+                # Preserve action objects for migration compatibility, but the
+                # corresponding commands live under File rather than a huge row.
+                button.setParent(page)
+                button.hide()
+        actions.addStretch(1)
         layout.addLayout(actions)
+        self._sync_library_quick_actions()
         self.stack.addWidget(page)
         self.pages['asset_library'] = page
 
@@ -863,6 +879,23 @@ class QtManager(QMainWindow):
             '%d of %d imported PAKs • %.1f GiB extracted • read-only previews' %
             (len(visible), len(archives),
              sum(a['bytes'] for a in archives) / (1024 ** 3)))
+        self._sync_library_quick_actions()
+
+    def _sync_library_quick_actions(self):
+        """Only offer asset actions applicable to the selected library PAK."""
+        buttons = getattr(self, 'asset_quick', {})
+        if not buttons:
+            return
+        selected = self._selected_library_id()
+        record = getattr(self, '_library_rows', {}).get(selected)
+        has_pak = record is not None
+        is_map = (has_pak and record['name'].casefold().startswith(
+            ('levels_', 'level_', 'levels2_', 'level')))
+        for label in ('Preview Files', 'Edit / Add to Mod Project', 'Open Map'):
+            button = buttons[label]
+            relevant = bool(is_map if label == 'Open Map' else has_pak)
+            button.setVisible(relevant)
+            button.setEnabled(relevant)
 
     def _library_build_context(self):
         if hasattr(self, 'asset_view_tabs') and self.asset_view_tabs.currentIndex() == 1:
