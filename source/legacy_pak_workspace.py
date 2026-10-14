@@ -127,7 +127,7 @@ def inspect_archive(source, *, verify_crc=False):
             "count": len(entries), "uncompressed": sum(e["size"] for e in entries)}
 
 
-def create_project(source, folder):
+def create_project(source, folder, *, verify_crc=True):
     """Index once; do not unpack hundreds of megabytes until a file is opened."""
     candidate = Path(source).expanduser()
     _reject_links(candidate)
@@ -137,7 +137,9 @@ def create_project(source, folder):
         raise FileExistsError("Choose a new legacy project directory.")
     if source.is_relative_to(folder) or folder.is_relative_to(source):
         raise ValueError("Legacy source and project directory must be separate.")
-    inventory = inspect_archive(source, verify_crc=True)
+    # Browsing an archive index is safe without trusting every payload CRC.
+    # Reading/exporting/rebuilding each member still validates its bytes.
+    inventory = inspect_archive(source, verify_crc=verify_crc)
     digest = sha_file(source)
     folder.mkdir(parents=True)
     try:
@@ -145,6 +147,7 @@ def create_project(source, folder):
             "format": PROJECT_FORMAT, "source": str(source),
             "source_sha256": digest, "source_name": source.name,
             "created": datetime.now(timezone.utc).isoformat(),
+            "crc_verified_at_import": bool(verify_crc),
             "entries": inventory["entries"],
         }
         (folder / PROJECT_FILE).write_text(
