@@ -7,6 +7,8 @@ on:
       - 'source/qt_manager.py'
       - 'source/qt_navigation_icons.py'
       - 'source/test_qt_modern_navigation.py'
+      - 'source/library_map_actions.py'
+      - 'source/test_library_map_actions.py'
       - '.github/workflows/qt-modern-navigation.yml'
   workflow_dispatch:
 
@@ -31,4 +33,4 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -m compileall -q source
-          python -m unittest -v test_qt_modern_navigation
+          python -m unittest -v test_qt_modern_navigation test_library_map_actions
