@@ -1248,38 +1248,41 @@ class QtWorkspaceEditor(QMainWindow):
                                 (' | streaming fragments' if self.stream else ''))
 
     def _gfx_dependency(self, virtual):
-        """Resolve an external movie only from this project or selected build."""
+        """Find an exact or unambiguous nested GFX/SWF from this build only."""
         from gfx_preview_backend import MAX_SOURCE
-        from evolve_pak_workspace import normalized_name
-        name = normalized_name(virtual).casefold()
-        if self.read_only_library:
-            from asset_library_preview import archive_entries
-            from build_collections import resolve_archive_build, build_index
-            identifier = self.library_archive['id']
-            context = resolve_archive_build(
-                identifier, build_id=self.library_archive.get('build_id'))
-            # The current imported PAK takes precedence only for an exact
-            # path. For other imports, an ambiguous build result is blocked.
-            local = [(virtual_path, path) for virtual_path, path in
-                     archive_entries(identifier).items()
-                     if virtual_path.casefold() == name]
-            if len(local) == 1:
-                file = local[0][1]
+        from gfx_dependency_resolver import choose_movie_provider, verified_movie_content
+        from build_collections import resolve_archive_build, build_index, UNASSIGNED
+        from asset_library_preview import archive_entries
+        from pathlib import Path
+        key = (str(self.workspace), str(self.current),
+               str(self.library_archive) if self.read_only_library else "workspace")
+        if getattr(self, "_gfx_scope_key", None) != key:
+            if self.read_only_library:
+                identifier = self.library_archive["id"]
+                context = resolve_archive_build(
+                    identifier, build_id=self.library_archive.get("build_id"))
+                providers = list(archive_entries(identifier).items())
+                if context != UNASSIGNED:
+                    seen = {str(path.resolve()) for _, path in providers}
+                    for name, hits in build_index(context).items():
+                        for hit in hits:
+                            candidate = Path(hit["file"])
+                            token = str(candidate.resolve())
+                            if token not in seen:
+                                providers.append((name, candidate))
+                                seen.add(token)
             else:
-                hits = build_index(context).get(name, [])
-                if len(hits) != 1:
-                    return None
-                file = Path(hits[0]['file'])
-            if file.is_symlink() or not file.is_file() or file.stat().st_size > MAX_SOURCE:
-                return None
-            return file.read_bytes()
-        matching = [item for item in self.records if item.casefold() == name]
-        if len(matching) != 1:
-            return None
-        source = checked_path(self.workspace, matching[0])
-        if source.is_symlink() or not source.is_file() or source.stat().st_size > MAX_SOURCE:
-            return None
-        return source.read_bytes()
+                # Editable workspace imports cannot silently borrow a movie
+                # from an unknown build. The user can extract verified
+                # dependencies into the workspace before editing.
+                providers = []
+                for name in self.records:
+                    if name.casefold().endswith((".gfx", ".swf")):
+                        providers.append((name, checked_path(self.workspace, name)))
+            self._gfx_scope_key, self._gfx_scope_providers = key, providers
+        chosen, _reason = choose_movie_provider(
+            virtual, self.current or virtual, self._gfx_scope_providers)
+        return verified_movie_content(chosen, MAX_SOURCE) if chosen is not None else None
 
     def refresh_model_asset_references(self):
         """Rebuild references after any newly completed Asset Library imports."""
