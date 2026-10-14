@@ -32,7 +32,9 @@ class GfxEditorDialog(QDialog):
         self.owner = owner
         self.manager = owner.manager
         self.relative = relative
-        self._backend = owner.manager.settings.get("gfx_ffdec_path")
+        from gfx_preview_backend import preferred_ffdec_override
+        self._backend = preferred_ffdec_override(
+            owner.manager.settings.get("gfx_ffdec_path"))
         from workspace_file_actions import checked_path
         from gfx_preview_backend import resolve_imports
         source = checked_path(owner.workspace, relative)
@@ -303,7 +305,9 @@ class GfxEditorDialog(QDialog):
 
     def configure_backend(self):
         self.viewer.configure_backend()
-        self._backend = self.owner.manager.settings.get("gfx_ffdec_path")
+        from gfx_preview_backend import preferred_ffdec_override
+        self._backend = preferred_ffdec_override(
+            self.owner.manager.settings.get("gfx_ffdec_path"))
         self._reload_preview()
 
     def export_png(self):
