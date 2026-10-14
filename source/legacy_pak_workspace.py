@@ -18,6 +18,7 @@ import shutil
 import stat
 import tempfile
 import zipfile
+from historical_zip import HistoricalZipFile
 
 PROJECT_FILE = ".evolve-legacy-pak.json"
 PROJECT_FORMAT = "evolve-legacy-zip-v1"
@@ -67,7 +68,7 @@ def _safe_inside(root, relative):
     return target
 
 
-def _inventory(archive):
+def _inventory(archive, *, allow_empty=False):
     records = []
     seen = set()
     total = 0
@@ -102,12 +103,12 @@ def _inventory(archive):
             "size": entry.file_size, "compressed": entry.compress_size,
             "method": entry.compress_type, "crc": entry.CRC,
         })
-    if not records:
+    if not records and not allow_empty:
         raise ValueError("Legacy PAK contains no editable files.")
     return records
 
 
-def inspect_archive(source, *, verify_crc=False):
+def inspect_archive(source, *, verify_crc=False, allow_empty=False):
     """Return metadata only for valid ordinary ZIP PAKs, without extracting."""
     candidate = Path(source).expanduser()
     _reject_links(candidate)
@@ -115,12 +116,13 @@ def inspect_archive(source, *, verify_crc=False):
     if source.suffix.casefold() != ".pak" or not zipfile.is_zipfile(source):
         raise ValueError("Select a ZIP-compatible historical .pak archive.")
     try:
-        with zipfile.ZipFile(source, "r") as archive:
-            entries = _inventory(archive)
+        with HistoricalZipFile(source, "r") as archive:
+            entries = _inventory(archive, allow_empty=allow_empty)
             if verify_crc:
-                broken = archive.testzip()
-                if broken:
-                    raise ValueError("Legacy PAK failed CRC check: " + broken)
+                for entry in archive.infolist():
+                    with archive.open(entry) as stream:
+                        while stream.read(BUFFER):
+                            pass
     except (zipfile.BadZipFile, RuntimeError, EOFError) as exc:
         raise ValueError("Malformed or unreadable legacy PAK: " + str(exc)) from exc
     return {"name": source.name, "entries": entries,
@@ -204,7 +206,7 @@ def read_member(project, name, *, max_bytes=MAX_FILE):
         return staged.read_bytes()
     if record["size"] > max_bytes:
         raise ValueError("Archive member is too large for this preview.")
-    with zipfile.ZipFile(project["source_path"]) as archive:
+    with HistoricalZipFile(project["source_path"]) as archive:
         data = archive.read(record["archive_name"])
     if len(data) != record["size"]:
         raise ValueError("Archive data size changed.")
@@ -327,7 +329,7 @@ def export_member(project, name, destination):
                 with staged.open("rb") as source:
                     shutil.copyfileobj(source, out, BUFFER)
             else:
-                with zipfile.ZipFile(project["source_path"]) as archive, \
+                with HistoricalZipFile(project["source_path"]) as archive, \
                      archive.open(record["archive_name"], "r") as source:
                     shutil.copyfileobj(source, out, BUFFER)
         except Exception:
@@ -359,7 +361,7 @@ def rebuild_pak(project, destination, *, progress=None):
     os.close(fd)
     temp = Path(temporary)
     try:
-        with zipfile.ZipFile(project["source_path"]) as original, \
+        with HistoricalZipFile(project["source_path"]) as original, \
              zipfile.ZipFile(temp, "w", allowZip64=True) as output:
             original_entries = {normalized_member(i.filename): i
                                 for i in original.infolist() if not i.is_dir()}

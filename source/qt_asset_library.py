@@ -92,25 +92,6 @@ class AssetLibraryController(QObject):
                             self.progress.emit(name, done, total))
                     results.append(result)
                 except Exception as exc:
-                    # Historical plain-ZIP CryEngine PAKs cannot satisfy the
-                    # signed Stage 2 extension. Index them as separate,
-                    # editable legacy projects rather than reporting them as
-                    # corrupted Stage 2 archives.
-                    try:
-                        from legacy_pak_import import try_import_legacy
-                        parent = self.parent()
-                        projects = (parent.projects_path if parent is not None
-                                    and hasattr(parent, "projects_path") else
-                                    Path(stage).resolve().parent / "Projects")
-                        legacy = try_import_legacy(path, projects)
-                        if legacy is not None:
-                            results.append(legacy)
-                            continue
-                    except Exception as legacy_exc:
-                        results.append({"name": path.name, "status": "error",
-                                        "error": "Legacy ZIP inspection failed: " +
-                                                 str(legacy_exc)[:260]})
-                        continue
                     results.append({"name": path.name, "status": "error",
                                     "error": str(exc)[:400]})
             return results

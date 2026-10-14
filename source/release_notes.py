@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.44', (
+        'Browse 2012 Evolve PAKs and their contents in the default Asset Library.',
+        'Fix historical ZIP path separators without weakening corruption checks.',
+        'Older model formats may still be unsupported by the 3D preview.',
+    )),
     ('1.1.18-beta.43', (
         'Fix sidebar icon outlines so all eight Flaticon glyphs are centered and fully visible.',
         'Normalize vector icon geometry and correct high-DPI Qt drawing on compact Windows sidebars.',
