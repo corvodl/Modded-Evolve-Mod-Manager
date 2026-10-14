@@ -134,10 +134,6 @@ def parse_ui_data_references(movie, documents, *, archive="UIData.pak"):
                 path = child.get("file", "")
                 # Keep XML scope (NoLevel, InGame, etc.) to avoid implying an
                 # irrelevant in-game HUD texture is a main-menu GFX binding.
-                ancestor_names = []
-                for branch in preload.iter():
-                    if parent is branch:
-                        break
                 record = {
                     "path": path, "scope": parent.tag,
                     "relation": "engine-preload-not-sprite-binding"}
