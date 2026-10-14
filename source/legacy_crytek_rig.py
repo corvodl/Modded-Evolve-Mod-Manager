@@ -84,9 +84,18 @@ def read_legacy_bones(raw):
         except UnicodeDecodeError as exc:
             raise ValueError('Invalid UTF-8 historical bone name.') from exc
         name = name.strip()
+        if not name:
+            raise ValueError('Blank historical bone name.')
         key = name.casefold()
-        if not name or key in seen:
-            raise ValueError('Blank or duplicate historical bone name.')
+        if key in seen:
+            # Some 2012 wildlife (Lava Squid) actually have duplicate
+            # source labels for distinct indexed bones. Give their glTF
+            # nodes deterministic unique display names while preserving
+            # every ORIGINAL bone ID, parent edge and matrix.
+            name = name + '__source_joint_' + str(i)
+            key = name.casefold()
+            if key in seen:
+                raise ValueError('Unresolvable duplicate historical bone label.')
         seen.add(key)
         a = np.asarray(struct.unpack_from('<12f', raw, record + 216),
                        dtype=np.float64).reshape(3, 4)
@@ -106,8 +115,11 @@ def read_legacy_bones(raw):
         parents.append(parent)
         rest.append(world)
         inverse.append(inv)
-    if parents.count(-1) != 1:
-        raise ValueError('Historical skeleton must have one root.')
+    if not 1 <= parents.count(-1) <= MAX_BONES:
+        raise ValueError('Historical skeleton has no valid root.')
+    # Disconnected dual-root accessory rigs occur in early Teleporter
+    # attachments; their glTF skin omits the optional single-root selector.
+    # Do not attach those roots to a fabricated weighted game bone.
     return tuple(names), tuple(parents), tuple(rest), tuple(inverse)
 
 
