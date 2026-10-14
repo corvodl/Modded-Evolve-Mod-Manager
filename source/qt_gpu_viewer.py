@@ -1370,7 +1370,18 @@ class QtGPUModelPanel(QWidget):
             'background:#33333d;color:#888995;}')
         self.play_native_button.clicked.connect(self.load_native)
         catalog_layout.addWidget(self.native_clip_select, 1)
-        catalog_layout.addWidget(self.play_native_button)
+        native_controls = QHBoxLayout()
+        native_controls.setSpacing(5)
+        native_controls.addWidget(self.play_native_button, 1)
+        self.cancel_native_button = QPushButton('×')
+        self.cancel_native_button.setObjectName('cancelNativeAnimationDecode')
+        self.cancel_native_button.setFixedWidth(34)
+        self.cancel_native_button.setToolTip(
+            'Cancel current character motion conversion without editing assets.')
+        self.cancel_native_button.setEnabled(False)
+        self.cancel_native_button.clicked.connect(self.cancel_native_conversion)
+        native_controls.addWidget(self.cancel_native_button)
+        catalog_layout.addLayout(native_controls)
         self.native_clip_select.itemDoubleClicked.connect(lambda _item: self.load_native())
         self.layer_row_widget = QWidget(self)
         layer_row = QVBoxLayout(self.layer_row_widget)
@@ -1513,6 +1524,7 @@ class QtGPUModelPanel(QWidget):
             native_clip_playability, preferred_third_person_dba)
         self._native_generation += 1
         self._auto_dba_loading = False
+        self.cancel_native_button.setEnabled(False)
         # A new character should never inherit the old character's filter,
         # which could conceal the exact 3P DBA and prevent default playback.
         identity = str(character or description).casefold()
@@ -1728,6 +1740,15 @@ class QtGPUModelPanel(QWidget):
                 detail + '\nGame path: ' + ref.virtual_path +
                 '\nAsset Library path: ' + source)
 
+    def cancel_native_conversion(self):
+        # The background converter polls this generation and terminates its
+        # child process. Old QThreadPool results are ignored by token.
+        self._native_generation += 1
+        self._auto_dba_loading = False
+        self.cancel_native_button.setEnabled(False)
+        self.play_native_button.setEnabled(True)
+        self.native_info.setText('Motion decoding cancelled. Source assets were not changed.')
+
     def load_native(self):
         from character_animation_catalog import native_clip_playability
         i = self.native_clip_select.currentData()
@@ -1758,6 +1779,7 @@ class QtGPUModelPanel(QWidget):
             self.play_native_button.setEnabled(False)
             self.native_info.setText(
                 'Decoding base + additive/aimpose CAF on one verified skeleton…')
+            self.cancel_native_button.setEnabled(True)
             self._native_pool.start(_NativeConversion(
                 lambda unused: self._native_loader(ref, base_ref=base),
                 ref, token, self._native_signals))
@@ -1773,12 +1795,14 @@ class QtGPUModelPanel(QWidget):
              'Locating and extracting exact CAF from verified game PAK…'
              if state != 'candidate' else 'Decoding standalone CAF and rigged model…'))
         self.play_native_button.setEnabled(False)
+        self.cancel_native_button.setEnabled(True)
         job = _NativeConversion(self._native_loader, ref, token, self._native_signals)
         self._native_pool.start(job)
 
     def _native_ready(self, token, result, error):
         if token != self._native_generation:
             return
+        self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
         was_default_dba = self._auto_dba_loading
         self._auto_dba_loading = False
