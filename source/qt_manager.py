@@ -2618,8 +2618,12 @@ class QtManager(QMainWindow):
             return
         if isinstance(result, list):
             failed = [row for row in result if row.get('status') == 'error']
-            self._log('Asset Library: %d imported or already present, %d failures' %
-                      (len(result) - len(failed), len(failed)))
+            historical = [row for row in result
+                          if row.get('status') == 'legacy-project']
+            verified = len(result) - len(failed) - len(historical)
+            self._log('Asset Library: %d signed archive imports, %d legacy ZIP '
+                      'projects kept separate, %d failures' %
+                      (verified, len(historical), len(failed)))
             if failed:
                 self._log('First failed PAK: ' + failed[0]['name'] +
                           ': ' + failed[0]['error'][:180])
@@ -2634,7 +2638,7 @@ class QtManager(QMainWindow):
         # interrupt a playing animation or dirty text buffer.
         for editor in tuple(self.editors):
             try:
-                if (editor.isVisible() and editor.mode == 'models'
+                if (editor.isVisible() and getattr(editor, 'mode', None) == 'models'
                         and editor.current and not
                         (editor.model_panel and editor.model_panel.anim_playing)):
                     # An imported shared PAK previously left this editor
