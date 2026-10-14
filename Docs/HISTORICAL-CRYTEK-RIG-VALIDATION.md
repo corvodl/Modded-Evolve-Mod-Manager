@@ -19,6 +19,7 @@ py -3.11 source/legacy_rig_diagnostics.py `
   --body "C:\Temp\ParasiteHost3.chr" `
   --skeleton "C:\Temp\ParasiteHost3_Skeleton.chr" `
   --dba "C:\Temp\ParasiteHost3.dba" `
+  --chrparams "C:\Temp\ParasiteHost3_Skeleton.chrparams" `
   --report "C:\Temp\ParasiteHost3-rig-report.json" `
   --export-glb "C:\Temp\ParasiteHost3-weighted.glb"
 ```
