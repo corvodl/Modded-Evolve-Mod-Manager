@@ -66,5 +66,23 @@ invalidations and collisions. A dedicated Windows CI job downloads the pinned
 FFDec test dependency in CI only and exercises real vector-frame rendering.
 No proprietary Evolve files or keys are committed.
 
+## Supplied main-menu sample: structure-only check
+
+The user supplied `main_menu.gfx` privately for this PR. It was NOT added
+to Git or any release/test fixture. Its SHA-256 is
+`7ac1133f42fcb3a6b74ddd228860beb154965d8f6a1d8f2ab4e02630bc442762`;
+it is uncompressed GFX v15, 353,610 bytes, 1920×1080 at 30 FPS, with
+one root frame, 169 sprite definitions (58 of them zero-frame
+nonvisual/class shells), 87 named exports and three ImportAssets2 movies:
+`gfxfontlib_locfont.gfx`, `effectsModeSelect.swf`, and
+`effectsMainMenuFocus.swf`. Its sprite definitions and script exports
+motivated the zero-frame parser fix and visual-only sprite picker;
+the `.swf` imports prompted separate SWF dependency validation.
+
+This sample was inspected at the binary/tag level without running FFDec
+against those proprietary bytes, and the actual on-screen in-game main
+menu cannot be certified from this analysis. The real-renderer CI tests
+use only redistributed synthetic shapes and sprites.
+
 This feature never changes the user's game, project files, Asset Library
 archive contents or signed PAKs. If output exists, select a new PNG name.
