@@ -383,7 +383,8 @@ def skin_glb_legacy_composite(glb, parts, skeleton_raw):
     weights = np.concatenate([r.weights for r in rigs])
     result, summary = skin_glb_verified(
         glb, names, parents, rest, inverse, joints, weights,
-        sum(r.subset_count for r in rigs))
+        sum(r.subset_count for r in rigs),
+        allow_multiple_roots=True)
     summary['binding_source'] = ('body' if overrides else 'master')
     summary['part_count'] = len(parts)
     summary['source_format'] = 'CryTek 0x745'
@@ -410,7 +411,8 @@ def skin_glb_legacy(glb, body_raw, skeleton_raw):
     rig = read_legacy_rig(body_raw, skeleton_raw, vertex_count)
     payload, summary = skin_glb_verified(
         glb, rig.names, rig.parents, rig.rest, rig.inverse,
-        rig.joints, rig.weights, rig.subset_count)
+        rig.joints, rig.weights, rig.subset_count,
+        allow_multiple_roots=True)
     summary['source_format'] = 'CryTek 0x745'
     summary['body_bones'] = len(rig.body_bones)
     summary['master_bones'] = len(rig.names)
