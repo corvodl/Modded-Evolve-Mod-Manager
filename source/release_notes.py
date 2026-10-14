@@ -4,6 +4,10 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.43', (
+        'Fix sidebar icon outlines so all eight Flaticon glyphs are centered and fully visible.',
+        'Normalize vector icon geometry and correct high-DPI Qt drawing on compact Windows sidebars.',
+    )),
     ('1.1.18-beta.42', (
         'Replace unclear sidebar glyphs with recognisable Flaticon Regular Rounded icons.',
         'Route verified ordinary ZIP PAKs to separate legacy editing projects instead of signed-import errors.',
