@@ -11,7 +11,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QComboBox, QFileDialog, QMessageBox, QGroupBox, QWidget,
+    QComboBox, QFileDialog, QMessageBox, QGroupBox, QWidget, QMenuBar,
 )
 from gfx_preview_backend import inspect_gfx, GfxError, resolve_imports, export_gfx_png
 from gfx_edit_backend import (
@@ -47,6 +47,14 @@ class GfxEditorDialog(QDialog):
         self.resize(1120, 820)
         self.setMinimumSize(670, 550)
         outer = QVBoxLayout(self)
+        # The old six-button editing row clipped at normal Windows sizes.
+        # All advanced actions remain discoverable in native menus.
+        self.commands = QMenuBar(self)
+        self.commands.setObjectName("gfxEditorMenuBar")
+        outer.setMenuBar(self.commands)
+        self.file_menu = self.commands.addMenu("File")
+        self.edit_menu = self.commands.addMenu("Edit")
+        self.tools_menu = self.commands.addMenu("Tools")
         self.warning = QLabel(
             "Edits are staged in a separate GFX session. "
             "The original project is unchanged until Apply to Mod Project. "
@@ -104,7 +112,13 @@ class GfxEditorDialog(QDialog):
         self.undo.setIcon(action_icon(self.undo.text()))
         self.undo.clicked.connect(self.undo_edit)
         advanced.addWidget(self.undo)
-        layout.addLayout(advanced)
+        # Do not place these six long actions in a single visible row.
+        # They remain real buttons for programmatic operation and tests;
+        # menus are the user-facing discoverable entry points.
+        for button in (self.open_ffdec, self.xml_export, self.xml_import,
+                       self.import_movie, self.reload_movie, self.undo):
+            button.setParent(tools)
+            button.hide()
         script_controls = QHBoxLayout()
         self.script_export = QPushButton("Export ActionScript sources…")
         self.script_export.setIcon(action_icon(self.script_export.text()))
@@ -117,7 +131,20 @@ class GfxEditorDialog(QDialog):
         self.script_import.clicked.connect(self.import_scripts)
         script_controls.addWidget(self.script_import)
         script_controls.addStretch()
-        layout.addLayout(script_controls)
+        for button in (self.script_export, self.script_import):
+            button.setParent(tools)
+            button.hide()
+        self.file_menu.addAction("Import edited GFX…", self.import_edited)
+        self.file_menu.addAction("Export editable tag XML…", self.export_xml)
+        self.file_menu.addAction("Export ActionScript sources…", self.export_scripts)
+        self.edit_menu.addAction("Replace selected resource…", self.replace_resource)
+        self.edit_menu.addAction("Undo staged edit", self.undo_edit)
+        self.tools_menu.addAction("Open full FFDec editor…", self.open_advanced)
+        self.tools_menu.addAction("Rebuild from edited XML…", self.import_xml)
+        self.tools_menu.addAction("Rebuild from edited ActionScript…", self.import_scripts)
+        self.tools_menu.addAction("Reload FFDec changes", self.reload_edited)
+        self.edit_menu.aboutToShow.connect(self._sync_command_menus)
+        self.tools_menu.aboutToShow.connect(self._sync_command_menus)
         outer.addWidget(tools)
 
         footer = QHBoxLayout()
@@ -134,6 +161,16 @@ class GfxEditorDialog(QDialog):
         footer.addWidget(cancel)
         outer.addLayout(footer)
         self._reload_preview()
+
+    def _sync_command_menus(self):
+        for action in self.edit_menu.actions():
+            if action.text() == "Undo staged edit":
+                action.setEnabled(self.undo.isEnabled())
+            elif action.text() == "Replace selected resource…":
+                action.setEnabled(self.replace.isEnabled())
+        for action in self.tools_menu.actions():
+            if action.text() == "Reload FFDec changes":
+                action.setEnabled(self.reload_movie.isEnabled())
 
     def _reload_preview(self):
         self.snapshot = read_gfx_session(self.owner.workspace,
