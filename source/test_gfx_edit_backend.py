@@ -77,7 +77,7 @@ class GfxEditingTests(unittest.TestCase):
         self.assertEqual(self.target.read_bytes(), self.original)
         with self.assertRaisesRegex(GfxError, "does not belong"):
             read_gfx_session(self.root, snap.session)
-        with self.assertRaisesRegex(GfxError, "different"):
+        with self.assertRaisesRegex(GfxError, "unchanged"):
             use_edited_gfx_file(self.project, snap.session, snap.working_file)
 
     def test_reject_changed_project_after_ffdec_session_opened(self):
@@ -153,6 +153,36 @@ class GfxEditingTests(unittest.TestCase):
             result = rebuild_gfx_from_xml(self.project, snap.session, xml)
         self.assertTrue(result.changed)
         self.assertEqual(self.target.read_bytes(), self.original)
+
+    @unittest.skipUnless(
+        __import__("os").environ.get("EVOLVE_GFX_FFDEC"),
+        "Pinned FFDec is unavailable; real GFX editing CI runs separately")
+    def test_real_ffdec_shape_replace_produces_green_render_and_undo(self):
+        import io
+        import os
+        from PIL import Image
+        from gfx_preview_backend import render_gfx
+        installed = os.environ["EVOLVE_GFX_FFDEC"]
+        snap = create_gfx_session(self.project, self.virtual)
+        shape = self.root / "replacement.svg"
+        shape.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" '
+            'width="64" height="48"><rect width="64" height="48" '
+            'fill="#00ff00"/></svg>', encoding="utf-8")
+        result = replace_gfx_resource(
+            self.project, snap.session, "shape", 1, shape, configured=installed)
+        self.assertTrue(result.changed)
+        self.assertEqual(self.target.read_bytes(), self.original)
+        output = render_gfx(
+            result.working_file.read_bytes(),
+            virtual=self.virtual, backend=installed)
+        with Image.open(io.BytesIO(output)) as image:
+            pixel = image.convert("RGBA").getpixel((30, 20))
+            self.assertGreater(pixel[1], 200, pixel)
+            self.assertLess(pixel[0], 90, pixel)
+        undone = undo_gfx_session(self.project, snap.session)
+        self.assertFalse(undone.changed)
+        self.assertEqual(undone.working_file.read_bytes(), self.original)
 
     def test_xml_export_is_only_an_external_copy(self):
         snap = create_gfx_session(self.project, self.virtual)
