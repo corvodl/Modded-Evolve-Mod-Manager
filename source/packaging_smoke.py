@@ -47,24 +47,11 @@ assert frida.__version__ and numpy.__version__ and material_preview.render_textu
 assert gpu_model_preview.prepare_geometry and gpu_model_preview.Win32GPUPreview
 assert gfx_preview_backend.inspect_gfx and gfx_preview_backend.render_gfx
 assert qt_gfx_preview.GfxPreviewWidget
-from gfx_preview_backend import bundled_ffdec_paths, ffdec_command
-ffdec_bundled = bundled_ffdec_paths()
-assert ffdec_bundled is not None, 'Bundled FFDec/Temurin runtime missing'
-assert ffdec_command()[0] == str(ffdec_bundled[0])
-assert ffdec_bundled[2].is_file()
-assert (BUNDLE/'third_party'/'FFDec'/'NOTICE.txt').is_file()
-assert (BUNDLE/'third_party'/'FFDec'/'Sources'/'FFDec-source-b2ef2d3.zip').is_file()
-assert (BUNDLE/'third_party'/'FFDec'/'Sources'/'OpenJDK21U-jdk-sources_21.0.12_8.tar.gz').is_file()
-assert (BUNDLE/'third_party'/'FFDec'/'jre'/'legal').is_dir()
-# Functional package smoke: use only a redistribution-safe synthetic shape
-# and the actual Java+FFDec copied into the compiled Windows application.
-from gfx_synthetic_fixtures import synthetic_gfx
-import io
-synthetic_png = gfx_preview_backend.render_gfx(
-    synthetic_gfx(), virtual='package-gfx-test.gfx')
-with Image.open(io.BytesIO(synthetic_png)) as rendered:
-    rendered.load()
-    assert rendered.size == (64, 48)
+from gfx_preview_backend import ffdec_command, FFDEC_RELEASE_URL
+assert 'jpexs-decompiler/releases/tag/version26.3.0' in FFDEC_RELEASE_URL
+# FFDec is a separate optional installation. The executable must launch
+# and show the setup notice even if FFDec/Java are not installed.
+assert not (BUNDLE / 'third_party' / 'FFDec').exists(), 'Do not bundle FFDec or Java'
 assert gfx_edit_backend.create_gfx_session and gfx_edit_backend.apply_gfx_session
 assert qt_gfx_editor.GfxEditorDialog
 assert model_blender_export.glb_bytes and model_blender_export.convert_folder
