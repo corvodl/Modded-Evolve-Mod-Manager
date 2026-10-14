@@ -159,6 +159,41 @@ class LegacyBulkTransferTests(unittest.TestCase):
             plan_legacy_build_export(self.legacy, self.stage2, root=self.lib,
                                      prefix="does/not/exist")
 
+    def test_incomplete_import_is_listed_without_disabling_healthy_paks(self):
+        self.assets()
+        damaged = self.lib / ("archive__" + "c" * 20) / "asset-library.json"
+        data = json.loads(damaged.read_text())
+        data["warnings"] = ["synthetic unsupported entry"]
+        damaged.write_text(json.dumps(data))
+        plan = plan_legacy_build_export(self.legacy, self.stage2, root=self.lib)
+        self.assertEqual(plan["source_usable_archive_count"], 3)
+        self.assertEqual(plan["source_imported_archive_count"], 4)
+        self.assertEqual(plan["source_blocked_archives"][0]["archive_id"], "c" * 20)
+        self.assertNotIn(("map:desert_harsh", "terrain/terrain.dat"),
+                         {(row["scope"], row["path"]) for row in plan["files"]})
+        self.assertIn("global", {row["scope"] for row in plan["files"]})
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            plan_legacy_build_export(
+                self.legacy, self.stage2, root=self.lib, source_archive="c" * 20)
+
+    def test_snapshot_without_location_still_protects_original_game_root(self):
+        from build_collections import update_location
+        self.assets()
+        update_location(self.legacy, None, root=self.lib)
+        with self.assertRaisesRegex(ValueError, "outside game"):
+            export_legacy_build_bundle(
+                self.legacy, self.stage2,
+                self.legacy_game / "export-should-not-exist", root=self.lib)
+        self.assertFalse((self.legacy_game / "export-should-not-exist").exists())
+
+    def test_empty_registered_build_import_must_be_completed(self):
+        from build_collections import register_build
+        empty_stage2 = register_build("Empty Stage 2", "stage2", root=self.lib)
+        self.assets()
+        with self.assertRaisesRegex(ValueError, "Import Stage 2"):
+            plan_legacy_build_export(
+                self.legacy, empty_stage2, root=self.lib)
+
     def test_plan_only_has_no_payload_files(self):
         self.assets()
         destination = self.home / "inventory-only"
