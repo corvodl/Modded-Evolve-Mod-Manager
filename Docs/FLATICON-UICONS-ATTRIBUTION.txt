@@ -1,0 +1,24 @@
+Flaticon Uicons attribution (beta.40)
+=========================================
+
+Uicons by Flaticon: https://www.flaticon.com/uicons
+Author / publisher: Freepik Company / Flaticon.
+License: https://github.com/freepik-company/flaticon-uicons/blob/main/LICENSE
+Official source: https://github.com/freepik-company/flaticon-uicons
+Pinned source commit: 01c7cf8e403afdf879ff56c99235a34df81db6a2
+
+Eight Solid Rounded icon glyphs are extracted as SVG outlines:
+Instructions: book-alt
+Asset Library: archive
+Modding: tools
+Play & Restore: play
+Settings: settings
+Credits: users
+What's New: newspaper
+Developer: terminal
+
+These graphics are licensed third-party icons used with credit. They remain
+the property of their respective authors. Do not resell, redistribute, or
+relicense the icons separately from the manager. The full icon font is neither
+bundled into the release nor loaded at runtime. See the application's Credits
+page for attribution.

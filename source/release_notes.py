@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.40', (
+        'Replace sidebar symbols with matching Flaticon Uicons across all eight sections.',
+        'Improve sidebar icon size, alignment and visibility on Windows displays.',
+        'Include icon attribution in Credits while keeping navigation icons available offline.',
+    )),
     ('1.1.18-beta.39', (
         'Add consistent icons across file explorers, texture, model and GFX controls.',
         'Show the official FFDec download link when selecting a GFX movie without a configured renderer.',

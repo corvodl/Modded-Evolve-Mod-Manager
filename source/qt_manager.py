@@ -274,8 +274,8 @@ class NavigationButton(QPushButton):
     """
 
     def icon_bounds(self):
-        side = min(20, max(0, self.height() - 12))
-        return QRect(12, (self.height() - side) // 2, side, side)
+        side = min(24, max(0, self.height() - 12))
+        return QRect(10, (self.height() - side) // 2, side, side)
 
     def paintEvent(self, event):
         option = QStyleOptionButton()
@@ -285,7 +285,7 @@ class NavigationButton(QPushButton):
         painter = QPainter(self)
         self.style().drawControl(QStyle.CE_PushButton, option, painter, self)
         bounds = self.icon_bounds()
-        x = 12
+        x = 10
         if not self.icon().isNull():
             mode = QIcon.Normal if self.isEnabled() else QIcon.Disabled
             self.icon().paint(painter, bounds, Qt.AlignCenter, mode)
@@ -442,8 +442,8 @@ class QtManager(QMainWindow):
             btn.setToolTip(title)
             btn.setIcon(navigation_icon(
                 title, palette(self.appearance_mode, self.appearance_overrides)['text']))
-            btn.setIconSize(QSize(20, 20))
-            btn.setMinimumHeight(40)
+            btn.setIconSize(QSize(24, 24))
+            btn.setMinimumHeight(44)
             btn.setFocusPolicy(Qt.StrongFocus)
             btn.setObjectName('navActive' if index == 0 else 'nav')
             navlay.addWidget(btn)
@@ -1789,6 +1789,12 @@ class QtManager(QMainWindow):
         panel.addWidget(_button(
             'https://modded-evolve.com/',
             lambda: webbrowser.open('https://modded-evolve.com/')))
+        attribution, attribution_panel = _card(
+            'Interface icons', 'Uicons by Flaticon — Solid Rounded set.')
+        attribution_panel.addWidget(_button(
+            'Uicons by Flaticon  ↗',
+            lambda: webbrowser.open('https://www.flaticon.com/uicons')))
+        lay.addWidget(attribution)
         lay.addWidget(_label(self.t('credits_install_note'), muted=True))
         lay.addStretch()
         self.stack.addWidget(scroll)
