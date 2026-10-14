@@ -31,6 +31,7 @@ class LegacyRig:
     weights: np.ndarray  # four u8 weights per vertex; exact sum 255
     subset_count: int
     body_bones: tuple
+    binding_source: str = 'master'
 
     @property
     def active_joints(self):
@@ -131,15 +132,37 @@ def _legacy_streams(raw):
 
 
 def _remap_body_bones(body_names, body_parents, body_rest,
-                      master_names, master_parents, master_rest):
+                      master_names, master_parents, master_rest,
+                      active_body_bones):
+    """Map weighted bones by identity, or explicitly select a body-local rig.
+
+    Mesh source bind transforms are authoritative if weighted rest poses or
+    skeletal parentage differ. We must then export the whole BODY armature,
+    not use master inverse-binds with body vertices or tolerate mismatches.
+    Nonweighted body bones may contain stale rest transforms, but we never
+    use them to bind the mesh.
+    """
     lookup = {name.casefold(): i for i, name in enumerate(master_names)}
-    ids = []
+    if len(lookup) != len(master_names):
+        raise ValueError('Master skeleton has duplicate bone names.')
     body_keys = {name.casefold() for name in body_names}
+    if len(body_keys) != len(body_names):
+        raise ValueError('Body skeleton has duplicate bone names.')
+    active = {int(i) for i in active_body_bones}
+    if active and (min(active) < 0 or max(active) >= len(body_names)):
+        raise ValueError('Body palette refers to a nonexistent bone.')
+    ids = []
+    changed = []
     for i, name in enumerate(body_names):
-        key = name.casefold()
-        if key not in lookup:
-            raise ValueError('Body bone absent from master skeleton: ' + name)
-        j = lookup[key]
+        j = lookup.get(name.casefold())
+        if j is None:
+            if i in active:
+                changed.append((name, 'missing master bone'))
+            ids.append(0)
+            continue
+        ids.append(j)
+        if i not in active:
+            continue
         parent = body_parents[i]
         ancestor = master_parents[j]
         while ancestor != -1 and master_names[ancestor].casefold() not in body_keys:
@@ -147,11 +170,10 @@ def _remap_body_bones(body_names, body_parents, body_rest,
         actual = master_names[ancestor].casefold() if ancestor != -1 else None
         expected = body_names[parent].casefold() if parent != -1 else None
         if actual != expected:
-            raise ValueError('Body/master bone hierarchy differs at ' + name)
+            changed.append((name, 'parent hierarchy differs'))
         if not np.allclose(body_rest[i], master_rest[j], atol=0.005, rtol=0.0001):
-            raise ValueError('Body/master bone rest transform differs at ' + name)
-        ids.append(j)
-    return np.asarray(ids, dtype=np.uint16)
+            changed.append((name, 'weighted rest transform differs'))
+    return np.asarray(ids, dtype=np.uint16), tuple(changed)
 
 
 def read_legacy_rig(body, skeleton, vertex_count):
@@ -164,10 +186,8 @@ def read_legacy_rig(body, skeleton, vertex_count):
     """
     if not 3 <= vertex_count <= MAX_VERTICES:
         raise ValueError('Invalid historical vertex count.')
-    body_names, body_parents, body_rest, _ = read_legacy_bones(body)
+    body_names, body_parents, body_rest, body_inverse = read_legacy_bones(body)
     names, parents, rest, inverse = read_legacy_bones(skeleton)
-    body_to_master = _remap_body_bones(
-        body_names, body_parents, body_rest, names, parents, rest)
     streams = _legacy_streams(body)
     if 9 not in streams or 5 not in streams or 0 not in streams:
         raise ValueError('Historical mesh lacks position, skin or index stream.')
@@ -217,7 +237,7 @@ def read_legacy_rig(body, skeleton, vertex_count):
         if np.any(relevant_ids[active] >= palette_count):
             raise ValueError('Active local joint exceeds historical palette.')
         body_indices = palette[np.where(active, relevant_ids, 0)]
-        converted = body_to_master[body_indices].astype(np.uint16)
+        converted = body_indices.astype(np.uint16)
         converted[~active] = 0
         shared = covered[used]
         if shared.any() and not np.array_equal(joints[used[shared]], converted[shared]):
@@ -228,8 +248,20 @@ def read_legacy_rig(body, skeleton, vertex_count):
         raise ValueError('Historical subset palettes do not cover all mesh vertices.')
     if not np.any(weights > 0):
         raise ValueError('No active historical vertex influences.')
-    return LegacyRig(names, parents, rest, inverse, joints, weights,
-                     count_subsets, body_names)
+    active_bones = np.unique(joints[weights > 0])
+    body_to_master, differences = _remap_body_bones(
+        body_names, body_parents, body_rest, names, parents, rest, active_bones)
+    if differences:
+        # A variant's mesh can be valid against its *own* bind skeleton
+        # even when the CDF master rig uses a different animation rest pose.
+        # Retaining the body hierarchy + matching inverse matrices ensures
+        # no zero-pose deformation. DBA playback must retarget separately.
+        return LegacyRig(body_names, body_parents, body_rest, body_inverse,
+                         joints, weights, count_subsets, body_names, 'body')
+    mapped = body_to_master[joints]
+    mapped[weights == 0] = 0
+    return LegacyRig(names, parents, rest, inverse, mapped, weights,
+                     count_subsets, body_names, 'master')
 
 
 def indexed_historical_dba_paths(raw):
@@ -281,6 +313,71 @@ def probe_legacy_dba(raw):
                       'require successful verified conversion before playback.'}
 
 
+def skin_glb_legacy_composite(glb, parts, skeleton_raw):
+    """Join validated historical body parts with one compatible armature.
+
+    Each part is (rendered .chr bytes, vertex count). The resulting skin
+    retains all mesh/material subsets. If any part requires its own bind pose,
+    adopt that bone table only when every weighted joint in every other part
+    agrees in name, ancestry and rest matrix. Otherwise fail closed rather
+    than silently attach conflicting joints to a shared armature.
+    """
+    from model_textured_export import _unpack_glb
+    from model_rigging import skin_glb_verified
+    if not parts or len(parts) > 32:
+        raise ValueError('Expected 1-32 historical render parts.')
+    doc, _ = _unpack_glb(glb)
+    meshes = doc.get('meshes', ())
+    if len(meshes) != 1 or not meshes[0].get('primitives'):
+        raise ValueError('Historical CDF GLB needs one combined geometry mesh.')
+    accessors = {p['attributes'].get('POSITION')
+                 for p in meshes[0]['primitives']}
+    if len(accessors) != 1 or None in accessors:
+        raise ValueError('Composite requires one shared POSITION accessor.')
+    expected = doc['accessors'][accessors.pop()]['count']
+    if expected != sum(int(item[1]) for item in parts):
+        raise ValueError('Composite geometry and rig vertex counts differ.')
+    rigs = [read_legacy_rig(data, skeleton_raw, count) for data, count in parts]
+    overrides = [r for r in rigs if r.binding_source == 'body']
+    canonical = max(overrides, key=lambda r: len(r.names)) if overrides else rigs[0]
+    names, parents, rest, inverse = (canonical.names, canonical.parents,
+                                    canonical.rest, canonical.inverse)
+    by_name = {name.casefold(): i for i, name in enumerate(names)}
+    arrays = []
+    for rig in rigs:
+        mapping = np.zeros(len(rig.names), dtype=np.uint16)
+        for i in rig.active_joints:
+            bone = rig.names[i]
+            target = by_name.get(bone.casefold())
+            if target is None:
+                raise ValueError('No shared historical rig joint: ' + bone)
+            original_parent = rig.parents[i]
+            ancestor = parents[target]
+            available = {s.casefold() for s in rig.names}
+            while ancestor != -1 and names[ancestor].casefold() not in available:
+                ancestor = parents[ancestor]
+            actual = names[ancestor].casefold() if ancestor != -1 else None
+            expected_parent = (rig.names[original_parent].casefold()
+                               if original_parent != -1 else None)
+            if actual != expected_parent:
+                raise ValueError('Conflicting historical part hierarchy: ' + bone)
+            if not np.allclose(rig.rest[i], rest[target], atol=.005, rtol=.0001):
+                raise ValueError('Conflicting historical part bind pose: ' + bone)
+            mapping[i] = target
+        converted = mapping[rig.joints].copy()
+        converted[rig.weights == 0] = 0
+        arrays.append(converted)
+    joints = np.concatenate(arrays)
+    weights = np.concatenate([r.weights for r in rigs])
+    result, summary = skin_glb_verified(
+        glb, names, parents, rest, inverse, joints, weights,
+        sum(r.subset_count for r in rigs))
+    summary['binding_source'] = ('body' if overrides else 'master')
+    summary['part_count'] = len(parts)
+    summary['source_format'] = 'CryTek 0x745'
+    return result, summary
+
+
 def skin_glb_legacy(glb, body_raw, skeleton_raw):
     """Export validated native .chr geometry as a *real* glTF skeleton/skin.
 
@@ -305,4 +402,5 @@ def skin_glb_legacy(glb, body_raw, skeleton_raw):
     summary['source_format'] = 'CryTek 0x745'
     summary['body_bones'] = len(rig.body_bones)
     summary['master_bones'] = len(rig.names)
+    summary['binding_source'] = rig.binding_source
     return payload, summary
