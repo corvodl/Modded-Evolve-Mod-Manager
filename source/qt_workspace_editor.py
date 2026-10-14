@@ -1296,6 +1296,7 @@ class QtWorkspaceEditor(QMainWindow):
                 rel + (' | Asset Library — read-only preview'
                        if self.read_only_library else ' | project copy only'))
             self._load_recovery()
+            self._sync_editor_context_actions()
         elif self.mode == 'images':
             if is_split_dds(rel):
                 try:
