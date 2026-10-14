@@ -274,7 +274,7 @@ class NavigationButton(QPushButton):
     """
 
     def icon_bounds(self):
-        side = min(24, max(0, self.height() - 12))
+        side = min(30, max(0, self.height() - 12), max(0, self.width() - 90))
         return QRect(10, (self.height() - side) // 2, side, side)
 
     def paintEvent(self, event):
@@ -289,7 +289,7 @@ class NavigationButton(QPushButton):
         if not self.icon().isNull():
             mode = QIcon.Normal if self.isEnabled() else QIcon.Disabled
             self.icon().paint(painter, bounds, Qt.AlignCenter, mode)
-            x = bounds.right() + 10
+            x = bounds.right() + 9
         label = QRect(x, 0, max(0, self.width() - x - 8), self.height())
         painter.setFont(self.font())
         painter.setPen(QColor('#ffffff' if self.objectName() == 'navActive'
@@ -441,9 +441,9 @@ class QtManager(QMainWindow):
             btn.setAccessibleName(title)
             btn.setToolTip(title)
             btn.setIcon(navigation_icon(
-                title, palette(self.appearance_mode, self.appearance_overrides)['text']))
-            btn.setIconSize(QSize(24, 24))
-            btn.setMinimumHeight(44)
+                title, palette(self.appearance_mode, self.appearance_overrides)['text'], 32))
+            btn.setIconSize(QSize(30, 30))
+            btn.setMinimumHeight(48)
             btn.setFocusPolicy(Qt.StrongFocus)
             btn.setObjectName('navActive' if index == 0 else 'nav')
             navlay.addWidget(btn)
@@ -738,7 +738,7 @@ class QtManager(QMainWindow):
         self.asset_table.setHorizontalHeaderLabels(
             ('Dependency Group', 'Folder', 'Description', 'File', 'Extracted Files', 'Size'))
         self.asset_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.asset_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.asset_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.asset_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.asset_table.setAlternatingRowColors(True)
         self.asset_table.setSortingEnabled(True)
@@ -886,11 +886,14 @@ class QtManager(QMainWindow):
         buttons = getattr(self, 'asset_quick', {})
         if not buttons:
             return
-        selected = self._selected_library_id()
-        record = getattr(self, '_library_rows', {}).get(selected)
-        has_pak = record is not None
-        is_map = (has_pak and record['name'].casefold().startswith(
-            ('levels_', 'level_', 'levels2_', 'level')))
+        identifiers = self._selected_library_ids()
+        records = [getattr(self, '_library_rows', {}).get(identifier)
+                   for identifier in identifiers]
+        has_pak = bool(records) and all(record is not None for record in records)
+        from library_map_actions import library_map_identity
+        # The UI must also recognize level.pak/terraintexture.pak when their
+        # original source is Game/levels/Tutorial, not only levels_X.pak.
+        is_map = bool(has_pak and all(library_map_identity(r) for r in records))
         for label in ('Preview Files', 'Edit / Add to Mod Project', 'Open Map'):
             button = buttons[label]
             relevant = bool(is_map if label == 'Open Map' else has_pak)
@@ -913,17 +916,24 @@ class QtManager(QMainWindow):
             record['id'], source_build_id=build_id, open_level=open_level)
 
     def edit_selected_library_map(self):
-        record = self._selected_library_record()
-        if record is None:
+        identifiers = self._selected_library_ids()
+        if not identifiers:
+            self.info('Open Map', 'Select one or more imported map PAKs.')
             return
-        from pak_dependencies import is_level_pak
-        if not is_level_pak(record['name']):
-            self.info('Open Map', 'Select a supported level PAK in Asset Library.')
+        from library_map_actions import validated_map_selection
+        records = [getattr(self, '_library_rows', {}).get(identifier)
+                   for identifier in identifiers]
+        try:
+            primary, _ = validated_map_selection(records)
+        except ValueError as exc:
+            self.info('Open Map', str(exc))
             return
         self.open_library_map_from_archive(
-            record['id'], build_id=self._library_build_context())
+            primary['id'], build_id=self._library_build_context(),
+            selected_ids=identifiers)
 
-    def open_library_map_from_archive(self, identifier, *, build_id=None):
+    def open_library_map_from_archive(self, identifier, *, build_id=None,
+                                      selected_ids=None):
         """Extract map family as separate editable Stage 2 target workspaces."""
         try:
             if self.busy or self.asset_library_controller.busy:
@@ -931,30 +941,39 @@ class QtManager(QMainWindow):
             from asset_library import imported_archives
             from asset_library_bulk import stage_source_for_import
             from build_collections import catalog, resolve_archive_build
-            from level_asset_mount import level_from_source
-            from pak_dependencies import is_level_pak
+            from library_map_actions import (library_map_identity,
+                                             validated_map_selection)
             records = {item['id']: item for item in imported_archives()}
-            selected = records.get(identifier)
-            if not selected or not is_level_pak(selected['name']):
-                raise ValueError('Select a supported imported level PAK.')
+            requested = tuple(dict.fromkeys(selected_ids or (identifier,)))
+            if identifier not in requested:
+                raise ValueError('The primary map PAK must be selected.')
+            if any(archive_id not in records for archive_id in requested):
+                raise ValueError('One selected map PAK is no longer imported.')
+            primary, map_id = validated_map_selection(
+                [records[archive_id] for archive_id in requested])
+            if primary['id'] != identifier:
+                raise ValueError('Selected primary map PAK changed; select it again.')
+            selected = records[identifier]
             if not build_id or build_id == 'all':
                 build_id = resolve_archive_build(identifier)
             builds = catalog()['builds']
             if build_id not in builds or builds[build_id]['family'] != 'stage2':
                 raise ValueError(
-                    'Select a registered Stage 2 build. Historical maps remain '
-                    'reference-only until a verified target mapping is prepared.')
-            if identifier not in builds[build_id]['members']:
-                raise ValueError('Selected map archive does not belong to this build.')
-            map_id = (level_from_source(selected['source']) or
-                      level_from_source(selected['name']))
-            if not map_id:
-                raise ValueError('Map identity could not be established from source paths.')
+                    'Assign the selected map archives to one registered Stage 2 '
+                    'snapshot in Asset Library > By Build first. Historical '
+                    'maps remain reference-only until a verified target exists.')
+            if any(archive_id not in builds[build_id]['members']
+                   for archive_id in requested):
+                raise ValueError(
+                    'Selected level PAKs must all belong to the same registered '
+                    'Stage 2 build. Use By Build to select that snapshot first.')
             same_map = [
                 item for item in records.values()
                 if item['id'] in builds[build_id]['members']
-                and (level_from_source(item['source']) or
-                     level_from_source(item['name'])) == map_id]
+                and library_map_identity(item) == map_id]
+            if any(archive_id not in {item['id'] for item in same_map}
+                   for archive_id in requested):
+                raise ValueError('Selected PAKs do not form one verified map family.')
             if not 1 <= len(same_map) <= 30:
                 raise ValueError('Map family exceeds the 30-PAK bounded extraction limit.')
             game = self.game_root or self._find_game_root()
@@ -978,13 +997,33 @@ class QtManager(QMainWindow):
         except (OSError, ValueError, RuntimeError) as exc:
             self.failure(exc)
 
-    def _selected_library_id(self):
+    def _selected_library_ids(self):
+        """Stable archive IDs from selected rows, including Shift/Ctrl ranges.
+
+        Sorting and filtered table positions are not archive identifiers.
+        Keep the single-row helpers for preview/project operations.
+        """
         table = getattr(self, 'asset_table', None)
-        if table is None:
+        if table is None or table.selectionModel() is None:
+            return ()
+        values = []
+        for index in table.selectionModel().selectedRows(0):
+            cell = table.item(index.row(), 0)
+            if cell is not None:
+                identifier = cell.data(Qt.UserRole)
+                if identifier is not None and identifier not in values:
+                    values.append(identifier)
+        return tuple(values)
+
+    def _selected_library_id(self):
+        identifiers = self._selected_library_ids()
+        if not identifiers:
             return None
+        table = self.asset_table
         row = table.currentRow()
         cell = table.item(row, 0) if row >= 0 else None
-        return cell.data(Qt.UserRole) if cell else None
+        current = cell.data(Qt.UserRole) if cell is not None else None
+        return current if current in identifiers else identifiers[0]
 
     def _selected_library_record(self):
         identifier = self._selected_library_id()
