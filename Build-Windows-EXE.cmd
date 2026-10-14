@@ -14,6 +14,9 @@ if errorlevel 1 goto failed
 rem Always derive the Windows taskbar/EXE icon from the tracked black/red PNG.
 "%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" source\build_brand_icons.py
 if errorlevel 1 goto failed
+rem Render Flaticon Uicons glyphs from the version-pinned official GitHub source.
+"%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" source\build_flaticon_nav_icons.py
+if errorlevel 1 goto failed
 set "TEMP=%CD%\.build\temp"
 set "TMP=%CD%\.build\temp"
 pushd source
