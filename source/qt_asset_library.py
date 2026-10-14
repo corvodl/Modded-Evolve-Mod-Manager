@@ -579,10 +579,11 @@ class AssetLibraryDialog(QDialog):
             return
         try:
             output = Path(destination).absolute()
+            verified_output = output.resolve(strict=False)
             if (output.exists() or output.is_symlink()
                     or any(part.is_symlink() for part in output.parents)
-                    or output.is_relative_to(Path(target_project).resolve())
-                    or output.is_relative_to(Path(LIBRARY_HOME).resolve())):
+                    or verified_output.is_relative_to(Path(target_project).resolve())
+                    or verified_output.is_relative_to(Path(LIBRARY_HOME).resolve())):
                 raise ValueError("Choose a new external manifest outside projects and the Asset Library.")
             plan = prepare_transfer(
                 source_id, target_id, requested,
