@@ -586,6 +586,18 @@ class QtManager(QMainWindow):
     def _after_drawer_animation(self):
         if not self._drawer_open:
             self.drawer.hide()
+            return
+        # A child of an initially hidden animated drawer can retain its
+        # default 30px geometry on Windows even with a fixed 48px size hint.
+        # Re-layout after the final animation geometry has been applied and
+        # explicitly resize each visible button. setFixedSize() alone does
+        # not correct stale native child geometry in this situation.
+        layout = self.drawer.layout()
+        layout.invalidate()
+        layout.activate()
+        for button in self.nav_buttons:
+            button.resize(174, 48)
+        self.drawer.update()
 
     def open_page(self, index):
         if not 0 <= index < self.stack.count():
