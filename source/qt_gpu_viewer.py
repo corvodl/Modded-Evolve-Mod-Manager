@@ -1347,6 +1347,12 @@ class QtGPUModelPanel(QWidget):
         self.native_result_count.setStyleSheet('color:#aeb1c1;font-size:11px;')
         self.native_result_count.setWordWrap(True)
         catalog_layout.addWidget(self.native_result_count)
+        self.native_capabilities = QLabel('')
+        self.native_capabilities.setObjectName('historicalNativeCapabilityStatus')
+        self.native_capabilities.setStyleSheet('color:#acb0bd;font-size:10px;')
+        self.native_capabilities.setWordWrap(True)
+        self.native_capabilities.hide()
+        catalog_layout.addWidget(self.native_capabilities)
 
         self.native_clip_select = _CompactAnimationList(self)
         self.native_clip_select.setToolTip(
@@ -1364,7 +1370,18 @@ class QtGPUModelPanel(QWidget):
             'background:#33333d;color:#888995;}')
         self.play_native_button.clicked.connect(self.load_native)
         catalog_layout.addWidget(self.native_clip_select, 1)
-        catalog_layout.addWidget(self.play_native_button)
+        native_controls = QHBoxLayout()
+        native_controls.setSpacing(5)
+        native_controls.addWidget(self.play_native_button, 1)
+        self.cancel_native_button = QPushButton('×')
+        self.cancel_native_button.setObjectName('cancelNativeAnimationDecode')
+        self.cancel_native_button.setFixedWidth(34)
+        self.cancel_native_button.setToolTip(
+            'Cancel current character motion conversion without editing assets.')
+        self.cancel_native_button.setEnabled(False)
+        self.cancel_native_button.clicked.connect(self.cancel_native_conversion)
+        native_controls.addWidget(self.cancel_native_button)
+        catalog_layout.addLayout(native_controls)
         self.native_clip_select.itemDoubleClicked.connect(lambda _item: self.load_native())
         self.layer_row_widget = QWidget(self)
         layer_row = QVBoxLayout(self.layer_row_widget)
@@ -1500,12 +1517,14 @@ class QtGPUModelPanel(QWidget):
         self._native_signals.completed.connect(self._native_ready)
 
     def set_native_catalog(self, references, idle=None, description='',
-                           loader=None, refresh_library=None, character=None):
+                           loader=None, refresh_library=None, character=None,
+                           historical_character=False):
         """Filter a potentially huge native animation catalog on the GUI thread."""
         from character_animation_catalog import (
             native_clip_playability, preferred_third_person_dba)
         self._native_generation += 1
         self._auto_dba_loading = False
+        self.cancel_native_button.setEnabled(False)
         # A new character should never inherit the old character's filter,
         # which could conceal the exact 3P DBA and prevent default playback.
         identity = str(character or description).casefold()
@@ -1522,6 +1541,17 @@ class QtGPUModelPanel(QWidget):
         self._catalog_character = identity
         self._native_loader = loader
         self._native_references = tuple(references)
+        self._historical_character = bool(historical_character)
+        if historical_character:
+            found = any(ref.kind == 'dba' and ref.available for ref in references)
+            self.native_capabilities.setText(
+                '2012 CryTek • Mesh: available • Rig: not yet validated • '
+                'DBA: ' + ('found' if found else 'not indexed') +
+                ' • Clips: not decoded • Playback: not verified • '
+                'Rigged export: requires validation')
+            self.native_capabilities.show()
+        else:
+            self.native_capabilities.hide()
         # The selected row from another character must not carry over:
         # the numeric catalog index may now name a completely different clip.
         self.native_clip_select.blockSignals(True)
@@ -1710,6 +1740,15 @@ class QtGPUModelPanel(QWidget):
                 detail + '\nGame path: ' + ref.virtual_path +
                 '\nAsset Library path: ' + source)
 
+    def cancel_native_conversion(self):
+        # The background converter polls this generation and terminates its
+        # child process. Old QThreadPool results are ignored by token.
+        self._native_generation += 1
+        self._auto_dba_loading = False
+        self.cancel_native_button.setEnabled(False)
+        self.play_native_button.setEnabled(True)
+        self.native_info.setText('Motion decoding cancelled. Source assets were not changed.')
+
     def load_native(self):
         from character_animation_catalog import native_clip_playability
         i = self.native_clip_select.currentData()
@@ -1740,6 +1779,7 @@ class QtGPUModelPanel(QWidget):
             self.play_native_button.setEnabled(False)
             self.native_info.setText(
                 'Decoding base + additive/aimpose CAF on one verified skeleton…')
+            self.cancel_native_button.setEnabled(True)
             self._native_pool.start(_NativeConversion(
                 lambda unused: self._native_loader(ref, base_ref=base),
                 ref, token, self._native_signals))
@@ -1755,16 +1795,23 @@ class QtGPUModelPanel(QWidget):
              'Locating and extracting exact CAF from verified game PAK…'
              if state != 'candidate' else 'Decoding standalone CAF and rigged model…'))
         self.play_native_button.setEnabled(False)
+        self.cancel_native_button.setEnabled(True)
         job = _NativeConversion(self._native_loader, ref, token, self._native_signals)
         self._native_pool.start(job)
 
     def _native_ready(self, token, result, error):
         if token != self._native_generation:
             return
+        self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
         was_default_dba = self._auto_dba_loading
         self._auto_dba_loading = False
         if error:
+            if getattr(self, '_historical_character', False):
+                self.native_capabilities.setText(
+                    '2012 CryTek • Mesh: available • Rig/clip: not verified • '
+                    'DBA: indexed only • Playback/export: needs validated rig; '
+                    'see diagnostic below')
             self.native_info.setText('Native animation unavailable: ' + error[:230])
             return
         payload, details = result
@@ -1791,6 +1838,11 @@ class QtGPUModelPanel(QWidget):
         except (ValueError, OSError) as exc:
             self.native_info.setText('Animation playback rejected: ' + str(exc)[:230])
             return
+        if getattr(self, '_historical_character', False):
+            self.native_capabilities.setText(
+                '2012 CryTek • Mesh: available • Rig: validated • '
+                'DBA: found • Clips: decoded and verified • '
+                'Playback: available • Rigged export: available')
         resolved = details.get('_resolved_caf_reference')
         if resolved is not None:
             from character_animation_catalog import native_clip_playability

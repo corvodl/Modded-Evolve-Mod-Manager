@@ -230,6 +230,28 @@ def textured_model_from_workspace(mesh, workspace, relative,
             index = _workspace_index(workspace, projects_root, stage_root)
         except (OSError, ValueError, KeyError):
             index = None
+    if str(relative).casefold().endswith('.chr') and index is not None:
+        # Prototype CA_SKIN attachments use a renderable .chr rather than
+        # .skinm/.skin. Use its verified CDF master skeleton when available,
+        # and never export a decorative, unweighted armature.
+        from character_assembly import assemble_character
+        character = assemble_character(
+            workspace, relative, index, texture_folder=texture_folder,
+            projects_root=projects_root, stage_root=stage_root)
+        if (character is not None and
+                any(virtual.casefold() == str(relative).casefold()
+                    for virtual, _, _, _ in character.rig_parts)):
+            from native_character_glb import create_character_glb
+            payload, details = create_character_glb(
+                workspace, relative, index, character=character,
+                texture_folder=texture_folder, projects_root=projects_root,
+                stage_root=stage_root)
+            return payload, {
+                'texture_count': details['texture_count'],
+                'texture_status': 'Historical material preview (textures optional)',
+                'rig_status': details['rig_status'],
+                'bone_count': details['bone_count'],
+                'rig_layout': details['rig_layout']}
     payload = glb_bytes(mesh, name=Path(relative).stem)
     report = {'texture_count': 0, 'texture_status': 'No material resources found',
               'rig_status': 'Unrigged: no compatible skin source found',

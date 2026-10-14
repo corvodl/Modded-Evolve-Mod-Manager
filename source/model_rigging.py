@@ -161,10 +161,25 @@ def remap_skin_weights(mesh_raw, vertex_count, bone_count):
 
 
 def skin_glb(glb, mesh_raw, skeleton_raw):
-    """Add real glTF joints, weights, parent hierarchy and inverse bind matrices.
+    """Rig a modern CrChF v7 mesh, preserving its original validation."""
+    from model_textured_export import _unpack_glb
+    document, _ = _unpack_glb(glb)
+    primitives = document['meshes'][0].get('primitives', []) if len(document.get('meshes', [])) == 1 else []
+    if not primitives or len({p['attributes'].get('POSITION') for p in primitives}) != 1:
+        raise ValueError('Expected one mesh and one shared POSITION stream.')
+    pos = primitives[0]['attributes']['POSITION']
+    vertex_count = document['accessors'][pos]['count']
+    names, parents, world, inverse = parse_compiled_bones(skeleton_raw)
+    ids, weights, subsets = remap_skin_weights(mesh_raw, vertex_count, len(names))
+    return skin_glb_verified(glb, names, parents, world, inverse, ids, weights, subsets)
 
-    Expects the manager's existing Blender GLB: one mesh and common POSITION
-    accessor for all material primitives. Optional diffuse images remain intact.
+
+def skin_glb_verified(glb, names, parents, world, inverse, bone_ids, weights, subsets):
+    """Write shared glTF skin accessors from a separately validated rig.
+
+    The 2012 parser and modern parser feed this same construction path,
+    and both must pass the exported GLB rest-pose verification. Never call
+    this with guessed IDs, unnormalized influences or unverified bind data.
     """
     from model_textured_export import _unpack_glb, _pack_glb
     document, binary = _unpack_glb(glb)
@@ -175,11 +190,19 @@ def skin_glb(glb, mesh_raw, skeleton_raw):
         raise ValueError('No GLB primitives to rig.')
     positions = {p['attributes'].get('POSITION') for p in primitives}
     if len(positions) != 1 or None in positions:
-        raise ValueError('All material groups must share the original position stream.')
+        raise ValueError('All material groups must share one position stream.')
     vertex_count = document['accessors'][positions.pop()]['count']
-    names, parents, world, inverse = parse_compiled_bones(skeleton_raw)
-    bone_ids, weights, subsets = remap_skin_weights(
-        mesh_raw, vertex_count, len(names))
+    bone_ids = np.asarray(bone_ids, dtype=np.uint16)
+    weights = np.asarray(weights, dtype=np.uint8)
+    if (bone_ids.shape != weights.shape or bone_ids.shape[0] != vertex_count
+            or bone_ids.shape[1] not in (4, 8)
+            or len(names) != len(parents) or len(names) != len(world)
+            or len(names) != len(inverse) or not 1 <= len(names) <= 1024):
+        raise ValueError('Verified skin data does not match GLB mesh or skeleton.')
+    if (np.any(weights.astype(np.uint16).sum(axis=1) != 255)
+            or np.any(bone_ids[weights > 0] >= len(names))
+            or parents.count(-1) != 1):
+        raise ValueError('Invalid verified bone weights or root.')
     mesh_nodes = [i for i, node in enumerate(document.get('nodes', []))
                   if node.get('mesh') == 0]
     if len(mesh_nodes) != 1:

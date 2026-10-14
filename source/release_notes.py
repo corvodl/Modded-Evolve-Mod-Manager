@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.47', (
+        'Preview Xbox 360 DXT1 and CTX1 textures from split high/low DDS archives.',
+        'Export validated historical CryTek character armatures and weights to Blender.',
+        'Attempt historical DBA conversion with rig checks and clear unsupported-motion diagnostics.',
+    )),
     ('1.1.18-beta.46', (
         'Resolve historical character textures from their cooked DDS files and streaming archives.',
         'Report missing visible textures and unsupported Legacy rigs accurately.',

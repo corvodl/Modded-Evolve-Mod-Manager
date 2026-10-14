@@ -174,7 +174,29 @@ def _external_lookup(folder, ref):
     return None
 
 
-def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM, normal_map=False):
+def _historical_2012_character(index, workspace, relative):
+    """Gate Xenos transforms on an actual CryTek 0x745 model in this build."""
+    import struct
+    from pathlib import PurePosixPath
+    name = str(relative).replace('\\', '/')
+    if name.casefold().endswith('.cdf'):
+        name = str(PurePosixPath(name).with_suffix('.chr'))
+    if not name.casefold().endswith('.chr'):
+        return False
+    hits, status = _resolve(index, name, preferred_workspace=workspace)
+    if status != 'found':
+        return False
+    candidate = Path(hits[0]['file'])
+    if not candidate.is_file() or candidate.is_symlink():
+        return False
+    with candidate.open('rb') as handle:
+        header = handle.read(16)
+    return (len(header) == 16 and header[:8] == b'CryTek\0\0'
+            and struct.unpack_from('<I', header, 12)[0] == 0x745)
+
+
+def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM,
+                    normal_map=False, historical_2012=False):
     path = item['file']
     if path.stat().st_size > MAX_TEXTURE_BYTES:
         raise ValueError('Texture fragment exceeds the 64 MiB preview limit.')
@@ -256,7 +278,10 @@ def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM, norm
     # CryEngine normal maps can be BC5 XY or DXT5nm alpha/green, not
     # directly usable tangent-space RGB. The same normalized pixels feed the
     # Qt shader and GLB exporter; never rescale a lower mip as a substitute.
-    if normal_map:
+    from xbox360_dds import is_2012_console_dds, decode_2012_console_dds
+    if historical_2012 and is_2012_console_dds(raw):
+        tex = decode_2012_console_dds(raw, normal_map=normal_map)
+    elif normal_map:
         from normal_map_utils import decode_normal_dds_image
         tex = decode_normal_dds_image(raw, source_name=relative)
     else:
@@ -282,6 +307,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
     decode_max = 4096 if texture_quality == "highest" else 1024
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
+    historical_2012 = _historical_2012_character(
+        index, workspace, model_relative)
     from model_material_resolve import find_model_material
     if material_override:
         from multi_pak_assets import _resolve
@@ -421,7 +448,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         if hit is None:
             return None
         return _decode_texture(hit, index=index, max_dimension=decode_max,
-                               normal_map=normal)
+                               normal_map=normal, historical_2012=historical_2012)
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; sources = []; references = []; hidden = []
@@ -488,7 +515,9 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 result.append(None)
                 sources.append(None)
                 continue
-            image = _decode_texture(found, index=index, max_dimension=decode_max)
+            image = _decode_texture(
+                found, index=index, max_dimension=decode_max,
+                historical_2012=historical_2012)
             result.append(material_color(image, item.get('Diffuse', '1,1,1')))
             sources.append((
                 str(found.get('relative') or diffuse),
