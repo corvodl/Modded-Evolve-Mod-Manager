@@ -127,6 +127,34 @@ def navigation_icon(section, color="#f5f3f6", size=24):
     return QIcon(pixmap)
 
 
+def asset_kind_for_path(relative, *, group=None):
+    """Semantic icon selection shared by Stage 2 and historical file explorers."""
+    if group == "character-assembly":
+        return "assembly"
+    if group == "character":
+        return "mesh"
+    path = str(relative).replace("\\", "/").casefold()
+    filename = path.rsplit("/", 1)[-1]
+    suffix = Path(filename).suffix
+    if filename.endswith((".dds", ".tif", ".tiff", ".png", ".jpg", ".jpeg", ".ktx")) or ".dds." in filename:
+        return "image"
+    if suffix in (".chr", ".chrm", ".skinm", ".cgf", ".cga", ".skin", ".obj", ".fbx", ".glb", ".gltf"):
+        return "mesh"
+    if suffix == ".cdf":
+        return "assembly"
+    if suffix in (".caf", ".dba", ".anm", ".animevents", ".bspace"):
+        return "animation"
+    if suffix in (".mtl", ".mtlxml"):
+        return "material"
+    if suffix in (".gfx", ".swf", ".usm"):
+        return "gfx"
+    if suffix in (".fsb", ".fev", ".wav", ".ogg", ".mp3"):
+        return "audio"
+    if suffix in (".xml", ".lua", ".py", ".json", ".cfg", ".ini", ".ent", ".chrparams"):
+        return "file-code"
+    return "file"
+
+
 def resource_icon(kind, color="#f5f3f6", size=18):
     """Offline Flaticon asset icons independent of OS file associations."""
     code = kind if kind in ASSET_STEMS else "asset-" + kind
