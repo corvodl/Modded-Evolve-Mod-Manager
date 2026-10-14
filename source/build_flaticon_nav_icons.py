@@ -1,4 +1,4 @@
-"""Build eight nav SVGs from Flaticon's official Uicons solid-rounded font.
+"""Build eight nav SVGs from Flaticon's official Uicons regular-rounded font.
 
 The input is pinned to Flaticon's public GitHub repo, not scraped from the
 Flaticon website. Only eight SVG paths are emitted; the full webfont is never
@@ -13,23 +13,23 @@ from urllib.request import Request, urlopen
 
 # Official project: https://github.com/freepik-company/flaticon-uicons
 UPSTREAM_COMMIT = "01c7cf8e403afdf879ff56c99235a34df81db6a2"
-UPSTREAM_PATH = "src/uicons/webfonts/uicons-solid-rounded.woff"
-EXPECTED_GIT_BLOB = "1644aee4bd4ff5c7b1c7be2a92c4b06031c63c9c"
+UPSTREAM_PATH = "src/uicons/webfonts/uicons-regular-rounded.woff"
+EXPECTED_GIT_BLOB = "71f829a7fec21786dfabafd67b32dd62ccf04827"
 SOURCE_URL = (
     "https://raw.githubusercontent.com/freepik-company/flaticon-uicons/"
     + UPSTREAM_COMMIT + "/" + UPSTREAM_PATH
 )
 MAX_SOURCE_BYTES = 700_000
-# Codes from official src/uicons/css/solid/rounded.css at the same commit.
+# Codes from official src/uicons/css/regular/rounded.css at the same commit.
 NAV_GLYPHS = {
-    "instructions": ("book-alt", 0xF272),
-    "asset-library": ("archive", 0xF16E),
-    "modding": ("tools", 0xFDA3),
-    "play-restore": ("play", 0xFA7F),
-    "settings": ("settings", 0xFBAC),
-    "credits": ("users", 0xFE7E),
-    "whats-new": ("newspaper", 0xF994),
-    "developer": ("terminal", 0xFD4E),
+    "instructions": ("book-alt", 0xF274),
+    "asset-library": ("archive", 0xF16D),
+    "modding": ("tools", 0xFDCB),
+    "play-restore": ("play", 0xFA9E),
+    "settings": ("settings", 0xFBD2),
+    "credits": ("users", 0xFEA6),
+    "whats-new": ("newspaper", 0xF9A5),
+    "developer": ("terminal", 0xFD78),
 }
 
 

@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
-    QDockWidget, QTreeWidgetItemIterator, QFrame, QAbstractItemView,
+    QDockWidget, QTreeWidgetItemIterator, QFrame, QAbstractItemView, QHeaderView, QStyle,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
@@ -340,13 +340,15 @@ class QtWorkspaceEditor(QMainWindow):
         self.search.textChanged.connect(self.populate)
         explorer_box.addWidget(self.search)
         explorer_controls = QHBoxLayout()
-        self.favorites_only = QPushButton('★ Favorites')
+        self.favorites_only = QPushButton('Favorites')
         self.favorites_only.setIcon(navigation_icon('favorite', size=16))
+        self.favorites_only.setIconSize(QSize(16, 16))
         self.favorites_only.setCheckable(True)
         self.favorites_only.toggled.connect(self.populate)
         explorer_controls.addWidget(self.favorites_only)
         open_folder_button = self._button('Open Folder', self.explore)
-        open_folder_button.setIcon(navigation_icon('folder-open', size=18))
+        open_folder_button.setIcon(self.style().standardIcon(QStyle.SP_DirOpenIcon))
+        open_folder_button.setIconSize(QSize(16, 16))
         explorer_controls.addWidget(open_folder_button)
         explorer_controls.addStretch()
         explorer_box.addLayout(explorer_controls)
@@ -356,9 +358,18 @@ class QtWorkspaceEditor(QMainWindow):
         self.file_tree.setColumnCount(2)
         self.file_tree.setHeaderLabels(('File / Folder', 'Size'))
         self.file_tree.setSortingEnabled(True)
-        self.file_tree.setColumnWidth(0, 260)
-        self.file_tree.setColumnWidth(1, 75)
-        self.file_tree.setAlternatingRowColors(True)
+        header = self.file_tree.header()
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(72)
+        header.setSectionResizeMode(0, QHeaderView.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        self.file_tree.setColumnWidth(0, 425)
+        self.file_tree.setColumnWidth(1, 94)
+        self.file_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.file_tree.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.file_tree.setTextElideMode(Qt.ElideMiddle)
+        self.file_tree.setAlternatingRowColors(False)
+        self.file_tree.setStyleSheet('QTreeWidget#unifiedAssetExplorerTree::item:selected { background:#772b3d; color:#fff; } QTreeWidget#unifiedAssetExplorerTree::item { padding:4px 2px; }')
         if self.read_only_library:
             self.file_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.file_tree.itemSelectionChanged.connect(self.load_selection)
@@ -1087,7 +1098,7 @@ class QtWorkspaceEditor(QMainWindow):
                         # Store the original virtual directory independent of
                         # friendly display aliases (e.g. Gorgon/mon_lurker).
                         folder.setData(0, Qt.UserRole + 1, key)
-                        folder.setIcon(0, navigation_icon('folder', size=16))
+                        folder.setIcon(0, self.style().standardIcon(QStyle.SP_DirIcon))
                         description = character_asset_description(key)
                         folder.setToolTip(0, key + (
                             '\\n' + description if description else ''))
@@ -1098,7 +1109,7 @@ class QtWorkspaceEditor(QMainWindow):
                         folders[key] = folder
                     parent = folders[key]
                 key = str(self.workspace) + '|' + rel
-                symbol = '★ ' if key in self.favorites else ''
+                symbol = ''  # No duplicate text glyph over a file icon.
                 path = self.workspace / 'files' / rel
                 try:
                     stat = path.stat()
@@ -1110,7 +1121,7 @@ class QtWorkspaceEditor(QMainWindow):
                 category = self._category(rel)
                 item = QTreeWidgetItem([symbol + parts[-1], size])
                 item.setData(0, Qt.UserRole, rel)
-                item.setIcon(0, navigation_icon({'files':'file','images':'texture','models':'model','gfx':'gfx'}[category], size=16))
+                item.setIcon(0, self.style().standardIcon(QStyle.SP_FileIcon))
                 from character_aliases import character_asset_description
                 char_description = character_asset_description(rel)
                 item.setToolTip(0, category.title() + ' • ' + rel +
@@ -1124,7 +1135,7 @@ class QtWorkspaceEditor(QMainWindow):
                     continue
                 group = family_by_parent.get(rel)
                 if group is not None:
-                    item.setText(0, symbol + group.title)
+                    item.setText(0, group.title)
                     item.setToolTip(0, 'Open complete game character; expand for individual LODs, skins and dependencies.\\n'
                                        + rel + ('\\n' + char_description if char_description else ''))
                     item.setText(1, str(len(group.members)) + ' assets')
@@ -1145,7 +1156,7 @@ class QtWorkspaceEditor(QMainWindow):
                 parent = folders.get('/'.join(primary.split('/')[:-1]))
                 if parent is None:
                     continue
-                item = QTreeWidgetItem(['◆ ' + full.label, 'CDF assembly'])
+                item = QTreeWidgetItem([full.label, 'CDF assembly'])
                 item.setData(0, Qt.UserRole, primary)
                 item.setData(0, Qt.UserRole + 2, 'full-character')
                 item.setIcon(0, navigation_icon('layers', size=16))

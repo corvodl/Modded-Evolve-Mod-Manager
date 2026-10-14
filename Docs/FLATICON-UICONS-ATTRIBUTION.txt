@@ -7,7 +7,7 @@ License: https://github.com/freepik-company/flaticon-uicons/blob/main/LICENSE
 Official source: https://github.com/freepik-company/flaticon-uicons
 Pinned source commit: 01c7cf8e403afdf879ff56c99235a34df81db6a2
 
-Eight Solid Rounded icon glyphs are extracted as SVG outlines:
+Eight Regular Rounded icon glyphs are extracted as SVG outlines:
 Instructions: book-alt
 Asset Library: archive
 Modding: tools
