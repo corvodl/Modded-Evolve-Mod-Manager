@@ -1595,6 +1595,16 @@ class QtWorkspaceEditor(QMainWindow):
             source_loose = self.loose_animation_index
 
             def build_native_clip(ref, *, base_ref=None):
+                # A changed/closed model invalidates the native generation.
+                # Poll only plain Python state, never call QWidget methods
+                # from the background converter thread.
+                panel = self.model_panel
+                generation = getattr(panel, '_native_generation', None)
+                def cancelled():
+                    return (self.model_panel is not panel or
+                            getattr(panel, '_native_generation', None) != generation)
+                if cancelled():
+                    raise ValueError('Historical model animation cancelled.')
                 # QThreadPool worker: use the exact model skeleton for both
                 # clips. Layered aim poses must never run alone.
                 from animation_on_demand import resolve_caf_for_play
@@ -1620,7 +1630,8 @@ class QtWorkspaceEditor(QMainWindow):
                     projects_root=source_projects, stage_root=source_stage,
                     clips=(base_selected, selected) if base_selected is not None else None,
                     clip=selected if base_selected is None else None,
-                    allow_layered=base_selected is not None)
+                    allow_layered=base_selected is not None,
+                    cancelled=cancelled)
                 if base_selected is not None:
                     details['_layered_pair'] = (base_selected.name, selected.name)
                 from model_animation import AnimatedGLB
@@ -1634,7 +1645,11 @@ class QtWorkspaceEditor(QMainWindow):
             self.model_panel.set_native_catalog(
                 refs, idle, config, loader=build_native_clip,
                 refresh_library=self.refresh_model_asset_references,
-                character=anim_model)
+                character=anim_model,
+                historical_character=bool(
+                    self.character_preview is not None and
+                    any(virtual.casefold().endswith('.chr') and skin is None
+                        for virtual, _, skin, _ in self.character_preview.rig_parts)))
             if self.read_only_library:
                 # Same native animation timeline; don't offer loaders that
                 # import external clips in the reference-only browser.
