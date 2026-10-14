@@ -42,6 +42,29 @@ final game-accurate appearance and the manager's resulting character preview
 remain unverified. **Do not substitute** textures from `monsters/cocoon/` or
 other builds.
 
+## Optional local PNG diagnostic
+
+Use `source/xbox360_texture_diagnostics.py` with an unmodified 2012
+`.chr` and all exact `.dds.N` fragments. It saves a NEW PNG outside the
+Asset Library, verifies every source part and never modifies originals.
+
+```powershell
+py -3.11 source/xbox360_texture_diagnostics.py `
+  --model "C:\Temp\ParasiteHost3.chr" `
+  --fragment "C:\Temp\parasitehost.dds.0" `
+  --fragment "C:\Temp\parasitehost.dds.1" `
+  --fragment "C:\Temp\parasitehost.dds.2" `
+  --fragment "C:\Temp\parasitehost.dds.3" `
+  --fragment "C:\Temp\parasitehost.dds.4" `
+  --fragment "C:\Temp\parasitehost.dds.5" `
+  --output "C:\Temp\ParasiteHost-body-decoded.png"
+```
+
+Paths above are examples only. Use actual extracted PAK filenames (which
+can reside in different PAK import folders). Supply `--normal` when
+previewing CTX1 `_ddn` normals; the normal-map channels are reconstructed
+only with that explicit switch. The output filename must not exist.
+
 ## Local acceptance
 
 1. Import both source streaming PAKs into the same registered 2012 build.
