@@ -87,6 +87,26 @@ class UnifiedExplorerTests(unittest.TestCase):
         self.assertEqual(editor.tabs.currentIndex(), 2)
         load_model.assert_called_once_with("characters/hero.skinm")
 
+    def test_gfx_project_selection_uses_static_viewer_without_touching_file(self):
+        from gfx_synthetic_fixtures import synthetic_gfx
+        from gfx_preview_backend import GfxError
+        relative = "Libs/UI/my_movie.gfx"
+        source = self.editor.workspace / "files" / relative
+        source.parent.mkdir(parents=True, exist_ok=True)
+        movie = synthetic_gfx(scripts=True)
+        source.write_bytes(movie)
+        self.editor.records[relative] = {"path": relative, "format": "raw"}
+        self.editor.populate()
+        with patch("qt_gfx_preview.ffdec_command",
+                   side_effect=GfxError("Configure FFDec 26.3.0")):
+            self.editor.file_tree.setCurrentItem(self._find(relative))
+        self.assertEqual(self.editor.mode, "gfx")
+        self.assertEqual(self.editor.tabs.currentIndex(), 3)
+        self.assertEqual(self.editor.gfx_view.frame.maximum(), 2)
+        self.assertIn("Configure FFDec", self.editor.gfx_view.note.text())
+        self.assertEqual(source.read_bytes(), movie)
+        self.assertFalse(self.editor.gfx_view.export.isEnabled())
+
     def test_search_explorer_and_pak_selection_are_in_explorer(self):
         editor = self.editor
         self.assertIs(editor.search.parentWidget(), editor.explorer)
