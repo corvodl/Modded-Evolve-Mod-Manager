@@ -47,6 +47,15 @@ assert frida.__version__ and numpy.__version__ and material_preview.render_textu
 assert gpu_model_preview.prepare_geometry and gpu_model_preview.Win32GPUPreview
 assert gfx_preview_backend.inspect_gfx and gfx_preview_backend.render_gfx
 assert qt_gfx_preview.GfxPreviewWidget
+from gfx_preview_backend import bundled_ffdec_paths, ffdec_command
+ffdec_bundled = bundled_ffdec_paths()
+assert ffdec_bundled is not None, 'Bundled FFDec/Temurin runtime missing'
+assert ffdec_command()[0] == str(ffdec_bundled[0])
+assert ffdec_bundled[2].is_file()
+assert (BUNDLE/'third_party'/'FFDec'/'NOTICE.txt').is_file()
+assert (BUNDLE/'third_party'/'FFDec'/'Sources'/'FFDec-source-b2ef2d3.zip').is_file()
+assert (BUNDLE/'third_party'/'FFDec'/'Sources'/'OpenJDK21U-jdk-sources_21.0.12_8.tar.gz').is_file()
+assert (BUNDLE/'third_party'/'FFDec'/'jre'/'legal').is_dir()
 assert gfx_edit_backend.create_gfx_session and gfx_edit_backend.apply_gfx_session
 assert qt_gfx_editor.GfxEditorDialog
 assert model_blender_export.glb_bytes and model_blender_export.convert_folder
