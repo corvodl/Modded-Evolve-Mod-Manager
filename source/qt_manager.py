@@ -842,7 +842,10 @@ class QtManager(QMainWindow):
         table.setRowCount(0)
         for entry in visible:
             name = entry['name']
-            group = group_title(name)
+            from library_map_actions import library_map_identity
+            map_id = library_map_identity(entry)
+            group = ('Level • ' + map_id.replace('_', ' ').title()
+                     if map_id else group_title(name))
             folder = str(Path(entry['source']).parent)
             if len(folder) > 75:
                 folder = '…' + folder[-72:]
