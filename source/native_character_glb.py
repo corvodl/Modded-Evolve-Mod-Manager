@@ -44,6 +44,22 @@ def create_character_glb(workspace, relative, index, *, character=None,
         parts = []
         for virtual, render, skin, count in character.rig_parts:
             if skin is None:
+                # Historical 2012 CryTek characters use CA_SKIN .chr bindings
+                # and do not contain a separate modern .skin companion. This
+                # is a decoder limitation, not evidence that the user's DBA
+                # or animation PAK is missing. Never invent bone mapping.
+                if virtual.casefold().endswith('.chr'):
+                    from model_asset import inspect_model
+                    try:
+                        legacy = inspect_model(render.read_bytes())
+                    except (OSError, ValueError):
+                        legacy = None
+                    if legacy is not None and legacy.format_name == 'CryTek':
+                        raise ValueError(
+                            'Historical CryTek .chr has no separate .skin: '
+                            'Legacy bone/weight decoding is not implemented. '
+                            'The indexed DBA alone cannot be played without '
+                            'a validated animated rig for ' + virtual)
                 raise ValueError('Missing native skin companion for '+virtual)
             parts.append((render.read_bytes(), skin.read_bytes(), count))
         blob = glb_bytes(character.mesh, name=Path(character.cdf).stem)
