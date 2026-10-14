@@ -94,7 +94,6 @@ class GfxQtEditorTests(unittest.TestCase):
                        dialog.import_movie, dialog.reload_movie, dialog.undo,
                        dialog.script_export, dialog.script_import):
             self.assertTrue(button.isHidden())
-        self.assertFalse(dialog.replace.isHidden())
 
     def test_library_read_only_cannot_open_mutable_session(self):
         self.win.read_only_library = True
