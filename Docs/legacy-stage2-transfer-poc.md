@@ -20,6 +20,43 @@ A user-selected new output folder (outside game/build locations and the Asset Li
 
 All other asset types, including DDS sidecars, materials, CAF/DBA animations, and binary script files remain review-only through the existing generic transfer planner. Neither a GLB export nor a matching container version is evidence that a transferred character will work with Stage 2 skeletons.
 
+## Full imported-build export to a separate Stage 2 comparison
+
+After choosing **Import ALL Game PAKs** into a registered Legacy build and
+importing the target Stage 2 PAKs into a distinct Stage 2 build, select that
+Legacy build in the Asset Library filter and click
+**Export Legacy Build → Stage 2…**. This does not require selecting hundreds
+of individual PAKs. Choose the entire imported build or a selected PAK, an
+optional virtual-folder prefix, and one of three output types:
+
+- **Compare entire selection:** a complete virtual-path classification
+  and SHA-256 inventory JSON without duplicating the extracted payloads.
+- **Export changed / absent assets:** a separate review folder containing
+  imported Legacy assets whose normalized extracted SHA differs from the
+  imported Stage 2 catalog, or which have no imported target match.
+- **Export all assets:** the same separate review folder, including exact
+  SHA-256 matches. This can require substantial disk space.
+
+Every source file is hashed while exported and stored under the original
+imported PAK identifier. Names are compared case-insensitively but no differing
+content is picked arbitrarily: duplicate-path conflicts are listed and skipped.
+Legacy map files are scoped by map ID so one map's compiled terrain does not
+match another's. DDS stream fragments and animation/gameplay files retain
+their original bytes for research, not automatic decoding or runtime porting.
+Incomplete imported PAKs are listed as **blocked archives** rather than
+silently counting as transferred.
+
+The target Stage 2 build is used for provenance, comparative statuses and
+future project choices. The exporter **does not write the target build,
+modify the Stage 2 game, create new signed PAK entries, or register maps**.
+A target path reported absent means absent from the *imported target
+catalog* and may still exist elsewhere in the actual game.
+
+For actual editing, use the separately guarded **Review Compatible Legacy
+Model…** action for one native model that already exists in a Stage 2
+custom-signed editing project. Textures/materials/animations and new map
+entries still require separate compatibility checks and/or writer support.
+
 ## Gaps before actual playable Legacy map ports
 
 1. Complete build/map-scoped shared dependencies, material DDS streams, compiled nav/collision and resource list audits.
