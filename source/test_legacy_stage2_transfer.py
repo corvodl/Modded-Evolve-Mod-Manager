@@ -67,7 +67,8 @@ class LegacyTransferTests(unittest.TestCase):
                 "objects/cactus.cgf": b"synthetic cactus"})
         self.archive(self.legacy, "c" * 20,
             "Game/Levels/Forest_Ruins/level.pak", {
-                "terrain/terrain.dat": b"unrelated forest"})
+                "terrain/terrain.dat": b"unrelated forest",
+            "levelinfo.xml": b"<LevelInfo Source='other-map'/>"})
         self.archive(self.stage2, "d" * 20,
             "Game/Levels/Desert_Canyon/level.pak", {
                 "terrain/terrain.dat": b"Stage 2 canyon"})
@@ -88,6 +89,10 @@ class LegacyTransferTests(unittest.TestCase):
         self.assertFalse(result["installable"])
         self.assertEqual(result["extracted_file_count"], 4)
         self.assertEqual(result["virtual_path_conflicts"], [])
+        self.assertIn("levelinfo.xml",
+                      result["source_reference_diagnostics"]["found"])
+        self.assertEqual(result["source_reference_diagnostics"]["conflicts"], ())
+        self.assertFalse(result["all_engine_dependencies_verified"])
 
     def test_map_bundle_only_copies_local_verified_payloads(self):
         self.map_setup()
