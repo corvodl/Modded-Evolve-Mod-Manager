@@ -116,7 +116,7 @@ class LegacyTransferTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not belong"):
             plan_compiled_map(self.legacy, self.stage2, "Desert_Harsh",
                               root=self.lib, selected_archive="c" * 20)
-        with self.assertRaisesRegex(ValueError, "source"):
+        with self.assertRaisesRegex(ValueError, "Source"):
             plan_compiled_map(self.stage2, self.legacy, "Desert_Harsh", root=self.lib)
         with self.assertRaisesRegex(ValueError, "outside the Asset Library"):
             export_map_review_bundle(self.legacy, self.stage2, "Desert_Harsh",
