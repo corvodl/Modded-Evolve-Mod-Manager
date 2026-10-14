@@ -89,6 +89,8 @@ def inspect_model(data: bytes) -> ModelInfo:
         raise ValueError('Model exceeds safe inspection limit (256 MiB).')
     if data[:5] == b'CrChF':
         return _inspect_crchf(data)
+    if len(data) < 24 or data[:8] != b'CryTek\\0\\0':
+        raise ValueError('Unrecognized model header (expected CrChF or CryTek). Raw export remains available; model reimport is disabled.')
     from legacy_crytek_mesh import parse_crytek_chunks
     filetype, version, table_offset, table, rows = parse_crytek_chunks(
         data, max_chunks=MAX_CHUNKS)
