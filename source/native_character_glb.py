@@ -54,6 +54,14 @@ def create_character_glb(workspace, relative, index, *, character=None,
                         continue
                 raise ValueError('Missing native skin companion for ' + virtual)
             parts.append((render.read_bytes(), skin.read_bytes(), count))
+        if historical:
+            from legacy_crytek_rig import read_legacy_rig
+            try:
+                if len(parts) != 1 or parts[0][1] is not None:
+                    raise ValueError('Single body CDF binding required.')
+                read_legacy_rig(parts[0][0], skeleton, parts[0][2])
+            except ValueError as exc:
+                raise ValueError('Legacy bone/weight decoding validation failed: ' + str(exc)) from exc
         blob = glb_bytes(character.mesh, name=Path(character.cdf).stem)
         blob, textures = embed_diffuse_textures(blob, character.materials)
         if historical:
