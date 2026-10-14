@@ -124,7 +124,6 @@ class ModernQtNavigationTests(unittest.TestCase):
             table = self.win.asset_table
             self.assertEqual(table.rowCount(), 3)
             self.assertEqual(table.selectionMode(), QAbstractItemView.ExtendedSelection)
-            self.assertTrue(self.win.asset_quick["Open Map"].isVisible())
             table.scrollToTop()
             self.app.processEvents()
             start = table.visualRect(table.model().index(0, 0)).center()
@@ -134,6 +133,7 @@ class ModernQtNavigationTests(unittest.TestCase):
             self.app.processEvents()
             self.assertEqual(set(self.win._selected_library_ids()),
                              {"terrain", "packed", "level"})
+            self.assertTrue(self.win.asset_quick["Open Map"].isVisible())
             self.win.refresh_library_table()
             self.assertEqual(set(self.win._selected_library_ids()),
                              {"terrain", "packed", "level"})
