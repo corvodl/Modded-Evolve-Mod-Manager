@@ -75,4 +75,4 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/source
           QT_QPA_PLATFORM: offscreen
-        run: python -m unittest -v test_gfx_preview.GfxStaticPreviewTests.test_real_ffdec_renders_red_vector_and_transparent_second_frame test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_shape_replace_produces_green_render_and_undo
+        run: python -m unittest -v test_gfx_preview.GfxStaticPreviewTests.test_real_ffdec_renders_red_vector_and_transparent_second_frame test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_shape_replace_produces_green_render_and_undo test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_tag_xml_roundtrip_retains_gfx_movie
