@@ -328,6 +328,28 @@ class LegacyVariantCompatibilityTests(unittest.TestCase):
                          ['Root', 'Root__source_joint_1'])
         self.assertGreater(validate_skin_rest_pose(glb), 0)
 
+    def test_standalone_wildlife_mesh_without_cdf_uses_actual_bone_weights(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from model_textured_export import textured_model_from_workspace
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            virtual = 'objects/characters/animals/testwildlife/testwildlife.chr'
+            target = root / 'files' / virtual
+            target.parent.mkdir(parents=True)
+            raw = fixture()
+            target.write_bytes(raw)
+            index = {virtual.casefold(): [
+                {'file': target, 'workspace': root, 'relative': virtual,
+                 'archive': 'wildlife-synthetic'}]}
+            mesh = read_preview_mesh(raw, virtual)
+            glb, info = textured_model_from_workspace(
+                mesh, root, virtual, index=index)
+            self.assertTrue(info['rig_status'].startswith('Rigged:'))
+            self.assertEqual(info['rig_layout'], 'standalone-body')
+            self.assertEqual(info['bone_count'], 2)
+            self.assertGreater(validate_skin_rest_pose(glb), 0)
+
 
 if __name__ == '__main__':
     unittest.main()
