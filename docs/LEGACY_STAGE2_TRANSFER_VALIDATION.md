@@ -11,6 +11,28 @@ The existing manager transfer action is review-only. This branch adds a separate
 - This branch does not convert terrain, author new CryPak entries, sign new PAKs, modify playlists/GFX, or install content into a live game.
 - Historical ZIP sources remain read-only.
 
+## In-manager preparation (safe reference workflow)
+
+In Settings → Asset Library, select a historical build and source PAK,
+then choose **Prepare Transfer to Stage 2**. Choose a registered Stage 2
+target build, paste one or more *exact* source asset paths (one per line), and
+identify the target project and optional expected baseline hash. The manager
+discovers bounded explicit XML dependencies and presents a review of
+added/replacement candidates, reuse, missing assets, conflicts, and
+non-scannable binary dependencies. Nothing is installed.
+
+After saving the review-only plan, you may optionally create an **external
+candidate bundle** of hash-verified loose files. This is a NEW directory
+outside the managed Asset Library and existing target project. Its
+`candidate-manifest.json` explicitly reports `signed=false`,
+`installable=false`, and `game_compatibility_verified=false`. The
+source files remain immutable. Missing and ambiguous sources block this
+export; incomplete binary dependency inspection is reported, not hidden.
+
+A loose-file candidate cannot be used directly as a signed Stage 2 PAK.
+Do not rename the bundle to `.pak`, add it to a live installation, or
+interpret the review manifest as a game-side compatibility result.
+
 ## Technical staging pilot
 
 1. Copy an intact Stage 2 installation into a separate test folder. Never use the original installation.
