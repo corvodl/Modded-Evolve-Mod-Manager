@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from threading import Event
 
-from PySide6.QtCore import Qt, QRect, QThread, Signal
+from PySide6.QtCore import QSize, Qt, QRect, QThread, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
@@ -145,21 +145,27 @@ class GfxPreviewWidget(QWidget):
         self.note.setWordWrap(True)
         layout.addWidget(self.note)
         bar = QHBoxLayout()
-        self.setup = QPushButton("Configure FFDec…")
-        self.setup.setIcon(navigation_icon("settings"))
+        self.setup = QPushButton("FFDec…")
+        self.setup.setToolTip("Configure the externally installed FFDec tool")
+        self.setup.setIcon(navigation_icon("settings", size=15))
+        self.setup.setIconSize(QSize(15, 15))
         self.setup.clicked.connect(self.configure_backend)
         bar.addWidget(self.setup)
-        self.export = QPushButton("Export selected PNG…")
-        self.export.setIcon(navigation_icon("export"))
+        self.export = QPushButton("Export PNG…")
+        self.export.setToolTip("Export the selected frame or sprite as a PNG")
+        self.export.setIcon(navigation_icon("export", size=15))
+        self.export.setIconSize(QSize(15, 15))
         self.export.setObjectName("gfxExportPng")
         self.export.setEnabled(False)
         self.export.clicked.connect(owner.export_png)
         bar.addWidget(self.export)
         self.edit_movie = QPushButton(
-            "Edit in Mod Project…" if getattr(owner, "read_only_library", False)
-            else "Edit full GFX…")
+            "Edit in Project…" if getattr(owner, "read_only_library", False)
+            else "Edit GFX…")
+        self.edit_movie.setToolTip("Open the complete GFX editor for this movie")
         self.edit_movie.setObjectName("gfxOpenEditor")
-        self.edit_movie.setIcon(navigation_icon("gfx"))
+        self.edit_movie.setIcon(navigation_icon("gfx", size=15))
+        self.edit_movie.setIconSize(QSize(15, 15))
         self.edit_movie.clicked.connect(
             owner.edit_in_project if getattr(owner, "read_only_library", False)
             else owner.edit_gfx)
