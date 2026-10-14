@@ -309,34 +309,73 @@ def resolve_imports(info, virtual, resolver):
     return resolved, tuple(failures)
 
 
-def ffdec_command(configured=None):
-    """Use a separately configured/pinned FFDec 26.3.0 installation.
+def bundled_ffdec_paths(bundle=None):
+    """Locate the private, fully bundled FFDec + Temurin Java installation.
 
-    We intentionally do NOT download executables or bundle FFDec GPLv3 and a
-    Java runtime without an explicit third-party redistribution review.
-    ffdec-cli.exe is supported when present. A jar requires Java (or a private
-    JVM executable) and missing runtime is reported to the user.
+    Data source differs for PyInstaller onedir and a source checkout. The
+    installer/ZIP ships each under _internal/third_party/FFDec. Do not use
+    arbitrary Java PATH executables when a verified private JRE is present.
+    """
+    if bundle is None:
+        from app_runtime import BUNDLE
+        bundle = BUNDLE
+    root = Path(bundle) / "third_party" / "FFDec"
+    jar = root / "ffdec.jar"
+    java = root / "jre" / "bin" / "java.exe"
+    javaw = root / "jre" / "bin" / "javaw.exe"
+    ready = root / "BUNDLED-READY.txt"
+    if not all(file.is_file() and not file.is_symlink()
+               for file in (jar, java, javaw, ready)):
+        return None
+    return java, javaw, jar
+
+
+def ffdec_command(configured=None):
+    """Render and rebuild via the pinned bundled runtime by default.
+
+    Explicit alternate installations remain configurable. Runtime downloads
+    never occur. The official build verifies hashes and includes the upstream
+    GPL source, notices and Java licenses alongside the packaged tool.
     """
     choice = configured or os.environ.get("EVOLVE_GFX_FFDEC", "")
+    bundled = bundled_ffdec_paths()
+    if not choice and bundled:
+        java, _javaw, jar = bundled
+        return (str(java), "-Djava.awt.headless=true", "-jar", str(jar))
     if not choice:
-        raise GfxError("GFX renderer unavailable. Configure FFDec 26.3.0 (ffdec-cli.exe or ffdec.jar); Java may also be required.")
+        raise GfxError(
+            "Bundled FFDec 26.3.0/Java runtime is missing from the app. "
+            "Repair or reinstall the full portable ZIP / Windows installer, "
+            "or configure an external FFDec installation.")
     file = Path(choice).expanduser().resolve()
     if file.is_dir():
-        cli = file / "ffdec-cli.exe"
-        jar = file / "ffdec.jar"
+        cli, jar = file / "ffdec-cli.exe", file / "ffdec.jar"
         file = cli if cli.is_file() else jar
     if not file.is_file() or file.is_symlink():
-        raise GfxError("Configured FFDec renderer is missing or unsafe. Select the FFDec 26.3.0 installation again.")
+        raise GfxError("Configured FFDec renderer is missing or unsafe. Select a supported renderer or use the bundled version.")
     if file.name.casefold() == "ffdec-cli.exe":
         return (str(file),)
     if file.name.casefold() == "ffdec.jar":
         preferred_java = os.environ.get("EVOLVE_GFX_JAVA", "")
         java = (str(Path(preferred_java).resolve()) if preferred_java
-                else shutil.which("java"))
+                else str(bundled[0]) if bundled else shutil.which("java"))
         if not java or (preferred_java and not Path(java).is_file()):
-            raise GfxError("FFDec JAR configured but Java is missing. Configure EVOLVE_GFX_JAVA or choose ffdec-cli.exe.")
+            raise GfxError("FFDec JAR configured but Java is missing. Reinstall the bundled private JRE or configure EVOLVE_GFX_JAVA.")
         return (java, "-Djava.awt.headless=true", "-jar", str(file))
     raise GfxError("Select ffdec-cli.exe or ffdec.jar from a trusted FFDec 26.3.0 installation.")
+
+
+def preferred_ffdec_override(configured):
+    """Recover obsolete user setting when a verified bundled renderer exists."""
+    if not configured:
+        return None
+    try:
+        ffdec_command(configured)
+        return configured
+    except GfxError:
+        if bundled_ffdec_paths():
+            return None
+        return configured
 
 
 def _execute(command, *, cwd, cancelled, timeout):
