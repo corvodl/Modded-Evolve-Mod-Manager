@@ -4,6 +4,10 @@ on:
     branches: [beta]
     paths:
       - 'source/legacy_pak_workspace.py'
+      - 'source/legacy_pak_import.py'
+      - 'source/qt_asset_library.py'
+      - 'source/test_legacy_import_routing.py'
+      - 'source/test_qt_unified_explorer.py'
       - 'source/legacy_texture_preview.py'
       - 'source/qt_legacy_pak_editor.py'
       - 'source/qt_workspace_editor.py'
@@ -37,5 +41,5 @@ jobs:
         run: |
           python -m compileall -q source
           if ($LASTEXITCODE -ne 0) { throw 'Legacy editor Python syntax failed' }
-          python -m unittest -v test_legacy_pak_workspace test_qt_legacy_pak_editor test_contextual_toolbars
+          python -m unittest -v test_legacy_import_routing test_legacy_pak_workspace test_qt_legacy_pak_editor test_contextual_toolbars test_qt_unified_explorer
           if ($LASTEXITCODE -ne 0) { throw 'Legacy PAK and layout regression tests failed' }
