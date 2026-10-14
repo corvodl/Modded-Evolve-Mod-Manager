@@ -104,8 +104,9 @@ class GfxStaticPreviewTests(unittest.TestCase):
         self.assertIn("matching-context", missing[0])
 
     def test_backend_not_configured_is_actionable(self):
-        with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(GfxError, "Configure FFDec 26.3.0"):
+        with patch.dict(os.environ, {}, clear=True), patch(
+                "gfx_preview_backend.bundled_ffdec_paths", return_value=None):
+            with self.assertRaisesRegex(GfxError, "Bundled FFDec"):
                 ffdec_command()
         with self.assertRaisesRegex(GfxError, "missing or unsafe"):
             ffdec_command("/this/FFDEC/path/does/not/exist")
