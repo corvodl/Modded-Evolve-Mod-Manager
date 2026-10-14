@@ -59,10 +59,8 @@ def _asset_type(path, scope):
         return "binary-script-review"
     if name.endswith((".caf", ".dba", ".chrparams")):
         return "animation-review"
-    if name.endswith((".dds", ".dds.0", ".dds.1", ".dds.2",
-                      ".dds.3", ".dds.4", ".dds.5", ".dds.6",
-                      ".dds.7", ".dds.8", ".dds.9",
-                      ".tif", ".png")):
+    if (name.endswith((".dds", ".tif", ".png")) or
+            re.search(r"\.dds\.[0-9]+\Z", name)):
         return "texture-review"
     if name.endswith(_NORMAL_EXTENSIONS):
         return "native-model-review"
@@ -80,11 +78,14 @@ def _safe_prefix(prefix):
     return value.casefold()
 
 
-def _archive_records(build, library, *, selected_archive=None, prefix="", cancelled=None):
-    """Yield manifest-backed entries, bounded and scoped to *one* build.
+def _archive_records(build, library, *, selected_archive=None, prefix="",
+                     cancelled=None, blocked=None):
+    """Yield bounded manifest records from one registered build.
 
-    Build inventory hashes document imported extracted bytes; actual bytes are
-    rechecked when a review bundle is copied, not assumed to be still valid.
+    A full-game import can include partially extracted or absent archives.
+    Exclude those *entire* archives and record clear errors instead of
+    crashing every transfer, inventing their contents or silently claiming
+    they are compatible. Explicitly selecting a damaged PAK still fails.
     """
     members = build["members"]
     if selected_archive and selected_archive not in members:
@@ -98,34 +99,47 @@ def _archive_records(build, library, *, selected_archive=None, prefix="", cancel
         if cancelled and cancelled():
             from asset_library import ImportCanceled
             raise ImportCanceled("Legacy transfer inventory cancelled.")
-        folder = _folder_for_identifier(aid, library)
-        if folder.is_symlink() or not folder.is_dir():
-            raise ValueError("Build refers to a missing or unsafe archive: " + aid)
-        manifest = _load_manifest(folder)
-        if manifest.get("warnings"):
-            raise ValueError("Build archive has unreviewed extracted-file warnings: " + aid)
-        if manifest.get("source_sha256") != member.get("source_sha256"):
-            raise ValueError("Build membership no longer matches imported source PAK: " + aid)
-        relative = _archive_path(member, manifest)
-        for entry in manifest["entries"]:
-            total += 1
-            if total > MAX_ENTRIES:
-                raise ValueError("Too many imported entries. Export a smaller archive scope.")
-            virtual = normalized_name(entry["path"])
-            if prefix and not (virtual.casefold() == prefix or
-                               virtual.casefold().startswith(prefix + "/")):
-                continue
-            size = entry.get("bytes")
-            sha = str(entry.get("sha256") or "").casefold()
-            if (not isinstance(size, int) or size < 0 or
-                    not HEX64.fullmatch(sha)):
-                raise ValueError("Imported source entry has invalid hash/size: " + virtual)
-            yield {
-                "archive_id": aid, "original_archive": relative,
-                "scope": _scope(relative, virtual), "path": virtual,
-                "sha256": sha, "bytes": size,
-            }
-
+        try:
+            folder = _folder_for_identifier(aid, library)
+            if folder.is_symlink() or not folder.is_dir():
+                raise ValueError("Missing or unsafe library archive folder.")
+            manifest = _load_manifest(folder)
+            if manifest.get("warnings"):
+                raise ValueError("Archive has unreviewed extracted-file warnings.")
+            if manifest.get("source_sha256") != member.get("source_sha256"):
+                raise ValueError("Build membership does not match imported source PAK.")
+            relative = _archive_path(member, manifest)
+            parsed = []
+            for entry in manifest["entries"]:
+                total += 1
+                if total > MAX_ENTRIES:
+                    raise ValueError(
+                        "Too many imported entries. Export a smaller archive scope.")
+                virtual = normalized_name(entry["path"])
+                size = entry.get("bytes")
+                sha = str(entry.get("sha256") or "").casefold()
+                if (not isinstance(size, int) or size < 0 or
+                        not HEX64.fullmatch(sha)):
+                    raise ValueError(
+                        "Invalid extracted entry hash/size: " + virtual)
+                if prefix and not (virtual.casefold() == prefix or
+                                   virtual.casefold().startswith(prefix + "/")):
+                    continue
+                parsed.append({
+                    "archive_id": aid, "original_archive": relative,
+                    "scope": _scope(relative, virtual), "path": virtual,
+                    "sha256": sha, "bytes": size,
+                })
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            if selected_archive:
+                raise ValueError(
+                    "Selected Legacy PAK is incomplete or unavailable: " + str(exc)
+                ) from exc
+            if blocked is not None:
+                blocked.append({"archive_id": aid,
+                                "reason": str(exc)[:250]})
+            continue
+        yield from parsed
 
 def plan_legacy_build_export(source_build, target_build, *, root=None,
                              source_archive=None, prefix="", include_identical=False,
@@ -143,11 +157,13 @@ def plan_legacy_build_export(source_build, target_build, *, root=None,
         raise ValueError("Import Stage 2 PAKs into the target build before comparison.")
     prefix = _safe_prefix(prefix)
     source_map, target_map = defaultdict(list), defaultdict(list)
-    for record in _archive_records(dst, library, cancelled=cancelled):
+    source_blocked, target_blocked = [], []
+    for record in _archive_records(
+            dst, library, cancelled=cancelled, blocked=target_blocked):
         target_map[(record["scope"], record["path"].casefold())].append(record)
     for record in _archive_records(
             src, library, selected_archive=source_archive, prefix=prefix,
-            cancelled=cancelled):
+            cancelled=cancelled, blocked=source_blocked):
         source_map[(record["scope"], record["path"].casefold())].append(record)
     if not source_map:
         raise ValueError("No imported Legacy assets match the selected archive/path filter.")
@@ -207,6 +223,10 @@ def plan_legacy_build_export(source_build, target_build, *, root=None,
         "include_identical": bool(include_identical),
         "source_imported_archive_count": len(src["members"]),
         "target_imported_archive_count": len(dst["members"]),
+        "source_blocked_archives": source_blocked,
+        "target_blocked_archives": target_blocked,
+        "source_usable_archive_count": len(src["members"]) - len(source_blocked),
+        "target_usable_archive_count": len(dst["members"]) - len(target_blocked),
         "file_count": len(rows),
         "files_to_copy": sum(bool(row["copy_for_review"]) for row in rows),
         "bytes_to_copy": total_bytes,
@@ -218,6 +238,7 @@ def plan_legacy_build_export(source_build, target_build, *, root=None,
         "warnings": [
             "This export is NOT a playable Stage 2 mod or map, or a signed PAK.",
             "Comparison covers only imported assets from the two registered builds.",
+            "Incomplete imports are excluded and separately listed in blocked_archives.",
             "No cross-map fallback: compiled map paths are scoped by map ID.",
             "Existing-path assets require per-file model/material/texture/animation validation.",
             "New paths, map PAKs and modes require new-entry signing, mounting, registration and rollback.",
