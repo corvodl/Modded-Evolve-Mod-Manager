@@ -86,10 +86,11 @@ class UIDataPureTests(unittest.TestCase):
         self.assertEqual(other["screens"], [])
 
     def test_safe_xml_bound_and_archive_alias(self):
-        for value in ("Game/UIData.pak", "Game/UI_Data.pak",
-                      "Game/UI-Data.pak"):
+        for value in ("Game/UI_Data.pak", "UI_Data.pak"):
             self.assertTrue(is_ui_data_archive(value))
-        self.assertFalse(is_ui_data_archive("Game/UI_Assets.pak"))
+        for value in ("Game/UIData.pak", "Game/UI-Data.pak",
+                      "Game/UI_Assets.pak"):
+            self.assertFalse(is_ui_data_archive(value))
         with self.assertRaisesRegex(UIDataError, "Unsafe"):
             parse_ui_data_references("Libs/UI/main_menu.gfx", {
                 "UI/UIElements/MainMenu.xml": b'<!DOCTYPE x [ <!ENTITY leak SYSTEM "file:///etc/hosts"> ]><x>&leak;</x>'
@@ -135,7 +136,7 @@ class UIDataLibraryScopeTests(unittest.TestCase):
         _invalidate()
 
     def test_no_cross_build_uidata_fallback(self):
-        self._archive(self.legacy, "b" * 20, "Game/UIData.pak", DOCS)
+        self._archive(self.legacy, "b" * 20, "Game/UI_Data.pak", DOCS)
         result = library_gfx_ui_data(
             self.movie_id, "Libs/UI/main_menu.gfx", root=self.root,
             build_id=self.stage2)
@@ -155,8 +156,8 @@ class UIDataLibraryScopeTests(unittest.TestCase):
                          "menu-news-image-not-direct-GFX-sprite-UV")
 
     def test_ambiguous_uidata_snapshot_is_reported(self):
-        self._archive(self.stage2, "c" * 20, "Game/UIData.pak", DOCS)
-        self._archive(self.stage2, "d" * 20, "Game/UI_Data.pak", DOCS)
+        self._archive(self.stage2, "c" * 20, "Game/UI_Data.pak", DOCS)
+        self._archive(self.stage2, "d" * 20, "GameDLC02/UI_Data.pak", DOCS)
         result = library_gfx_ui_data(
             self.movie_id, "Libs/UI/main_menu.gfx",
             root=self.root, build_id=self.stage2)
