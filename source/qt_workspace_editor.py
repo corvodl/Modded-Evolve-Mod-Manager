@@ -1202,10 +1202,32 @@ class QtWorkspaceEditor(QMainWindow):
                 'asset-library:' + str(self.library_archive.get('build_id'))
                 if self.read_only_library else
                 'project:' + str(self.workspace.resolve()))
+            if self.read_only_library:
+                from asset_library_preview import library_gfx_ui_data
+                try:
+                    ui_data = library_gfx_ui_data(
+                        self.library_archive['id'], rel,
+                        build_id=self.library_archive.get('build_id'))
+                except (OSError, ValueError) as exc:
+                    ui_data = {
+                        'status': 'ui-data-reference-error',
+                        'screens': [],
+                        'warnings': ['Cannot inspect Game/UI_Data.pak: ' + str(exc)],
+                    }
+            else:
+                ui_data = {
+                    'status': 'editable-project-no-uidata',
+                    'screens': [],
+                    'warnings': [
+                        'UIData screen references are available in the Asset '
+                        'Library when Game/UI_Data.pak and UI_Assets.pak belong '
+                        'to the same registered game build.'],
+                }
             self.gfx_view.open_movie(
                 self.raw, rel, resolve=self._gfx_dependency,
                 context=context,
-                backend=self.manager.settings.get('gfx_ffdec_path'))
+                backend=self.manager.settings.get('gfx_ffdec_path'),
+                ui_data=ui_data)
             self.status.setText(
                 'Static Scaleform GFX preview — game ActionScript callbacks are not simulated.')
         elif self.mode == 'files':
