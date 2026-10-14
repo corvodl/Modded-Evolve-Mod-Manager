@@ -136,7 +136,8 @@ def read_gfx_session(workspace, session):
     ws = Path(workspace).resolve(strict=True)
     base = ws / EDIT_ROOT
     path = Path(session).resolve(strict=True)
-    if (base.is_symlink() or path.parent != base.resolve(strict=True) or
+    if (not base.is_dir() or base.is_symlink() or
+            path.parent != base.resolve(strict=True) or
             not path.is_dir() or path.is_symlink()):
         raise GfxError("GFX session does not belong to this editable workspace.")
     record_path = path / EDIT_JSON
@@ -256,8 +257,8 @@ def export_gfx_xml(workspace, session, destination, *, configured=None,
                configured=configured, folder=Path(tmp), cancelled=cancelled)
         if not out.is_file() or out.stat().st_size > MAX_XML:
             raise GfxError("FFDec did not produce a bounded editable XML document.")
-        with dest.open("xb") as writer:
-            shutil.copyfileobj(out.open("rb"), writer)
+        with dest.open("xb") as writer, out.open("rb") as source:
+            shutil.copyfileobj(source, writer)
     return dest
 
 
