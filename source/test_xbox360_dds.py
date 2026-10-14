@@ -8,6 +8,7 @@ import unittest
 from PIL import Image
 
 from dds_texture import parse_dds
+from test_editor_tabs_png import fixture_dds
 from material_preview import _historical_2012_character
 from xbox360_dds import (decode_2012_console_dds, is_2012_console_dds,
                          _tiled_to_xy, untile_xenos_blocks)
@@ -61,10 +62,8 @@ class Xbox2012DecodeTests(unittest.TestCase):
             self.assertTrue(all(0<=x<w and 0<=y<h for x,y in coords))
 
     def test_linear_dxt5_tiling_and_endian_roundtrip(self):
-        src=BytesIO()
-        image=Image.new('RGBA',(128,128),(60,120,180,255))
-        image.save(src,format='DDS')
-        raw=src.getvalue()
+        # Pillow defaults to an uncompressed DDS; explicitly request BC1.
+        raw=fixture_dds('DXT1', (128,128), 1)
         self.assertIn(raw[84:88],(b'DXT1',b'DXT5'))
         tiled=xboxify(raw)
         self.assertTrue(is_2012_console_dds(tiled))
@@ -86,9 +85,7 @@ class Xbox2012DecodeTests(unittest.TestCase):
         self.assertEqual(a,255)
 
     def test_missing_header_oversized_and_truncated_refused(self):
-        src=BytesIO()
-        Image.new('RGB',(128,128),(20,40,60)).save(src,format='DDS')
-        raw=src.getvalue()
+        raw=fixture_dds('DXT1', (128,128), 1)
         with self.assertRaisesRegex(ValueError,'surface header'):
             decode_2012_console_dds(raw)
         candidate=xboxify(raw)
