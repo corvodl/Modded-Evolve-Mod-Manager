@@ -29,6 +29,7 @@ class GfxEditorDialog(QDialog):
                 "Asset Library originals are read-only. Open an editable Modding project.")
         super().__init__(owner)
         self.owner = owner
+        self.manager = owner.manager
         self.relative = relative
         self._backend = owner.manager.settings.get("gfx_ffdec_path")
         from workspace_file_actions import checked_path
@@ -87,6 +88,10 @@ class GfxEditorDialog(QDialog):
         self.import_movie.setObjectName("gfxImportEdited")
         self.import_movie.clicked.connect(self.import_edited)
         advanced.addWidget(self.import_movie)
+        self.reload_movie = QPushButton("Reload FFDec changes")
+        self.reload_movie.setObjectName("gfxReloadEdited")
+        self.reload_movie.clicked.connect(self.reload_edited)
+        advanced.addWidget(self.reload_movie)
         self.undo = QPushButton("Undo staged edit")
         self.undo.clicked.connect(self.undo_edit)
         advanced.addWidget(self.undo)
@@ -112,6 +117,8 @@ class GfxEditorDialog(QDialog):
                                          self.snapshot.session)
         data = self.snapshot.working_file.read_bytes()
         info = inspect_gfx(data)
+        _deps, self._issues = resolve_imports(
+            info, self.relative, self.owner._gfx_dependency)
         display = {(name, charid) for name, charid in info.resources}
         current = self.category.currentData()
         self.category.blockSignals(True)
