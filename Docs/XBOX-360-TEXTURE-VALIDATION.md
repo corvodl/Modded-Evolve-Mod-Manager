@@ -36,11 +36,31 @@ committing their bytes:
 - `Parasite_Host_Spikes_ddn.dds.5` — 512×512, CTX1, gave a coherent blue
   normal-map atlas with reconstructed Z.
 
-The **body diffuse** and **body normal** live in the original installation's
-`Game/streaming/dds_low.pak` and `dds_high.pak` and were not uploaded. Their
-final game-accurate appearance and the manager's resulting character preview
-remain unverified. **Do not substitute** textures from `monsters/cocoon/` or
-other builds.
+The original **body diffuse** and **body normal** were subsequently supplied
+as extracted copies of the 2012 `Game/streaming/dds_low.pak` and
+`Game/streaming/dds_high.pak`. Both sets have been checked directly:
+
+| Exact virtual file | low archive | high archive | Header | Top mip |
+| --- | --- | --- | --- | --- |
+| `objects/characters/monsters/parasitehost/parasitehost.dds` | `.0`–`.4` | `.5` | DXT1, reserved tag `0x1800`, 8 mips | 512×512 |
+| `objects/characters/monsters/parasitehost/parasitehost_ddn.dds` | `.0`–`.4` | `.5` | CTX1, reserved tag `0x1040`, 8 mips | 512×512 |
+
+All 12 numbered entries extracted cleanly, and each complete chain has
+`174,888` bytes (128-byte header and `174,760` compressed payload bytes).
+Fragment sizes are `296, 512, 2048, 8192, 32768, 131072` bytes respectively;
+the `.0` contains the smallest three mips, not a usable 512-pixel preview.
+Neither stream is missing any high-resolution fragment.
+
+On these actual supplied files the Xenos block untile plus 16-bit byte swap
+produced a **recognizable, coherent diffuse UV atlas**, rather than the
+multicolored corruption produced by a linear DDS decoder. CTX1 R/G unpacking
+and Z reconstruction produced a coherent purple/blue normal-map atlas.
+This validates the *image conversion on these two inputs* but **does not
+establish final material UV placement, shader normals, or appearance inside
+the manager/Blender**. Those remain manual local acceptance checks.
+The original ZIP members were never edited or included in commits.
+
+Do not substitute textures from `monsters/cocoon/` or another build.
 
 ## Optional local PNG diagnostic
 
