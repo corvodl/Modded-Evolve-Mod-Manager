@@ -68,6 +68,31 @@ class GfxBuildScopeTests(unittest.TestCase):
             (self.lib / self.source / "files" / "Libs/UI/watermark.gfx").read_bytes(),
             self.movie)
 
+    def test_flashassets_font_import_resolves_only_in_selected_build(self):
+        from build_collections import remove_membership
+        remove_membership(self.a, self.font_owner, root=self.lib)
+        self._archive(self.a, "d" * 20,
+                      {"Libs/UI/FlashAssets/gfxfontlib_locfont.gfx": self.font_a})
+        found, missing, chosen = library_gfx_imports(
+            self.source, "Libs/UI/watermark.gfx", root=self.lib, build_id=self.a)
+        self.assertFalse(missing)
+        self.assertEqual(chosen, self.a)
+        self.assertEqual(
+            found, {"Libs/UI/gfxfontlib_locfont.gfx": self.font_a})
+        self.assertNotIn(self.font_b, found.values())
+
+    def test_nested_ambiguous_font_import_is_rejected(self):
+        from build_collections import remove_membership
+        remove_membership(self.a, self.font_owner, root=self.lib)
+        self._archive(self.a, "d" * 20,
+                      {"Libs/UI/FlashAssets/gfxfontlib_locfont.gfx": self.font_a})
+        self._archive(self.a, "e" * 20,
+                      {"Libs/UI/Other/gfxfontlib_locfont.gfx": self.font_b})
+        found, issues, _ = library_gfx_imports(
+            self.source, "Libs/UI/watermark.gfx", root=self.lib, build_id=self.a)
+        self.assertFalse(found)
+        self.assertIn("Missing matching-context movie", issues[0])
+
     def test_duplicate_same_virtual_font_within_build_is_missing_not_guessed(self):
         self._archive(self.a, "d" * 20,
                       {"Libs/UI/gfxfontlib_locfont.gfx": self.font_b})
