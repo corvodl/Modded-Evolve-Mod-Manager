@@ -66,7 +66,13 @@ class ModernQtNavigationTests(unittest.TestCase):
             self.assertLessEqual(region.right(), button.width() - 8, label)
             self.assertLessEqual(region.bottom(), button.height() - 6, label)
             self.assertFalse(button.icon().isNull(), label)
-            self.assertGreaterEqual(region.width(), 28, label)
+            self.assertGreaterEqual(
+                region.width(), 28,
+                f'{label}: nav={button.width()}x{button.height()}, '
+                f'icon={region.width()}x{region.height()}, '
+                f'drawer={self.win.drawer.width()}x{self.win.drawer.height()}, '
+                f'visible={button.isVisible()}, '
+                f'animation={self.win.menu_animation.state()}')
             self.assertGreaterEqual(button.height(), 48, label)
             # The text begins after the icon and must remain inside the drawer.
             self.assertGreaterEqual(button.width() - region.right() - 18, 80, label)
