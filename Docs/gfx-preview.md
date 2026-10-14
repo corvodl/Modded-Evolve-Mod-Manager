@@ -9,36 +9,50 @@ is for transparency inspection only. **Export selected PNG…** writes FFDec's
 rendered RGBA frame/sprite at the requested resolution; it is not a screenshot
 of the enlarged/scaled viewer. Existing raw export still works.
 
-## Required optional renderer on Windows
+## Bundled FFDec renderer and Java on Windows
 
-The Mod Manager does not bundle JPEXS or Java, silently download executables,
-or reinterpret a GFX as DDS/PNG. This avoids redistributing FFDec's GPLv3
-third-party components without reviewing license compliance and corresponding
-source obligations. The main app, installer and portable ZIP continue to work
-without this extra tool, but GFX rasterization clearly reports it unavailable.
+The Windows installer and portable ZIP now package an independent,
+unmodified **FFDec 26.3.0** (`ffdec.jar`) and an independent private
+**Eclipse Temurin OpenJDK 21.0.12+8 JRE**. Both render the preview and power
+advanced full-GFX editing automatically. You do not need to install FFDec
+or configure Java. The full Windows build verifies the pinned ZIP hashes and
+**includes source archives and third-party license/legal notices**:
 
-1. Download the **official stable FFDec 26.3.0** Windows ZIP
-   from https://github.com/jindrapetrik/jpexs-decompiler/releases/tag/version26.3.0
-   and extract it outside the game and Mod Manager's signed staging directories.
-2. For the ZIP archive, SHA-256 must be
-   `35f4930eb7c380afe66f2117f90b006deac0631473ad7500bb39c78f68645ecd`.
-   The test CI checks the exact pinned upstream archive. If manually installed,
-   verify the ZIP before use.
-3. In the GFX viewer click **Configure FFDec…**, select `ffdec-cli.exe` from
-   the installation, or `ffdec.jar` if a compatible Java runtime is installed.
-   For the JAR, Java is an explicit dependency; optionally set
-   `EVOLVE_GFX_JAVA` to the Java executable. Set `EVOLVE_GFX_FFDEC` to the
-   trusted FFDec CLI/JAR path to configure noninteractively. No automatic
-   update/download occurs. This choice is saved with manager settings.
+- FFDec GPLv3-or-later, original upstream package SHA-256
+  `35f4930eb7c380afe66f2117f90b006deac0631473ad7500bb39c78f68645ecd`;
+  sources at `_internal/third_party/FFDec/Sources/FFDec-source-b2ef2d3.zip`.
+- Temurin JRE 21.0.12+8, original upstream package SHA-256
+  `b8aa18fef5edb69bee8618f99677d66d0873d22cb40d974c15ac9ffcdecf73ba`;
+  OpenJDK corresponding source at
+  `_internal/third_party/FFDec/Sources/OpenJDK21U-jdk-sources_21.0.12_8.tar.gz`,
+  and JRE legal notices under `_internal/third_party/FFDec/jre/legal`.
+- Third-party attribution: `_internal/third_party/FFDec/NOTICE.txt`.
+  Official projects:
+  https://github.com/jindrapetrik/jpexs-decompiler and
+  https://github.com/adoptium/temurin21-binaries
 
-FFDec runs in an isolated temporary layout with 28-second timeout, cancel,
-size limits and bounded diagnostic output. External movie imports are permitted
-only when an exact relative name is resolved unambiguously within the current
-project or registered Asset Library build. ImportAssets URLs and paths
-outside the scoped virtual folder are not fetched. Missing imports are shown
-as diagnostics; font/image data from different builds are not substituted.
-Cache entries include source and dependency hashes plus build and frame
-selection.
+Each app build downloads and verifies these upstream distributions **at build
+time**, not in an installed game or running Mod Manager. FFDec remains a
+separate GPL tool launched as its own Java process. Users can inspect,
+modify and redistribute the upstream source under its respective terms.
+
+A manual FFDec 26.3.0 override is still available via **Change FFDec…**.
+An invalid renderer path remembered from an older beta falls back to the
+bundled FFDec and private Java automatically. No update of your signed PAKs
+or Data folder is required.
+
+The renderer runs in an isolated temporary layout with a 28-second timeout,
+cancel, size limits and bounded diagnostic output. Scaleform ImportAssets
+checks the exact virtual filename first, then a **unique actual .gfx/.swf
+movie in the same UI subtree** (for example under `Libs/UI/FlashAssets`)
+from the selected game build. It never substitutes unrelated DDS files for
+missing SWFs, and ambiguous duplicates remain missing with diagnostics.
+Different game builds are not mixed. ActionScript runtime callbacks are still
+not simulated.
+
+External in-game font, animation and script dependencies **not present in
+the imported same-build PAKs cannot be bundled or fabricated**. The full
+library imports are needed for the best GFX preview.
 
 ## Edit and rebuild a GFX inside a Mod Project
 
