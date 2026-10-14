@@ -97,14 +97,16 @@ def create_character_glb(workspace, relative, index, *, character=None,
                              'its Blender armatures are poseable independently '
                              'but shared CAF/DBA playback has not been verified.')
     if character is not None and 'historical' in locals() and historical and (clip is not None or clips):
-        from legacy_crytek_rig import probe_legacy_dba
         selected = clip if clip is not None else tuple(clips)[0]
-        if selected.kind == 'dba' and selected.file is not None:
-            probe_legacy_dba(Path(selected.file).read_bytes())
-        raise ValueError(
-            'Historical CryTek 0x745 rig is validated, but DBA/CAF motion '
-            'controllers are not decoded for this format. Database discovery '
-            'is not a playable clip; animation export remains disabled.')
+        if selected.kind == 'dba' or (not selected.available and selected.dba_file is not None):
+            from database_animation import convert_historical_database_motion
+            blob = convert_historical_database_motion(blob, selected, index, character, preferred_workspace=workspace)
+            motion_doc, _ = _unpack_glb(blob)
+            details['animation_source'] = 'Pinned converter output verified against historical CDF rig'
+            details['bone_channels'] = sum(len(a['channels']) for a in motion_doc['animations'])
+            details['clips'] = len(motion_doc['animations'])
+            return blob, details
+        raise ValueError('Standalone CryTek 0x745 CAF controller decoding is not implemented; only verified converter-backed DBA clips can play.')
     if clip is not None and (clip.kind == 'dba' or
                              (not clip.available and clip.dba_file is not None)):
         from database_animation import convert_database_motion
