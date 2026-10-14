@@ -181,30 +181,50 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
 
 
 def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_root=None, index=None):
-    """Prefer the selected render mesh; fall back to its same-folder companion."""
+    """Resolve only the selected model's exact render companions, read-only.
+
+    A CryEngine .chr commonly represents character/skeleton data. The usual
+    render companion is .chrm, but some characters instead have a same-stem
+    .skinm. A CDF-defined differently named skin is handled upstream by
+    assemble_character(), not guessed via a global filename search.
+    """
     suffix = Path(relative).suffix.lower()
     if suffix in ('.skin', '.chr', '.cgf', '.cga'):
-        companion_rel = relative + 'm'
+        from evolve_pak_workspace import normalized_name
+        candidates = [normalized_name(relative + 'm')]
+        if suffix == '.chr':
+            candidates.append(normalized_name(str(Path(relative).with_suffix('.skinm')).replace('\\', '/')))
         root = (Path(workspace) / 'files').resolve()
-        file = (root / companion_rel).resolve()
-        if file.is_relative_to(root) and file.is_file() and not file.is_symlink():
-            return read_preview_mesh(file.read_bytes(), companion_rel)
-        # An already indexed read-only Asset Library must not call the
-        # editable project's signed-PAK workspace discovery path.
-        if index is not None:
-            from multi_pak_assets import _resolve
-            hits, state = _resolve(index, companion_rel,
-                                   preferred_workspace=workspace)
-            if state == 'ambiguous':
-                raise ValueError('Multiple different render companion meshes: ' + companion_rel)
-            linked = hits[0]['file'] if state == 'found' else None
-        else:
-            from multi_pak_assets import locate_related_asset
-            linked = locate_related_asset(
-                workspace, companion_rel, projects_root, stage_root)
-        if linked is not None:
-            return read_preview_mesh(linked.read_bytes(), companion_rel)
-        raise ValueError('This character file stores skeleton/metadata. A .skinm or .chrm render-mesh companion is needed for preview.')
+        for companion_rel in candidates:
+            # Do not resolve before checking links; an imported read-only
+            # library must never be tricked into loading outside its folder.
+            local = root.joinpath(*companion_rel.split('/'))
+            if (not local.is_symlink() and local.is_file()
+                    and local.resolve().is_relative_to(root)):
+                return read_preview_mesh(local.read_bytes(), companion_rel)
+            # An explicitly scoped Asset Library index is authoritative.
+            # Never fall back to project discovery across other builds.
+            if index is not None:
+                from multi_pak_assets import _resolve
+                hits, state = _resolve(index, companion_rel,
+                                       preferred_workspace=workspace)
+                if state == 'ambiguous':
+                    raise ValueError('Multiple different render companion meshes: ' + companion_rel)
+                linked = hits[0]['file'] if state == 'found' else None
+            else:
+                from multi_pak_assets import locate_related_asset
+                linked = locate_related_asset(
+                    workspace, companion_rel, projects_root, stage_root)
+            if linked is not None:
+                linked = Path(linked)
+                if linked.is_symlink() or not linked.is_file():
+                    raise ValueError('Companion render mesh is not a safe regular file: ' + companion_rel)
+                return read_preview_mesh(linked.read_bytes(), companion_rel)
+        raise ValueError(
+            'No render mesh found for this character metadata. Checked: '
+            + ', '.join(candidates)
+            + '. For differently named body skins, import its matching .cdf'
+            ' and referenced .skinm into the selected build.')
     return read_preview_mesh(raw, relative)
 
 
