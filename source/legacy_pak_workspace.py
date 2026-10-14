@@ -53,13 +53,17 @@ def _reject_links(path):
 
 
 def _safe_inside(root, relative):
-    root = Path(root).resolve()
+    root = Path(root).absolute()
     target = root.joinpath(*relative.split("/"))
+    # Do not call resolve() on the root before inspecting symlinks: that would
+    # hide a malicious "overrides" -> outside-folder junction/symlink.
+    for part in (target, *target.parents):
+        if part.is_symlink():
+            raise ValueError("Linked project paths are not allowed.")
+        if part == root:
+            break
     if not target.resolve().is_relative_to(root):
         raise ValueError("Project entry resolves outside project folder.")
-    if any(part.is_symlink() for part in (target, *target.parents)
-           if part == root or root in part.parents):
-        raise ValueError("Linked project paths are not allowed.")
     return target
 
 
@@ -105,8 +109,9 @@ def _inventory(archive):
 
 def inspect_archive(source, *, verify_crc=False):
     """Return metadata only for valid ordinary ZIP PAKs, without extracting."""
-    source = Path(source).resolve(strict=True)
-    _reject_links(source)
+    candidate = Path(source).expanduser()
+    _reject_links(candidate)
+    source = candidate.resolve(strict=True)
     if source.suffix.casefold() != ".pak" or not zipfile.is_zipfile(source):
         raise ValueError("Select a ZIP-compatible historical .pak archive.")
     try:
@@ -124,7 +129,9 @@ def inspect_archive(source, *, verify_crc=False):
 
 def create_project(source, folder):
     """Index once; do not unpack hundreds of megabytes until a file is opened."""
-    source = Path(source).resolve(strict=True)
+    candidate = Path(source).expanduser()
+    _reject_links(candidate)
+    source = candidate.resolve(strict=True)
     folder = Path(folder).resolve()
     if folder.exists():
         raise FileExistsError("Choose a new legacy project directory.")
@@ -165,8 +172,9 @@ def load_project(folder, *, check_source=True):
         if rel != item["path"] or rel.casefold() in unique:
             raise ValueError("Unsafe or duplicated legacy project entry.")
         unique.add(rel.casefold())
-    source = Path(manifest["source"]).resolve(strict=True)
-    _reject_links(source)
+    candidate = Path(manifest["source"])
+    _reject_links(candidate)
+    source = candidate.resolve(strict=True)
     if check_source and sha_file(source) != manifest["source_sha256"]:
         raise ValueError("Original legacy PAK changed; refuse to edit/rebuild from a new baseline.")
     manifest["folder"] = folder
@@ -209,7 +217,8 @@ def read_editable_text(project, name, *, limit=MAX_PREVIEW):
         raise ValueError("This is a binary asset. Use Replace File or Export Original.")
     if sum(byte < 9 or 13 < byte < 32 for byte in data[:4096]) > 8:
         raise ValueError("Binary or compiled text cannot be edited in the text pane.")
-    for codec in ("utf-8-sig", "utf-8", "cp1252"):
+    codecs = ("utf-8-sig",) if data.startswith(b"\xef\xbb\xbf") else ("utf-8", "cp1252")
+    for codec in codecs:
         try:
             return data.decode(codec), codec
         except UnicodeDecodeError:
@@ -381,6 +390,8 @@ def rebuild_pak(project, destination, *, progress=None):
                 raise ValueError("Rebuilt legacy PAK failed CRC: " + bad)
         if sha_file(project["source_path"]) != project["source_sha256"]:
             raise ValueError("Original PAK changed while rebuilding.")
+        if destination.exists():
+            raise FileExistsError("Output appeared while rebuilding; refusing to overwrite it.")
         os.replace(temp, destination)
         return {"output": str(destination), "changes": len(edited),
                 "members": len(project["entries"]), "bytes": destination.stat().st_size}
