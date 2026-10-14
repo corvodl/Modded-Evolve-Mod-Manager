@@ -195,6 +195,8 @@ class Xbox2012DecodeTests(unittest.TestCase):
 
         header = bytearray(empty_dds(b'CTX1', 512, 512))
         struct.pack_into('<I', header, 28, 8)
+        struct.pack_into('<I', header, 8,
+                         struct.unpack_from('<I', header, 8)[0] | 0x20000)
         struct.pack_into('<I', header, 36, 0x1040)
         # parse_dds validates that at least some compressed payload exists.
         # Build a minimal valid envelope before querying its mip sizes.
