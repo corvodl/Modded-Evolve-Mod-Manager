@@ -22,6 +22,7 @@ class Stage2TransferTransactionTests(unittest.TestCase):
                                                    ("package", "stage", "recovery"))
         self.package.mkdir()
         self.stage.mkdir()
+        (self.stage / ".stage2-transfer-staging.json").write_text(json.dumps({"purpose": "isolated-stage2-transfer-staging", "schema": 1}), encoding="utf-8")
         self.verifications = []
 
     def verified(self, path, relative):
