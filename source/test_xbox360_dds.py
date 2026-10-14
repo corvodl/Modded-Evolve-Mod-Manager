@@ -95,6 +95,46 @@ class Xbox2012DecodeTests(unittest.TestCase):
             decode_2012_console_dds(xboxify(
                 empty_dds()+ bytes((128,128,128,128,0,0,0,0))*(32*32)))
 
+    def test_local_split_fragment_diagnostic_exports_png_without_edits(self):
+        from xbox360_texture_diagnostics import decode_fragment_files
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            source=root/'library';source.mkdir()
+            output=root/'exports';output.mkdir()
+            model=source/'test.chr'
+            model.write_bytes(b'CryTek\\0\\0'+struct.pack('<2I',0xffff0000,0x745))
+            original=fixture_dds('DXT1',(128,128),5)
+            info=parse_dds(original)
+            lengths=[8192,2048,512,128,32]
+            chain=original[info.data_offset:]
+            self.assertEqual(len(chain),sum(lengths))
+            mips=[]
+            at=0
+            for size in lengths:
+                mips.append(chain[at:at+size])
+                at+=size
+            tiled=xboxify(original)
+            header=bytearray(tiled[:128])
+            # Small tail mips are irrelevant to the top-resolution preview,
+            # but the complete stream still needs valid lengths and order.
+            fragments=[
+                bytes(header)+mips[3]+mips[4], mips[2],mips[1],tiled[128:]]
+            paths=[]
+            for i,raw in enumerate(fragments):
+                path=source/('test.dds.'+str(i));path.write_bytes(raw)
+                paths.append(path)
+            expected=[p.read_bytes() for p in paths]
+            png=output/'decoded.png'
+            report=decode_fragment_files(model,paths,png)
+            self.assertEqual(report['size'],(128,128))
+            self.assertEqual(len(report['fragments']),4)
+            with Image.open(png) as converted,Image.open(BytesIO(original)) as reference:
+                self.assertEqual(converted.convert('RGB').tobytes(),
+                                 reference.convert('RGB').tobytes())
+            self.assertEqual([p.read_bytes() for p in paths],expected)
+            with self.assertRaisesRegex(ValueError,'NEW output'):
+                decode_fragment_files(model,paths,png)
+
     def test_model_gate_does_not_transform_stage2_or_unknown_character(self):
         with tempfile.TemporaryDirectory() as td:
             name='Objects/characters/monsters/ParasiteHost/ParasiteHost3.chr'
