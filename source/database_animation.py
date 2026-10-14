@@ -209,17 +209,31 @@ def convert_historical_database_motion(blob, reference, index, character, *,
         flags = getattr(subprocess,'CREATE_NO_WINDOW',0)
         if cancelled and cancelled():
             raise ValueError('Historical DBA conversion cancelled.')
+        import time
+        process = subprocess.Popen([program, *args], cwd=out,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   creationflags=flags)
+        deadline = time.monotonic() + 180
         try:
-            proc=subprocess.run([program,*args],cwd=out,capture_output=True,
-                                timeout=180,creationflags=flags)
-        except subprocess.TimeoutExpired as exc:
-            raise ValueError('Historical DBA converter exceeded 180 seconds.') from exc
-        if cancelled and cancelled():
-            raise ValueError('Historical DBA conversion cancelled.')
-        if proc.returncode:
+            while True:
+                if cancelled and cancelled():
+                    raise ValueError('Historical DBA conversion cancelled.')
+                if time.monotonic() > deadline:
+                    raise ValueError('Historical DBA converter exceeded 180 seconds.')
+                try:
+                    _, stderr = process.communicate(timeout=0.4)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+            process.communicate()
+            raise
+        if process.returncode:
             raise ValueError(
                 'Pinned converter does not support this 2012 .chr/DBA or failed: '
-                +proc.stderr.decode('utf-8','replace')[-400:])
+                + stderr.decode('utf-8','replace')[-400:])
         files=[p for p in out.rglob('*.glb') if p.is_file() and not p.is_symlink()]
         if len(files)!=1 or files[0].stat().st_size > 192*1024*1024:
             raise ValueError('Historical converter produced no single bounded rigged GLB.')
