@@ -505,7 +505,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         # the real body material. They previously suppressed this error and
         # silently produced a black/untextured GPU preview.
         detail = '; '.join(issues[:3]) if issues else ', '.join(visible_diffuse[:3])
-        raise ValueError('No visible diffuse DDS textures found or decoded: ' + detail +
+        raise ValueError('No diffuse DDS textures found or decoded for visible material slots: ' + detail +
                          '. Import the owning Legacy texture PAK for this build, '
                          'then use Textures > Diagnose Texture Links.')
     if not any(x is not None for x in result) and not any(hidden):
