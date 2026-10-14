@@ -362,7 +362,8 @@ class LegacyPAKEditor(QMainWindow):
         self._build_progress.setWindowModality(Qt.WindowModal)
         self._build_progress.setMinimumDuration(0)
         self._worker = _LegacyBuildThread(self.project, target, self)
-        self._worker.progress.connect(self._build_progress.setValue)
+        self._worker.progress.connect(
+            lambda done, total: self._build_progress.setValue(done))
         self._worker.completed.connect(self._build_done)
         self._worker.failed.connect(self._build_failed)
         self._worker.finished.connect(self._build_progress.close)
