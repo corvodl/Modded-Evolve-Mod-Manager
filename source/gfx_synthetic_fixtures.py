@@ -39,7 +39,8 @@ def _tag(code, content=b""):
 
 def synthetic_gfx(*, scripts=False, imports=False, sprites=True,
                   nonvisual_sprite=False, exported_names=False,
-                  action_message=None, width=64, height=48, compressed=False):
+                  action_message=None, embedded_image=False,
+                  width=64, height=48, compressed=False):
     shape = [0, 0, 0, 1, 0, 1]  # Change style: move + FillStyle1
     shape += _uint(1, 5) + [0, 0] + [1]  # moveBits=1, x=0,y=0, fill=1
     for horizontal, delta in ((True, width*20), (False, height*20),
@@ -55,6 +56,12 @@ def synthetic_gfx(*, scripts=False, imports=False, sprites=True,
     place_shape = struct.pack("<HH", 1, 1) + b"\x00"  # identity matrix
     place_sprite = struct.pack("<HH", 2, 1) + b"\x00"
     body = _tag(2, shape_payload)
+    if embedded_image:
+        from io import BytesIO
+        from PIL import Image
+        encoded = BytesIO()
+        Image.new("RGB", (16, 16), (245, 0, 0)).save(encoded, "JPEG")
+        body += _tag(21, struct.pack("<H", 4) + encoded.getvalue())
     if sprites:
         nested = _tag(4, place_shape) + _tag(1) + _tag(0)
         body += _tag(39, struct.pack("<HH", 2, 1) + nested)
