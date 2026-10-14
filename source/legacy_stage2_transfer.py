@@ -100,6 +100,48 @@ def _members_for_map(build, map_id, *, library_root):
     return rows
 
 
+def _explicit_map_references(source_build, source, members, names, *, library):
+    """Inspect only readable XML links in the selected build and map context.
+
+    No guessing about compiled world, shared PAKs, resource-list sidecars or
+    unresolved map-global names. Source references are never looked up in
+    another build or unrelated map-specific archive.
+    """
+    from build_collections import build_index
+    from build_transfer_dependencies import discover_dependencies
+    from level_asset_mount import map_relative_asset
+
+    selected_ids = {row[0] for row in members}
+    foreign_ids = set()
+    for aid, member in source["members"].items():
+        if aid in selected_ids:
+            continue
+        folder = _folder_for_identifier(aid, library)
+        if not folder.is_dir() or folder.is_symlink():
+            continue
+        source_path = _archive_path(member, _load_manifest(folder))
+        if re.search(r"(?:^|/)levels/[^/]+/", str(source_path).replace("\\", "/").casefold()):
+            foreign_ids.add(aid)
+    scoped = {}
+    for name, rows in build_index(source_build, root=library).items():
+        permitted = [
+            row for row in rows
+            if row["_asset_library"] not in foreign_ids
+            and (not map_relative_asset(name) or row["_asset_library"] in selected_ids)
+        ]
+        if permitted:
+            scoped[name] = permitted
+    seeds = sorted({name for name in names
+                    if name.casefold().split("/")[-1] in
+                    ("levelinfo.xml", "leveldata.xml", "mission_mission0.xml")})[:16]
+    if not seeds:
+        return {"seeds": [], "found": [], "missing": [],
+                "conflicts": [], "incomplete": [{"reason": "no-readable-level-metadata"}],
+                "edges": [], "closure_complete": False}
+    result = discover_dependencies(scoped, seeds, build_id=source_build)
+    return dict(result, seeds=seeds)
+
+
 def plan_compiled_map(source_build, target_build, map_id, *, root=None,
                       selected_archive=None):
     """Produce a bounded, non-deployable review plan from local inventories."""
@@ -150,6 +192,8 @@ def plan_compiled_map(source_build, target_build, map_id, *, root=None,
     has_source_heightmap = any(name.endswith("heightmap.dat") for name in virtual_names)
     has_authored_layer = any(name.endswith(".lyr") for name in virtual_names)
     has_compiled_terrain = any(name.endswith("terrain/terrain.dat") for name in virtual_names)
+    reference_scan = _explicit_map_references(
+        source_build, source, candidates, virtual_names, library=library)
     return {
         "schema": 1, "type": "legacy-stage2-compiled-map-review",
         "map_id": map_id, "source_build_id": source_build,
@@ -163,6 +207,9 @@ def plan_compiled_map(source_build, target_build, map_id, *, root=None,
         "target_has_compiled_level": any(row[-1] == "compiled-level" for row in target_group),
         "requires_new_archive_support": any(not a["target_archive_present"] for a in archives),
         "needs_external_dependencies": True,
+        "source_reference_diagnostics": reference_scan,
+        "all_engine_dependencies_verified": False,
+        "reference_scope": "selected-map-explicit-xml-only",
         "runtime_compatibility": "unverified",
         "editor_compatibility": "not-established-without-source-heightmap"
           if not has_source_heightmap else "unverified",
