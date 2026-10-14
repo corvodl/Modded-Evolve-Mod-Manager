@@ -293,6 +293,39 @@ class LegacyVariantCompatibilityTests(unittest.TestCase):
             skin_glb_legacy_composite(
                 glb_bytes(composite), [(body, 4), (conflicting, 4)], master)
 
+    def test_two_root_teleporter_accessory(self):
+        from legacy_crytek_rig import _one_chunk
+        raw = bytearray(fixture())
+        at, _ = _one_chunk(raw, 0xACDC0000)
+        struct.pack_into('<i', raw, at + 48 + 584 + 572, 0)
+        raw = bytes(raw)
+        names, parents, _, _ = read_legacy_bones(raw)
+        self.assertEqual(parents, (-1, -1))
+        mesh = read_preview_mesh(raw, 'teleporter3_arms.chr')
+        glb, report = skin_glb_legacy(glb_bytes(mesh), raw, raw)
+        doc, _ = _unpack_glb(glb)
+        self.assertNotIn('skeleton', doc['skins'][0])
+        self.assertEqual(report['bone_count'], 2)
+        self.assertGreater(validate_skin_rest_pose(glb), 0)
+
+    def test_duplicate_source_bone_label_preserves_joint_ids(self):
+        from legacy_crytek_rig import _one_chunk
+        raw = bytearray(fixture())
+        at, _ = _one_chunk(raw, 0xACDC0000)
+        record = at + 48 + 584
+        raw[record+312:record+568] = bytes(256)
+        raw[record+312:record+316] = b'Root'
+        raw = bytes(raw)
+        names, parents, _, _ = read_legacy_bones(raw)
+        self.assertEqual(names, ('Root', 'Root__source_joint_1'))
+        mesh = read_preview_mesh(raw, 'lava_squid.chr')
+        glb, report = skin_glb_legacy(glb_bytes(mesh), raw, raw)
+        doc, _ = _unpack_glb(glb)
+        self.assertEqual([doc['nodes'][n]['name'] for n in
+                          doc['skins'][0]['joints']],
+                         ['Root', 'Root__source_joint_1'])
+        self.assertGreater(validate_skin_rest_pose(glb), 0)
+
 
 if __name__ == '__main__':
     unittest.main()
