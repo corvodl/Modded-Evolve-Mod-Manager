@@ -259,9 +259,18 @@ class QtWorkspaceEditor(QMainWindow):
                      ('Import PNG', self.import_png))
                 )
                 for text, callback in actions:
-                    widgets[text] = self._button(text, callback)
-                    widgets[text].setIcon(action_icon(text))
-                    bar.addWidget(widgets[text])
+                    button = self._button(text, callback)
+                    widgets[text] = button
+                    button.setParent(tab)
+                    button.setToolTip(text + ' (also in File, Edit or Textures menu)')
+                    button.setIconSize(QSize(15, 15))
+                    if text in ('Save', 'Find Text', 'Export PNG'):
+                        # Context-only quick actions; advanced operations are
+                        # in the already-existing menu bar rather than a row
+                        # of 7 text+icon buttons that clips small editors.
+                        bar.addWidget(button)
+                    else:
+                        button.hide()
                 bar.addStretch(1)
                 box.addLayout(bar)
             if section == 'files':
@@ -393,6 +402,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.find_shortcut.activated.connect(self.find_text)
         self.populate()
         self._sync_file_explorer_button()
+        self.views['files'].textChanged.connect(self._sync_editor_context_actions)
+        self._sync_editor_context_actions()
         self.recovery_timer=QTimer(self)
         self.recovery_timer.setInterval(30000)
         self.recovery_timer.timeout.connect(self._autosave_recovery)
@@ -445,6 +456,33 @@ class QtWorkspaceEditor(QMainWindow):
                 button.setEnabled(False)
         self.save_shortcut.setEnabled(False)
         self.views['files'].setReadOnly(True)
+        self._sync_editor_context_actions()
+
+    def _sync_editor_context_actions(self):
+        """Keep only relevant lightweight buttons visible for current asset."""
+        if not hasattr(self, 'actions'):
+            return
+        mode = getattr(self, 'mode', None)
+        has_asset = bool(getattr(self, 'current', None))
+        editable = bool(has_asset and mode == 'files'
+                        and not self.read_only_library)
+        for section, name in (('files', 'Save'), ('files', 'Find Text'),
+                              ('images', 'Export PNG')):
+            button = self.actions.get(section, {}).get(name)
+            if button is None:
+                continue
+            relevant = (has_asset and mode == section and
+                        (name != 'Save' or editable))
+            button.setVisible(bool(relevant))
+            button.setEnabled(bool(relevant and (
+                name != 'Save' or self._dirty())))
+        for item in self.editor_menus.get('Textures', ()).actions():
+            if item.text() in ('Import Replacement DDS…', 'Import Replacement PNG…'):
+                item.setEnabled(has_asset and mode == 'images'
+                                and not self.read_only_library)
+        for item in self.editor_menus.get('File', ()).actions():
+            if item.text() == 'Export Texture as PNG…':
+                item.setEnabled(has_asset and mode == 'images')
 
     def _build_editor_menus(self):
         """Blender-style discoverable menu bar; no oversized model-action rows."""
@@ -463,6 +501,7 @@ class QtWorkspaceEditor(QMainWindow):
 
         action('File', 'Open File Folder', self.explore)
         action('File', 'Export Rendered GFX PNG…', self.export_png)
+        action('File', 'Export Texture as PNG…', self.export_png)
         action('File', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('File', 'Export Native Model…', self.export_model)
         action('File', 'Export for Blender (.glb)…', self.export_blender_model)
@@ -473,6 +512,11 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Batch Asset Export…', self.open_asset_search)
         action('File', 'Project History & Undo…', self.open_project_history)
         action('Edit', 'Save Text', self.save)
+        self._context_menu_actions = {
+            'Save Text': menus['Edit'].actions()[-1],
+            'Export Texture as PNG…': next(a for a in menus['File'].actions()
+                if a.text() == 'Export Texture as PNG…'),
+        }
         action('Edit', 'Find Text', self.find_text)
         action('Edit', 'Visual Gameplay Values…', self.open_gameplay_editor)
         action('Edit', 'Gameplay Presets…', self.open_gameplay_presets)
@@ -490,6 +534,8 @@ class QtWorkspaceEditor(QMainWindow):
         action('Model', 'Asset Dependency Graph…', self.open_dependency_graph)
         action('Model', 'Reset Camera', lambda: self._with_model_panel(
             lambda p: p.reset_view()))
+        action('Textures', 'Import Replacement DDS…', self.import_dds)
+        action('Textures', 'Import Replacement PNG…', self.import_png)
         action('Textures', 'Diagnose Texture Links…', self.find_model_textures)
         action('Textures', 'Texture Preview Status…', self.texture_diagnostics)
         action('Textures', 'Resolve Missing Textures…', self.open_texture_resolver)
@@ -1193,6 +1239,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.texture_message = 'No texture lookup has run'
         self.mode = self._category(rel)
+        self._sync_editor_context_actions()
         self.dependency_button.setEnabled(self.mode=='models')
         if self.mode != 'models':
             self.dependency_button.setText('Dependencies…')
