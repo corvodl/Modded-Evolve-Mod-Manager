@@ -66,7 +66,7 @@ class GfxEditingTests(unittest.TestCase):
         self.assertFalse(restored.changed)
         self.assertEqual(restored.working_file.read_bytes(), self.original)
         self.assertEqual(self.target.read_bytes(), self.original)
-        with self.assertRaisesRegex(GfxError, "no staged GFX edits"):
+        with self.assertRaisesRegex(GfxError, "no changes"):
             apply_gfx_session(self.project, snap.session)
 
     def test_invalid_movies_and_unsafe_sessions_fail_closed(self):
@@ -101,7 +101,7 @@ class GfxEditingTests(unittest.TestCase):
         with self.assertRaisesRegex(GfxError, "does not match"):
             replace_gfx_resource(self.project, snap.session,
                                  "shape", 99, svg)
-        with self.assertRaisesRegex(GfxError, "Select a"):
+        with self.assertRaisesRegex(GfxError, "supported image/text/shape"):
             replace_gfx_resource(self.project, snap.session,
                                  "shape", 1, self.candidate)
         def synthesize(args, *, configured, folder, cancelled=None):
@@ -191,7 +191,7 @@ class GfxEditingTests(unittest.TestCase):
                    side_effect=lambda args, **_: Path(args[-1]).write_text(
                        "<SWF tags='1'/>")):
             exported = export_gfx_xml(self.project, snap.session, xml)
-        self.assertEqual(exported, xml)
+        self.assertEqual(exported.resolve(), xml.resolve())
         self.assertIn("SWF", xml.read_text())
         self.assertEqual(self.target.read_bytes(), self.original)
         with self.assertRaises(GfxError):
