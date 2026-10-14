@@ -78,7 +78,7 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
     info = inspect_model(data)
     if info.format_name == 'CryTek':
         from legacy_crytek_mesh import read_crytek_geometry
-        positions, triangles, uvs = read_crytek_geometry(data)
+        positions, triangles, uvs, subsets = read_crytek_geometry(data)
         xs, ys, zs = zip(*positions)
         center = ((max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2,
                   (max(zs) + min(zs)) / 2)
@@ -86,10 +86,10 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
                      max(zs) - min(zs)) / 2
         if radius <= 1e-7:
             raise ValueError('Legacy render geometry has degenerate bounds.')
-        # Historical material subsets/rigging are not inferred. Positions
-        # and validated UVs can be displayed without changing source bytes.
+        # Index ranges and original material IDs are verified against the
+        # historical subset table; rigging remains a separate validation gate.
         return PreviewMesh(positions, triangles, center, radius, source_name,
-                           uvs, ())
+                           uvs, subsets)
     if info.format_name != 'CrChF' or info.version != 7:
         raise ValueError('3D preview supports CrChF v7 or validated CryTek 0x745 geometry only.')
     streams = {}
