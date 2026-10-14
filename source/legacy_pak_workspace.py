@@ -300,15 +300,31 @@ def changed_members(project):
 
 
 def export_member(project, name, destination):
+    """Stream even multi-hundred-megabyte FSB / USM files without buffering."""
+    record = entries_by_name(project).get(name)
+    if record is None:
+        raise ValueError("Select a file from the legacy archive.")
     destination = Path(destination).resolve()
     if destination.exists():
         raise FileExistsError("Choose a new export filename.")
     if destination.is_relative_to(project["folder"]):
         raise ValueError("Export outside the editing project's internal folders.")
-    data = read_member(project, name)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    staged = _override_path(project, name)
     with destination.open("xb") as out:
-        out.write(data)
+        try:
+            if staged.is_file():
+                _reject_links(staged)
+                with staged.open("rb") as source:
+                    shutil.copyfileobj(source, out, BUFFER)
+            else:
+                with zipfile.ZipFile(project["source_path"]) as archive, \
+                     archive.open(record["archive_name"], "r") as source:
+                    shutil.copyfileobj(source, out, BUFFER)
+        except Exception:
+            out.close()
+            destination.unlink(missing_ok=True)
+            raise
     return destination
 
 
