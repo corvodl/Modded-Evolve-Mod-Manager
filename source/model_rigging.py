@@ -174,7 +174,8 @@ def skin_glb(glb, mesh_raw, skeleton_raw):
     return skin_glb_verified(glb, names, parents, world, inverse, ids, weights, subsets)
 
 
-def skin_glb_verified(glb, names, parents, world, inverse, bone_ids, weights, subsets):
+def skin_glb_verified(glb, names, parents, world, inverse, bone_ids, weights, subsets,
+                      *, allow_multiple_roots=False):
     """Write shared glTF skin accessors from a separately validated rig.
 
     The 2012 parser and modern parser feed this same construction path,
@@ -202,6 +203,7 @@ def skin_glb_verified(glb, names, parents, world, inverse, bone_ids, weights, su
     if (np.any(weights.astype(np.uint16).sum(axis=1) != 255)
             or np.any(bone_ids[weights > 0] >= len(names))
             or parents.count(-1) < 1
+            or (parents.count(-1) != 1 and not allow_multiple_roots)
             or any(parent >= i or parent < -1
                    for i, parent in enumerate(parents))):
         raise ValueError('Invalid verified bone weights or root hierarchy.')
