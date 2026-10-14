@@ -197,8 +197,6 @@ def plan_legacy_build_export(source_build, target_build, *, root=None,
                 (include_identical or action != "same-payload-candidate"))
         if copy:
             total_bytes += winner["bytes"]
-            if total_bytes > MAX_EXPORT_BYTES:
-                raise ValueError("Review export exceeds 100 GiB. Select fewer assets.")
         counts[action] += 1
         rows.append({
             "path": winner["path"], "scope": scope,
@@ -263,6 +261,21 @@ def _deny_output(destination, *, library, builds, protected_roots=()):
         location = build.get("location")
         if location:
             roots.append(Path(location).resolve())
+        # Even snapshots without a registered install location can contain
+        # a fully qualified source PAK path inside an EvolveGame installation.
+        for aid in build["members"]:
+            folder = _folder_for_identifier(aid, library)
+            if folder.is_symlink() or not folder.is_dir():
+                continue
+            try:
+                source = str(_load_manifest(folder).get("source") or "")
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            if source:
+                for parent in Path(source).resolve().parents:
+                    if parent.name.casefold() == "evolvegame":
+                        roots.append(parent)
+                        break
     roots.extend(Path(p).resolve() for p in protected_roots if p)
     for root in roots:
         if candidate.is_relative_to(root) or root.is_relative_to(candidate):
@@ -292,6 +305,9 @@ def export_legacy_build_bundle(source_build, target_build, destination, *,
     if expected_inventory_sha256 and plan["inventory_sha256"] != expected_inventory_sha256:
         raise ValueError("Build catalog changed after preview. Review transfer again.")
     if not plan_only:
+        if plan["bytes_to_copy"] > MAX_EXPORT_BYTES:
+            raise ValueError(
+                "Asset export exceeds 100 GiB. Use inventory-only or split by PAK.")
         free = shutil.disk_usage(output.parent).free
         if free < plan["bytes_to_copy"] + 64 * 1024 * 1024:
             raise ValueError("Insufficient destination disk space for selected assets.")
