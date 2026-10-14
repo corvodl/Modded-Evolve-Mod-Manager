@@ -144,3 +144,85 @@ def convert_database_motion(blob, reference, index, character, *, preferred_work
             raise ValueError('Converter did not produce one bounded rigged model.')
         return attach_converted_motion(blob, files[0].read_bytes(),
             reference.virtual_path if reference.kind == 'caf' else None)
+
+
+
+def convert_historical_database_motion(blob, reference, index, character, *,
+                                       preferred_workspace=None, executable=None,
+                                       cache_root=None, cancelled=None):
+    """Try pinned external conversion of a 2012 .chr DBA in an isolated folder.
+
+    Supports only the verified single CA_SKIN .chr binding. This does not
+    assert that the converter understands the 0x905 DBA. If it does, *every*
+    transfer still passes exact bone hierarchy/rest checks and AnimatedGLB.
+    The manager never invents missing clips or writes to Asset Library files.
+    """
+    from animation_converter_bridge import bundled_converter, validate_conversion
+    from legacy_crytek_rig import probe_legacy_dba
+    from multi_pak_assets import _resolve
+    if (character is None or len(character.rig_parts) != 1
+            or character.rig_parts[0][2] is not None):
+        raise ValueError('2012 motion conversion needs one verified .chr CDF body.')
+    body_virtual, body_path, _, _ = character.rig_parts[0]
+    if not body_virtual.casefold().endswith('.chr'):
+        raise ValueError('Historical conversion accepts a CDF .chr body only.')
+    virtual_db = (reference.virtual_path if reference.kind == 'dba'
+                  else reference.dba_virtual_path)
+    database = (reference.file if reference.kind == 'dba' else reference.dba_file)
+    if not virtual_db or database is None:
+        raise ValueError('Historical DBA source was not verified in this build.')
+    db_raw = Path(database).read_bytes()
+    probe_legacy_dba(db_raw)
+    candidates, status = _resolve(index, character.skeleton,
+                                   preferred_workspace=preferred_workspace)
+    if status != 'found':
+        raise ValueError('Missing/ambiguous master skeleton for historical DBA.')
+    if cancelled and cancelled():
+        raise ValueError('Historical DBA conversion cancelled.')
+    with TemporaryDirectory(prefix='evolve-2012-motion-',dir=cache_root) as temporary:
+        root, out = Path(temporary)/'files', Path(temporary)/'output'
+        root.mkdir();out.mkdir()
+        def stage(src, name):
+            virtual = normalized_name(name)
+            dst = root.joinpath(*virtual.split('/'))
+            if not dst.resolve().is_relative_to(root.resolve()):
+                raise ValueError('Unsafe historical converter virtual path.')
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src,dst)
+            return dst
+        body = stage(body_path,body_virtual)
+        stage(candidates[0]['file'],character.skeleton)
+        stage(database,virtual_db)
+        # Carry only the owning CDF, never unrelated source files.
+        cdf, state = _resolve(index,character.cdf,
+                              preferred_workspace=preferred_workspace)
+        if state == 'found':
+            stage(cdf[0]['file'],character.cdf)
+        # 2012 files use the real .chr as the CA_SKIN binding; a fabricated
+        # modern .skin file would invalidate both palette and bind transforms.
+        params=ET.Element('Params');listing=ET.SubElement(params,'AnimationList')
+        ET.SubElement(listing,'Animation',name='$TracksDatabase',
+                      path=normalized_name(virtual_db))
+        body.with_suffix('.chrparams').write_bytes(ET.tostring(params))
+        program, args = validate_conversion(executable or bundled_converter(),
+                                             body,root,out)
+        flags = getattr(subprocess,'CREATE_NO_WINDOW',0)
+        if cancelled and cancelled():
+            raise ValueError('Historical DBA conversion cancelled.')
+        try:
+            proc=subprocess.run([program,*args],cwd=out,capture_output=True,
+                                timeout=180,creationflags=flags)
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError('Historical DBA converter exceeded 180 seconds.') from exc
+        if cancelled and cancelled():
+            raise ValueError('Historical DBA conversion cancelled.')
+        if proc.returncode:
+            raise ValueError(
+                'Pinned converter does not support this 2012 .chr/DBA or failed: '
+                +proc.stderr.decode('utf-8','replace')[-400:])
+        files=[p for p in out.rglob('*.glb') if p.is_file() and not p.is_symlink()]
+        if len(files)!=1 or files[0].stat().st_size > 192*1024*1024:
+            raise ValueError('Historical converter produced no single bounded rigged GLB.')
+        return attach_converted_motion(
+            blob,files[0].read_bytes(),
+            reference.virtual_path if reference.kind=='caf' else None)
