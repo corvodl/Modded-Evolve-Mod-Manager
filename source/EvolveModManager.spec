@@ -33,7 +33,7 @@ hidden = [
     'workspace_file_actions', 'pak_browser', 'portable_bundle',
     'first_run_setup', 'old_prepared', 'loose_game_files',
     'loose_file_editor', 'qt_manager', 'qt_workspace_editor',
-    'qt_asset_library', 'qt_asset_preview', 'asset_library_preview', 'animation_converter_bridge', 'converted_motion', 'character_aliases',
+    'qt_asset_library', 'qt_asset_preview', 'asset_library_preview', 'gfx_preview_backend', 'qt_gfx_preview', 'animation_converter_bridge', 'converted_motion', 'character_aliases',
     'qt_gpu_viewer', 'qt_asset_studio', 'studio_tools', 'qt_asset_intelligence', 'asset_intelligence', 'qt_workflow_lab', 'workflow_lab', 'qt_task_queue', 'asset_geometry_cache', 'operation_progress', 'qt_operation_progress', 'qt_background_exports', 'material_editor_v2', 'qt_developer_lab', 'developer_runtime_lab', 'developer_network_lab', 'developer_private_services', 'developer_support_lab', 'developer_write_policy', 'project_lifecycle', 'project_selection', 'qt_theme_116', 'quality_lab_116', 'studio_polish_117', 'renderer_3', 'developer_diagnostics_116', 'qt_font_health', 'desktop_shortcut', 'orphaned_swap_recovery',
 ]
 for package in ('cryptography', 'frida', 'twofish', 'PIL'):
