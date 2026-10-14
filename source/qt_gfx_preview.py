@@ -185,8 +185,15 @@ class GfxPreviewWidget(QWidget):
             self.symbol.blockSignals(True)
             self.symbol.clear()
             self.symbol.addItem("Main timeline", (0, info.frames))
+            display_names = {
+                character_id: exported for character_id, exported in info.exports
+                if exported and not exported.startswith("__Packages.")
+            }
             for character_id, frames in info.sprites:
-                self.symbol.addItem(f"Sprite #{character_id} ({frames} frames)",
+                if frames == 0:
+                    continue  # Exported classes without timelines cannot render.
+                label = display_names.get(character_id, f"Sprite #{character_id}")
+                self.symbol.addItem(f"{label} (#{character_id}, {frames} frames)",
                                     (character_id, frames))
             self.symbol.setCurrentIndex(0)
             self.symbol.blockSignals(False)
@@ -197,7 +204,9 @@ class GfxPreviewWidget(QWidget):
             self.details.setText(
                 f"GFX v{info.version} · {info.compression} · "
                 f"{info.width}×{info.height} · {info.fps:g} fps · "
-                f"{info.frames} root frames · {len(info.sprites)} sprites · "
+                f"{info.frames} root frames · "
+                f"{sum(n > 0 for _, n in info.sprites)} playable sprites · "
+                f"{sum(n == 0 for _, n in info.sprites)} nonvisual definitions · "
                 f"{len(info.images)} embedded image symbols")
             self._start_render()
         except (ValueError, OSError) as exc:
