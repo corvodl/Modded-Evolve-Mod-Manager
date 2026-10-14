@@ -57,6 +57,8 @@ class GfxInfo:
     scripts: bool
     root_placements: int
     tags: int
+    exports: tuple = ()  # (character ID, readable exported symbol name)
+    extension_tags: tuple = ()
 
     @property
     def notes(self):
@@ -68,6 +70,12 @@ class GfxInfo:
         if self.imports:
             warnings.append("External font/movie imports require matching-build references: " +
                             ", ".join(self.imports[:6]))
+        nonvisual = sum(1 for _, n in self.sprites if n == 0)
+        if nonvisual:
+            warnings.append(f"{nonvisual} nonvisual sprite/class definitions have no timeline to render.")
+        if self.extension_tags:
+            warnings.append("Scaleform extension tags " + repr(self.extension_tags) +
+                            " are present; static output may differ from the game.")
         return tuple(warnings)
 
 
@@ -139,6 +147,7 @@ def inspect_gfx(data):
         raise GfxError("GFX movie dimensions or frame count exceed preview limits.")
     pos = offset + 4
     sprites, images, imports = {}, set(), []
+    exports, extensions = [], set()
     script = False
     places = 0
     tags = 0
@@ -166,6 +175,23 @@ def inspect_gfx(data):
             if len(sprites) >= 1024 or length > MAX_FRAMES:
                 raise GfxError("Too many GFX sprites or sprite frames.")
             sprites[symbol] = length
+        if code == 56:  # ExportAssets: character ID -> viewer-friendly name
+            if len(block) < 2:
+                raise GfxError("Truncated exported GFX symbol list.")
+            exported_count, = struct.unpack_from("<H", block)
+            if exported_count > 2048 - len(exports):
+                raise GfxError("GFX exported symbol count exceeds safe limit.")
+            cursor = 2
+            for _ in range(exported_count):
+                if cursor + 2 > len(block):
+                    raise GfxError("Truncated exported GFX symbol ID.")
+                character_id, = struct.unpack_from("<H", block, cursor)
+                cursor += 2
+                name, consumed = _cstring(block[cursor:])
+                cursor += consumed
+                exports.append((character_id, name))
+        if code >= 1000:
+            extensions.add(code)
         if code in IMAGE_TAGS and len(block) >= 2:
             images.add(struct.unpack_from("<H", block)[0])
         if code in SCRIPT_TAGS:
@@ -181,7 +207,8 @@ def inspect_gfx(data):
             break
     return GfxInfo(version, compression, width, height, rate / 256.0, frames,
                    tuple(sorted(sprites.items())), tuple(sorted(images)),
-                   tuple(dict.fromkeys(imports)), script, places, tags)
+                   tuple(dict.fromkeys(imports)), script, places, tags,
+                   tuple(exports), tuple(sorted(extensions)))
 
 
 _INVALID_COMPONENT = re.compile(r'[<>:"|?*]')
