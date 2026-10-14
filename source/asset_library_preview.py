@@ -153,6 +153,48 @@ def export_png(identifier, relative, destination, *, root=None, build_id=None):
     return target
 
 
+def gfx_movie(identifier, relative, *, root=None):
+    """Inspect a safe, manifest-listed raw GFX asset, not a DDS/bitmap."""
+    from gfx_preview_backend import MAX_SOURCE, inspect_gfx
+    if not relative.casefold().endswith(".gfx"):
+        raise ValueError("Choose a Scaleform .gfx movie.")
+    raw = read_asset(identifier, relative, root=root, limit=MAX_SOURCE)
+    return inspect_gfx(raw)
+
+
+def library_gfx_imports(identifier, relative, *, root=None, build_id=None):
+    """Resolve movie imports only from same library PAK or same registered build.
+
+    Ambiguity remains missing instead of selecting a same-name asset from
+    another build. Unassigned legacy imports remain scoped to their own PAK.
+    """
+    from gfx_preview_backend import inspect_gfx, resolve_imports, MAX_SOURCE
+    from build_collections import build_index, resolve_archive_build
+    original = read_asset(identifier, relative, root=root, limit=MAX_SOURCE)
+    info = inspect_gfx(original)
+    own = archive_entries(identifier, root)
+    context = resolve_archive_build(identifier, root=root, build_id=build_id)
+    scoped = build_index(context, root=root)
+
+    def resolve(virtual):
+        key = virtual.casefold()
+        local = [value for name, value in own.items() if name.casefold() == key]
+        if len(local) == 1:
+            chosen = local[0]
+        else:
+            candidates = scoped.get(key, ())
+            # Do not assume two copies of a font are interchangeable, even
+            # if they have the same filename across two registered builds.
+            if len(candidates) != 1:
+                return None
+            chosen = Path(candidates[0]["file"])
+        if chosen.is_symlink() or not chosen.is_file() or chosen.stat().st_size > MAX_SOURCE:
+            return None
+        return chosen.read_bytes()
+
+    return (*resolve_imports(info, relative, resolve), context)
+
+
 def library_model_index(identifier, root=None, *, build_id=None):
     """Include all imported dependencies while prioritizing the selected PAK."""
     own = archive_entries(identifier, root)
