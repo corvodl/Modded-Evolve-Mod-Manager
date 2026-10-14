@@ -160,7 +160,10 @@ def inspect_gfx(data):
             raise GfxError("GFX tag count exceeds safe preview limit.")
         if code == 39 and len(block) >= 4:
             symbol, length = struct.unpack_from("<HH", block)
-            if len(sprites) >= 1024 or not 1 <= length <= MAX_FRAMES:
+            # Valid Scaleform libraries may define 0-frame sprite shells for
+            # ActionScript exports. They have no renderable timeline, but must
+            # not invalidate their containing movie (main_menu.gfx uses many).
+            if len(sprites) >= 1024 or length > MAX_FRAMES:
                 raise GfxError("Too many GFX sprites or sprite frames.")
             sprites[symbol] = length
         if code in IMAGE_TAGS and len(block) >= 2:
@@ -220,6 +223,29 @@ def safe_import_path(url, virtual):
     return _virtual_path(str(PurePosixPath(name).parent / url))
 
 
+def _validate_imported_movie(content, relative):
+    """Validate bounded Flash movie bytes; GFX and ordinary SWF differ.
+
+    Scaleform ImportAssets2 can refer to .swf files (FWS/CWS) as well as
+    .gfx files. JPEXS handles both, but GFX parsing alone must not reject
+    otherwise valid Flash dependencies.
+    """
+    if not isinstance(content, bytes) or len(content) < 8 or len(content) > MAX_SOURCE:
+        raise GfxError("External Flash movie is incomplete or exceeds size limit: " + relative)
+    if relative.casefold().endswith(".gfx"):
+        inspect_gfx(content)
+        return
+    if content[:3] not in (b"FWS", b"CWS"):
+        raise GfxError("Imported SWF must have FWS or CWS signature: " + relative)
+    size, = struct.unpack_from("<I", content, 4)
+    if size < 12 or size > MAX_DECOMPRESSED:
+        raise GfxError("Imported SWF declares unsafe decompressed size: " + relative)
+    if content[:3] == b"FWS" and size != len(content):
+        raise GfxError("Imported SWF length mismatch: " + relative)
+    if content[:3] == b"CWS" and len(_decompress_limited(content[8:], size - 8)) != size - 8:
+        raise GfxError("Imported SWF compression/length mismatch: " + relative)
+
+
 def resolve_imports(info, virtual, resolver):
     """Resolve only unique, intact per-build/project providers supplied by UI.
 
@@ -234,7 +260,7 @@ def resolve_imports(info, virtual, resolver):
             if content is None:
                 failures.append(f"Missing matching-context movie: {relative}")
                 continue
-            inspect_gfx(content)
+            _validate_imported_movie(content, relative)
             resolved[relative] = content
         except (GfxError, ValueError, OSError) as exc:
             failures.append(str(exc))
@@ -344,8 +370,7 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
         virtual_dep = _virtual_path(key)
         if not virtual_dep.casefold().endswith((".gfx", ".swf")):
             raise GfxError("Invalid external dependency type.")
-        if not isinstance(blob, bytes) or len(blob) > MAX_SOURCE:
-            raise GfxError("Missing or oversized GFX import.")
+        _validate_imported_movie(blob, virtual_dep)
         checked[virtual_dep] = blob
     executable = Path(command[-1] if command[-1].endswith(".jar") else command[0])
     stamp = (executable.stat().st_size, executable.stat().st_mtime_ns)
