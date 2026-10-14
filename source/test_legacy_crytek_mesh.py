@@ -53,6 +53,19 @@ class OldCryTekMeshTests(unittest.TestCase):
         self.assertEqual(inspect_model(blob).format_name, 'CryTek')
         self.assertEqual(inspect_model(blob).chunks, 4)
 
+    def test_cdf_explicit_chr_skin_binding(self):
+        from character_assembly import _parse_cdf
+        root = 'objects/characters/archetypefemale/'
+        data = (
+            '<CharacterDefinition><Model File="' + root
+            + 'archfemale_skeleton.chr"/><AttachmentList>'
+            '<Attachment AName="body" Type="CA_SKIN" Binding="' + root
+            + 'archfemale.chr"/></AttachmentList></CharacterDefinition>'
+        ).encode('utf-8')
+        skeleton, bindings, _ = _parse_cdf(data)
+        self.assertEqual(skeleton, root + 'archfemale_skeleton.chr')
+        self.assertEqual(bindings, (('body', root + 'archfemale.chr'),))
+
     def test_version_and_invalid_index_rejected(self):
         with self.assertRaisesRegex(ValueError, '0x745'):
             read_crytek_geometry(fixture(version=0x744))
