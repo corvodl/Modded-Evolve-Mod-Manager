@@ -187,8 +187,9 @@ def inspect_gfx(data):
                     raise GfxError("Truncated exported GFX symbol ID.")
                 character_id, = struct.unpack_from("<H", block, cursor)
                 cursor += 2
-                name, consumed = _cstring(block[cursor:])
-                cursor += consumed
+                name_bytes = block[cursor:]
+                name = _cstring(name_bytes)
+                cursor += name_bytes.index(b"\x00") + 1
                 exports.append((character_id, name))
         if code >= 1000:
             extensions.add(code)
