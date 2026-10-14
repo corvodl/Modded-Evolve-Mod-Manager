@@ -39,7 +39,7 @@ def _tag(code, content=b""):
 
 def synthetic_gfx(*, scripts=False, imports=False, sprites=True,
                   nonvisual_sprite=False, exported_names=False,
-                  width=64, height=48, compressed=False):
+                  action_message=None, width=64, height=48, compressed=False):
     shape = [0, 0, 0, 1, 0, 1]  # Change style: move + FillStyle1
     shape += _uint(1, 5) + [0, 0] + [1]  # moveBits=1, x=0,y=0, fill=1
     for horizontal, delta in ((True, width*20), (False, height*20),
@@ -65,8 +65,13 @@ def synthetic_gfx(*, scripts=False, imports=False, sprites=True,
         body += _tag(56, struct.pack("<HH", 1, 2) + b"mcButtonMainMenu\x00")
     if imports:
         body += _tag(71, b"gfxfontlib_locfont.gfx\x00\x01\x00\x00\x00")
-    if scripts:
-        body += _tag(12, b"\x00")
+    if scripts or action_message is not None:
+        action = b"\x00"
+        if action_message is not None:
+            payload = b"\x00" + action_message.encode("ascii") + b"\x00"
+            action = (b"\x96" + struct.pack("<H", len(payload)) +
+                      payload + b"\x26\x00")
+        body += _tag(12, action)
     body += _tag(4, place_sprite if sprites else place_shape)
     body += _tag(1)
     body += _tag(28, struct.pack("<H", 1))
