@@ -178,7 +178,13 @@ def convert_historical_database_motion(blob, reference, index, character, *,
     if database is None or not virtual_db:
         raise ValueError('No verified historical DBA for this selection.')
     raw_db = Path(database).read_bytes()
-    probe_legacy_dba(raw_db)  # exact controller 0x905 container validation
+    found = probe_legacy_dba(raw_db)  # exact 0x905 container + path index
+    if reference.kind == 'caf' and found['indexed_paths']:
+        from converted_motion import clip_key
+        wanted = clip_key(reference.virtual_path)
+        if wanted not in {clip_key(name) for name in found['indexed_paths']}:
+            raise ValueError('Selected animation is not indexed inside this DBA: '
+                             + reference.virtual_path)
 
     skeleton, status = _resolve(index, character.skeleton,
                                 preferred_workspace=preferred_workspace)
