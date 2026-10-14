@@ -82,6 +82,22 @@ class LegacyMaterialsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'No visible diffuse DDS'):
             self.load()
 
+    def test_old_chr_dba_requires_real_rig_instead_of_fake_skin(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from native_character_glb import create_character_glb
+        self.add(PREFIX + 'ParasiteHost3_Skeleton.chr', b'CryTek skeleton')
+        render = self.add(PREFIX + 'ParasiteHost3.chr', b'CryTek body')
+        character = SimpleNamespace(
+            skeleton=PREFIX + 'ParasiteHost3_Skeleton.chr',
+            rig_parts=((PREFIX + 'ParasiteHost3.chr', render, None, 13910),))
+        with patch('model_asset.inspect_model',
+                   return_value=SimpleNamespace(format_name='CryTek')):
+            with self.assertRaisesRegex(ValueError, 'Legacy bone/weight decoding'):
+                create_character_glb(
+                    self.root, PREFIX + 'ParasiteHost3.chr',
+                    self.index, character=character)
+
     def test_unique_wrong_character_basename_is_not_borrowed(self):
         self.add(OTHER + 'parasitehost.dds', self.dds((255, 0, 0)))
         with self.assertRaisesRegex(ValueError, 'No visible diffuse DDS'):
