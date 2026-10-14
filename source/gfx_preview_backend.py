@@ -309,73 +309,83 @@ def resolve_imports(info, virtual, resolver):
     return resolved, tuple(failures)
 
 
-def bundled_ffdec_paths(bundle=None):
-    """Locate the private, fully bundled FFDec + Temurin Java installation.
+FFDEC_RELEASE_URL = "https://github.com/jindrapetrik/jpexs-decompiler/releases/tag/version26.3.0"
 
-    Data source differs for PyInstaller onedir and a source checkout. The
-    installer/ZIP ships each under _internal/third_party/FFDec. Do not use
-    arbitrary Java PATH executables when a verified private JRE is present.
+
+def _installed_ffdec():
+    """Find a separately installed FFDec 26.3.0 without downloading files.
+
+    Prefer explicit user configuration in ffdec_command(). Do not recursively
+    search the game or mix FFDec into the shipped application.
     """
-    if bundle is None:
-        from app_runtime import BUNDLE
-        bundle = BUNDLE
-    root = Path(bundle) / "third_party" / "FFDec"
-    jar = root / "ffdec.jar"
-    java = root / "jre" / "bin" / "java.exe"
-    javaw = root / "jre" / "bin" / "javaw.exe"
-    ready = root / "BUNDLED-READY.txt"
-    if not all(file.is_file() and not file.is_symlink()
-               for file in (jar, java, javaw, ready)):
-        return None
-    return java, javaw, jar
+    candidates = []
+    for variable in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        base = os.environ.get(variable)
+        if not base:
+            continue
+        folder = Path(base)
+        candidates.extend((
+            folder / "FFDec", folder / "JPEXS Free Flash Decompiler",
+            folder / "JPEXS", folder / "FFDec" / "ffdec",
+        ))
+    home = Path.home()
+    candidates.extend((home / "FFDec", home / "Tools" / "FFDec",
+                       home / "Downloads" / "ffdec"))
+    for directory in candidates:
+        for name in ("ffdec-cli.exe", "ffdec.jar"):
+            file = directory / name
+            if file.is_file() and not file.is_symlink():
+                return str(file)
+    from_path = shutil.which("ffdec-cli.exe") or shutil.which("ffdec-cli")
+    return str(from_path) if from_path else None
 
 
 def ffdec_command(configured=None):
-    """Render and rebuild via the pinned bundled runtime by default.
+    """Resolve a user-installed FFDec renderer; no bundled Java or downloads.
 
-    Explicit alternate installations remain configurable. Runtime downloads
-    never occur. The official build verifies hashes and includes the upstream
-    GPL source, notices and Java licenses alongside the packaged tool.
+    For a JAR, Java is needed separately. ffdec-cli.exe from the official
+    FFDec Windows package may provide its own launch path. No GFX feature
+    will quietly install third-party binaries.
     """
-    choice = configured or os.environ.get("EVOLVE_GFX_FFDEC", "")
-    bundled = bundled_ffdec_paths()
-    if not choice and bundled:
-        java, _javaw, jar = bundled
-        return (str(java), "-Djava.awt.headless=true", "-jar", str(jar))
+    choice = configured or os.environ.get("EVOLVE_GFX_FFDEC") or _installed_ffdec()
     if not choice:
         raise GfxError(
-            "Bundled FFDec 26.3.0/Java runtime is missing from the app. "
-            "Repair or reinstall the full portable ZIP / Windows installer, "
-            "or configure an external FFDec installation.")
+            "FFDec 26.3.0 is required for GFX preview, editing and PNG "
+            "export. Use Download FFDec, install it, then select "
+            "ffdec-cli.exe or ffdec.jar. The JAR requires Java. "
+            + FFDEC_RELEASE_URL)
     file = Path(choice).expanduser().resolve()
     if file.is_dir():
         cli, jar = file / "ffdec-cli.exe", file / "ffdec.jar"
         file = cli if cli.is_file() else jar
     if not file.is_file() or file.is_symlink():
-        raise GfxError("Configured FFDec renderer is missing or unsafe. Select a supported renderer or use the bundled version.")
+        raise GfxError(
+            "Configured FFDec path is missing or unsafe. Choose a valid "
+            "FFDec 26.3.0 installation with Configure FFDec.")
     if file.name.casefold() == "ffdec-cli.exe":
         return (str(file),)
     if file.name.casefold() == "ffdec.jar":
         preferred_java = os.environ.get("EVOLVE_GFX_JAVA", "")
-        java = (str(Path(preferred_java).resolve()) if preferred_java
-                else str(bundled[0]) if bundled else shutil.which("java"))
+        java = (str(Path(preferred_java).expanduser().resolve())
+                if preferred_java else shutil.which("java"))
         if not java or (preferred_java and not Path(java).is_file()):
-            raise GfxError("FFDec JAR configured but Java is missing. Reinstall the bundled private JRE or configure EVOLVE_GFX_JAVA.")
+            raise GfxError(
+                "FFDec JAR requires Java, which is not installed or configured. "
+                "Install Java or select FFDec's Windows ffdec-cli.exe.")
         return (java, "-Djava.awt.headless=true", "-jar", str(file))
-    raise GfxError("Select ffdec-cli.exe or ffdec.jar from a trusted FFDec 26.3.0 installation.")
+    raise GfxError(
+        "Select ffdec-cli.exe or ffdec.jar from an official FFDec 26.3.0 installation.")
 
 
 def preferred_ffdec_override(configured):
-    """Recover obsolete user setting when a verified bundled renderer exists."""
+    """Discard obsolete manual FFDec paths so auto-detection can run."""
     if not configured:
         return None
     try:
         ffdec_command(configured)
-        return configured
     except GfxError:
-        if bundled_ffdec_paths():
-            return None
-        return configured
+        return None
+    return configured
 
 
 def _execute(command, *, cwd, cancelled, timeout):
