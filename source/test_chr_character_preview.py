@@ -23,9 +23,9 @@ def valid_mesh():
 
 
 def older_crytek_model():
-    return (b'CryTek\0\0' + struct.pack('<III', 0xffff0000, 1, 24)
-            + bytes(4) + struct.pack('<I', 1)
-            + struct.pack('<IIII', 1, 1, 20, 1))
+    # A supported 20-byte CryTek directory, but unknown geometry version.
+    from test_legacy_crytek_mesh import fixture
+    return fixture(version=0x744)
 
 
 class CharacterRenderCompanionTests(unittest.TestCase):
@@ -77,7 +77,7 @@ class CharacterRenderCompanionTests(unittest.TestCase):
         legacy = older_crytek_model()
         self.create(self.selected, legacy)
         self.create(self.prefix + 'ArchFemale_LOD1.chr', legacy)
-        with self.assertRaisesRegex(ValueError, 'older CryTek layout'):
+        with self.assertRaisesRegex(ValueError, 'CryTek model files require'):
             find_preview_mesh(self.root, self.selected, legacy, index={})
 
     def test_no_skinm_does_not_claim_skinm_required(self):
