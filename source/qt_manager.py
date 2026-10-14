@@ -443,11 +443,11 @@ class QtManager(QMainWindow):
             btn.setIcon(navigation_icon(
                 title, palette(self.appearance_mode, self.appearance_overrides)['text'], 32))
             btn.setIconSize(QSize(30, 30))
-            btn.setFixedHeight(48)
-            # The drawer is a fixed 194 logical pixels wide with 10px margins.
-            # Reserve a stable button width even before Qt lays out the
-            # collapsed drawer; otherwise the icon shrinks to 18px at startup.
-            btn.setMinimumWidth(164)
+            # The drawer has 194px width and 10px side margins. Set the
+            # initial widget geometry explicitly: hidden drawer children may
+            # still have Qt's default 100x30 size before first layout on
+            # Windows/offscreen, which clips the 30px icon to 18px.
+            btn.setFixedSize(174, 48)
             btn.setFocusPolicy(Qt.StrongFocus)
             btn.setObjectName('navActive' if index == 0 else 'nav')
             navlay.addWidget(btn)
@@ -570,6 +570,9 @@ class QtManager(QMainWindow):
         self._position_drawer()
         self._drawer_open = open_it
         self.drawer.show()
+        # Lay out children immediately, even if the geometry animation has
+        # only just started; icon painting must never use stale initial sizes.
+        self.drawer.layout().activate()
         self.drawer.raise_()
         self.menu_button.setText('✕  Close' if open_it else '☰  Menu')
         self.menu_animation.stop()
