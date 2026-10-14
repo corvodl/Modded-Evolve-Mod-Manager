@@ -42,51 +42,61 @@ def create_character_glb(workspace, relative, index, *, character=None,
             raise ValueError('Missing or ambiguous CDF skeleton: '+character.skeleton)
         skeleton = candidates[0]['file'].read_bytes()
         parts = []
+        historical = False
         for virtual, render, skin, count in character.rig_parts:
             if skin is None:
-                # Historical 2012 CryTek characters use CA_SKIN .chr bindings
-                # and do not contain a separate modern .skin companion. This
-                # is a decoder limitation, not evidence that the user's DBA
-                # or animation PAK is missing. Never invent bone mapping.
                 if virtual.casefold().endswith('.chr'):
                     from model_asset import inspect_model
-                    try:
-                        legacy = inspect_model(render.read_bytes())
-                    except (OSError, ValueError):
-                        legacy = None
-                    if legacy is not None and legacy.format_name == 'CryTek':
-                        raise ValueError(
-                            'Historical CryTek .chr has no separate .skin: '
-                            'Legacy bone/weight decoding is not implemented. '
-                            'The indexed DBA alone cannot be played without '
-                            'a validated animated rig for ' + virtual)
-                raise ValueError('Missing native skin companion for '+virtual)
+                    info = inspect_model(render.read_bytes())
+                    if info.format_name == 'CryTek':
+                        historical = True
+                        parts.append((render.read_bytes(), None, count))
+                        continue
+                raise ValueError('Missing native skin companion for ' + virtual)
             parts.append((render.read_bytes(), skin.read_bytes(), count))
         blob = glb_bytes(character.mesh, name=Path(character.cdf).stem)
-        blob, textures = embed_diffuse_textures(blob,character.materials)
-        try:
-            blob, rig = skin_glb_composite(blob,parts,skeleton)
-            layout = 'shared'
-        except ValueError as exc:
-            if not any(hint in str(exc).casefold() for hint in (
-                    'conflicting bind poses', 'hierarchy differs',
-                    'bind/rest pose')):
-                raise
-            # The same skinned mesh cannot have per-primitive inverse binds.
-            # Export separate native armatures rather than silently stripping
-            # all bones or inventing a common bind pose for attachments.
-            blob, rig = skin_glb_composite_separate(
-                blob,parts,part_names=character.included)
-            layout = 'independent'
-        details = {'texture_count':textures,
-                   'rig_status':('Rigged CDF assembly' if layout == 'shared'
-                                 else 'Rigged CDF assembly: independent Blender armatures'),
-                   'rig_layout':layout,
-                   'bone_count':rig['bone_count'],'part_count':rig['part_count']}
+        blob, textures = embed_diffuse_textures(blob, character.materials)
+        if historical:
+            if len(parts) != 1 or parts[0][1] is not None:
+                raise ValueError(
+                    'Mixed/multipart 2012 CDF rigs are not validated yet; '
+                    'select the single matching .chr body.')
+            from legacy_crytek_rig import skin_glb_legacy
+            blob, rig = skin_glb_legacy(blob, parts[0][0], skeleton)
+            layout = 'historical-validated'
+        else:
+            try:
+                blob, rig = skin_glb_composite(blob, parts, skeleton)
+                layout = 'shared'
+            except ValueError as exc:
+                if not any(hint in str(exc).casefold() for hint in (
+                        'conflicting bind poses', 'hierarchy differs',
+                        'bind/rest pose')):
+                    raise
+                # Multiple distinct native rest poses require distinct armatures.
+                blob, rig = skin_glb_composite_separate(
+                    blob, parts, part_names=character.included)
+                layout = 'independent'
+        details = {'texture_count': textures,
+                   'rig_status': ('Rigged historical CDF (rest pose validated)'
+                                  if historical else
+                                  'Rigged CDF assembly' if layout == 'shared'
+                                  else 'Rigged CDF assembly: independent Blender armatures'),
+                   'rig_layout': layout,
+                   'bone_count': rig['bone_count'], 'part_count': len(parts)}
         if layout == 'independent' and (clip is not None or clips):
             raise ValueError('This CDF has multiple distinct native bind poses; '
                              'its Blender armatures are poseable independently '
                              'but shared CAF/DBA playback has not been verified.')
+    if character is not None and 'historical' in locals() and historical and (clip is not None or clips):
+        from legacy_crytek_rig import probe_legacy_dba
+        selected = clip if clip is not None else tuple(clips)[0]
+        if selected.kind == 'dba' and selected.file is not None:
+            probe_legacy_dba(Path(selected.file).read_bytes())
+        raise ValueError(
+            'Historical CryTek 0x745 rig is validated, but DBA/CAF motion '
+            'controllers are not decoded for this format. Database discovery '
+            'is not a playable clip; animation export remains disabled.')
     if clip is not None and (clip.kind == 'dba' or
                              (not clip.available and clip.dba_file is not None)):
         from database_animation import convert_database_motion
