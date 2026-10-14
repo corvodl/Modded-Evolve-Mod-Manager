@@ -7,15 +7,15 @@ from __future__ import annotations
 
 from threading import Event
 
-from PySide6.QtCore import Qt, QRect, QThread, Signal
-from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtCore import Qt, QRect, QThread, Signal, QUrl
+from PySide6.QtGui import QColor, QPainter, QPixmap, QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QPushButton, QScrollArea, QFileDialog, QMessageBox,
 )
 from gfx_preview_backend import (
     inspect_gfx, resolve_imports, ffdec_command, render_gfx, GfxError,
-    preferred_ffdec_override, bundled_ffdec_paths,
+    preferred_ffdec_override, FFDEC_RELEASE_URL,
 )
 
 
@@ -155,8 +155,16 @@ class GfxPreviewWidget(QWidget):
         layout.addWidget(self.note)
         bar = QHBoxLayout()
         self.setup = QPushButton("Configure FFDec…")
+        self.setup.setToolTip("Select FFDec 26.3.0 already installed on your computer")
         self.setup.clicked.connect(self.configure_backend)
         bar.addWidget(self.setup)
+        self.download_ffdec = QPushButton("Download FFDec")
+        self.download_ffdec.setObjectName("gfxDownloadFFDec")
+        self.download_ffdec.setToolTip(
+            "Open official JPEXS FFDec 26.3.0 release (external browser; "
+            "the manager does not install third-party software)")
+        self.download_ffdec.clicked.connect(self.open_ffdec_download)
+        bar.addWidget(self.download_ffdec)
         self.export = QPushButton("Export selected PNG…")
         self.export.setObjectName("gfxExportPng")
         self.export.setEnabled(False)
@@ -194,7 +202,13 @@ class GfxPreviewWidget(QWidget):
         self._virtual = relative
         self._context = context
         self._backend = preferred_ffdec_override(backend)
-        self.setup.setText("Change FFDec…" if bundled_ffdec_paths() else "Configure FFDec…")
+        try:
+            ffdec_command(self._backend)
+            self.setup.setText("Change FFDec…")
+            self.download_ffdec.setVisible(False)
+        except GfxError:
+            self.setup.setText("Configure FFDec…")
+            self.download_ffdec.setVisible(True)
         self._imports = {}
         self._warnings = ()
         self.canvas._pixmap = QPixmap()
@@ -370,6 +384,14 @@ class GfxPreviewWidget(QWidget):
             raise GfxError("Render the selected GFX frame/sprite successfully before exporting PNG.")
         return self._png
 
+    def open_ffdec_download(self):
+        """Use the official external release page; no auto-install/download."""
+        if not QDesktopServices.openUrl(QUrl(FFDEC_RELEASE_URL)):
+            QMessageBox.warning(
+                self, "FFDec download",
+                "Unable to open the official release page. Visit:\n" +
+                FFDEC_RELEASE_URL)
+
     def configure_backend(self):
         current = self._backend or ""
         chosen, _ = QFileDialog.getOpenFileName(
@@ -382,6 +404,8 @@ class GfxPreviewWidget(QWidget):
             self._backend = chosen
             self.owner.manager.settings["gfx_ffdec_path"] = chosen
             self.owner.manager.persist()
+            self.setup.setText("Change FFDec…")
+            self.download_ffdec.setVisible(False)
             self._start_render()
         except GfxError as exc:
             QMessageBox.warning(self, "Scaleform renderer", str(exc))
