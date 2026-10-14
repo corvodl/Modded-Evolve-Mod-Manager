@@ -93,7 +93,8 @@ class UnifiedExplorerTests(unittest.TestCase):
         relative = "Libs/UI/my_movie.gfx"
         source = self.editor.workspace / "files" / relative
         source.parent.mkdir(parents=True, exist_ok=True)
-        movie = synthetic_gfx(scripts=True)
+        movie = synthetic_gfx(
+            scripts=True, nonvisual_sprite=True, exported_names=True)
         source.write_bytes(movie)
         self.editor.records[relative] = {"path": relative, "format": "raw"}
         self.editor.populate()
@@ -103,6 +104,9 @@ class UnifiedExplorerTests(unittest.TestCase):
         self.assertEqual(self.editor.mode, "gfx")
         self.assertEqual(self.editor.tabs.currentIndex(), 3)
         self.assertEqual(self.editor.gfx_view.frame.maximum(), 2)
+        self.assertEqual(self.editor.gfx_view.symbol.count(), 2)
+        self.assertIn("mcButtonMainMenu", self.editor.gfx_view.symbol.itemText(1))
+        self.assertIn("nonvisual", self.editor.gfx_view.note.text())
         self.assertIn("Configure FFDec", self.editor.gfx_view.note.text())
         self.assertEqual(source.read_bytes(), movie)
         self.assertFalse(self.editor.gfx_view.export.isEnabled())
