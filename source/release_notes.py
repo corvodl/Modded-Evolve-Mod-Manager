@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.39', (
+        'Add consistent icons across file explorers, texture, model and GFX controls.',
+        'Show the official FFDec download link when selecting a GFX movie without a configured renderer.',
+        'Keep raw GFX browsing available without installing FFDec.',
+    )),
     ('1.1.18-beta.38', (
         'Preview and edit Scaleform GFX movies with frame/sprite rendering and PNG export.',
         'Replace GFX images, shapes, text and scripts with FFDec-backed rebuild and external authoring.',
