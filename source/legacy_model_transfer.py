@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import tempfile
 
 from asset_library import _folder_for_identifier, _home, _load_manifest
 from build_collections import build_index
@@ -153,10 +154,19 @@ def apply_reviewed_model(plan, stage, *, root=None):
     src = _provider(build_index(plan["source_build_id"], root=library),
                     plan["path"], plan["source_build_id"],
                     selected_archive=plan["source_archive_id"])
-    # replace_model itself rechecks the unchanged target hash, creates a
-    # backup in EditorBackups and swaps only this one workspace file.
-    changed = replace_model(plan["project"], plan["path"], src["file"],
-                            plan["target_sha256"])
+    # Freeze validated source bytes in a short-lived private snapshot. This
+    # prevents an external library edit between review and the existing native
+    # replacement code's later file read (a source-side TOCTOU).
+    payload, verified_hash = _library_model(src, plan["path"], library)
+    if verified_hash != plan["source_sha256"]:
+        raise ValueError("Legacy model changed since the user approved it.")
+    with tempfile.TemporaryDirectory(prefix="legacy-model-reviewed-") as scratch:
+        copy = Path(scratch) / Path(plan["path"]).name
+        copy.write_bytes(payload)
+        # replace_model rechecks the unchanged target hash, creates its own
+        # EditorBackups snapshot, and swaps only this one workspace file.
+        changed = replace_model(plan["project"], plan["path"], copy,
+                                plan["target_sha256"])
     return {"project": plan["project"], "path": plan["path"],
             "changed": hashlib.sha256(changed).hexdigest() != plan["target_sha256"],
             "source_sha256": plan["source_sha256"],
