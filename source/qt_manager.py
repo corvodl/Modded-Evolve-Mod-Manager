@@ -443,7 +443,7 @@ class QtManager(QMainWindow):
             btn.setIcon(navigation_icon(
                 title, palette(self.appearance_mode, self.appearance_overrides)['text'], 32))
             btn.setIconSize(QSize(30, 30))
-            btn.setMinimumHeight(48)
+            btn.setFixedHeight(48)
             btn.setFocusPolicy(Qt.StrongFocus)
             btn.setObjectName('navActive' if index == 0 else 'nav')
             navlay.addWidget(btn)
