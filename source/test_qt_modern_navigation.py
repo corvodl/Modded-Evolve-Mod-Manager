@@ -134,6 +134,9 @@ class ModernQtNavigationTests(unittest.TestCase):
             self.app.processEvents()
             self.assertEqual(set(self.win._selected_library_ids()),
                              {"terrain", "packed", "level"})
+            self.win.refresh_library_table()
+            self.assertEqual(set(self.win._selected_library_ids()),
+                             {"terrain", "packed", "level"})
             with patch.object(self.win, "open_library_map_from_archive") as opening:
                 self.win.edit_selected_library_map()
                 opening.assert_called_once()
