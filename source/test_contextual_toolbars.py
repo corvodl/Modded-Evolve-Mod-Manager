@@ -63,6 +63,10 @@ class ContextualToolbarTests(unittest.TestCase):
         # The visible toolbar consists of only two short, contextual actions.
         self.assertLessEqual(sum(
             1 for b in editor.actions["files"].values() if b.isVisible()), 2)
+        # Clear synthetic unsaved edits before close cleanup; otherwise the
+        # real editor correctly opens a modal confirmation that blocks CI.
+        editor.views["files"].setPlainText(editor.loaded_text)
+        self.app.processEvents()
 
     def test_asset_library_quick_buttons_follow_archive_selection(self):
         from unittest.mock import patch
