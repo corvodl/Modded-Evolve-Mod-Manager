@@ -269,6 +269,13 @@ def rebuild_gfx_from_xml(workspace, session, imported_xml, *,
     xml = Path(imported_xml).expanduser().resolve(strict=True)
     if xml.suffix.casefold() != ".xml" or not xml.is_file() or xml.stat().st_size > MAX_XML:
         raise GfxError("Select a bounded FFDec XML tag document.")
+    # No DTDs, external entities, or stylesheet processing may be supplied
+    # to the Java XML importer. A local XML tag tree is sufficient here.
+    header = xml.read_bytes()
+    lower = header.lower()
+    if any(token in lower for token in
+           (b"<!doctype", b"<!entity", b"<?xml-stylesheet")):
+        raise GfxError("External entities, DTDs and XML stylesheets are forbidden.")
     with tempfile.TemporaryDirectory(prefix="gfx-xml-roundtrip-") as tmp:
         folder = Path(tmp)
         infile = folder / "import.xml"
