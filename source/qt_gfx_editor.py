@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (
 from gfx_preview_backend import inspect_gfx, GfxError, resolve_imports, export_gfx_png
 from gfx_edit_backend import (
     create_gfx_session, read_gfx_session, replace_gfx_resource,
-    export_gfx_xml, rebuild_gfx_from_xml, use_edited_gfx_file,
+    export_gfx_xml, rebuild_gfx_from_xml, export_gfx_scripts,
+    rebuild_gfx_scripts, use_edited_gfx_file,
     undo_gfx_session, apply_gfx_session, launch_gfx_gui,
 )
 from qt_gfx_preview import GfxPreviewWidget
@@ -96,6 +97,17 @@ class GfxEditorDialog(QDialog):
         self.undo.clicked.connect(self.undo_edit)
         advanced.addWidget(self.undo)
         layout.addLayout(advanced)
+        script_controls = QHBoxLayout()
+        self.script_export = QPushButton("Export ActionScript sources…")
+        self.script_export.setObjectName("gfxExportActionScript")
+        self.script_export.clicked.connect(self.export_scripts)
+        script_controls.addWidget(self.script_export)
+        self.script_import = QPushButton("Rebuild from edited ActionScript…")
+        self.script_import.setObjectName("gfxImportActionScript")
+        self.script_import.clicked.connect(self.import_scripts)
+        script_controls.addWidget(self.script_import)
+        script_controls.addStretch()
+        layout.addLayout(script_controls)
         outer.addWidget(tools)
 
         footer = QHBoxLayout()
@@ -229,6 +241,25 @@ class GfxEditorDialog(QDialog):
             self._run("XML rebuild", lambda: rebuild_gfx_from_xml(
                 self.owner.workspace, self.snapshot.session,
                 path, configured=self._backend))
+
+    def export_scripts(self):
+        parent = QFileDialog.getExistingDirectory(
+            self, "Choose ActionScript export parent", str(Path.home()))
+        if not parent:
+            return
+        folder = Path(parent) / (Path(self.relative).stem + "-actionscripts")
+        self._run("ActionScript export", lambda: export_gfx_scripts(
+            self.owner.workspace, self.snapshot.session, folder,
+            configured=self._backend))
+
+    def import_scripts(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "Choose edited FFDec ActionScript source directory",
+            str(Path.home()))
+        if folder:
+            self._run("ActionScript rebuild", lambda: rebuild_gfx_scripts(
+                self.owner.workspace, self.snapshot.session,
+                folder, configured=self._backend))
 
     def import_edited(self):
         path, _ = QFileDialog.getOpenFileName(
