@@ -47,7 +47,7 @@ from loose_file_editor import save_loose_text
 from loose_game_files import TEXT_EXTENSIONS, copy_to_project
 from evolve_pak_workspace import normalized_name
 from version_info import app_version
-from qt_navigation_icons import navigation_icon, action_icon
+from qt_navigation_icons import navigation_icon, action_icon, resource_icon, asset_kind_for_path
 from studio_polish_117 import (prepare_model_cached, clear_model_cache,
     model_cache_stats, export_preflight, project_session_key,
     sanitized_project_session)
@@ -335,19 +335,19 @@ class QtWorkspaceEditor(QMainWindow):
         self.search = QLineEdit()
         self.search.setObjectName('fileExplorerSearch')
         self.search.setPlaceholderText('Search files and folders…')
-        self.search.addAction(navigation_icon('search', size=18), QLineEdit.LeadingPosition)
+        self.search.addAction(resource_icon('search', size=17), QLineEdit.LeadingPosition)
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self.populate)
         explorer_box.addWidget(self.search)
         explorer_controls = QHBoxLayout()
         self.favorites_only = QPushButton('Favorites')
-        self.favorites_only.setIcon(navigation_icon('favorite', size=16))
+        self.favorites_only.setIcon(resource_icon('favorite', size=16))
         self.favorites_only.setIconSize(QSize(16, 16))
         self.favorites_only.setCheckable(True)
         self.favorites_only.toggled.connect(self.populate)
         explorer_controls.addWidget(self.favorites_only)
         open_folder_button = self._button('Open Folder', self.explore)
-        open_folder_button.setIcon(self.style().standardIcon(QStyle.SP_DirOpenIcon))
+        open_folder_button.setIcon(resource_icon('folder-open', size=16))
         open_folder_button.setIconSize(QSize(16, 16))
         explorer_controls.addWidget(open_folder_button)
         explorer_controls.addStretch()
@@ -1098,7 +1098,7 @@ class QtWorkspaceEditor(QMainWindow):
                         # Store the original virtual directory independent of
                         # friendly display aliases (e.g. Gorgon/mon_lurker).
                         folder.setData(0, Qt.UserRole + 1, key)
-                        folder.setIcon(0, self.style().standardIcon(QStyle.SP_DirIcon))
+                        folder.setIcon(0, resource_icon('folder', size=18))
                         description = character_asset_description(key)
                         folder.setToolTip(0, key + (
                             '\\n' + description if description else ''))
@@ -1121,7 +1121,7 @@ class QtWorkspaceEditor(QMainWindow):
                 category = self._category(rel)
                 item = QTreeWidgetItem([symbol + parts[-1], size])
                 item.setData(0, Qt.UserRole, rel)
-                item.setIcon(0, self.style().standardIcon(QStyle.SP_FileIcon))
+                item.setIcon(0, resource_icon(asset_kind_for_path(rel), size=18))
                 from character_aliases import character_asset_description
                 char_description = character_asset_description(rel)
                 item.setToolTip(0, category.title() + ' • ' + rel +
@@ -1136,6 +1136,7 @@ class QtWorkspaceEditor(QMainWindow):
                 group = family_by_parent.get(rel)
                 if group is not None:
                     item.setText(0, group.title)
+                    item.setIcon(0, resource_icon('mesh', size=18))
                     item.setToolTip(0, 'Open complete game character; expand for individual LODs, skins and dependencies.\\n'
                                        + rel + ('\\n' + char_description if char_description else ''))
                     item.setText(1, str(len(group.members)) + ' assets')
@@ -1159,7 +1160,7 @@ class QtWorkspaceEditor(QMainWindow):
                 item = QTreeWidgetItem([full.label, 'CDF assembly'])
                 item.setData(0, Qt.UserRole, primary)
                 item.setData(0, Qt.UserRole + 2, 'full-character')
-                item.setIcon(0, navigation_icon('layers', size=16))
+                item.setIcon(0, resource_icon('assembly', size=18))
                 item.setToolTip(0,
                     'Full character assembled from ' + full.definition +
                     '\\nThe CDF selects the body and compatible equipment. ' +
