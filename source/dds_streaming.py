@@ -42,6 +42,8 @@ def _mip_sizes(info, header):
     else:
         block = BLOCK_BYTES.get(header[84:88])
     if block is None:
+        if header[84:88] == b'CTX1':
+            raise ValueError('CTX1 texture is present, but its preview decoder is not implemented.')
         raise ValueError('Only supported block-compressed DDS mip streams can be reconstructed.')
     if info.mipmaps < 2 or info.mipmaps > 20 or info.data_offset not in (128, 148):
         raise ValueError('Unsupported streaming mip count or DDS header.')

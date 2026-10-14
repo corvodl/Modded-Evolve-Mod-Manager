@@ -4,6 +4,7 @@ No game assets are committed. Tests model exact virtual ownership and cooked
 DDS priority even when historical .tif references or TIFF records exist.
 """
 from pathlib import Path
+import struct
 import tempfile
 import unittest
 
@@ -100,6 +101,34 @@ class LegacyMaterialsTests(unittest.TestCase):
 
     def test_unique_wrong_character_basename_is_not_borrowed(self):
         self.add(OTHER + 'parasitehost.dds', self.dds((255, 0, 0)))
+        with self.assertRaisesRegex(ValueError, 'No diffuse DDS.*visible'):
+            self.load()
+
+    def test_realistic_low_high_archive_split_uses_highest_mip(self):
+        # Synthetic equivalent of the observed 512px, eight-mip 2012 stream:
+        # .0-.4 in dds_low.pak, .5 in dds_high.pak. No game bytes included.
+        from test_beta36_normal_pipeline import dds
+        green = struct.pack('<HHI', 0x07e0, 0x07e0, 0)
+        red = struct.pack('<HHI', 0xf800, 0xf800, 0)
+        fragments = {
+            0: dds(b'DXT1', 512, 512, red * 21, mips=8),
+            1: red * 64, 2: red * 256, 3: red * 1024,
+            4: red * 4096, 5: green * 16384,
+        }
+        for number, payload in fragments.items():
+            virtual = PREFIX + 'parasitehost.dds.' + str(number)
+            folder = self.root / ('dds_high' if number == 5 else 'dds_low')
+            folder.mkdir(exist_ok=True)
+            path = folder / Path(virtual).name
+            path.write_bytes(payload)
+            self.index[virtual] = [{'file': path, 'relative': virtual,
+                                   'workspace': None, 'archive': folder.name}]
+        self.add('objects/characters/monsters/cocoon/ParasiteHost/parasitehost.dds',
+                 self.dds((255, 0, 0)))
+        result = self.load()
+        self.assertEqual(result.textures[10].size, (512, 512))
+        self.assertEqual(result.textures[10].convert('RGB').getpixel((0, 0)), (0, 255, 0))
+        del self.index[PREFIX + 'parasitehost.dds.5']
         with self.assertRaisesRegex(ValueError, 'No diffuse DDS.*visible'):
             self.load()
 

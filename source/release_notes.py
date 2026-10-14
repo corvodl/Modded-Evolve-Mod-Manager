@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.46', (
+        'Resolve historical character textures from their cooked DDS files and streaming archives.',
+        'Report missing visible textures and unsupported Legacy rigs accurately.',
+        'Console texture layouts, CTX1 normals and Legacy skeletal animation still need decoder support.',
+    )),
     ('1.1.18-beta.45', (
         'Preview compatible 2012 CryTek .chr character geometry, CDFs and material subsets.',
         'Review cross-build assets and dependencies with detached, hash-verified transfer candidates.',
