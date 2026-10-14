@@ -66,6 +66,9 @@ class LegacyPAKQtTests(unittest.TestCase):
         self.assertFalse(self.editor.save_button.isHidden())
         self.assertIn("Build Legacy PAK…",
                       [a.text() for a in self.editor.editor_menus["File"].actions()])
+        # Leave no unsaved buffer: closeEvent prompts the real user.
+        self.editor.text.setPlainText(self.editor.loaded_text)
+        self.app.processEvents()
 
     def test_binary_selection_offers_safe_raw_replacement(self):
         self._select("Sounds/Monster.fsb")
