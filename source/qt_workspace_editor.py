@@ -383,6 +383,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.dependency_button=QPushButton('Dependencies…')
         self.dependency_button.setIcon(navigation_icon('layers', size=18))
         self.dependency_button.setEnabled(False)
+        self.dependency_button.hide()
         menu=QMenu(self.dependency_button)
         menu.addAction('Asset Dependency Graph',self.open_dependency_graph)
         menu.addAction('Find Missing Textures',self.open_texture_resolver)
@@ -1242,6 +1243,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.mode = self._category(rel)
         self._sync_editor_context_actions()
         self.dependency_button.setEnabled(self.mode=='models')
+        self.dependency_button.setVisible(self.mode == 'models')
         if self.mode != 'models':
             self.dependency_button.setText('Dependencies…')
         self._model_generation += 1
