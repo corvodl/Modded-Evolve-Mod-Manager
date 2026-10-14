@@ -232,17 +232,53 @@ def read_legacy_rig(body, skeleton, vertex_count):
                      count_subsets, body_names)
 
 
+def indexed_historical_dba_paths(raw):
+    """Return bounded, length-prefixed CAF path *names*, not decoded motion.
+
+    In this 0x905 database variant the animation directory stores a one-byte
+    length preceded by zero, an ASCII virtual path and a terminator. Only
+    accept records satisfying this exact shape, not unrelated binary text.
+    """
+    import re
+    if len(raw) > 256 * 1024 * 1024:
+        raise ValueError('Historical DBA exceeds scan limit.')
+    pattern = re.compile(rb'animations/[a-zA-Z0-9_./-]{1,220}\.caf')
+    names = {}
+    for match in pattern.finditer(raw):
+        start, end = match.span()
+        path = match.group()
+        if (start < 2 or end >= len(raw) or raw[start - 2] != 0
+                or raw[start - 1] != len(path) or raw[end] != 0):
+            continue
+        from multi_pak_assets import normalized_name
+        try:
+            virtual = normalized_name(path.decode('ascii'))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        key = virtual.casefold()
+        if key in names and names[key] != virtual:
+            raise ValueError('Conflicting historical animation path case.')
+        names[key] = virtual
+        if len(names) > 512:
+            raise ValueError('Historical DBA animation index exceeds 512 entries.')
+    return tuple(names.values())
+
+
 def probe_legacy_dba(raw):
-    """Metadata only. A chunk is NOT an animation or a decoded clip."""
+    """Validate database and inspect names without calling them playable clips."""
     filetype, version, _, _, entries = parse_crytek_chunks(raw)
     if filetype != 0xffff0000 or version != SUPPORTED_VERSION:
         raise ValueError('Unknown 2012 CryTek DBA container.')
     if len(entries) != 1 or entries[0][0] != 0xCCCC000D or entries[0][1] != 0x905:
         raise ValueError('Unrecognized 2012 DBA database chunk structure.')
+    names = indexed_historical_dba_paths(raw)
     return {'version': hex(version), 'database_chunk_count': 1,
             'database_chunk_version': hex(entries[0][1]),
+            'indexed_clip_count': len(names),
+            'indexed_paths': names,
             'clips_decoded': 0, 'playback_available': False,
-            'reason': 'Historical 0x905 DBA clip/controller encoding remains unverified.'}
+            'reason': 'Indexed CAF paths are metadata; historical 0x905 controllers '
+                      'require successful verified conversion before playback.'}
 
 
 def skin_glb_legacy(glb, body_raw, skeleton_raw):
