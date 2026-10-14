@@ -59,6 +59,7 @@ class GfxInfo:
     tags: int
     exports: tuple = ()  # (character ID, readable exported symbol name)
     extension_tags: tuple = ()
+    resources: tuple = ()  # (kind, characterId) resource tags with editable content
 
     @property
     def notes(self):
@@ -147,6 +148,7 @@ def inspect_gfx(data):
         raise GfxError("GFX movie dimensions or frame count exceed preview limits.")
     pos = offset + 4
     sprites, images, imports = {}, set(), []
+    resources = set()
     exports, extensions = [], set()
     script = False
     places = 0
@@ -194,7 +196,18 @@ def inspect_gfx(data):
         if code >= 1000:
             extensions.add(code)
         if code in IMAGE_TAGS and len(block) >= 2:
-            images.add(struct.unpack_from("<H", block)[0])
+            character_id = struct.unpack_from("<H", block)[0]
+            images.add(character_id)
+            resources.add(("image", character_id))
+        if code in (2, 22, 32, 83) and len(block) >= 2:
+            resources.add(("shape", struct.unpack_from("<H", block)[0]))
+        if code in (11, 33, 37) and len(block) >= 2:
+            resources.add(("text", struct.unpack_from("<H", block)[0]))
+        if code in (14, 87) and len(block) >= 2:
+            resources.add(("sound" if code == 14 else "binary", 
+                           struct.unpack_from("<H", block)[0]))
+        if code in (7, 34) and len(block) >= 2:
+            resources.add(("button", struct.unpack_from("<H", block)[0]))
         if code in SCRIPT_TAGS:
             script = True
         if code in PLACE_TAGS:
@@ -209,7 +222,8 @@ def inspect_gfx(data):
     return GfxInfo(version, compression, width, height, rate / 256.0, frames,
                    tuple(sorted(sprites.items())), tuple(sorted(images)),
                    tuple(dict.fromkeys(imports)), script, places, tags,
-                   tuple(exports), tuple(sorted(extensions)))
+                   tuple(exports), tuple(sorted(extensions)),
+                   tuple(sorted(resources)))
 
 
 _INVALID_COMPONENT = re.compile(r'[<>:"|?*]')
