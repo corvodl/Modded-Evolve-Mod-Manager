@@ -544,7 +544,7 @@ class AssetLibraryDialog(QDialog):
         example = next(iter(choices.values()), "")
         pasted, ok = QInputDialog.getMultiLineText(
             self, "Select Legacy assets",
-            "Enter one or more exact source paths from this PAK (one per line).\\n"
+            "Enter one or more exact source paths from this PAK (one per line).\n"
             "Dependencies are reviewed automatically. Originals stay read-only.",
             example)
         if not ok or not pasted.strip():
@@ -593,10 +593,10 @@ class AssetLibraryDialog(QDialog):
             for item in plan["mappings"]:
                 counts[item["action"]] = counts.get(item["action"], 0) + 1
             description = (
-                "%d virtual assets examined, including discovered references.\\n"
-                "Add review: %d | Replace review: %d | Reuse: %d\\n"
-                "Missing source: %d | Conflicts: %d\\n"
-                "Dependency diagnostics: %d incomplete / %d missing / %d ambiguous\\n\\n"
+                "%d virtual assets examined, including discovered references.\n"
+                "Add review: %d | Replace review: %d | Reuse: %d\n"
+                "Missing source: %d | Conflicts: %d\n"
+                "Dependency diagnostics: %d incomplete / %d missing / %d ambiguous\n\n"
                 "All statuses are reference-only. No archive has been signed, "
                 "installed, or tested in Stage 2. Save this review manifest?"
             ) % (
@@ -618,7 +618,7 @@ class AssetLibraryDialog(QDialog):
                 return
             export = QMessageBox.question(
                 self, "Export detached candidate files?",
-                "Save a separate bundle of verified source file copies for review?\\n"
+                "Save a separate bundle of verified source file copies for review?\n"
                 "This is NOT a signed PAK or importable Stage 2 mod, and does "
                 "not modify either original game or library.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
@@ -714,8 +714,8 @@ class AssetLibraryDialog(QDialog):
         elif action == "transfer-candidate":
             QMessageBox.information(
                 self, "Review bundle created",
-                "Verified reference copies saved to:\\n" + str(result)
-                + "\\n\\nNot a signed Stage 2 package or tested game mod.")
+                "Verified reference copies saved to:\n" + str(result)
+                + "\n\nNot a signed Stage 2 package or tested game mod.")
         elif isinstance(result, list):
             legacy = [item for item in result if item.get("status") == "legacy-project"]
             failures = [item for item in result if item.get("status") == "error"]
