@@ -174,8 +174,8 @@ class GfxPreviewWidget(QWidget):
         self._backend = backend
         self._imports = {}
         self._warnings = ()
-        self.canvas.set_png(b"") if False else self.canvas.set_view()
         self.canvas._pixmap = QPixmap()
+        self.canvas.update()
         try:
             info = inspect_gfx(data)
             resolved, warnings = resolve_imports(
