@@ -215,6 +215,30 @@ class GfxEditingTests(unittest.TestCase):
             rebuild_gfx_scripts(self.project, snap.session, dest,
                                 configured="mock.jar")
 
+    @unittest.skipUnless(
+        __import__("os").environ.get("EVOLVE_GFX_FFDEC"),
+        "Pinned FFDec is unavailable; XML rebuild must use the real tool")
+    def test_real_ffdec_tag_xml_roundtrip_retains_gfx_movie(self):
+        import os
+        from gfx_preview_backend import inspect_gfx
+        from gfx_edit_backend import _ffdec
+        installed = os.environ["EVOLVE_GFX_FFDEC"]
+        snap = create_gfx_session(self.project, self.virtual)
+        xml = self.root / "movie.xml"
+        export_gfx_xml(self.project, snap.session, xml, configured=installed)
+        self.assertTrue(xml.is_file())
+        self.assertGreater(xml.stat().st_size, 100)
+        compiled = self.root / "converted.gfx"
+        _ffdec(["-xml2swf", str(xml), str(compiled)],
+               configured=installed, folder=self.root)
+        payload = compiled.read_bytes()
+        actual = inspect_gfx(payload)
+        expected = inspect_gfx(self.original)
+        self.assertEqual((actual.width, actual.height, actual.frames),
+                         (expected.width, expected.height, expected.frames))
+        self.assertEqual(actual.sprites, expected.sprites)
+        self.assertEqual(actual.exports, expected.exports)
+
     def test_xml_export_is_only_an_external_copy(self):
         snap = create_gfx_session(self.project, self.virtual)
         xml = self.root / "edit.xml"
