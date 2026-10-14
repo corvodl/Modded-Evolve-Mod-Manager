@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 from gfx_preview_backend import (
     inspect_gfx, resolve_imports, ffdec_command, render_gfx, GfxError,
+    preferred_ffdec_override, bundled_ffdec_paths,
 )
 
 
@@ -179,7 +180,8 @@ class GfxPreviewWidget(QWidget):
         self._raw = None
         self._virtual = relative
         self._context = context
-        self._backend = backend
+        self._backend = preferred_ffdec_override(backend)
+        self.setup.setText("Change FFDec…" if bundled_ffdec_paths() else "Configure FFDec…")
         self._imports = {}
         self._warnings = ()
         self.canvas._pixmap = QPixmap()
