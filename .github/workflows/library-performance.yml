@@ -1,0 +1,25 @@
+name: Library performance regressions
+on:
+  pull_request:
+    branches: [beta]
+    paths:
+      - 'source/**'
+      - '.github/workflows/library-performance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install cryptography Pillow numpy PySide6
+      - name: Check indexing, material reuse and exports
+        working-directory: source
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest test_asset_library_preview test_build_collections test_build_transfer_dependencies test_level_asset_mount test_material_preview test_texture_pixel_cache test_level_blender_export test_textured_export test_beta36_normal_pipeline test_viewer_material_fixes test_legacy_material_texture_resolve test_blender_export

@@ -38,6 +38,21 @@ class BuildCollectionTests(unittest.TestCase):
         self.tmp.cleanup()
         _invalidate()
 
+    def test_scoped_index_skips_foreign_manifest_and_separates_caches(self):
+        from asset_library import _load_manifest
+        with patch('asset_library._load_manifest', wraps=_load_manifest) as reads:
+            first = extracted_index(self.root, archive_ids=[self.one])
+            self.assertEqual(reads.call_count, 1)
+            self.assertIn(self.one, str(reads.call_args.args[0]))
+            extracted_index(self.root, archive_ids=[self.one])
+            self.assertEqual(reads.call_count, 1)
+            second = extracted_index(self.root, archive_ids=[self.two])
+            self.assertEqual(reads.call_count, 2)
+        self.assertEqual(first['characters/shared.dds'][0]['file'].read_bytes(), b'legacy')
+        self.assertEqual(second['characters/shared.dds'][0]['file'].read_bytes(), b'stage2')
+        self.assertEqual(extracted_index(self.root, archive_ids=[]), {})
+        self.assertEqual(len(extracted_index(self.root)['characters/shared.dds']), 2)
+
     def test_migration_and_isolation(self):
         self.assertEqual(len(catalog(self.root)["builds"]["unassigned"]["members"]), 2)
         old = register_build("Legacy", "legacy", root=self.root)

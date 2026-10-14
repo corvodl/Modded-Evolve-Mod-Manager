@@ -59,6 +59,30 @@ class LibraryPreviewTests(unittest.TestCase):
             export_file(self.identifier, original,
                         self.archive / 'files' / 'copied.mtl', root=self.root)
 
+    def test_single_file_export_does_not_stat_unrelated_assets(self):
+        original = 'animations/config/character.xml'
+        real_stat = Path.stat
+        touched = []
+
+        def track(path, *args, **kwargs):
+            touched.append(path)
+            return real_stat(path, *args, **kwargs)
+
+        with patch.object(Path, 'stat', track):
+            export_file(self.identifier, original, self.base / 'out.xml', root=self.root)
+        for virtual in self.data:
+            if virtual != original:
+                self.assertNotIn(self.archive / 'files' / virtual, touched)
+
+    def test_model_index_manifest_reads_do_not_scale_with_entry_count(self):
+        from asset_library import _load_manifest
+        with (patch('asset_library_preview._load_manifest', wraps=_load_manifest) as reads,
+              patch('build_collections.build_index', return_value={}),
+              patch('build_collections.resolve_archive_build', return_value='test')):
+            result = library_model_index(self.identifier, self.root)
+        self.assertEqual(len(result), len(self.data))
+        self.assertEqual(reads.call_count, 2)
+
     def test_complete_export_preserves_virtual_directory_layout(self):
         folder = self.base / 'exports'
         folder.mkdir()
