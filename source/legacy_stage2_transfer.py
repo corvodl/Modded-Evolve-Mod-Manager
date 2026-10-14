@@ -13,8 +13,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-from uuid import uuid4
-
 from asset_library import _folder_for_identifier, _home, _load_manifest
 from build_collections import catalog
 from evolve_pak_workspace import normalized_name
@@ -182,7 +180,8 @@ def _hash_copy(source, destination, expected_hash, expected_size):
 
 
 def export_map_review_bundle(source_build, target_build, map_id, destination, *,
-                             root=None, selected_archive=None):
+                             root=None, selected_archive=None,
+                             cancelled=None, progress=None):
     """Copy verified extracted map-local files into a NEW, review-only folder.
 
     Does not copy encrypted PAKs, install content, write to Asset Library or
@@ -209,11 +208,15 @@ def export_map_review_bundle(source_build, target_build, map_id, destination, *,
                       encoding="utf-8")
     try:
         manifest_rows = []
+        completed = 0
         for aid, _member, manifest, folder, _original, role in selected:
             files_root = (folder / "files").resolve(strict=True)
             if (folder / "files").is_symlink() or not files_root.is_relative_to(folder.resolve()):
                 raise ValueError("Imported archive has an unsafe files directory.")
             for row in manifest["entries"]:
+                if cancelled and cancelled():
+                    from asset_library import ImportCanceled
+                    raise ImportCanceled("Map review bundle cancelled; incomplete files remain marked.")
                 name = normalized_name(row["path"])
                 src = files_root.joinpath(*name.split("/"))
                 if (src.is_symlink() or not src.is_file() or
@@ -234,6 +237,10 @@ def export_map_review_bundle(source_build, target_build, map_id, destination, *,
                     "bundle_path": relative.as_posix(), "sha256": expected_hash.casefold(),
                     "bytes": expected_size
                 })
+                completed += 1
+                if progress:
+                    progress("Exporting map review files", completed,
+                             plan["extracted_file_count"])
         plan["exported_files"] = manifest_rows
         (target / "transfer-review.json").write_text(
             json.dumps(plan, indent=2), encoding="utf-8")
