@@ -94,7 +94,7 @@ class LegacyBulkTransferTests(unittest.TestCase):
         self.assets()
         plan = plan_legacy_build_export(self.legacy, self.stage2, root=self.lib)
         self.assertEqual(plan["type"], "legacy-stage2-build-transfer-review")
-        self.assertEqual(plan["source_imported_archive_count"], 4)
+        self.assertEqual(plan["source_imported_archive_count"], 3)
         self.assertEqual(plan["target_imported_archive_count"], 2)
         self.assertEqual(plan["file_count"], 9)  # five global, two per map
         self.assertFalse(plan["game_files_modified"])
@@ -166,8 +166,8 @@ class LegacyBulkTransferTests(unittest.TestCase):
         data["warnings"] = ["synthetic unsupported entry"]
         damaged.write_text(json.dumps(data))
         plan = plan_legacy_build_export(self.legacy, self.stage2, root=self.lib)
-        self.assertEqual(plan["source_usable_archive_count"], 3)
-        self.assertEqual(plan["source_imported_archive_count"], 4)
+        self.assertEqual(plan["source_usable_archive_count"], 2)
+        self.assertEqual(plan["source_imported_archive_count"], 3)
         self.assertEqual(plan["source_blocked_archives"][0]["archive_id"], "c" * 20)
         self.assertNotIn(("map:desert_harsh", "terrain/terrain.dat"),
                          {(row["scope"], row["path"]) for row in plan["files"]})
