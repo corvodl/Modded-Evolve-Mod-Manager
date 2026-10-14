@@ -18,6 +18,7 @@ import shutil
 from uuid import uuid4
 
 RECEIPT = "transfer-recovery.json"
+STAGING_MARKER = ".stage2-transfer-staging.json"
 BUFFER = 1024 * 1024
 HEX = re.compile(r"^[0-9a-fA-F]{64}$")
 MAX_FILES = 512
@@ -150,6 +151,12 @@ def install_package(package, target_root, recovery, *, verify_archive,
             any(recovery.is_relative_to(root) or root.is_relative_to(recovery)
                 for root in (package, target))):
         raise ValueError("Package, staging target and new recovery folder must be disjoint.")
+    marker = target / STAGING_MARKER
+    if marker.is_symlink() or not marker.is_file():
+        raise ValueError("Target is not a marked isolated transfer staging directory.")
+    marker_data = json.loads(marker.read_text("utf-8"))
+    if marker_data != {"purpose": "isolated-stage2-transfer-staging", "schema": 1}:
+        raise ValueError("Invalid isolated staging marker.")
     data = json.loads((package / "transfer-package.json").read_text("utf-8"))
     if data.get("schema") != 1 or data.get("kind") != "stage2-verified-pak-transfer":
         raise ValueError("Unsupported package manifest.")
@@ -215,9 +222,15 @@ def restore_package(recovery):
     if recovery.is_relative_to(target) or target.is_relative_to(recovery):
         raise ValueError("Unsafe recovery directory.")
     rows = receipt["files"]
-    _parse_package(Path(receipt["package"]), rows)
+    if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_FILES:
+        raise ValueError("Recovery journal has invalid archive operations.")
     # Check all touched destinations first. Never clobber unrelated user edits.
     for row in rows:
+        if row.get("operation") not in ("add", "replace"):
+            raise ValueError("Invalid recovery operation.")
+        _digest(row.get("sha256"))
+        if row["operation"] == "replace":
+            _digest(row.get("baseline_sha256"))
         dst = _path(target, row["path"])
         if dst.exists():
             actual = sha256_file(dst)
