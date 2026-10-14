@@ -32,6 +32,37 @@ class GfxStaticPreviewTests(unittest.TestCase):
         self.assertIn("gfxfontlib_locfont.gfx", info.imports)
         self.assertTrue(any("ActionScript" in x for x in info.notes))
 
+    def test_zero_frame_class_symbols_are_valid_but_not_renderable(self):
+        movie = synthetic_gfx(
+            scripts=True, sprites=True, nonvisual_sprite=True,
+            exported_names=True)
+        info = inspect_gfx(movie)
+        self.assertEqual(info.frames, 2)
+        self.assertEqual(dict(info.sprites), {2: 1, 3: 0})
+        self.assertIn((2, "mcButtonMainMenu"), info.exports)
+        self.assertTrue(any("nonvisual" in note for note in info.notes))
+        # The zero-frame definition is not a valid render request.
+        with tempfile.TemporaryDirectory() as tmp:
+            ffdec = Path(tmp) / "ffdec-cli.exe"
+            ffdec.write_bytes(b"mock")
+            with self.assertRaisesRegex(GfxError, "unavailable"):
+                render_gfx(movie, symbol=3, frame=1, backend=str(ffdec))
+
+    def test_real_swf_movie_dependency_header_is_supported(self):
+        from types import SimpleNamespace
+        info = SimpleNamespace(imports=("effectsModeSelect.swf",))
+        blob = synthetic_gfx()
+        imported = b"FWS" + blob[3:]
+        matched, errors = resolve_imports(
+            info, "Libs/UI/main_menu.gfx",
+            lambda name: imported if name == "Libs/UI/effectsModeSelect.swf" else None)
+        self.assertEqual(matched, {"Libs/UI/effectsModeSelect.swf": imported})
+        self.assertFalse(errors)
+        _, errors = resolve_imports(
+            info, "Libs/UI/main_menu.gfx",
+            lambda _: imported[:-3])
+        self.assertTrue(any("length" in warning for warning in errors))
+
     def test_cfx_zlib_movie_matches_uncompressed_metadata(self):
         a = inspect_gfx(synthetic_gfx())
         b = inspect_gfx(synthetic_gfx(compressed=True))
