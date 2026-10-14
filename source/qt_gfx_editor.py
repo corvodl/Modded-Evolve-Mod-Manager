@@ -194,6 +194,10 @@ class GfxEditorDialog(QDialog):
                       self.owner.workspace, self.snapshot.session,
                       kind, character_id, file, configured=self._backend))
 
+    def edit_gfx(self):
+        # The shared preview widget offers this action on editing dialogs.
+        self.open_advanced()
+
     def open_advanced(self):
         try:
             pid = launch_gfx_gui(
