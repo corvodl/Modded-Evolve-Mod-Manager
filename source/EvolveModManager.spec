@@ -15,19 +15,8 @@ for name in ('cgf-converter.exe', 'Cryengine-Converter-source-v2.0.0.zip', 'NOTI
     if not asset.is_file():
         raise FileNotFoundError('Bundled Cryengine-Converter missing: ' + str(asset))
     datas.append((str(asset), 'third_party/Cryengine-Converter'))
-# FFDec is an independent GPLv3 tool. Distribute its full upstream
-# application, corresponding source, license, and a private Temurin JRE with
-# corresponding OpenJDK sources and legal notices in BOTH installer and ZIP.
-scaleform = root / 'third_party' / 'FFDec'
-for name in ('ffdec.jar', 'NOTICE.txt', 'BUNDLED-READY.txt',
-             'Sources/FFDec-source-b2ef2d3.zip',
-             'Sources/OpenJDK21U-jdk-sources_21.0.12_8.tar.gz',
-             'jre/bin/java.exe', 'jre/bin/javaw.exe'):
-    if not (scaleform / name).is_file():
-        raise FileNotFoundError('Bundled Scaleform dependency missing: ' + str(scaleform / name))
-if not (scaleform / 'jre' / 'legal').is_dir():
-    raise FileNotFoundError('Bundled Temurin JRE legal notices missing.')
-datas.append((str(scaleform), 'third_party/FFDec'))
+# Scaleform FFDec is an optional user-installed tool, not bundled.
+# The app detects an existing installation or opens the official release page.
 datas += [(str(root/'launcher_support'), 'launcher_support'),
           (str(root/'assets'), 'assets'),
           (str(root/'reference'), 'reference'),
