@@ -28,7 +28,7 @@ ASSET_STEMS = {
     )
 }
 
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, Qt, QRectF
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
@@ -122,7 +122,13 @@ def navigation_icon(section, color="#f5f3f6", size=24):
     pixmap.fill(Qt.transparent)
     pixmap.setDevicePixelRatio(2)
     painter = QPainter(pixmap)
-    renderer.render(painter)
+    painter.setRenderHint(QPainter.Antialiasing)
+    # QtSvg may use a source SVG's 32px intrinsic viewport with a smaller,
+    # high-DPI logical painter area. Render to an explicit logical rectangle
+    # to prevent clipped / off-center fragments on the 18–24px sidebar.
+    inset = max(1.0, size * .07)
+    renderer.render(painter, QRectF(inset, inset, size - 2 * inset,
+                                  size - 2 * inset))
     painter.end()
     return QIcon(pixmap)
 
