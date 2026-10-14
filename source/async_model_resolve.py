@@ -21,10 +21,13 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                   index=None, require_assembly=False):
     path = checked_path(workspace, relative)
     raw = path.read_bytes()
-    try:
-        report = inspect_model(raw).description
-    except ValueError as exc:
-        report = str(exc)
+    if str(relative).casefold().endswith('.cdf'):
+        report = 'Character Definition (CDF) • referenced model assembly'
+    else:
+        try:
+            report = inspect_model(raw).description
+        except ValueError as exc:
+            report = str(exc)
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
     character = None
