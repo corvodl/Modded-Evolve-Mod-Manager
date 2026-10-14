@@ -63,7 +63,7 @@ def decode_legacy_texture(project, relative):
         raise ValueError("Select a DDS texture or its first streaming fragment.")
     if not match:
         raw = read_member(project, relative, max_bytes=200_000_000)
-        image = preview_dds(raw, max_size=(900, 700))
+        image = preview_dds(raw, max_size=(16384, 16384))
         info = parse_dds(raw)
         return image, info.description
     root, part_no, aux_letter = match.groups()
@@ -109,7 +109,6 @@ def decode_legacy_texture(project, relative):
             raise ValueError("CTX1 is preserved for editing/export, but preview decoding needs a CTX1 codec.")
         raw = first[:offset] + highest_to_smallest
         image = preview_dds(raw, max_size=(900, 700))
-    image.thumbnail((900, 700), Image.Resampling.LANCZOS)
     kind = "auxiliary 8-bit plane" if auxiliary else info.pixel_format
     return image, f"{info.width} × {info.height} | {kind} | {info.mipmaps} mips"
 
