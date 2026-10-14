@@ -164,6 +164,44 @@ class Legacy2012RigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'inverse/rest'):
             read_legacy_bones(bytes(b))
 
+    def test_native_historical_dba_cancel_before_external_process(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from database_animation import convert_historical_database_motion
+        with TemporaryDirectory() as folder:
+            root=Path(folder)
+            body=root/'body.chr';body.write_bytes(fixture())
+            skeleton=root/'skeleton.chr';skeleton.write_bytes(fixture(master=True))
+            db=root/'database.dba';db.write_bytes(database())
+            virtual='objects/characters/monsters/parasitehost/ParasiteHost3_Skeleton.chr'
+            index={virtual.casefold():[{'file':skeleton,'relative':virtual,'workspace':root}]}
+            character=SimpleNamespace(rig_parts=((
+                'objects/characters/monsters/parasitehost/ParasiteHost3.chr', body, None, 4),),
+                skeleton=virtual, cdf='objects/characters/monsters/parasitehost/ParasiteHost3.cdf')
+            motion=SimpleNamespace(kind='dba',file=db,virtual_path='animations/monsters/parasitehost_3/ParasiteHost3.dba')
+            with patch('subprocess.Popen') as popen:
+                with self.assertRaisesRegex(ValueError,'cancelled'):
+                    convert_historical_database_motion(
+                        b'unused GLB',motion,index,character,preferred_workspace=root,
+                        cancelled=lambda: True)
+                popen.assert_not_called()
+
+    def test_chrparams_is_metadata_not_controller_coverage(self):
+        from legacy_rig_diagnostics import _animation_config
+        config=(b'<Params><AnimationList>'
+                b'<Animation name="#filepath" path="animations/monsters/parasitehost_3" />'
+                b'<Animation name="$TracksDatabase" path="animations/monsters/parasitehost_3/ParasiteHost3.dba" />'
+                b'<Animation name="idle" path="idle.caf" />'
+                b'</AnimationList></Params>')
+        result=_animation_config(config)
+        self.assertEqual(result['alias_count'],1)
+        self.assertEqual(len(result['database_declarations']),1)
+        self.assertIsNone(result['controller_coverage'])
+        with self.assertRaises(ValueError):
+            _animation_config(b'<!DOCTYPE stuff><Params/>')
+
     def test_db_metadata_not_a_playable_clip(self):
         info=probe_legacy_dba(database())
         self.assertEqual(info['database_chunk_version'],'0x905')
