@@ -431,19 +431,21 @@ def apply_gfx_session(workspace, session, *, expected_sha256=None):
 
 
 def ffdec_gui_command(configured):
-    """Open the full authoring UI from a trusted external FFDec installation."""
+    """Launch editable FFDec GUI with javaw, never headless Java options."""
     command = ffdec_command(configured)
     binary = Path(command[-1] if command[-1].endswith(".jar") else command[0])
     if binary.suffix.casefold() == ".jar":
-        return command
-    # Windows bundled launcher is for the GUI. CLI entrypoint is not.
+        java = Path(command[0])
+        gui_java = java.with_name("javaw.exe")
+        return (str(gui_java if gui_java.is_file() else java),
+                "-jar", str(binary))
     gui = binary.with_name("ffdec.exe")
     if gui.is_file() and not gui.is_symlink():
         return (str(gui),)
     jar = binary.with_name("ffdec.jar")
     if jar.is_file() and not jar.is_symlink():
-        return ffdec_command(str(jar))
-    raise GfxError("FFDec GUI is unavailable. Install FFDec with ffdec.exe or its JAR and Java.")
+        return ffdec_gui_command(str(jar))
+    raise GfxError("FFDec GUI is unavailable. The package must contain ffdec.jar and its private Java runtime.")
 
 
 def launch_gfx_gui(workspace, session, *, configured=None):
