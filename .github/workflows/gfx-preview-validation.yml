@@ -43,10 +43,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
+      - name: Install Pillow for RGBA pixel assertions
+        run: python -m pip install 'Pillow>=12,<13'
       - name: Download exact pinned FFDec 26.3.0 ZIP and verify GitHub release SHA-256
         shell: pwsh
         run: |
