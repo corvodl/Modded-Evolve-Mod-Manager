@@ -370,11 +370,20 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
         if command[-1].endswith(".jar"):
             pass
         args += ["-cli", "-onerror", "abort", "-exportTimeout", str(TIMEOUT - 2),
-                 "-zoom", str(scale), "-ignorebackground", "-select",
-                 f"{symbol}:{frame}", "-format", "frame:png"]
+                 "-zoom", str(scale), "-ignorebackground"]
+        if symbol:
+            # FFDec's "frame" exporter always targets the main timeline.
+            # For a sprite, request the character explicitly with the sprite
+            # exporter, then select the requested sprite-local frame.
+            args.extend(["-selectid", str(symbol), "-select",
+                         f"{symbol}:{frame}", "-format", "sprite:png"])
+            output_kind = "sprite"
+        else:
+            args.extend(["-select", str(frame), "-format", "frame:png"])
+            output_kind = "frame"
         if checked:
             args.extend(["-importAssets", "yes,local"])
-        args.extend(["-export", "frame", str(out), str(target)])
+        args.extend(["-export", output_kind, str(out), str(target)])
         _execute(args, cwd=root, cancelled=cancelled, timeout=TIMEOUT)
         files = [p for p in out.rglob("*.png") if p.is_file() and not p.is_symlink()]
         if len(files) != 1:
