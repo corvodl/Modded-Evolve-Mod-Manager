@@ -20,37 +20,16 @@ from PySide6.QtWidgets import (
 from gpu_model_preview import prepare_geometry, GPUUnavailable
 
 
+from qt_navigation_icons import navigation_icon
+
+
 def _viewport_tool_icon(kind):
-    """Draw toolbar icons without an emoji font or SVG runtime dependency."""
-    canvas = QPixmap(18, 18)
-    canvas.fill(Qt.transparent)
-    painter = QPainter(canvas)
-    painter.setRenderHint(QPainter.Antialiasing, True)
-    painter.setPen(QPen(QColor("#e9e2e7"), 1.6))
-    painter.setBrush(Qt.NoBrush)
-    if kind == "View":
-        painter.drawEllipse(2, 5, 14, 8)
-        painter.drawEllipse(7, 7, 4, 4)
-    elif kind == "Materials":
-        for x, y in ((3, 3), (10, 3), (3, 10), (10, 10)):
-            painter.drawRect(x, y, 5, 5)
-    elif kind == "Animation":
-        painter.drawRect(2, 3, 14, 12)
-        painter.drawPolygon(QPolygon([QPoint(7, 6), QPoint(7, 12),
-                                       QPoint(12, 9)]))
-    elif kind == "Grid":
-        for v in (4, 9, 14):
-            painter.drawLine(v, 2, v, 16)
-            painter.drawLine(2, v, 16, v)
-    elif kind == "Wire":
-        painter.drawRect(3, 3, 11, 11)
-        painter.drawLine(3, 3, 14, 14)
-        painter.drawLine(14, 3, 3, 14)
-    elif kind == "Solid":
-        painter.setBrush(QColor("#aaa6b6"))
-        painter.drawEllipse(3, 3, 12, 12)
-    painter.end()
-    return QIcon(canvas)
+    """Use the same offline pictograms as explorer and GFX controls."""
+    mapping = {
+        "View": "view", "Materials": "material", "Animation": "animation",
+        "Grid": "grid", "Wire": "wire", "Solid": "solid",
+    }
+    return navigation_icon(mapping.get(kind, kind.casefold()), size=18)
 
 
 class _CompactAnimationList(QListWidget):
@@ -756,6 +735,7 @@ class QtGPUModelPanel(QWidget):
         self._play_shortcut = QToolButton(self)
         self._play_shortcut.setText('▶  Play')
         self._play_shortcut.setToolTip('Play / pause current animation')
+        self._play_shortcut.setIcon(navigation_icon('play'))
         self._play_shortcut.clicked.connect(self.toggle_play)
         layout.addLayout(toolbar)
         self.canvas=QtGLModelCanvas(mesh,materials,self,prepared_geometry=prepared_geometry)
@@ -1292,6 +1272,7 @@ class QtGPUModelPanel(QWidget):
         self.clip_select.currentTextChanged.connect(self.select_clip)
         line.addWidget(self.clip_select, 1)
         self.play_button = QPushButton('Play')
+        self.play_button.setIcon(navigation_icon('play'))
         self.play_button.clicked.connect(self.toggle_play)
         line.addWidget(self.play_button)
         playback_layout.addLayout(line)
@@ -1304,11 +1285,12 @@ class QtGPUModelPanel(QWidget):
         self.native_search.textChanged.connect(self._filter_native_catalog)
         native_header.addWidget(self.native_search, 1)
         self.native_refresh_button = QPushButton('Refresh Library')
+        self.native_refresh_button.setIcon(navigation_icon('refresh'))
         self.native_refresh_button.setObjectName('refreshNativeLibrary')
         self.native_refresh_button.setToolTip(
             'Re-read the current Asset Library and update this model\'s animation references.')
         self.native_refresh_button.clicked.connect(self.refresh_native_catalog)
-        self.native_refresh_button.setText('↻')
+        self.native_refresh_button.setText('')
         self.native_refresh_button.setFixedWidth(35)
         self.native_refresh_button.setToolTip('Refresh animations from the Asset Library')
         search_row=QHBoxLayout()

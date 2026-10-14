@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QPushButton, QScrollArea, QFileDialog, QMessageBox,
 )
+from qt_navigation_icons import navigation_icon
 from gfx_preview_backend import (
     inspect_gfx, resolve_imports, ffdec_command, render_gfx, GfxError,
 )
@@ -103,6 +104,7 @@ class GfxPreviewWidget(QWidget):
         controls.addWidget(QLabel("Symbol:"))
         self.symbol = QComboBox()
         self.symbol.setObjectName("gfxSymbolSelection")
+        self.symbol.setToolTip("Select a movie frame or sprite symbol")
         controls.addWidget(self.symbol, 2)
         controls.addWidget(QLabel("Frame:"))
         self.frame = QSpinBox()
@@ -116,6 +118,7 @@ class GfxPreviewWidget(QWidget):
             self.scale.addItem(f"{n}×", n)
         controls.addWidget(self.scale)
         self.fit = QPushButton("Fit")
+        self.fit.setIcon(navigation_icon("fit"))
         self.fit.setCheckable(True)
         self.fit.setChecked(True)
         self.fit.setObjectName("gfxFit")
@@ -143,9 +146,11 @@ class GfxPreviewWidget(QWidget):
         layout.addWidget(self.note)
         bar = QHBoxLayout()
         self.setup = QPushButton("Configure FFDec…")
+        self.setup.setIcon(navigation_icon("settings"))
         self.setup.clicked.connect(self.configure_backend)
         bar.addWidget(self.setup)
         self.export = QPushButton("Export selected PNG…")
+        self.export.setIcon(navigation_icon("export"))
         self.export.setObjectName("gfxExportPng")
         self.export.setEnabled(False)
         self.export.clicked.connect(owner.export_png)
@@ -154,6 +159,7 @@ class GfxPreviewWidget(QWidget):
             "Edit in Mod Project…" if getattr(owner, "read_only_library", False)
             else "Edit full GFX…")
         self.edit_movie.setObjectName("gfxOpenEditor")
+        self.edit_movie.setIcon(navigation_icon("gfx"))
         self.edit_movie.clicked.connect(
             owner.edit_in_project if getattr(owner, "read_only_library", False)
             else owner.edit_gfx)

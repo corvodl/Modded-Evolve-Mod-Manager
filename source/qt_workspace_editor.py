@@ -47,6 +47,7 @@ from loose_file_editor import save_loose_text
 from loose_game_files import TEXT_EXTENSIONS, copy_to_project
 from evolve_pak_workspace import normalized_name
 from version_info import app_version
+from qt_navigation_icons import navigation_icon, action_icon
 from studio_polish_117 import (prepare_model_cached, clear_model_cache,
     model_cache_stats, export_preflight, project_session_key,
     sanitized_project_session)
@@ -222,7 +223,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.current_file_label = QLabel('Select a file from File Explorer')
         self.current_file_label.setObjectName('currentWorkspaceAsset')
         top.addWidget(self.current_file_label, 1)
-        self.sidebar_button = QPushButton('☰ Hide File Explorer')
+        self.sidebar_button = QPushButton('Hide File Explorer')
+        self.sidebar_button.setIcon(navigation_icon('folder', size=18))
         self.sidebar_button.setObjectName('fileExplorerToggle')
         self.sidebar_button.setCheckable(True)
         self.sidebar_button.setChecked(True)
@@ -258,6 +260,7 @@ class QtWorkspaceEditor(QMainWindow):
                 )
                 for text, callback in actions:
                     widgets[text] = self._button(text, callback)
+                    widgets[text].setIcon(action_icon(text))
                     bar.addWidget(widgets[text])
                 bar.addStretch(1)
                 box.addLayout(bar)
@@ -283,7 +286,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_cpu.setObjectName('cpuModelPreview')
                 view.addWidget(self.model_cpu)
             box.addWidget(view, 1)
-            self.tabs.addTab(tab, label)
+            self.tabs.addTab(tab, navigation_icon({'files':'text','images':'texture','models':'model','gfx':'gfx'}[section]), label)
             self.views[section] = view
             self.actions[section] = widgets
         self.editor_split.addWidget(self.tabs)
@@ -299,7 +302,7 @@ class QtWorkspaceEditor(QMainWindow):
         explorer_box.setContentsMargins(8, 8, 8, 8)
         explorer_box.setSpacing(7)
         explorer_head = QHBoxLayout()
-        title = QLabel('▤  FILE EXPLORER')
+        title = QLabel('FILE EXPLORER')
         title.setObjectName('fileExplorerHeading')
         explorer_head.addWidget(title, 1)
         self.explorer_count = QLabel('')
@@ -323,15 +326,19 @@ class QtWorkspaceEditor(QMainWindow):
         self.search = QLineEdit()
         self.search.setObjectName('fileExplorerSearch')
         self.search.setPlaceholderText('Search files and folders…')
+        self.search.addAction(navigation_icon('search', size=18), QLineEdit.LeadingPosition)
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self.populate)
         explorer_box.addWidget(self.search)
         explorer_controls = QHBoxLayout()
         self.favorites_only = QPushButton('★ Favorites')
+        self.favorites_only.setIcon(navigation_icon('favorite', size=16))
         self.favorites_only.setCheckable(True)
         self.favorites_only.toggled.connect(self.populate)
         explorer_controls.addWidget(self.favorites_only)
-        explorer_controls.addWidget(self._button('Open Folder', self.explore))
+        open_folder_button = self._button('Open Folder', self.explore)
+        open_folder_button.setIcon(navigation_icon('folder-open', size=18))
+        explorer_controls.addWidget(open_folder_button)
         explorer_controls.addStretch()
         explorer_box.addLayout(explorer_controls)
 
@@ -365,6 +372,7 @@ class QtWorkspaceEditor(QMainWindow):
         bottom = QHBoxLayout()
         bottom.addWidget(self.status, 1)
         self.dependency_button=QPushButton('Dependencies…')
+        self.dependency_button.setIcon(navigation_icon('layers', size=18))
         self.dependency_button.setEnabled(False)
         menu=QMenu(self.dependency_button)
         menu.addAction('Asset Dependency Graph',self.open_dependency_graph)
@@ -536,7 +544,7 @@ class QtWorkspaceEditor(QMainWindow):
         showing = self._explorer_visible
         self.sidebar_button.blockSignals(True)
         self.sidebar_button.setChecked(showing)
-        self.sidebar_button.setText('☰ Hide File Explorer' if showing else '☰ Show File Explorer')
+        self.sidebar_button.setText('Hide File Explorer' if showing else 'Show File Explorer')
         self.sidebar_button.blockSignals(False)
         if hasattr(self, '_file_explorer_action'):
             self._file_explorer_action.blockSignals(True)
@@ -1031,6 +1039,7 @@ class QtWorkspaceEditor(QMainWindow):
                         # Store the original virtual directory independent of
                         # friendly display aliases (e.g. Gorgon/mon_lurker).
                         folder.setData(0, Qt.UserRole + 1, key)
+                        folder.setIcon(0, navigation_icon('folder', size=16))
                         description = character_asset_description(key)
                         folder.setToolTip(0, key + (
                             '\\n' + description if description else ''))
@@ -1053,6 +1062,7 @@ class QtWorkspaceEditor(QMainWindow):
                 category = self._category(rel)
                 item = QTreeWidgetItem([symbol + parts[-1], size])
                 item.setData(0, Qt.UserRole, rel)
+                item.setIcon(0, navigation_icon({'files':'file','images':'texture','models':'model','gfx':'gfx'}[category], size=16))
                 from character_aliases import character_asset_description
                 char_description = character_asset_description(rel)
                 item.setToolTip(0, category.title() + ' • ' + rel +
@@ -1090,6 +1100,7 @@ class QtWorkspaceEditor(QMainWindow):
                 item = QTreeWidgetItem(['◆ ' + full.label, 'CDF assembly'])
                 item.setData(0, Qt.UserRole, primary)
                 item.setData(0, Qt.UserRole + 2, 'full-character')
+                item.setIcon(0, navigation_icon('layers', size=16))
                 item.setToolTip(0,
                     'Full character assembled from ' + full.definition +
                     '\\nThe CDF selects the body and compatible equipment. ' +
@@ -1143,6 +1154,11 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             chosen = self.selected()
+            if self._category(chosen) == 'gfx':
+                from qt_ffdec_prompt import ffdec_is_ready, show_ffdec_requirement
+                if not ffdec_is_ready(self.manager) and not getattr(self, '_gfx_requirement_notified', False):
+                    self._gfx_requirement_notified = True
+                    show_ffdec_requirement(self)
             item = self.file_tree.currentItem()
             full_character = bool(
                 item and item.data(0, Qt.UserRole + 2) == 'full-character')
@@ -1770,6 +1786,10 @@ class QtWorkspaceEditor(QMainWindow):
                 'Open an extracted .gfx asset before choosing the editor.')
             return
         try:
+            from qt_ffdec_prompt import ffdec_is_ready, show_ffdec_requirement
+            if not ffdec_is_ready(self.manager):
+                show_ffdec_requirement(self)
+                return
             if self.manager.busy:
                 raise RuntimeError('Finish the current manager operation first.')
             from qt_gfx_editor import GfxEditorDialog
@@ -1880,8 +1900,8 @@ class QtWorkspaceEditor(QMainWindow):
         if section=='images':
             menu.addAction('Advanced Texture Adjustments…', self.open_texture_editor)
         if section=='gfx':
-            menu.addAction('Edit full Scaleform GFX…', self.edit_gfx)
-            menu.addAction('Export rendered PNG…', self.export_png)
+            menu.addAction(navigation_icon('gfx', size=18), 'Edit full Scaleform GFX…', self.edit_gfx)
+            menu.addAction(navigation_icon('export', size=18), 'Export rendered PNG…', self.export_png)
         menu.addAction('Reveal Extracted File in Explorer', self.explore)
         menu.addAction('Open Extracted File in External App', self.open_extracted_external)
         menu.addAction('Copy Extracted Absolute Path', self.copy_extracted_path)
