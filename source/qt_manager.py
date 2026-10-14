@@ -1088,6 +1088,7 @@ class QtManager(QMainWindow):
             ('Open Legacy PAK Project…', self.open_legacy_project),
             (None, None),
             ('Projects…', self.open_project_dashboard),
+            ('Refresh Project List', self.refresh_project_list),
             ('Open Unpacked Files', self.open_unpacked),
         ))
         menu_commands('Edit', (
@@ -1147,7 +1148,10 @@ class QtManager(QMainWindow):
         self.project_changes_table.itemDoubleClicked.connect(
             lambda _: self.open_modified_project_file())
         root.addWidget(self.project_changes_table, 1)
+        # Only the selected project's frequent actions belong on the page.
+        # Refresh/review/library remain in File/Edit/Tools and sidebar.
         project_actions = QHBoxLayout()
+        self.project_quick = {}
         for title, handler in (
             ('Refresh Projects', self.refresh_project_list),
             ('Continue Editing', self.open_active_project),
@@ -1155,8 +1159,16 @@ class QtManager(QMainWindow):
             ('Build Mod', self.build),
             ('Asset Library', lambda: self.open_page(SECTIONS.index('Asset Library'))),
         ):
-            project_actions.addWidget(_button(title, handler), 1)
+            button = _button(title, handler)
+            self.project_quick[title] = button
+            if title in ('Continue Editing', 'Build Mod'):
+                project_actions.addWidget(button)
+            else:
+                button.setParent(page)
+                button.hide()
+        project_actions.addStretch(1)
         root.addLayout(project_actions)
+        self._sync_project_quick_actions()
         self.legacy_archive_toggle = _button(
             'Show Advanced Archive Tools', self.toggle_advanced_archive_tools)
         root.addWidget(self.legacy_archive_toggle)
@@ -1254,6 +1266,16 @@ class QtManager(QMainWindow):
                 break
         self.refresh_project_changes()
 
+    def _sync_project_quick_actions(self):
+        buttons = getattr(self, 'project_quick', {})
+        if not buttons:
+            return
+        record = self.selected_project_context()
+        ready = bool(record and record['status'] not in ('missing', 'unavailable'))
+        for title in ('Continue Editing', 'Build Mod'):
+            buttons[title].setVisible(ready)
+            buttons[title].setEnabled(ready)
+
     def selected_project_context(self):
         if not hasattr(self, 'project_table'):
             return None
@@ -1317,6 +1339,7 @@ class QtManager(QMainWindow):
             except (OSError, ValueError, KeyError) as exc:
                 self._log('Project changes: ' + str(exc)[:200])
         table.setSortingEnabled(True)
+        self._sync_project_quick_actions()
 
     def open_modified_project_file(self):
         current = self.project_changes_table.item(
