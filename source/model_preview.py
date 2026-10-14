@@ -299,7 +299,7 @@ def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_roo
     raise ValueError(
         'No supported render geometry for ' + relative
         + '. Checked direct model data, same-stem render companions '
-          '(.chrm/.skinm), CDF skin bindings, and same-stem .chr LODs. 
+          '(.chrm/.skinm), CDF skin bindings, and same-stem .chr LODs. '
           'Do not assume this character must have a .skinm.')
 
 
