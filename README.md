@@ -13,8 +13,8 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Beta — v1.1.18-beta.43
 
-- Fix the actual cropped sidebar glyph shapes at normal and scaled Windows display sizes.
-- Normalize Flaticon SVG bounds and Qt high-DPI painting so all eight navigation icons render fully.
+- Fix sidebar icon outlines so all eight Flaticon glyphs are centered and fully visible.
+- Normalize vector icon geometry and correct high-DPI Qt drawing on compact Windows sidebars.
 
 Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
 
