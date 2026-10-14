@@ -43,13 +43,13 @@ class UiIconFfdecTests(unittest.TestCase):
         self.assertEqual(FFDEC_DOWNLOAD,
                          "https://github.com/jindrapetrik/jpexs-decompiler/releases")
         captured = {}
-        def fake_exec(dialog):
+        def fake_open(dialog):
             captured["title"] = dialog.windowTitle()
             captured["text"] = dialog.text()
             captured["detail"] = dialog.informativeText()
             captured["buttons"] = [b.text() for b in dialog.buttons()]
             return QMessageBox.Rejected
-        with patch.object(QMessageBox, "exec", fake_exec):
+        with patch.object(QMessageBox, "open", fake_open):
             show_ffdec_requirement(None)
         self.assertIn("FFDec", captured["title"])
         self.assertIn("needed", captured["text"])
