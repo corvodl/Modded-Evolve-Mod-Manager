@@ -56,6 +56,15 @@ assert (BUNDLE/'third_party'/'FFDec'/'NOTICE.txt').is_file()
 assert (BUNDLE/'third_party'/'FFDec'/'Sources'/'FFDec-source-b2ef2d3.zip').is_file()
 assert (BUNDLE/'third_party'/'FFDec'/'Sources'/'OpenJDK21U-jdk-sources_21.0.12_8.tar.gz').is_file()
 assert (BUNDLE/'third_party'/'FFDec'/'jre'/'legal').is_dir()
+# Functional package smoke: use only a redistribution-safe synthetic shape
+# and the actual Java+FFDec copied into the compiled Windows application.
+from gfx_synthetic_fixtures import synthetic_gfx
+import io
+synthetic_png = gfx_preview_backend.render_gfx(
+    synthetic_gfx(), virtual='package-gfx-test.gfx')
+with Image.open(io.BytesIO(synthetic_png)) as rendered:
+    rendered.load()
+    assert rendered.size == (64, 48)
 assert gfx_edit_backend.create_gfx_session and gfx_edit_backend.apply_gfx_session
 assert qt_gfx_editor.GfxEditorDialog
 assert model_blender_export.glb_bytes and model_blender_export.convert_folder
