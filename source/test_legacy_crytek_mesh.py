@@ -34,7 +34,7 @@ def fixture(*, version=0x745, bad_index=False):
                             offset, 99) + subset)
     return (b'CryTek\0\0'
             + struct.pack('<3I', 0xFFFF0000, version, 20)
-            + struct.pack('<I', len(chunks)) + b''.join(entries)
+            + struct.pack('<I', len(entries)) + b''.join(entries)
             + b''.join(body))
 
 
@@ -70,11 +70,12 @@ class OldCryTekMeshTests(unittest.TestCase):
     def test_replacement_check_preserves_legacy_stream_metadata(self):
         before = fixture()
         changed = bytearray(before)
-        changed[-4:] = struct.pack('<2H', 1, 2)
+        # Adjust one vertex coordinate while retaining the exact headers.
+        first_chunk = 24 + 20 * 4
+        struct.pack_into('<f', changed, first_chunk + 40, 0.125)
         validate_model_replacement(before, bytes(changed))
         mutated_header = bytearray(before)
         # The first stream's element count occupies +24 of its chunk header.
-        first_chunk = 24 + 20 * 4
         struct.pack_into('<I', mutated_header, first_chunk + 24, 5)
         with self.assertRaises(ValueError):
             validate_model_replacement(before, bytes(mutated_header))
