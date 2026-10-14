@@ -25,28 +25,40 @@ class FlaticonNavigationTests(unittest.TestCase):
                 path = NAV_ASSETS / (stem + ".svg")
                 self.assertTrue(path.is_file(), "Missing generated Flaticon glyph: " + str(path))
                 root = ElementTree.parse(path).getroot()
-                self.assertEqual(root.attrib["width"], "32")
-                self.assertIn("viewBox", root.attrib)
+                self.assertEqual(root.attrib["width"], "24")
+                self.assertEqual(root.attrib["height"], "24")
+                self.assertEqual(root.attrib["viewBox"], "0 0 24 24")
                 paths = list(root.iter("{http://www.w3.org/2000/svg}path"))
                 self.assertEqual(len(paths), 1)
                 self.assertGreater(len(paths[0].attrib["d"]), 40)
                 self.assertEqual(paths[0].attrib["fill"], "#f5f3f6")
 
-    def test_sidebar_flaticon_icons_have_visible_24px_pixels(self):
+    def test_sidebar_flaticon_icons_are_centered_and_not_clipped(self):
+        # Test BOTH the sidebar's normal size and narrow/high-DPI variants.
+        # The earlier implementation only checked nonempty pixels: even a
+        # small clipped corner could pass that assertion.
         for section in NAV_STEMS:
-            with self.subTest(section=section):
-                picture = navigation_icon(section, "#ffffff", 24).pixmap(24, 24)
-                self.assertFalse(picture.isNull())
-                image = picture.toImage().convertToFormat(QImage.Format_RGBA8888)
-                alpha_pixels = [
-                    (x, y) for y in range(image.height()) for x in range(image.width())
-                    if image.pixelColor(x, y).alpha() >= 128
-                ]
-                self.assertGreater(len(alpha_pixels), 35, section)
-                self.assertGreater(max(x for x, y in alpha_pixels) -
-                                   min(x for x, y in alpha_pixels), 10, section)
-                self.assertGreater(max(y for x, y in alpha_pixels) -
-                                   min(y for x, y in alpha_pixels), 10, section)
+            for size in (18, 24, 30):
+                with self.subTest(section=section, size=size):
+                    picture = navigation_icon(section, "#ffffff", size).pixmap(size, size)
+                    self.assertFalse(picture.isNull())
+                    image = picture.toImage().convertToFormat(QImage.Format_RGBA8888)
+                    pixels = [
+                        (x, y) for y in range(image.height())
+                        for x in range(image.width())
+                        if image.pixelColor(x, y).alpha() >= 100
+                    ]
+                    self.assertGreater(len(pixels), size * size // 24, section)
+                    left, right = min(x for x, y in pixels), max(x for x, y in pixels)
+                    top, bottom = min(y for x, y in pixels), max(y for x, y in pixels)
+                    self.assertGreater(left, 0, section)
+                    self.assertGreater(top, 0, section)
+                    self.assertLess(right, size - 1, section)
+                    self.assertLess(bottom, size - 1, section)
+                    self.assertGreater(right - left, size * 0.50, section)
+                    self.assertGreater(bottom - top, size * 0.50, section)
+                    self.assertLess(abs((left + right)/2 - (size - 1)/2), size * .16, section)
+                    self.assertLess(abs((top + bottom)/2 - (size - 1)/2), size * .16, section)
 
     def test_semantic_glyphs_use_official_regular_rounded_codepoints(self):
         # Prevent a later build from silently switching back to the opaque
