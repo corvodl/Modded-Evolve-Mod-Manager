@@ -44,9 +44,11 @@ def _checked_path(base, rel):
 def _check_destination(destination, root, target_project):
     output = Path(destination).absolute()
     home = Path(root).resolve()
+    resolved = output.resolve(strict=False)
     if (output.exists() or output.is_symlink()
             or any(p.is_symlink() for p in output.parents)
-            or output.is_relative_to(home) or home.is_relative_to(output)):
+            or resolved == home or resolved.is_relative_to(home)
+            or home.is_relative_to(resolved)):
         raise ValueError("Choose a new external directory, not the Asset Library.")
     if target_project is not None:
         target = Path(target_project).resolve()
