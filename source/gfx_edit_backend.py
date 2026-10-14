@@ -309,8 +309,9 @@ def export_gfx_scripts(workspace, session, destination, *,
                folder=root, cancelled=cancelled)
         files = []
         total = 0
+        safe_root = generated.resolve()
         for entry in generated.rglob("*"):
-            if entry.is_symlink() or not entry.resolve().is_relative_to(generated):
+            if entry.is_symlink() or not entry.resolve().is_relative_to(safe_root):
                 raise GfxError("Unsafe generated ActionScript path.")
             if not entry.is_file():
                 continue
