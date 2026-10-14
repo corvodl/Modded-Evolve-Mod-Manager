@@ -51,6 +51,20 @@ def _archive_path(member, manifest):
     return relative
 
 
+def _canonical_archive(archive_path):
+    """Normalize only a known original GAME-relative archive location.
+
+    Windows absolute install paths differ across builds; the same
+    Game/Levels/Foo/level.pak should still compare as one archive. Retain
+    GameDLC02/GameDLC04 prefixes to prevent collisions with base content.
+    """
+    raw = str(archive_path).replace("\\", "/").casefold().strip("/")
+    match = re.search(r"(?:^|/)(game(?:dlc[0-9]+)?|levels)/", raw)
+    if match:
+        return raw[match.start(1):]
+    return raw
+
+
 def _role(archive_path, map_id):
     path = str(archive_path).replace("\\", "/").casefold().strip("/")
     map_key = map_id.casefold()
@@ -99,8 +113,7 @@ def plan_compiled_map(source_build, target_build, map_id, *, root=None,
     if selected_archive is not None and selected_archive not in {row[0] for row in candidates}:
         raise ValueError("Selected archive does not belong to this map and source build.")
     target_group = _members_for_map(target, map_id, library_root=library)
-    target_paths = {row[4].replace("\\", "/").casefold()
-                    for row in target_group}
+    target_paths = {_canonical_archive(row[4]) for row in target_group}
     archives, seen_virtual = [], {}
     total_size = 0
     total_entries = 0
@@ -128,8 +141,8 @@ def plan_compiled_map(source_build, target_build, map_id, *, root=None,
             "archive_id": aid, "source_relative": original, "role": role,
             "source_archive_sha256": manifest.get("source_sha256"),
             "entries": count, "extracted_bytes": sum(int(e["bytes"]) for e in manifest["entries"]),
-            "target_archive_present": original.replace("\\", "/").casefold() in target_paths,
-            "deployment": "existing-archive-review" if original.replace("\\", "/").casefold()
+            "target_archive_present": _canonical_archive(original) in target_paths,
+            "deployment": "existing-archive-review" if _canonical_archive(original)
                           in target_paths else "new-archive-not-supported",
         })
     virtual_names = set(seen_virtual)
