@@ -10,6 +10,7 @@ on:
       - 'source/qt_asset_preview.py'
       - 'source/asset_library_preview.py'
       - 'source/test_gfx_preview.py'
+      - 'source/test_gfx_library_scope.py'
       - 'source/test_qt_unified_explorer.py'
       - 'source/test_qt_asset_preview.py'
       - '.github/workflows/gfx-preview-validation.yml'
@@ -34,7 +35,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -m compileall -q source
-          python -m unittest -v test_gfx_preview test_qt_unified_explorer test_qt_asset_preview
+          python -m unittest -v test_gfx_preview test_qt_unified_explorer test_qt_asset_preview test_gfx_library_scope
   real-renderer:
     runs-on: windows-2022
     timeout-minutes: 20
