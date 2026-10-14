@@ -250,7 +250,7 @@ class GfxPreviewWidget(QWidget):
                 " general texture preloads")
         else:
             warning = (info.get("warnings") or [
-                "Import UIData.pak into the same registered game build."])[0]
+                "Import Game/UI_Data.pak into the same registered game build."])[0]
             self.ui_data_summary.setText("UIData: " + warning)
         self.ui_data_summary.setToolTip(
             "UIData provides screen bindings and resource paths, "
