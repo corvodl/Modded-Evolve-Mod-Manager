@@ -8,7 +8,9 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtWidgets import QApplication, QPushButton, QLabel
+from PySide6.QtWidgets import QApplication, QPushButton, QLabel, QAbstractItemView
+from PySide6.QtTest import QTest
+from PySide6.QtCore import Qt
 from qt_manager import QtManager, SECTIONS
 from qt_navigation_icons import navigation_icon
 
@@ -64,6 +66,10 @@ class ModernQtNavigationTests(unittest.TestCase):
             self.assertLessEqual(region.right(), button.width() - 8, label)
             self.assertLessEqual(region.bottom(), button.height() - 6, label)
             self.assertFalse(button.icon().isNull(), label)
+            self.assertGreaterEqual(region.width(), 28, label)
+            self.assertGreaterEqual(button.height(), 48, label)
+            # The text begins after the icon and must remain inside the drawer.
+            self.assertGreaterEqual(button.width() - region.right() - 18, 80, label)
 
     def test_sidebar_icon_renders_with_visible_pixels_and_scaled_asset(self):
         # QWidget.render(QPainter) into a synthetic 2x QImage causes an
@@ -93,6 +99,50 @@ class ModernQtNavigationTests(unittest.TestCase):
         large = navigation_icon('Instructions', '#ffffff', 40).pixmap(40, 40)
         self.assertFalse(large.isNull())
         self.assertGreaterEqual(large.width(), 40)
+
+    def test_library_shift_selection_and_tutorial_map_dispatch(self):
+        """Actual Qt Shift-click selects all three map PAK rows."""
+        directory = r"C:\Games\ModdedEvolve\EvolveGame\Game"
+        records = [
+            {"id": "terrain", "name": "terraintexture.pak",
+             "source": directory + r"\levels\Tutorial\terraintexture.pak"},
+            {"id": "packed", "name": "levels_tutorial.pak",
+             "source": directory + r"\levels_tutorial.pak"},
+            {"id": "level", "name": "level.pak",
+             "source": directory + r"\levels\Tutorial\level.pak"},
+        ]
+        for entry in records:
+            entry.update({"entries": 9, "bytes": 4096})
+        build = {"label": "Stage 2 test", "family": "stage2",
+                 "members": {entry["id"]: {"relative_path": entry["source"],
+                                           "source_sha256": "fixture"}
+                             for entry in records}}
+        with patch("asset_library.imported_archives", return_value=records), \
+             patch("build_collections.catalog", return_value={"builds": {"test": build}}):
+            self.win.open_page(SECTIONS.index("Asset Library"))
+            self.app.processEvents()
+            table = self.win.asset_table
+            self.assertEqual(table.rowCount(), 3)
+            self.assertEqual(table.selectionMode(), QAbstractItemView.ExtendedSelection)
+            self.assertTrue(self.win.asset_quick["Open Map"].isVisible())
+            table.scrollToTop()
+            self.app.processEvents()
+            start = table.visualRect(table.model().index(0, 0)).center()
+            end = table.visualRect(table.model().index(2, 0)).center()
+            QTest.mouseClick(table.viewport(), Qt.LeftButton, Qt.NoModifier, start)
+            QTest.mouseClick(table.viewport(), Qt.LeftButton, Qt.ShiftModifier, end)
+            self.app.processEvents()
+            self.assertEqual(set(self.win._selected_library_ids()),
+                             {"terrain", "packed", "level"})
+            with patch.object(self.win, "open_library_map_from_archive") as opening:
+                self.win.edit_selected_library_map()
+                opening.assert_called_once()
+                args, keywords = opening.call_args
+                self.assertEqual(args[0], "level")
+                self.assertEqual(set(keywords["selected_ids"]),
+                                 {"terrain", "packed", "level"})
+            visible_groups = [table.item(i, 0).text() for i in range(3)]
+            self.assertEqual(visible_groups, ["Level • Tutorial"] * 3)
 
     def test_update_first_section_and_one_real_action(self):
         settings = self.win.pages["settings"]
