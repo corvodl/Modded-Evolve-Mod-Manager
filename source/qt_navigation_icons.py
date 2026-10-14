@@ -19,6 +19,15 @@ NAV_STEMS = {
     "What's New": 'whats-new',
     'Developer': 'developer',
 }
+ASSET_STEMS = {
+    key: key for key in (
+        "asset-folder", "asset-folder-open", "asset-file", "asset-file-code",
+        "asset-image", "asset-mesh", "asset-animation", "asset-assembly",
+        "asset-material", "asset-gfx", "asset-audio", "asset-favorite",
+        "asset-search",
+    )
+}
+
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
@@ -76,16 +85,28 @@ PATHS.update({
 })
 
 
+# Offline fallbacks support development checkouts before Uicons generation.
+_RESOURCE_FALLBACKS = {
+    "asset-folder": "folder", "asset-folder-open": "folder-open",
+    "asset-file": "file", "asset-file-code": "text",
+    "asset-image": "texture", "asset-mesh": "model",
+    "asset-animation": "animation", "asset-assembly": "layers",
+    "asset-material": "material", "asset-gfx": "gfx",
+    "asset-audio": "file", "asset-favorite": "favorite",
+    "asset-search": "search",
+}
+
 # Do not change protected-page lifecycle or expose it through icon metadata.
 
 
 @lru_cache(maxsize=128)
 def navigation_icon(section, color="#f5f3f6", size=24):
-    drawing = PATHS.get(section)
+    drawing = PATHS.get(section) or PATHS.get(_RESOURCE_FALLBACKS.get(section, ""))
     if drawing is None:
         return QIcon()
     safe_color = color if len(color) == 7 and color.startswith("#") else "#f5f3f6"
-    asset = NAV_ASSETS / (NAV_STEMS[section] + ".svg") if section in NAV_STEMS else None
+    stem = NAV_STEMS.get(section) or ASSET_STEMS.get(section)
+    asset = NAV_ASSETS / (stem + ".svg") if stem else None
     if asset is not None and asset.is_file():
         # Resolved entirely from the local bundled app. Do not load URLs.
         svg = asset.read_text(encoding="utf-8").replace("#f5f3f6", safe_color)
@@ -104,6 +125,13 @@ def navigation_icon(section, color="#f5f3f6", size=24):
     renderer.render(painter)
     painter.end()
     return QIcon(pixmap)
+
+
+def resource_icon(kind, color="#f5f3f6", size=18):
+    """Offline Flaticon asset icons independent of OS file associations."""
+    code = kind if kind in ASSET_STEMS else "asset-" + kind
+    return navigation_icon(code, color, size)
+
 
 
 def action_icon(label, color="#f5f3f6", size=18):
