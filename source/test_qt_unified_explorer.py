@@ -69,6 +69,27 @@ class UnifiedExplorerTests(unittest.TestCase):
         self.assertIs(editor.trees["images"], editor.trees["models"])
         self.assertEqual(editor.file_tree.columnCount(), 2)
 
+    def test_explorer_names_scroll_and_icons_are_not_duplicated(self):
+        from PySide6.QtWidgets import QAbstractItemView, QHeaderView
+        tree = self.editor.file_tree
+        self.assertEqual(tree.columnWidth(0), 425)
+        self.assertGreaterEqual(tree.columnWidth(1), 80)
+        self.assertEqual(tree.header().sectionResizeMode(0),
+                         QHeaderView.Interactive)
+        self.assertEqual(tree.horizontalScrollMode(),
+                         QAbstractItemView.ScrollPerPixel)
+        self.assertEqual(tree.textElideMode(), Qt.ElideMiddle)
+        self.assertFalse(tree.alternatingRowColors())
+        self.assertNotIn("★", self.editor.favorites_only.text())
+        for name in ("configs/ability.xml", "textures/eye.dds",
+                     "characters/hero.skinm"):
+            item = self._find(name)
+            self.assertEqual(item.text(0), Path(name).name)
+            self.assertFalse(item.icon(0).isNull())
+            self.assertIn(name, item.toolTip(0))
+        self.assertNotIn("#0000ff", tree.styleSheet().lower())
+        self.assertIn("#772b3d", tree.styleSheet().lower())
+
     def test_click_selects_correct_editor_without_visible_tabs(self):
         editor = self.editor
         editor.file_tree.setCurrentItem(self._find("configs/ability.xml"))
