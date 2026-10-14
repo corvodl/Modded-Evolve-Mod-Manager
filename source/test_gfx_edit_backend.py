@@ -268,6 +268,41 @@ class GfxEditingTests(unittest.TestCase):
         self.assertIn(b"OLD", self.target.read_bytes())
         self.assertTrue(inspect_gfx(updated.working_file.read_bytes()).scripts)
 
+    @unittest.skipUnless(
+        __import__("os").environ.get("EVOLVE_GFX_FFDEC"),
+        "Pinned FFDec is unavailable; native bitmap editing needs the real tool")
+    def test_real_ffdec_bitmap_replacement_exports_new_blue_image(self):
+        import os
+        from PIL import Image
+        from gfx_preview_backend import inspect_gfx
+        from gfx_edit_backend import _ffdec
+        configured = os.environ["EVOLVE_GFX_FFDEC"]
+        source = synthetic_gfx(embedded_image=True)
+        self.target.write_bytes(source)
+        snap = create_gfx_session(self.project, self.virtual)
+        self.assertIn(("image", 4),
+                      inspect_gfx(snap.working_file.read_bytes()).resources)
+        picture = self.root / "blue.png"
+        Image.new("RGBA", (16, 16), (0, 0, 255, 255)).save(picture)
+        result = replace_gfx_resource(
+            self.project, snap.session, "image", 4, picture,
+            configured=configured)
+        self.assertTrue(result.changed)
+        self.assertIn(4, inspect_gfx(result.working_file.read_bytes()).images)
+        folder = self.root / "bitmaps"
+        folder.mkdir()
+        _ffdec(["-selectid", "4", "-export", "image", str(folder),
+                str(result.working_file)], configured=configured,
+               folder=self.root)
+        images = sorted(path for path in folder.rglob("*")
+                        if path.is_file())
+        self.assertEqual(len(images), 1, [str(x) for x in images])
+        with Image.open(images[0]) as frame:
+            red, green, blue = frame.convert("RGB").getpixel((8, 8))
+        self.assertGreater(blue, 200, (red, green, blue))
+        self.assertLess(red, 50, (red, green, blue))
+        self.assertEqual(self.target.read_bytes(), source)
+
     def test_xml_export_is_only_an_external_copy(self):
         snap = create_gfx_session(self.project, self.virtual)
         xml = self.root / "edit.xml"
