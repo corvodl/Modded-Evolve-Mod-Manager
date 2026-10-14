@@ -150,8 +150,10 @@ class Legacy2012RigTests(unittest.TestCase):
                     read_legacy_rig(fixture(**kwargs),fixture(master=True),4)
 
     def test_invalid_record_names_hierarchy_and_truncation(self):
-        for kwargs in ({'duplicate_name':True},{'corrupt_hierarchy':True},
-                       {'version':0x744}):
+        # Duplicate LABELS and multiple original roots occur in real 2012
+        # wildlife/Teleporter accessories and have dedicated positive tests.
+        # Unsupported source versions must still reject.
+        for kwargs in ({'version':0x744},):
             with self.subTest(kwargs=kwargs):
                 with self.assertRaises(ValueError):
                     read_legacy_bones(fixture(**kwargs))
@@ -211,6 +213,142 @@ class Legacy2012RigTests(unittest.TestCase):
             probe_legacy_dba(fixture())
         with self.assertRaises(ValueError):
             probe_legacy_dba(database()[:-1])
+
+
+
+def adjust_bone_bind(raw, bone_name, translation):
+    """Adjust one synthetic body's world/inverse pair consistently."""
+    from legacy_crytek_rig import _one_chunk
+    blob = bytearray(raw)
+    at, size = _one_chunk(blob, 0xACDC0000)
+    for i in range((size-48)//584):
+        record = at + 48 + i*584
+        name = bytes(blob[record+312:record+568]).split(b'\0', 1)[0].decode()
+        if name == bone_name:
+            for position, sign in ((record + 264, 1), (record + 216, -1)):
+                matrix = list(struct.unpack_from('<12f', blob, position))
+                matrix[3] = translation * sign
+                struct.pack_into('<12f', blob, position, *matrix)
+            return bytes(blob)
+    raise ValueError('Synthetic bone not found.')
+
+
+class LegacyVariantCompatibilityTests(unittest.TestCase):
+    def test_weighted_rest_difference_uses_actual_body_bind(self):
+        # Teleporter3-like case: same names/hierarchy but real weighted
+        # joints have a different pose than the CDF animation skeleton.
+        from legacy_crytek_rig import read_legacy_rig
+        master = fixture(master=True)
+        body = adjust_bone_bind(fixture(), 'A', 1.23)
+        rig = read_legacy_rig(body, master, 4)
+        self.assertEqual(rig.binding_source, 'body')
+        self.assertEqual(rig.names, ('Root', 'A'))
+        self.assertEqual(rig.active_joints, (0, 1))
+        self.assertAlmostEqual(rig.rest[1][0, 3], 1.23, places=5)
+        mesh = read_preview_mesh(body, 'Teleporter3.chr')
+        output, detail = skin_glb_legacy(glb_bytes(mesh), body, master)
+        self.assertEqual(detail['binding_source'], 'body')
+        self.assertEqual(detail['bone_count'], 2)
+        self.assertGreater(validate_skin_rest_pose(output), 0)
+
+    def test_unweighted_rest_difference_preserves_master(self):
+        from legacy_crytek_rig import read_legacy_rig
+        master = fixture(master=True)
+        # Extra is not in the source body. It can have an independent rest.
+        body = fixture()
+        rig = read_legacy_rig(body, master, 4)
+        self.assertEqual(rig.binding_source, 'master')
+        self.assertEqual(rig.names, ('Root','Extra','A'))
+
+    def test_multipart_combined_historical_glb(self):
+        from legacy_crytek_rig import skin_glb_legacy_composite
+        from character_assembly import combine_meshes
+        body, master = fixture(), fixture(master=True)
+        mesh = read_preview_mesh(body, 'rocky1_body.chr')
+        combined, _ = combine_meshes([
+            ('body', mesh, None), ('arm', mesh, None)])
+        output, detail = skin_glb_legacy_composite(
+            glb_bytes(combined), [(body, 4), (body, 4)], master)
+        doc, _ = _unpack_glb(output)
+        self.assertEqual(detail['binding_source'], 'master')
+        self.assertEqual(detail['part_count'], 2)
+        self.assertEqual(doc['accessors'][
+            doc['meshes'][0]['primitives'][0]['attributes']['JOINTS_0']]['count'], 8)
+        self.assertEqual(len(doc['skins']), 1)
+        self.assertGreater(validate_skin_rest_pose(output), 0)
+
+    def test_multipart_body_bind_and_conflicting_part_rejected(self):
+        from legacy_crytek_rig import skin_glb_legacy_composite
+        from character_assembly import combine_meshes
+        master = fixture(master=True)
+        body = adjust_bone_bind(fixture(), 'A', 1.2)
+        conflicting = adjust_bone_bind(fixture(), 'A', 2.4)
+        mesh = read_preview_mesh(body, 'rocky1_body.chr')
+        composite, _ = combine_meshes(
+            [('body', mesh, None), ('arm', mesh, None)])
+        payload, detail = skin_glb_legacy_composite(
+            glb_bytes(composite), [(body, 4), (body, 4)], master)
+        self.assertEqual(detail['binding_source'], 'body')
+        self.assertEqual(detail['bone_count'], 2)
+        self.assertGreater(validate_skin_rest_pose(payload), 0)
+        with self.assertRaisesRegex(ValueError, 'Conflicting historical part bind pose'):
+            skin_glb_legacy_composite(
+                glb_bytes(composite), [(body, 4), (conflicting, 4)], master)
+
+    def test_two_root_teleporter_accessory(self):
+        from legacy_crytek_rig import _one_chunk
+        raw = bytearray(fixture())
+        at, _ = _one_chunk(raw, 0xACDC0000)
+        struct.pack_into('<i', raw, at + 48 + 584 + 572, 0)
+        raw = bytes(raw)
+        names, parents, _, _ = read_legacy_bones(raw)
+        self.assertEqual(parents, (-1, -1))
+        mesh = read_preview_mesh(raw, 'teleporter3_arms.chr')
+        glb, report = skin_glb_legacy(glb_bytes(mesh), raw, raw)
+        doc, _ = _unpack_glb(glb)
+        self.assertNotIn('skeleton', doc['skins'][0])
+        self.assertEqual(report['bone_count'], 2)
+        self.assertGreater(validate_skin_rest_pose(glb), 0)
+
+    def test_duplicate_source_bone_label_preserves_joint_ids(self):
+        from legacy_crytek_rig import _one_chunk
+        raw = bytearray(fixture())
+        at, _ = _one_chunk(raw, 0xACDC0000)
+        record = at + 48 + 584
+        raw[record+312:record+568] = bytes(256)
+        raw[record+312:record+316] = b'Root'
+        raw = bytes(raw)
+        names, parents, _, _ = read_legacy_bones(raw)
+        self.assertEqual(names, ('Root', 'Root__source_joint_1'))
+        mesh = read_preview_mesh(raw, 'lava_squid.chr')
+        glb, report = skin_glb_legacy(glb_bytes(mesh), raw, raw)
+        doc, _ = _unpack_glb(glb)
+        self.assertEqual([doc['nodes'][n]['name'] for n in
+                          doc['skins'][0]['joints']],
+                         ['Root', 'Root__source_joint_1'])
+        self.assertGreater(validate_skin_rest_pose(glb), 0)
+
+    def test_standalone_wildlife_mesh_without_cdf_uses_actual_bone_weights(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from model_textured_export import textured_model_from_workspace
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            virtual = 'objects/characters/animals/testwildlife/testwildlife.chr'
+            target = root / 'files' / virtual
+            target.parent.mkdir(parents=True)
+            raw = fixture()
+            target.write_bytes(raw)
+            index = {virtual.casefold(): [
+                {'file': target, 'workspace': root, 'relative': virtual,
+                 'archive': 'wildlife-synthetic'}]}
+            mesh = read_preview_mesh(raw, virtual)
+            glb, info = textured_model_from_workspace(
+                mesh, root, virtual, index=index)
+            self.assertTrue(info['rig_status'].startswith('Rigged:'))
+            self.assertEqual(info['rig_layout'], 'standalone-body')
+            self.assertEqual(info['bone_count'], 2)
+            self.assertGreater(validate_skin_rest_pose(glb), 0)
 
 
 if __name__ == '__main__':

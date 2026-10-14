@@ -268,6 +268,36 @@ def textured_model_from_workspace(mesh, workspace, relative,
         report.update(texture_count=count,
                       texture_status='%d diffuse textures embedded from unpacked PAKs' % count,
                       texture_warnings=warnings)
+    if str(relative).casefold().endswith('.chr'):
+        # Animals, wildlife, and many prototype characters have their own
+        # fully weighted 0x745 .chr but no CDF. Their embedded bone chunk is
+        # a legitimate static Blender skin source. Do not invent a CDF or
+        # assert compatibility with an external animation master.
+        from model_asset import inspect_model
+        from legacy_crytek_rig import skin_glb_legacy
+        from multi_pak_assets import _resolve
+        hits, state = (_resolve(index, relative, preferred_workspace=workspace)
+                       if index is not None else ((), 'missing'))
+        if state == 'found':
+            model_file = Path(hits[0]['file'])
+        else:
+            model_file = (Path(workspace).resolve() / 'files' / relative).resolve()
+        files_root = (Path(workspace).resolve() / 'files').resolve()
+        if (model_file.is_file() and not model_file.is_symlink()
+                and (state == 'found' or model_file.is_relative_to(files_root))):
+            try:
+                raw = model_file.read_bytes()
+                if inspect_model(raw).format_name == 'CryTek':
+                    payload, rig = skin_glb_legacy(payload, raw, raw)
+                    report['rig_status'] = (
+                        'Rigged: %d bones, %d active (standalone 2012 body bind; '
+                        'no animation master)' %
+                        (rig['bone_count'], rig['active_bones']))
+                    report['bone_count'] = rig['bone_count']
+                    report['rig_layout'] = 'standalone-body'
+                    return payload, report
+            except (OSError, ValueError) as exc:
+                report['rig_status'] = 'Unrigged: standalone CryTek rig: ' + str(exc)
     # Resolve the original .skin/.chr companion in a safe, read-only way.
     # CompiledBones stores inverse-bind and rest-pose matrices; each mesh
     # subset has its own local-to-global bone palette.
@@ -321,6 +351,19 @@ def export_extracted_model(source, destination, *, projects_root=None,
         report = {'texture_count': 0,
                   'texture_status': 'Texture lookup requires a compatible unpacked project.',
                   'rig_status': 'Unrigged: native skin companion not found', 'bone_count': 0}
+        if source.suffix.casefold() == '.chr':
+            from model_asset import inspect_model
+            from legacy_crytek_rig import skin_glb_legacy
+            try:
+                raw = source.read_bytes()
+                if inspect_model(raw).format_name == 'CryTek':
+                    blob, rig = skin_glb_legacy(blob, raw, raw)
+                    report['bone_count'] = rig['bone_count']
+                    report['rig_status'] = (
+                        'Rigged: %d bones, %d active (standalone historical body)' %
+                        (rig['bone_count'], rig['active_bones']))
+            except (OSError, ValueError) as exc:
+                report['rig_status'] = 'Unrigged: historical rig: ' + str(exc)
         if companion is not None and companion.is_file() and not companion.is_symlink():
             try:
                 blob, rig = skin_glb(
@@ -363,7 +406,7 @@ def export_extracted_folder(folder, destination, *, projects_root=None,
         raise ValueError('Choose a separate export folder outside model sources.')
     candidates = sorted((p for p in folder.rglob('*') if p.is_file() and
                          not p.is_symlink() and p.suffix.casefold() in
-                         ('.skinm', '.chrm', '.cgf', '.cgfm', '.cga', '.cgam')))
+                         ('.skinm', '.chrm', '.chr', '.cgf', '.cgfm', '.cga', '.cgam')))
     if len(candidates) > MAX_FOLDER_FILES:
         raise ValueError('Model count exceeds exporter limit.')
     done, errors = [], []

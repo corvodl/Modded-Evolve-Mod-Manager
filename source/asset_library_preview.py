@@ -249,11 +249,18 @@ def export_glb(identifier, relative, destination, *, root=None, build_id=None):
         else:
             if relative.casefold().endswith('.cdf'):
                 raise ValueError('No supported CDF body binding for rigged export.')
-            mesh = find_preview_mesh(context,relative,files[relative].read_bytes(),
-                                     index=index)
-            payload = glb_bytes(mesh)
-            report = {'textures':0,
-                      'rig':'Unrigged: no validated CDF and master skeleton'}
+            mesh = find_preview_mesh(context, relative,
+                                     files[relative].read_bytes(), index=index)
+            # Non-CDF animals also contain real 2012 weighted .chr bones.
+            # Route through the same material and standalone rig validator,
+            # never export a decorative, unweighted skeleton.
+            from model_textured_export import textured_model_from_workspace
+            payload, details = textured_model_from_workspace(
+                mesh, context, relative, index=index)
+            report = {'textures': details.get('texture_count', 0),
+                      'rig': details.get('rig_status', 'No validated rig'),
+                      'bone_count': details.get('bone_count', 0),
+                      'animation_clips': 0}
         target.write_bytes(payload)
         return target, report
     if not relative.casefold().endswith(('.skinm', '.chrm', '.cgfm', '.cgam')):
