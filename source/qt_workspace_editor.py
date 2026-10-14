@@ -475,9 +475,9 @@ class QtWorkspaceEditor(QMainWindow):
                 continue
             relevant = (has_asset and mode == section and
                         (name != 'Save' or editable))
-            button.setVisible(bool(relevant))
-            button.setEnabled(bool(relevant and (
-                name != 'Save' or self._dirty())))
+            available = bool(relevant and (name != 'Save' or self._dirty()))
+            button.setVisible(available)
+            button.setEnabled(available)
         for item in self.editor_menus.get('Textures', ()).actions():
             if item.text() in ('Import Replacement DDS…', 'Import Replacement PNG…'):
                 item.setEnabled(has_asset and mode == 'images'
