@@ -169,28 +169,28 @@ def library_gfx_imports(identifier, relative, *, root=None, build_id=None):
     another build. Unassigned legacy imports remain scoped to their own PAK.
     """
     from gfx_preview_backend import inspect_gfx, resolve_imports, MAX_SOURCE
-    from build_collections import build_index, resolve_archive_build
+    from gfx_dependency_resolver import choose_movie_provider, verified_movie_content
+    from build_collections import build_index, resolve_archive_build, UNASSIGNED
     original = read_asset(identifier, relative, root=root, limit=MAX_SOURCE)
     info = inspect_gfx(original)
     own = archive_entries(identifier, root)
     context = resolve_archive_build(identifier, root=root, build_id=build_id)
-    scoped = build_index(context, root=root)
+    # Old/unassigned PAKs have no reliable build identity: do not search
+    # other unrelated Unassigned imports for a similarly named font/movie.
+    providers = [(name, path) for name, path in own.items()]
+    if context != UNASSIGNED:
+        seen = {str(path.resolve()) for _, path in providers}
+        for name, hits in build_index(context, root=root).items():
+            for hit in hits:
+                candidate = Path(hit["file"])
+                token = str(candidate.resolve())
+                if token not in seen:
+                    providers.append((name, candidate))
+                    seen.add(token)
 
     def resolve(virtual):
-        key = virtual.casefold()
-        local = [value for name, value in own.items() if name.casefold() == key]
-        if len(local) == 1:
-            chosen = local[0]
-        else:
-            candidates = scoped.get(key, ())
-            # Do not assume two copies of a font are interchangeable, even
-            # if they have the same filename across two registered builds.
-            if len(candidates) != 1:
-                return None
-            chosen = Path(candidates[0]["file"])
-        if chosen.is_symlink() or not chosen.is_file() or chosen.stat().st_size > MAX_SOURCE:
-            return None
-        return chosen.read_bytes()
+        chosen, _reason = choose_movie_provider(virtual, relative, providers)
+        return verified_movie_content(chosen, MAX_SOURCE) if chosen is not None else None
 
     return (*resolve_imports(info, relative, resolve), context)
 
