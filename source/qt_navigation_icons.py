@@ -1,11 +1,24 @@
-"""Offline vector navigation icons rendered through QtSvg at device pixel ratio.
+"""Offline vector icons. Main navigation uses real Flaticon Uicons SVG assets.
 
-Original path drawings (book, archive, tools, play, settings, people, history).
-No icon fonts, emoji, online fetches, or external files at runtime.
+The eight attributed Uicons are generated at build time and bundled locally;
+existing hand-drawn paths remain an offline fallback for source checkouts.
 """
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
+
+NAV_ASSETS = Path(__file__).resolve().parent / 'assets' / 'ui_nav'
+NAV_STEMS = {
+    'Instructions': 'instructions',
+    'Asset Library': 'asset-library',
+    'Modding': 'modding',
+    'Play & Restore': 'play-restore',
+    'Settings': 'settings',
+    'Credits': 'credits',
+    "What's New": 'whats-new',
+    'Developer': 'developer',
+}
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
@@ -18,6 +31,7 @@ PATHS = {
     "Settings": '<path d="M4 7h16M4 17h16M9 4v6M15 14v6"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/>',
     "Credits": '<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6m0 4a5 5 0 0 1 4 5"/>',
     "What's New": '<path d="m12 2 2.1 7.9L22 12l-7.9 2.1L12 22l-2.1-7.9L2 12l7.9-2.1z"/>',
+    'Developer': '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12 16h5"/>',
 }
 
 # Shared asset/action pictograms for the file explorers, texture workstation,
@@ -71,7 +85,12 @@ def navigation_icon(section, color="#f5f3f6", size=24):
     if drawing is None:
         return QIcon()
     safe_color = color if len(color) == 7 and color.startswith("#") else "#f5f3f6"
-    svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
+    asset = NAV_ASSETS / (NAV_STEMS[section] + ".svg") if section in NAV_STEMS else None
+    if asset is not None and asset.is_file():
+        # Resolved entirely from the local bundled app. Do not load URLs.
+        svg = asset.read_text(encoding="utf-8").replace("#f5f3f6", safe_color)
+    else:
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
            'viewBox="0 0 24 24" fill="none" stroke="' + safe_color +
            '" stroke-width="1.8" stroke-linecap="round" '
            'stroke-linejoin="round">' + drawing + '</svg>')
