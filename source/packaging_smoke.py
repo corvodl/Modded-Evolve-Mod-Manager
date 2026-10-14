@@ -17,6 +17,8 @@ import model_asset
 import model_preview
 import gfx_preview_backend
 import qt_gfx_preview
+import gfx_edit_backend
+import qt_gfx_editor
 import model_blender_export
 import model_textured_export
 import model_rigging
@@ -45,6 +47,8 @@ assert frida.__version__ and numpy.__version__ and material_preview.render_textu
 assert gpu_model_preview.prepare_geometry and gpu_model_preview.Win32GPUPreview
 assert gfx_preview_backend.inspect_gfx and gfx_preview_backend.render_gfx
 assert qt_gfx_preview.GfxPreviewWidget
+assert gfx_edit_backend.create_gfx_session and gfx_edit_backend.apply_gfx_session
+assert qt_gfx_editor.GfxEditorDialog
 assert model_blender_export.glb_bytes and model_blender_export.convert_folder
 assert model_textured_export.textured_model_from_workspace
 assert model_rigging.skin_glb and model_rigging.parse_compiled_bones
