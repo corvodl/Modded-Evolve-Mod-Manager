@@ -23,6 +23,8 @@ from typing import Callable
 REPO = 'corvodl/Modded-Evolve-Mod-Manager'
 API = f'https://api.github.com/repos/{REPO}'
 RELEASE_ASSET = 'EvolveModManager-Windows.zip'
+REVISION_STAMP = 'BUILD_REVISION.txt'
+UPDATE_WORK_DIR = 'UpdateWork'
 MANIFEST_ASSET = 'update-manifest.json'
 ALLOWED_TOP = frozenset({'EvolveModManager.exe', 'EvolveModWorker.exe', '_internal',
                          'Docs', 'START-HERE.txt', 'BUILD_COMMIT.txt', 'BUILD_CHANNEL.txt'})
@@ -41,6 +43,8 @@ class Update:
     url: str
     size: int
     channel: str = 'main'
+    revision: int = 0
+    release_type: str = 'milestone'
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,51 @@ def _get(url: str, *, max_bytes=1_000_000) -> bytes:
     if len(data) > max_bytes:
         raise ValueError('Update response exceeds size limit.')
     return data
+
+
+def installed_revision(app_home: Path) -> int:
+    """Old installs have revision zero."""
+    try:
+        value = (Path(app_home) / REVISION_STAMP).read_text(encoding='ascii').strip()
+        if re.fullmatch(r'0|[1-9][0-9]{0,4}', value):
+            return int(value)
+    except (OSError, UnicodeError):
+        pass
+    return 0
+
+
+def _revision_fields(manifest):
+    if manifest.get('schema') == 1:
+        if 'revision' in manifest or 'release_type' in manifest:
+            raise ValueError('Invalid schema-1 revision fields.')
+        return 0, 'milestone'
+    if manifest.get('schema') != 2:
+        raise ValueError('Unsupported update manifest schema.')
+    revision, kind = manifest.get('revision'), manifest.get('release_type')
+    if (type(revision) is not int or not 0 <= revision <= 99999 or
+            kind not in ('milestone', 'patch') or
+            (revision == 0) != (kind == 'milestone')):
+        raise ValueError('Invalid update revision and release type.')
+    return revision, kind
+
+
+def _validated_asset_name(manifest):
+    revision, kind = _revision_fields(manifest)
+    if manifest.get('schema') == 1:
+        if manifest.get('asset') != RELEASE_ASSET:
+            raise ValueError('Legacy release asset mismatch.')
+        return RELEASE_ASSET, 0, 'milestone'
+    version = str(manifest.get('version', '')).split(' - ', 1)[0]
+    version_key(version)
+    asset = f'EvolveModManager-Windows-{version}-p{revision}.zip'
+    installer = f'EvolveModManager-Setup-{version}-p{revision}.exe'
+    if manifest.get('asset') != asset or manifest.get('installer') != installer:
+        raise ValueError('Revision-specific asset mismatch.')
+    return asset, revision, kind
+
+
+def update_workspace(app_home: Path) -> Path:
+    return Path(app_home).resolve() / UPDATE_WORK_DIR
 
 
 def installed_commit(app_home: Path) -> str | None:
