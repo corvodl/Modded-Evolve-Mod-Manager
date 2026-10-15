@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox, QToolButton, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QCheckBox, QToolButton, QLineEdit, QMessageBox
 
 from launch_integration import SwapStatus
 from qt_manager import QtManager, SECTIONS, qt_style
@@ -461,6 +461,18 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIn('.customkey-original', explanations)
         self.assertIn('manual fallback', explanations)
         self.assertFalse(hasattr(self.win, 'skip_live_backup_checkbox'))
+
+    def test_imported_library_columns_grow_for_full_pak_names(self):
+        table = self.win.asset_table
+        long_name = 'characters_creatures_reaver_data.pak'
+        table.setRowCount(1)
+        table.setItem(0, 3, QTableWidgetItem(long_name))
+        table.setColumnWidth(3, 75)
+        self.win._fit_library_column_widths()
+        self.assertEqual(table.horizontalHeader().sectionResizeMode(3),
+                         QHeaderView.Interactive)
+        self.assertGreaterEqual(table.columnWidth(3),
+                                table.sizeHintForColumn(3) + 12)
 
     def test_table_search_description_and_original_names(self):
         stage = self.base/'stage'/'paks'/'Game'
