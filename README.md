@@ -1,16 +1,16 @@
-# Evolve Stage 2 Mod Manager — v1.2.1
+# Evolve Stage 2 Mod Manager — v1.2.3
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.2.1 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.2.3 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.2
+## Latest Stable — v1.2.3
 
-- Speed up Modding and Asset Library navigation with background inventory, virtualized large asset trees, and demand-driven file metadata.
-- Show verified model and map geometry earlier, retain unchanged map textures, and invalidate prepared caches when source assets change.
-- Stream RSA-verified signed PAK entries in bounded chunks with native Twofish acceleration, cancellation, and preserved CRC checks.
+- Pin Play with Mods, Play without Mods, and Settings at the bottom of the sidebar; add quick launch buttons to Home.
+- Restore original PAK files automatically after the game and client close, with journal-backed recovery in Settings.
+- Show installed client version separately without an unverified update checker.
 
 ## Download and install
 
@@ -18,7 +18,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 2. Run `EvolveModManager.exe`. The **Home** dashboard opens first, with a shortcut to the Instructions tab and the required Modded Evolve website. No installation folder picker opens until you click Set Up Manager.
 3. After the normal client has installed Evolve Stage 2, close the game and client. Click **Set Up Manager**, select the client-installed **EvolveGame** folder, and select the normal Modded Evolve client executable.
 4. The manager builds local signing resources, an injector and staged custom-signed PAKs from **your installed game files**. It does not alter the original installed PAKs during setup. Allow substantial free disk space for staging; the amount depends on the game files and original-snapshot option.
-5. Open **Modding** to edit archives. Use **Play & Restore** to play privately/offline and restore originals afterward.
+5. Open **Modding** to edit archives. Launch from the **Play with Mods** or **Play without Mods** buttons on Home or the bottom of the sidebar. Original files are restored after the modded game and client both exit.
 
 The portable Windows release bundles Python and its required application dependencies. A separate Python installation is only necessary to **build from source**.
 
@@ -31,7 +31,7 @@ The portable Windows release bundles Python and its required application depende
 | **Home** | Dashboard with workspace icons, setup/build information, and quick links to all manager sections |
 | **Instructions** | Required Modded Evolve installation, first-run setup, modding and restoration walkthrough |
 | **Modding** | Archive browser, unpacking, extracted-file editing, building and adding mods |
-| **Play & Restore** | Guided offline launch, swap state, and restoration/recovery of original game files |
+| **Home** quick play | Play with Mods and Play without Mods; Settings holds manual restoration and recovery |
 | **Settings** | Projects, stage and launch-helper folders; maintenance and advanced workflows |
 | **Credits** | Project links and attribution |
 
@@ -123,9 +123,9 @@ The game browser lists certain loose editable files from the installed game. Cho
 
 ## Playing with mods and restoring originals
 
-Go to **Play & Restore → Play With Mods** for private/offline testing. Follow the guided launcher steps, wait until the launcher is ready, and then press Play in the normal Modded Evolve client. Modded game files may be incompatible with normal online/profile services.
+Select **Play with Mods** from Home or from the bottom sidebar for private/offline testing. Follow the guided launcher steps, wait until the launcher is ready, and then press Play in the normal Modded Evolve client. Modded game files may be incompatible with normal online/profile services.
 
-**When finished:** Close `Evolve.exe` and `ModdedEvolveLauncher.exe`, then click **Restore Game Files**. The usual restore relies on a recorded swap state and retains prepared mod copies for later use.
+**When finished:** Close `Evolve.exe` and `ModdedEvolveLauncher.exe`. The manager's independent watchdog waits until both processes exit and then automatically restores original files using the recorded swap state; verified mod files can be retained for the next session. If restoration needs attention, go to **Settings → Backups & Recovery → Restore Game Files**.
 
 **Missing-journal recovery:** If `*.customkey-original` backups are present but the swap journal says “Nothing to restore,” the manager checks the actual game folder and offers an independent recovery option. It preserves the currently installed modified files as uniquely named `*.customkey-recovery-mod-*` files, restores the original archives and `inject.dll` using same-drive renames, and saves a recovery manifest to `Data/RecoveryLogs`. Recovery stops on unsafe or failed file operations. Do **not** delete original backups or override recovery warnings.
 

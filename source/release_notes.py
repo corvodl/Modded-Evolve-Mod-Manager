@@ -4,6 +4,11 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.2.3', (
+        "Pin Play with Mods, Play without Mods, and Settings at the bottom of the sidebar; add quick launch buttons to Home.",
+        "Restore original PAK files automatically after the game and client close, with journal-backed recovery in Settings.",
+        "Show installed client version separately without an unverified update checker.",
+    )),
     ('1.2.2', (
         "Speed up Modding and Asset Library navigation with background inventory, virtualized large asset trees, and demand-driven file metadata.",
         "Show verified model and map geometry earlier, retain unchanged map textures, and invalidate prepared caches when source assets change.",
