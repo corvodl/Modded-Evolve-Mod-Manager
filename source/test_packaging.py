@@ -8,6 +8,15 @@ from unittest.mock import patch
 import app_runtime
 
 class PackagingTests(unittest.TestCase):
+    def test_production_manager_uses_gui_subsystem_but_worker_keeps_console(self):
+        spec = Path(__file__).with_name("EvolveModManager.spec").read_text("utf-8")
+        self.assertIn("('qt_manager', 'EvolveModManager', False)", spec)
+        self.assertIn("('worker_entry', 'EvolveModWorker', True)", spec)
+        self.assertIn("runtime_hooks=['qt_streams_hook.py']", spec)
+        hook = Path(__file__).with_name("qt_streams_hook.py").read_text("utf-8")
+        self.assertIn('app_dir / "Data" / "Logs"', hook)
+        self.assertNotIn("ShowWindow(", hook)
+
     def test_source_command_unchanged(self):
         cmd = [sys.executable, '-u', 'tool.py', 'build']
         with patch.object(sys, 'frozen', False, create=True):
