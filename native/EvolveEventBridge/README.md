@@ -10,6 +10,23 @@ adapter registers handlers and invokes `EvolveBridge_Pump` on the engine
 thread. This is deliberately not an RVA-calling engine hook, injector or
 arbitrary memory-write library.
 
+## Read-only live UI snapshots (experimental)
+
+The bridge now includes an optional `EvolveBridge_RegisterUiSnapshot`
+game-thread callback and a bounded authenticated `ui_snapshot` request.
+This is useful for testing Scaleform menu object names, hierarchy, text,
+position and visibility **once a separately verified game-side adapter is
+available**. The included fake Evolve.exe host exposes **synthetic** nodes
+for native/transport regression tests only. No live Scaleform ABI, injection,
+engine hook, or UI object traversal has been verified for the actual game.
+
+The `GFX → Live UI (experimental)` tab can connect manually and request a
+read-only snapshot; it fails clearly if the provider is unavailable.
+**All process-memory reading, scanning and writing stay in the protected
+Developer workbench.** The new UI transport has no memory read/write
+or arbitrary address operations and will not run outside verified offline
+conditions. See [the adapter contract](../../Docs/gfx-live-ui-inspector.md).
+
 ## Build
 
 From Windows with .NET SDK 8 and Visual Studio 2022 C++ Build Tools:

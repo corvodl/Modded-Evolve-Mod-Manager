@@ -770,7 +770,7 @@ class QtGPUModelPanel(QWidget):
         self._info.setObjectName('viewportBreadcrumb')
         self._info.setText('User Perspective  •  '+mesh.source_name)
         self._info.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._info.setStyleSheet('QLabel#viewportBreadcrumb { background: rgba(22,22,26,165); color: #f0edf2; padding: 4px 7px; border-radius: 4px; }')
+        # Viewport labels use shared semantic chrome, not fixed theme colors.
         self._info.show()
         self._overlay = QScrollArea(self.canvas)
         self._overlay.setObjectName('modelOverlayControls')
@@ -778,10 +778,7 @@ class QtGPUModelPanel(QWidget):
         self._overlay.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._overlay.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._overlay.setToolTip('Scroll inside the popover to reach more tools.')
-        self._overlay.setStyleSheet(
-            '#modelOverlayControls { background: #1b1b21; border: 1px solid #45414a; '
-            'border-radius: 9px; }'
-            'QWidget#modelOverlayContent { background: #1b1b21; }')
+        # Shared theme colors cover the scrollable inspector in light/dark mode.
         self._overlay_content = QWidget()
         self._overlay_content.setObjectName('modelOverlayContent')
         self._overlay_body = QVBoxLayout(self._overlay_content)
@@ -935,9 +932,7 @@ class QtGPUModelPanel(QWidget):
         self.diffuse_source_info = QLabel('Diffuse DDS diagnostics will appear here.')
         self.diffuse_source_info.setObjectName('modelDiffuseSourceInfo')
         self.diffuse_source_info.setWordWrap(True)
-        self.diffuse_source_info.setStyleSheet(
-            'QLabel#modelDiffuseSourceInfo {color:#bbb9c9;'
-            'background:#24252e;border-radius:6px;padding:8px;}')
+        self.diffuse_source_info.setObjectName('viewHint')
         self._overlay_sections['Materials'][1].addWidget(self.diffuse_source_info)
         self.part_select.currentIndexChanged.connect(
             lambda _index: self._update_source_brightness())
@@ -961,7 +956,7 @@ class QtGPUModelPanel(QWidget):
     def _create_viewport_navigation(self):
         self._tool_rail = QFrame(self.canvas)
         self._tool_rail.setObjectName('viewportToolRail')
-        self._tool_rail.setStyleSheet('QFrame#viewportToolRail { background: rgba(31,31,36,220); border: 1px solid #49464e; border-radius: 5px; }')
+        # Reusable toolbar surface comes from qt_design_system.
         rail = QVBoxLayout(self._tool_rail)
         rail.setContentsMargins(3,4,3,4)
         rail.setSpacing(3)
@@ -989,7 +984,7 @@ class QtGPUModelPanel(QWidget):
         rail.addStretch()
         self._axis_widget = QFrame(self.canvas)
         self._axis_widget.setObjectName('viewportAxisControls')
-        self._axis_widget.setStyleSheet('QFrame#viewportAxisControls { background: rgba(31,31,36,220); border: 1px solid #49464e; border-radius: 14px; }')
+        # The camera axis rail shares the same neutral surface.
         axes = QHBoxLayout(self._axis_widget)
         axes.setContentsMargins(3,3,3,3)
         axes.setSpacing(2)
@@ -1015,7 +1010,7 @@ class QtGPUModelPanel(QWidget):
     def _build_compact_timeline(self,parent_layout):
         strip = QFrame(self)
         strip.setObjectName('viewportTimeline')
-        strip.setStyleSheet('QFrame#viewportTimeline { background: #212126; border-top: 1px solid #47424a; }')
+        # Timeline retains compact Qt-native controls and inherited colors.
         bar = QHBoxLayout(strip)
         bar.setContentsMargins(6,2,6,2)
         bar.setSpacing(5)
@@ -1258,13 +1253,7 @@ class QtGPUModelPanel(QWidget):
             heading.setChecked(opened)
             heading.setToolButtonStyle(Qt.ToolButtonTextOnly)
             heading.setMinimumHeight(31)
-            heading.setStyleSheet(
-                'QToolButton {text-align:left; padding:7px 10px;'
-                'background:#272932;color:#f0edf5;border:1px solid #3a3c48;'
-                'border-radius:7px;font-weight:600;}'
-                'QToolButton:checked {background:#302d43;'
-                'border:1px solid #635678;}'
-                'QToolButton:hover {background:#393543;}')
+            heading.setObjectName('disclosureToggle')
             body = QWidget(self)
             inner = QVBoxLayout(body)
             inner.setSizeConstraint(QLayout.SetMinAndMaxSize)

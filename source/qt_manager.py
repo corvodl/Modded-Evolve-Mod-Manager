@@ -57,7 +57,7 @@ from PySide6.QtWidgets import (
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
 from app_updater import (discover_latest, download_and_prepare,
                          launch_apply, installed_commit, installed_revision, report_startup_ready)
-from version_info import app_version
+from version_info import app_version, footer_version
 from qt_theme_116 import PALETTES, ROLES, palette, qt_palette_style
 from studio_polish_117 import theme_preset, validate_theme_preset, read_theme_file
 from pak_browser import archive_description, describe_archive, matching_archives, format_size, import_target
@@ -76,6 +76,7 @@ from developer_memory_panel import DeveloperMemoryPanel
 from online_guard import set_offline, target_executable
 from release_notes import RELEASE_NOTES
 from qt_navigation_icons import navigation_icon
+from qt_ui_components import WorkspaceHeader, ContextActions, DisclosurePanel, configure_splitter
 
 ROOT = Path(__file__).resolve().parent
 COLORS = {'bg':'#0b0b0d','surface':'#17171d','panel':'#202027',
@@ -169,8 +170,8 @@ def _card(title, note=''):
     frame = _widget(QFrame, name='card')
     frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
     lay = QVBoxLayout(frame)
-    lay.setContentsMargins(20, 16, 20, 18)
-    lay.setSpacing(10)
+    lay.setContentsMargins(16, 12, 16, 14)
+    lay.setSpacing(8)
     if title:
         heading = _label(title)
         heading.setObjectName('cardTitle')
@@ -198,8 +199,8 @@ def _scroll_page():
     scroll.setFrameShape(QFrame.NoFrame)
     wrapper = QWidget()
     layout = QVBoxLayout(wrapper)
-    layout.setContentsMargins(14, 14, 14, 18)
-    layout.setSpacing(14)
+    layout.setContentsMargins(12, 10, 12, 14)
+    layout.setSpacing(12)
     scroll.setWidget(wrapper)
     return scroll, layout
 
@@ -409,11 +410,13 @@ class QtManager(QMainWindow):
         base = QWidget()
         self.setCentralWidget(base)
         body = QVBoxLayout(base)
-        body.setContentsMargins(20, 14, 20, 12)
-        body.setSpacing(12)
+        body.setContentsMargins(16, 12, 16, 10)
+        body.setSpacing(10)
 
         top = QHBoxLayout()
-        self.menu_button = _button('☰  Menu', self.toggle_menu, primary=True)
+        self.menu_button = _button('☰  Menu', self.toggle_menu)
+        self.menu_button.setObjectName('menuTrigger')
+        self.menu_button.setToolTip('Show navigation (Esc to close)')
         top.addWidget(self.menu_button)
         app_icon = QLabel()
         png = ROOT / 'assets' / 'hunt.png'
@@ -424,6 +427,9 @@ class QtManager(QMainWindow):
         brand = _label('EVOLVE / MOD MANAGER')
         brand.setObjectName('brand')
         top.addWidget(brand)
+        self.page_location = _label('  /  Instructions', muted=True, wrap=False)
+        self.page_location.setObjectName('currentPageContext')
+        top.addWidget(self.page_location)
         top.addStretch()
         top.addWidget(_button('Help', self.show_help))
         top.addWidget(_button('Activity', self.toggle_activity))
@@ -444,7 +450,7 @@ class QtManager(QMainWindow):
         navlay = QVBoxLayout(self.drawer)
         navlay.setContentsMargins(10, 15, 10, 15)
         navlay.setSpacing(6)
-        navlay.addWidget(_label('SECTIONS', muted=True))
+        navlay.addWidget(_label('WORKSPACE', muted=True))
         self.nav_buttons = []
         for index, title in enumerate(SECTIONS):
             # Qt interprets & as a keyboard-mnemonic marker in QPushButton.
@@ -511,7 +517,7 @@ class QtManager(QMainWindow):
         self.shared_asset_label = _label('Asset Library: ready to import', muted=True)
         self.shared_asset_label.setToolTip('Extracted files from verified shared, animation and user-added PAKs.')
         footer.addWidget(self.shared_asset_label)
-        self.version_label = _label(app_version())
+        self.version_label = _label(footer_version())
         self.version_label.setObjectName('version')
         footer.addWidget(self.version_label)
         body.addLayout(footer)
@@ -652,6 +658,7 @@ class QtManager(QMainWindow):
             self.refresh_archives()
             self._startup_inventory_pending = False
         self._highlight_page(index)
+        self.page_location.setText('  /  ' + SECTIONS[index])
         self.toggle_menu(False)
 
     def _highlight_page(self, index):
@@ -732,6 +739,12 @@ class QtManager(QMainWindow):
         tools_menu = bar.addMenu('Tools')
         tools_menu.addAction('Verify / Remove Imported PAKs…', self.open_asset_library)
         layout.addWidget(bar)
+        self.asset_toolbar = ContextActions(page)
+        self.asset_toolbar.add_action('Import PAKs', self.open_asset_library, primary=True)
+        self.asset_toolbar.add_action('Refresh', self.refresh_library_table)
+        self.asset_toolbar.add_action('Open Library Folder', self.open_library_folder, overflow=True)
+        self.asset_toolbar.add_action('Verify Library', self.open_asset_library, overflow=True)
+        layout.addWidget(self.asset_toolbar)
         # A visible build view is inventory-only; previews carry an explicit build ID.
         self.asset_view_tabs = QTabWidget(page)
         self.asset_view_tabs.setObjectName('assetCollectionViews')
@@ -1223,8 +1236,14 @@ class QtManager(QMainWindow):
         self.project_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         self.project_table.itemDoubleClicked.connect(lambda _: self.open_active_project())
         self.project_table.itemSelectionChanged.connect(self.refresh_project_changes)
-        root.addWidget(self.project_table, 1)
-        root.addWidget(_label('MODIFIED FILES IN SELECTED PROJECT', muted=True))
+        self.project_split = configure_splitter(QSplitter(Qt.Vertical))
+        self.project_split.setObjectName('moddingProjectSplitter')
+        self.project_split.addWidget(self.project_table)
+        changes_panel = QWidget()
+        changes_box = QVBoxLayout(changes_panel)
+        changes_box.setContentsMargins(0, 0, 0, 0)
+        changes_box.setSpacing(5)
+        changes_box.addWidget(_label('MODIFIED FILES IN SELECTED PROJECT', muted=True))
         self.project_changes_table = QTableWidget(0, 2)
         self.project_changes_table.setObjectName('projectChangedFilesTable')
         self.project_changes_table.setHorizontalHeaderLabels(('Modified Asset', 'Project Workspace'))
@@ -1236,7 +1255,12 @@ class QtManager(QMainWindow):
         self.project_changes_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.project_changes_table.itemDoubleClicked.connect(
             lambda _: self.open_modified_project_file())
-        root.addWidget(self.project_changes_table, 1)
+        changes_box.addWidget(self.project_changes_table, 1)
+        self.project_split.addWidget(changes_panel)
+        self.project_split.setStretchFactor(0, 3)
+        self.project_split.setStretchFactor(1, 2)
+        self.project_split.setSizes([360, 190])
+        root.addWidget(self.project_split, 1)
         # Only the selected project's frequent actions belong on the page.
         # Refresh/review/library remain in File/Edit/Tools and sidebar.
         project_actions = QHBoxLayout()
@@ -1260,6 +1284,8 @@ class QtManager(QMainWindow):
         self._sync_project_quick_actions()
         self.legacy_archive_toggle = _button(
             'Show Advanced Archive Tools', self.toggle_advanced_archive_tools)
+        self.legacy_archive_toggle.setIcon(navigation_icon('layers', size=16))
+        self.legacy_archive_toggle.setToolTip('Expand signed PAK browsing and specialist operations')
         root.addWidget(self.legacy_archive_toggle)
         self.legacy_archive_panel = QWidget()
         archive_box = QVBoxLayout(self.legacy_archive_panel)
@@ -1552,7 +1578,12 @@ class QtManager(QMainWindow):
         theme_line.addWidget(self.appearance_combo)
         theme_line.addStretch()
         general_row.addLayout(theme_line)
-        general_row.addWidget(_label('Customize all interface colors, including the original red accent.', muted=True))
+        self.theme_advanced = DisclosurePanel(
+            'Custom colors and saved themes', expanded=False)
+        general_row.addWidget(self.theme_advanced)
+        self.theme_advanced.addWidget(_label(
+            'Customize individual colors and saved theme presets. '
+            'Changes apply across all Qt windows.', muted=True))
         self.appearance_color_buttons = {}
         for role in ROLES:
             line = QHBoxLayout()
@@ -1562,8 +1593,8 @@ class QtManager(QMainWindow):
             self.appearance_color_buttons[role] = picker
             line.addWidget(picker)
             line.addStretch()
-            general_row.addLayout(line)
-        general_row.addWidget(_button('Reset Theme Colors', self._reset_appearance_colors))
+            self.theme_advanced.addLayout(line)
+        self.theme_advanced.addWidget(_button('Reset Theme Colors', self._reset_appearance_colors))
         presets=QHBoxLayout()
         presets.addWidget(_label('Saved themes'))
         self.theme_preset_combo=QComboBox()
@@ -1572,12 +1603,12 @@ class QtManager(QMainWindow):
         presets.addWidget(_button('Preview / Apply',self._apply_saved_theme))
         presets.addWidget(_button('Save Current',self._save_theme_preset))
         presets.addWidget(_button('Remove',self._remove_theme_preset))
-        general_row.addLayout(presets)
+        self.theme_advanced.addLayout(presets)
         preset_files=QHBoxLayout()
         preset_files.addWidget(_button('Import Theme…',self._import_theme_preset))
         preset_files.addWidget(_button('Export Theme…',self._export_theme_preset))
         preset_files.addStretch()
-        general_row.addLayout(preset_files)
+        self.theme_advanced.addLayout(preset_files)
         self._update_appearance_labels()
         self.motion_checkbox = QCheckBox('Reduce menu animation')
         self.motion_checkbox.setChecked(self.reduce_motion)
@@ -1676,7 +1707,10 @@ class QtManager(QMainWindow):
                           'Optional workspace, export and maintenance controls.')
         advanced, advanced_row = _card('ADVANCED FILE OPTIONS',
                                        'Unpack filtering, current workspace, and output location.')
-        lay.addWidget(advanced)
+        self.settings_advanced = DisclosurePanel(
+            'Advanced file and maintenance settings', expanded=False)
+        self.settings_advanced.addWidget(advanced)
+        lay.addWidget(self.settings_advanced)
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText('Optional unpack filter (clear for batch extraction)')
         advanced_row.addWidget(self.filter_input)
@@ -1826,7 +1860,8 @@ class QtManager(QMainWindow):
             self.failure(exc)
 
     def _apply_appearance(self):
-        style = qt_palette_style(qt_style(), self.appearance_mode, self.appearance_overrides)
+        style = qt_palette_style(qt_style(), self.appearance_mode,
+                                 self.appearance_overrides, density=self.ui_density)
         if self.ui_density == 'Compact':
             style += """
             QPushButton { padding:5px 10px; }

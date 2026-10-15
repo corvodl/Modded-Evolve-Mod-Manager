@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from qt_ui_components import WorkspaceHeader
+
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem,
@@ -31,13 +33,13 @@ class AccountProfileInspector(QDialog):
         self.perk_names = set()
         self._ownable_checks = {}
         self._progression = {}
-        self.setStyleSheet("QDialog {background:#202126; color:#e6e6e9;} "
-                           "QTableWidget,QLineEdit {background:#292a30; color:#e6e6e9;} "
-                           "QPushButton {padding:6px;}")
+        # Inherit shared Qt design tokens; never force dark colors in Light mode.
         layout = QVBoxLayout(self)
-        title = QLabel("Readable account profile backups • local test workspace")
-        title.setStyleSheet("font-size:17px;font-weight:600")
-        layout.addWidget(title)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        layout.addWidget(WorkspaceHeader(
+            "Offline Account Profile",
+            "Inspect and compare readable test backups without touching a live account."))
         warning = QLabel(
             "The current TRSEVLVPC cache is encoded. This tool cannot edit server balances, "
             "grant permanent online ownership or import a copy into a live account. "

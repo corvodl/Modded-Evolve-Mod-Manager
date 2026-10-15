@@ -2,15 +2,17 @@
 from __future__ import annotations
 import re
 
+from qt_design_system import qt_modern_style
+
 ROLES = ('background', 'surface', 'field', 'text', 'muted',
          'border', 'accent', 'button', 'selection')
 PALETTES = {
-    'Dark': dict(background='#0b0b0d', surface='#17171d', field='#18171d',
-                 text='#f5f3f6', muted='#a6a3ae', border='#39353d',
-                 accent='#c73649', button='#26242c', selection='#87293b'),
-    'Light': dict(background='#f5f6f8', surface='#ffffff', field='#f9fafc',
-                  text='#202129', muted='#5a5e6c', border='#c8cbd3',
-                  accent='#b21f36', button='#e6e8ee', selection='#e9bac4'),
+    'Dark': dict(background='#111318', surface='#1c1e24', field='#24262e',
+                 text='#f2f3f5', muted='#adb1bd', border='#393e49',
+                 accent='#c9384a', button='#292c34', selection='#48303b'),
+    'Light': dict(background='#f5f6f8', surface='#ffffff', field='#eff1f5',
+                  text='#242731', muted='#606775', border='#d6dbe3',
+                  accent='#b72b41', button='#e9ecf1', selection='#f1dce2'),
 }
 HEX = re.compile(r'^#[0-9a-fA-F]{6}$')
 TOKEN = re.compile(r'#[0-9a-fA-F]{3,8}\b')
@@ -38,7 +40,7 @@ def palette(mode='Dark', overrides=None):
     return result
 
 
-def qt_palette_style(base, mode='Dark', overrides=None):
+def qt_palette_style(base, mode='Dark', overrides=None, *, density='Comfortable'):
     values = palette(mode, overrides)
     lookup = {}
     for role, names in ORIGINAL.items():
@@ -72,4 +74,5 @@ def qt_palette_style(base, mode='Dark', overrides=None):
     QToolTip { background:%(surface)s; color:%(text)s;
         border:1px solid %(border)s; padding:5px; }
     """ % values
+    style += qt_modern_style(values, density=density)
     return style

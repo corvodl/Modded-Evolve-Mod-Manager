@@ -1,25 +1,21 @@
-# Evolve Stage 2 Mod Manager — v1.2.0
+# Evolve Stage 2 Mod Manager — v1.2.1
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.2.0 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.2.1 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.0
+## Latest Stable — v1.2.1
 
-- Modernize the Qt interface with contextual tools, cleaner Settings, Flaticon navigation icons, and improved workspace layouts.
-- Manage Stage 2 PAKs through build-scoped Asset Library browsing, dependencies, bulk imports, isolated edits, and safer mod staging.
-- Improve complete character assemblies, GPU materials, rig compatibility, CAF/DBA animation browsing, and supported idle playback.
-- Use higher-resolution streamed CryEngine DDS textures and normal maps in previews and Blender exports, with explicit diagnostics.
-- Export supported rigged character assemblies, textured GLBs, and terrain/level scenes for Blender with source-safe validation.
-- Expand the Level Editor with grouped map archives, combined scenes, previews, and missing-resource reports.
-- Preview and edit Scaleform GFX with external texture placement, transparent frames, and verified static layout controls.
-- Offer experimental main-menu promotional title and TRY/BUY overrides plus preview-only popup-layer isolation; verify results offline.
-- Inspect historical CryTek PAKs and compatible assets separately without promising playable cross-version conversions.
-- Improve offline project workflows, asset provenance, recovery, and update safety while preserving personal game and mod data.
-- Support versioned patch revisions and consolidate installation, update work, and logs under one manager folder.
-- Patch 1: embed GFX editing in File Editor, diagnose same-build UI dependencies, hide static video placeholders, and improve startup without a console window.
+- Refresh every Qt workspace with a cohesive charcoal interface, muted panels, restrained red accents, and reusable controls.
+- Improve Modding and Asset Library navigation with resizable project lists, contextual actions, and collapsible advanced tools.
+- Modernize File, GFX, GPU Model, and Level editors with clearer inspectors, shared toolbars, and more room for previews.
+- Simplify Settings and dialogs with consistent light/dark appearances, custom theme options, and compact-density support.
+- Improve main-menu GFX authoring, static UI symbol visibility, and separate featured title, TRY, and BUY edits.
+- Introduce an experimental read-only UI inspection interface for future verified offline game-side integration.
+- Keep the release milestone visible in editor footers without patch-revision clutter and preserve safer update handling.
+- Retain console-free Windows startup and defer expensive inventory scans until their workspace opens.
 
 ## Download and install
 

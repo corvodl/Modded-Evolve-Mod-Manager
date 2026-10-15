@@ -4,6 +4,16 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.2.1', (
+        "Refresh every Qt workspace with a cohesive charcoal interface, muted panels, restrained red accents, and reusable controls.",
+        "Improve Modding and Asset Library navigation with resizable project lists, contextual actions, and collapsible advanced tools.",
+        "Modernize File, GFX, GPU Model, and Level editors with clearer inspectors, shared toolbars, and more room for previews.",
+        "Simplify Settings and dialogs with consistent light/dark appearances, custom theme options, and compact-density support.",
+        "Improve main-menu GFX authoring, static UI symbol visibility, and separate featured title, TRY, and BUY edits.",
+        "Introduce an experimental read-only UI inspection interface for future verified offline game-side integration.",
+        "Keep the release milestone visible in editor footers without patch-revision clutter and preserve safer update handling.",
+        "Retain console-free Windows startup and defer expensive inventory scans until their workspace opens.",
+    )),
     ('1.2.0', (
         "Modernize the Qt interface with contextual tools, cleaner Settings, Flaticon navigation icons, and improved workspace layouts.",
         "Manage Stage 2 PAKs through build-scoped Asset Library browsing, dependencies, bulk imports, isolated edits, and safer mod staging.",

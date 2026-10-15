@@ -46,8 +46,9 @@ from workspace_editor import save_text, validate_xml, digest, TEXT_SUFFIXES, MAX
 from loose_file_editor import save_loose_text
 from loose_game_files import TEXT_EXTENSIONS, copy_to_project
 from evolve_pak_workspace import normalized_name
-from version_info import app_version
+from version_info import app_version, footer_version
 from qt_navigation_icons import navigation_icon, action_icon
+from qt_ui_components import configure_splitter
 from studio_polish_117 import (prepare_model_cached, clear_model_cache,
     model_cache_stats, export_preflight, project_session_key,
     sanitized_project_session)
@@ -234,7 +235,7 @@ class QtWorkspaceEditor(QMainWindow):
         top.addWidget(self.sidebar_button)
         main.addLayout(top)
 
-        self.editor_split = QSplitter(Qt.Horizontal)
+        self.editor_split = configure_splitter(QSplitter(Qt.Horizontal))
         self.editor_split.setObjectName('unifiedEditorSplitter')
         self.tabs = QTabWidget()
         self.tabs.setObjectName('internalFileTypeViewer')
@@ -306,11 +307,7 @@ class QtWorkspaceEditor(QMainWindow):
 
         self.explorer = QFrame()
         self.explorer.setObjectName('fileExplorerPane')
-        self.explorer.setStyleSheet(
-            'QFrame#fileExplorerPane { background: #222128; '
-            'border-left: 2px solid #62545e; }'
-            'QLabel#fileExplorerHeading { font-weight: bold; '
-            'font-size: 13px; color: #f3edf2; }')
+        # Shared semantic Qt theme supplies light/dark colors and borders.
         explorer_box = QVBoxLayout(self.explorer)
         explorer_box.setContentsMargins(8, 8, 8, 8)
         explorer_box.setSpacing(7)
@@ -373,7 +370,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.file_tree.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.file_tree.setTextElideMode(Qt.ElideMiddle)
         self.file_tree.setAlternatingRowColors(False)
-        self.file_tree.setStyleSheet('QTreeWidget#unifiedAssetExplorerTree::item:selected { background:#772b3d; color:#fff; } QTreeWidget#unifiedAssetExplorerTree::item { padding:4px 2px; }')
+        # No window-specific selection color; honor the app accent and theme.
         if self.read_only_library:
             self.file_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.file_tree.itemSelectionChanged.connect(self.load_selection)
@@ -383,10 +380,12 @@ class QtWorkspaceEditor(QMainWindow):
         explorer_box.addWidget(self.file_tree, 1)
         self.trees = {section: self.file_tree for section in self.TABS}
         self._explorer_visible = True
-        self.editor_split.addWidget(self.explorer)
-        self.editor_split.setStretchFactor(0, 5)
-        self.editor_split.setStretchFactor(1, 2)
-        self.editor_split.setSizes([940, 310])
+        # Explorer lives on the left, like Finder/QtCreator; the main
+        # preview remains the largest and most resizeable work area.
+        self.editor_split.insertWidget(0, self.explorer)
+        self.editor_split.setStretchFactor(0, 2)
+        self.editor_split.setStretchFactor(1, 5)
+        self.editor_split.setSizes([310, 940])
         main.addWidget(self.editor_split, 1)
         self.status = QLabel(
             'Asset Library: preview and export only; editing and importing are disabled.'
@@ -405,7 +404,7 @@ class QtWorkspaceEditor(QMainWindow):
         menu.addAction('Validate Blender Export',self.inspect_blender_export)
         self.dependency_button.setMenu(menu)
         bottom.addWidget(self.dependency_button)
-        self.version_label = QLabel(app_version())
+        self.version_label = QLabel(footer_version())
         self.version_label.setObjectName('version')
         self.version_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         bottom.addWidget(self.version_label)
@@ -618,7 +617,7 @@ class QtWorkspaceEditor(QMainWindow):
         self._explorer_visible = bool(visible)
         self.explorer.setVisible(bool(visible))
         if visible:
-            self.editor_split.setSizes([940, 310])
+            self.editor_split.setSizes([310, 940])
         self._sync_file_explorer_button()
 
     def set_workspace_layout(self, name):
@@ -628,7 +627,7 @@ class QtWorkspaceEditor(QMainWindow):
             raise ValueError('Unknown layout preset.')
         explorer_width, viewport_width = options[name]
         self.toggle_file_explorer(True)
-        self.editor_split.setSizes([viewport_width * 120, explorer_width * 120])
+        self.editor_split.setSizes([explorer_width * 120, viewport_width * 120])
 
     def save_workspace_layout(self):
         self.manager.settings['editor_workspace_layout'] = {
@@ -653,7 +652,8 @@ class QtWorkspaceEditor(QMainWindow):
             pair = sizes.get('models') or sizes.get('files')
             if (isinstance(pair, list) and len(pair) == 2 and
                     all(isinstance(n, int) and n > 0 for n in pair)):
-                self.editor_split.setSizes(pair)
+                # Saved widths used the old viewer-left/explorer-right order.
+                self.editor_split.setSizes(list(reversed(pair)))
 
     def _capture_playback_preferences(self):
         if self.current and self.mode=='models' and self.model_panel is not None:

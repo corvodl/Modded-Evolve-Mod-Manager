@@ -212,6 +212,21 @@ class GfxQtEditorTests(unittest.TestCase):
                       viewer.bitmap_status.text())
         self.assertEqual(self.asset.read_bytes(), self.original)
 
+    def test_live_ui_inspector_is_read_only_and_opt_in(self):
+        dialog = GfxEditorDialog(self.win, self.relative)
+        self.addCleanup(dialog.close)
+        panel = dialog.live_ui
+        self.assertIsNotNone(panel)
+        self.assertTrue(any(
+            "Live UI" in dialog.viewer.tabs.tabText(i)
+            for i in range(dialog.viewer.tabs.count())))
+        self.assertEqual(panel.pids.count(), 0)  # No startup process scan
+        self.assertEqual(panel.tree.topLevelItemCount(), 0)
+        self.assertEqual(panel.tree.columnCount(), 6)
+        self.assertIsNone(getattr(panel, "write_memory", None))
+        self.assertIsNone(getattr(panel, "edit_selected_node", None))
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
     def test_featured_promo_options_are_guarded_and_not_game_changes(self):
         dialog = GfxEditorDialog(self.win, self.relative)
         self.addCleanup(dialog.close)
