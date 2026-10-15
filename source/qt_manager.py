@@ -3439,7 +3439,9 @@ class QtManager(QMainWindow):
             dest.parent.mkdir(parents=True, exist_ok=False)
             cmd = [sys.executable,'-u',str(ROOT/'evolve_pak_workspace.py'),
                    'build','--workspace',str(ws),'--public-key',str(pub),
-                   '--private-key',str(priv),'--out',str(dest)]
+                   '--private-key',str(priv),'--out',str(dest),
+                   '--stage',str(self.stage_path),
+                   '--backup-root',str(Path(self.projects_path)/'Backups')]
             self.run_steps([('Rebuilding and signing PAK',cmd)], 'Build Mod',
                            lambda: self._after_build(dest))
         except Exception as exc:
@@ -3490,7 +3492,8 @@ class QtManager(QMainWindow):
             cmd=[sys.executable,'-u',str(ROOT/'evolve_pak_workspace.py'),
                  'build','--workspace',str(workspace),
                  '--public-key',str(pub),'--private-key',str(priv),
-                 '--out',str(output)]
+                 '--out',str(output), '--stage',str(self.stage_path),
+                 '--backup-root',str(Path(self.projects_path)/'Backups')]
             self.run_steps([('Validate and sign offline test PAK',cmd)],
                 'Build Offline Test',
                 lambda:self._stage_offline_test(output,relative))
