@@ -18,9 +18,15 @@ from workspace_file_actions import checked_path
 
 def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                   texture_folder=None, animation_index=None, equipment=None,
-                  index=None, require_assembly=False):
+                  index=None, require_assembly=False, cancel=None):
+    def checkpoint():
+        if cancel is not None and cancel():
+            raise InterruptedError('Obsolete model preparation cancelled')
+
+    checkpoint()
     path = checked_path(workspace, relative)
     raw = path.read_bytes()
+    checkpoint()
     if str(relative).casefold().endswith('.cdf'):
         report = 'Character Definition (CDF) • referenced model assembly'
     else:
@@ -30,6 +36,7 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
             report = str(exc)
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
+    checkpoint()
     character = None
     assembly_error = ''
     try:
@@ -39,6 +46,7 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
             equipment=equipment)
     except (ValueError, OSError) as exc:
         assembly_error = str(exc)
+    checkpoint()
     if require_assembly and character is None:
         raise ValueError(
             'Full Character needs a valid CDF with compatible body and '
@@ -59,10 +67,12 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                 projects_root=projects_root, stage_root=stage_root,index=index)
         except (ValueError, OSError) as exc:
             issue = str(exc)
+    checkpoint()
     skeleton = character.skeleton if character else relative
     references, idle, config = discover_animations(
         skeleton, index, preferred_workspace=workspace,
         loose_index=animation_index)
+    checkpoint()
     # Derived geometry caches are optional. A broken/unwritable cache must
     # never prevent the game model from opening.
     if projects_root is not None:
@@ -72,6 +82,7 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
     else:
         geometry = prepare_geometry(mesh, shading='faceted')
         cached = False
+    checkpoint()
     return {
         'raw':raw, 'report':report, 'mesh':mesh, 'materials':materials,
         'character':character, 'index':index,'geometry':geometry,
