@@ -90,8 +90,8 @@ class GlossMaterialTests(unittest.TestCase):
             self.assertTrue(any('Roughness' in p.name for p in saved))
 
     def test_shader_binds_separate_gloss_and_normal_maps(self):
-        self.assertIn('texture2D(normal_map,diffuse_coord)', FRAGMENT)
-        self.assertIn('texture2D(gloss_map,diffuse_coord)', FRAGMENT)
+        self.assertIn('texture2D(normal_map,normal_coord)', FRAGMENT)
+        self.assertIn('texture2D(gloss_map,gloss_coord)', FRAGMENT)
         self.assertIn('mix(8.0,128.0,smoothness)', FRAGMENT)
         self.assertIn('has_gloss', FRAGMENT)
         self.assertIn('gloss_map', str(Renderer3.__init__.__code__.co_consts))
