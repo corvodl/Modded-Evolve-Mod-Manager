@@ -360,7 +360,8 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
     discarded, never indexed. All input archives are treated as untrusted.
     """
     from evolve_pak_workspace import normalized_name
-    from evolve_gameplay_editor import decrypt_entry, decode_cryxml
+    from evolve_gameplay_editor import decode_cryxml
+    from pak_streaming import stream_signed_entry, EntryStreamCanceled
     root = _home(root)
     def finish(result):
         if build_id is not None:
@@ -455,9 +456,12 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
         raise FileExistsError("Import already in progress for " + source.name)
     records, skipped, written = [], [], 0
     archive = None
+    signed_reader = None
+    cipher_sessions = {}
     work.mkdir(parents=True)
     try:
         archive = HistoricalZipFile(source) if plain_zip else None
+        signed_reader = None if plain_zip else source.open('rb')
         base = work / "files"
         seen = set()
         count = len(info["entries"])
@@ -477,24 +481,48 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
                     raise ValueError("Unsupported historical entry size/method: " + virtual)
                 skipped.append(virtual + ": unsupported size/method")
                 continue
-            with span('pak', 'entry_read_decrypt', method=int(meta['method']),
-                      declared_bytes=length):
-                data = archive.read(name) if plain_zip else decrypt_entry(source, info, name)
-            converted = False
-            if data.startswith(b"CryXmlB\x00"):
-                element = decode_cryxml(data)
-                data = ET.tostring(element, encoding="utf-8", xml_declaration=True)
-                converted = True
             destination = base.joinpath(*virtual.split("/"))
             if not destination.parent.resolve().is_relative_to(base.resolve()):
                 raise ValueError("Unsafe archive output path.")
             destination.parent.mkdir(parents=True, exist_ok=True)
-            with destination.open("xb") as handle:
-                handle.write(data)
-            written += len(data)
-            records.append({"path": virtual, "bytes": len(data),
-                            "sha256": hashlib.sha256(data).hexdigest(),
-                            "cryxml": converted})
+            converted = False
+            if plain_zip:
+                # Ordinary/historical ZIPs retain their own strict reader.
+                with span('pak', 'entry_read_decrypt', method=int(meta['method']),
+                          declared_bytes=length):
+                    data = archive.read(name)
+                if data.startswith(b"CryXmlB\\x00"):
+                    element = decode_cryxml(data)
+                    data = ET.tostring(element, encoding="utf-8", xml_declaration=True)
+                    converted = True
+                with destination.open("xb") as handle:
+                    handle.write(data)
+                result_size = len(data)
+                result_hash = hashlib.sha256(data).hexdigest()
+            else:
+                # Signed methods 13/14 decrypt/deflate/hash in bounded chunks.
+                # A single large entry can now be canceled before it completes.
+                try:
+                    with span('pak', 'entry_stream_decrypt',
+                              method=int(meta['method']), declared_bytes=length):
+                        result = stream_signed_entry(
+                            source, info, name, destination, cancelled=cancelled,
+                            reader=signed_reader, cipher_sessions=cipher_sessions)
+                except EntryStreamCanceled as exc:
+                    raise ImportCanceled("Import canceled.") from exc
+                result_size, result_hash = result['bytes'], result['sha256']
+                if result['head'] == b"CryXmlB\\x00":
+                    # Binary XML conversion still needs one bounded entry in
+                    # memory; non-XML models/textures never do.
+                    element = decode_cryxml(destination.read_bytes())
+                    data = ET.tostring(element, encoding="utf-8", xml_declaration=True)
+                    destination.write_bytes(data)
+                    result_size = len(data)
+                    result_hash = hashlib.sha256(data).hexdigest()
+                    converted = True
+            written += result_size
+            records.append({"path": virtual, "bytes": result_size,
+                            "sha256": result_hash, "cryxml": converted})
             if progress and (position == 1 or position % 50 == 0 or position == count):
                 progress(source.name, position, count)
         if not records:
@@ -529,6 +557,10 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
     finally:
         if archive is not None:
             archive.close()
+        if signed_reader is not None:
+            signed_reader.close()
+        for session in cipher_sessions.values():
+            session.close()
 
 
 def installed_defaults(game):
