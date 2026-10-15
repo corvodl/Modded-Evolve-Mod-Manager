@@ -88,7 +88,7 @@ def _preset_code(mode: str, target: str, custom: str, layout=None) -> str:
         names = {"title": ("mcFeatureTitle",),
                  "try": ("mcFeatureTry", "mcFeatureButtonTry"),
                  "buy": ("mcFeatureBuy", "mcFeatureButtonBuy")}[target]
-        lines = [f"    var {_MARKER} = true;"]
+        lines = [f"    var {_MARKER}_{target} = true;"]
         for name in names:
             lines += [
                 f"    if (_root.{name} != undefined) {{",
@@ -172,9 +172,25 @@ def patch_featured_actionscript(source: str, mode: str, target: str = "all",
     """Patch one identified setFeatured function without guessing UI strings."""
     if not isinstance(source, str) or len(source) > MAX_XML:
         raise GfxError("Invalid or oversized exported ActionScript.")
-    if _MARKER in source:
-        raise GfxError("A featured promo preset is already in this script. Undo first.")
     injection = _preset_code(mode, target, custom, layout)
+    # A different control can be edited in the same session. Each preset is
+    # explicitly scoped so hiding TRY/BUY never forces a reset of the title.
+    # The older single-marker preset has unknown targets: fail closed.
+    if re.search(r"\\bvar\\s+" + _MARKER + r"\\s*=", source):
+        raise GfxError(
+            "An older, unscoped promo preset is present. Undo it before "
+            "using independent title, TRY and BUY edits.")
+    if re.search(r"\\bvar\\s+" + _MARKER + "_" + target + r"\\s*=", source):
+        raise GfxError(
+            "A featured edit for this control is already staged. "
+            "Undo that edit before changing the same control again.")
+    if (target == "all" and
+            any(re.search(r"\\bvar\\s+" + _MARKER + "_" + item + r"\\s*=", source)
+                for item in ("title", "try", "buy"))):
+        raise GfxError("Individual title/TRY/BUY edits are staged. Undo before editing the entire promotion.")
+    if target != "all" and re.search(
+            r"\\bvar\\s+" + _MARKER + r"_all\\s*=", source):
+        raise GfxError("An entire-promotion edit is staged. Undo before editing individual controls.")
     hits = list(_FUNCTION.finditer(source))
     if len(hits) != 1:
         raise GfxError("Expected one setFeatured function in exported ActionScript.")
