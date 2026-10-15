@@ -198,8 +198,8 @@ class UpdateTests(unittest.TestCase):
         workflow = Path(__file__).resolve().parent.parent/'.github'/'workflows'/'windows-release.yml'
         if workflow.is_file():
             text = workflow.read_text(encoding='utf-8')
-            self.assertLess(text.index('gh release upload Main "dist/EvolveModManager-Windows.zip"'),
-                            text.index('gh release upload Main "dist/update-manifest.json"'))
+            self.assertLess(text.index('gh release upload Main "dist/$file"'),
+                            text.index("gh release upload Main 'dist/update-manifest.json'"))
             self.assertIn('Get-FileHash', text)
             self.assertIn('github.sha', text)
 
@@ -211,7 +211,7 @@ class UpdateTests(unittest.TestCase):
             app = base / 'app'
             app.mkdir()
             (app / 'BUILD_COMMIT.txt').write_text(COMMIT)
-            scratch = base / 'EvolveModManagerUpdates' / 'unique'
+            scratch = app / 'UpdateWork' / 'unique'
             scratch.mkdir(parents=True)
             ack = scratch / 'startup-ok-123.txt'
             with patch.dict(os.environ, {'LOCALAPPDATA': str(base),
