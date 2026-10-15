@@ -91,8 +91,8 @@ class TexturedModelExportTests(unittest.TestCase):
         from pak_browser import archive_description
         self.assertIn('Skeletons', archive_description(
             'Game/characters_hunters_merc_sunny_data.pak'))
-        self.assertIn('if present', archive_description(
-            'Game/characters_hunters_merc_sunny_ts.pak'))
+        self.assertEqual(archive_description(
+            'Game/characters_hunters_merc_sunny_ts.pak'), 'Sunny Textures')
         self.assertIn('blending definitions', archive_description(
             'Game/animations_hunters.pak'))
 
