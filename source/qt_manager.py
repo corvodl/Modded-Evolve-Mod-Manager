@@ -57,7 +57,7 @@ from PySide6.QtWidgets import (
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
 from app_updater import (discover_latest, download_and_prepare,
                          launch_apply, installed_commit, installed_revision, report_startup_ready)
-from version_info import app_version
+from version_info import app_version, footer_version
 from qt_theme_116 import PALETTES, ROLES, palette, qt_palette_style
 from studio_polish_117 import theme_preset, validate_theme_preset, read_theme_file
 from pak_browser import archive_description, describe_archive, matching_archives, format_size, import_target
@@ -511,7 +511,7 @@ class QtManager(QMainWindow):
         self.shared_asset_label = _label('Asset Library: ready to import', muted=True)
         self.shared_asset_label.setToolTip('Extracted files from verified shared, animation and user-added PAKs.')
         footer.addWidget(self.shared_asset_label)
-        self.version_label = _label(app_version())
+        self.version_label = _label(footer_version())
         self.version_label.setObjectName('version')
         footer.addWidget(self.version_label)
         body.addLayout(footer)
