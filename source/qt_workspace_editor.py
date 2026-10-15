@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from threading import Event
 
 from PIL import Image
 from PySide6.QtCore import Qt, QUrl, QTimer, QSize
@@ -199,6 +200,7 @@ class QtWorkspaceEditor(QMainWindow):
         self._model_pool = None
         self._model_signals = None
         self._model_generation = 0
+        self._model_cancel = Event()
         self._model_prepared = False
         self._prepared_geometry = None
         self._prepared_animation = None
@@ -1346,6 +1348,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.dependency_button.setVisible(self.mode == 'models')
         if self.mode != 'models':
             self.dependency_button.setText('Dependencies…')
+        self._model_cancel.set()
+        self._model_cancel = Event()
         self._model_generation += 1
         if self.mode != 'gfx':
             self.gfx_view.cancel_pending()
@@ -1554,8 +1558,11 @@ class QtWorkspaceEditor(QMainWindow):
         equipment = self.character_skin_choice
         require_assembly = self.full_character_active
         token = self._model_generation
+        cancel = self._model_cancel
 
         def resolve(_unused):
+            if cancel.is_set():
+                raise InterruptedError('Obsolete model preparation cancelled')
             # Character-specific PAK lookup and large library indexing can
             # touch thousands of files. Keep them off the Qt event thread.
             try:
@@ -1563,17 +1570,21 @@ class QtWorkspaceEditor(QMainWindow):
                 start_character_catalog(stage, rel)
             except (OSError, ValueError, RuntimeError):
                 pass  # The asset resolver can still open the selected model.
+            if cancel.is_set():
+                raise InterruptedError('Obsolete model preparation cancelled')
             active_index = index
             # Retain the existing catalog for additional views of this PAK:
             # rebuilding it changed id(index), defeating model cache hits.
             if library_id is not None and active_index is None:
                 from asset_library_preview import library_model_index
                 active_index = library_model_index(library_id)
+            if cancel.is_set():
+                raise InterruptedError('Obsolete model preparation cancelled')
             data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
                 projects_root=projects, stage_root=stage,
                 texture_folder=tex, animation_index=ani,
                 equipment=equipment, index=active_index,
-                require_assembly=require_assembly)
+                require_assembly=require_assembly, cancel=cancel.is_set)
             return (data, cache_hit, load_ms), None
 
         # Tests and headless software previews retain deterministic synchronous
@@ -1582,7 +1593,7 @@ class QtWorkspaceEditor(QMainWindow):
         if platform in ('offscreen','minimal') or not self.isVisible():
             try:
                 self._model_ready(token, resolve(None), None)
-            except (ValueError, OSError) as exc:
+            except (ValueError, OSError, InterruptedError) as exc:
                 self._model_ready(token, None, str(exc))
             return
         from qt_gpu_viewer import _NativeConversion, _NativeResult
@@ -1925,6 +1936,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.tabs.blockSignals(False)
                 return
         self._capture_playback_preferences()
+        self._model_cancel.set()
         self._model_generation += 1
         self.gfx_view.cancel_pending()
         self.current, self.mode = None, None
@@ -2899,6 +2911,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         self._save_project_session()
         self.media_view.clear()
+        self._model_cancel.set()
         self._model_generation += 1
         self.gfx_view.cancel_pending()
         self._close_gfx_editor()
