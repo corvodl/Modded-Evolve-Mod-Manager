@@ -27,6 +27,7 @@ jobs:
           python-version: '3.11'
           architecture: x64
       - name: Install signed MSYS2 native Twofish dependencies
+        id: msys2
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -36,6 +37,8 @@ jobs:
             mingw-w64-x86_64-libgpg-error
       - name: Run Windows regression suite, build GUI/worker and compile portable ZIP
         shell: cmd
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: call Build-Windows-EXE.cmd
       - name: Run extended native, streaming, GUI and performance regressions
         shell: pwsh
