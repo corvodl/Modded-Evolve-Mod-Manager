@@ -1597,17 +1597,7 @@ class QtManager(QMainWindow):
             self.output_pak = ''
             self.output_input.setText('')
             self.persist()
-            from qt_workspace_editor import QtWorkspaceEditor
-            for existing in self.editors:
-                if existing.isVisible() and getattr(existing, 'workspace', None) == workspace:
-                    existing.raise_()
-                    existing.activateWindow()
-                    return
-            editor = QtWorkspaceEditor(self, workspace)
-            editor.setAttribute(Qt.WA_DeleteOnClose, False)
-            self.editors.append(editor)
-            editor.show()
-            editor.raise_()
+            self._open_project_workspace(workspace)
         except (OSError, ValueError, RuntimeError) as exc:
             self.failure(exc)
 
@@ -2835,24 +2825,32 @@ class QtManager(QMainWindow):
         else:
             self._open_project_workspace(folder)
 
-    def _open_project_workspace(self, folder):
+    def _open_project_workspace(self, folder, *, archive_map=None):
+        """Reopen the live editor; never retain or reuse deleted Qt wrappers."""
+        from shiboken6 import isValid
         from qt_workspace_editor import QtWorkspaceEditor
         workspace = Path(folder).resolve(strict=True)
-        for editor in self.editors:
-            if (isinstance(editor, QtWorkspaceEditor) and editor.isVisible()
-                    and editor.workspace == workspace):
-                editor.raise_()
-                editor.activateWindow()
-                return
-        editor = QtWorkspaceEditor(self, workspace)
-        editor.setAttribute(Qt.WA_DeleteOnClose, False)
-        self.editors.append(editor)
+        # Qt can delete a child even while Python retains its wrapper.
+        self.editors[:] = [editor for editor in self.editors if isValid(editor)]
+        editor = next((
+            existing for existing in reversed(self.editors)
+            if isinstance(existing, QtWorkspaceEditor)
+            and not existing.read_only_library and existing.workspace == workspace
+        ), None)
+        if editor is None:
+            editor = QtWorkspaceEditor(self, workspace, archive_map=archive_map)
+            editor.setAttribute(Qt.WA_DeleteOnClose, False)
+            self.editors.append(editor)
+        else:
+            editor.resume_project_editor()
         editor.show()
         virtual = getattr(self, '_pending_library_virtual', None)
         self._pending_library_virtual = None
         if virtual and virtual in editor.records:
             editor.load(virtual)
         editor.raise_()
+        editor.activateWindow()
+        return editor
 
     def _foreground_assets_active(self):
         if self.busy or self.asset_library_controller.busy:
@@ -3708,17 +3706,11 @@ class QtManager(QMainWindow):
                         'The selected PAK has no matching extracted project. '
                         'Double-click it to unpack a fresh project.')
                 self.current_workspace = str(ws)
-                for editor in self.editors:
-                    if (isinstance(editor, QtWorkspaceEditor) and editor.isVisible()
-                            and editor.workspace == ws):
-                        editor.raise_()
-                        editor.activateWindow()
-                        return
                 from project_selection import editor_collection_for_workspace
                 archive_map = editor_collection_for_workspace(
                     ws, self._editor_collection())
-                editor = QtWorkspaceEditor(
-                    self, ws, archive_map=archive_map)
+                self._open_project_workspace(ws, archive_map=archive_map)
+                return
             editor.setAttribute(Qt.WA_DeleteOnClose, False)
             self.editors.append(editor)
             editor.show()
@@ -4553,6 +4545,11 @@ class QtManager(QMainWindow):
 
 
 def main():
+    from windows_admin_launch import ensure_manager_administrator
+    # Executables request elevation through the manifest; direct source runs
+    # request the same UAC permission before creating any Qt windows.
+    if not ensure_manager_administrator():
+        return 0
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     capture_mode = next((flag for flag in
