@@ -49,7 +49,7 @@ def texture_payloads(blob):
     return output
 
 
-def write_texture_folder(blob, model_file):
+def write_texture_folder(blob, model_file, *, texture_root=None, model_namespace=None):
     """Write <export directory>/textures/<model>_<slot>.png, atomically.
 
     Existing textures are never silently replaced. Return the generated
@@ -59,13 +59,17 @@ def write_texture_folder(blob, model_file):
     if not model_file.parent.is_dir():
         raise FileNotFoundError("Export destination directory is missing.")
     textures = texture_payloads(blob)
-    destination = model_file.parent / "textures"
+    destination = (Path(texture_root) if texture_root is not None
+                   else model_file.parent / "textures")
     if destination.is_symlink():
         raise ValueError("Refusing symlinked texture output directory.")
-    destination.mkdir(exist_ok=True)
+    destination.mkdir(parents=True, exist_ok=True)
     if not destination.is_dir():
         raise ValueError("Textures output path is not a directory.")
-    prefix = _safe_name(model_file.stem)
+    # A single export root may hold GLBs with identical stems under
+    # Assemblies/, skins/ and other subfolders. Qualify nested paths so
+    # companion PNG names can never silently overwrite one another.
+    prefix = _safe_name(model_namespace if model_namespace is not None else model_file.stem)
     targets = [(destination / ("%s_%03d_%s.png" % (prefix,i+1,name)), raw)
                for i,name,raw in textures]
     manifest = destination / (prefix + "_texture_manifest.json")
