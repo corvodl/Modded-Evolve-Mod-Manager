@@ -34,8 +34,8 @@ jobs:
           from release_notes import RELEASE_NOTES, markdown
           from version_info import app_version
           readme = Path('README.md').read_text(encoding='utf-8')
-          assert app_version() == 'v1.2.0'
-          assert RELEASE_NOTES[0][0] == '1.2.0'
+          assert app_version() == 'v1.2.1'
+          assert RELEASE_NOTES[0][0] == '1.2.1'
           assert len(RELEASE_NOTES[0][1]) >= 8
           assert all('-beta.' not in name for name, _ in RELEASE_NOTES)
           assert '## Latest Beta' not in readme
