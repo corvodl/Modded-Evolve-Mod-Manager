@@ -363,6 +363,9 @@ class QtManager(QMainWindow):
         self.reduce_motion = bool(self.settings.get('reduce_motion', False))
         self.keep_original_snapshots = bool(self.settings.get('keep_original_snapshots', True))
         self.show_activity_on_tasks = bool(self.settings.get('show_activity_on_tasks', True))
+        self.file_explorer_side = self.settings.get('file_explorer_side', 'Right')
+        if self.file_explorer_side not in ('Left', 'Right'):
+            self.file_explorer_side = 'Right'
         self.appearance_mode = self.settings.get('appearance_mode', 'Dark')
         if self.appearance_mode not in PALETTES:
             self.appearance_mode = 'Dark'
@@ -1704,6 +1707,19 @@ class QtManager(QMainWindow):
         density.addWidget(self.density_combo)
         density.addStretch()
         general_row.addLayout(density)
+        explorer_position = QHBoxLayout()
+        explorer_position.addWidget(_label('File Explorer position'))
+        self.file_explorer_side_combo = QComboBox()
+        self.file_explorer_side_combo.setObjectName('fileExplorerPositionSetting')
+        self.file_explorer_side_combo.addItems(('Right', 'Left'))
+        self.file_explorer_side_combo.setCurrentText(self.file_explorer_side)
+        self.file_explorer_side_combo.setToolTip(
+            'Choose which side contains the File Explorer in model and file editors.')
+        self.file_explorer_side_combo.currentTextChanged.connect(
+            self._change_file_explorer_side)
+        explorer_position.addWidget(self.file_explorer_side_combo)
+        explorer_position.addStretch()
+        general_row.addLayout(explorer_position)
         theme_line = QHBoxLayout()
         theme_line.addWidget(_label('Color theme'))
         self.appearance_combo = QComboBox()
@@ -2030,6 +2046,24 @@ class QtManager(QMainWindow):
         if getattr(self, '_log_dialog', None):
             self._log_dialog.setStyleSheet(style)
         self.menu_animation.setDuration(0 if self.reduce_motion else 205)
+
+    def _change_file_explorer_side(self, side):
+        """Update open file editors immediately and persist the user's choice."""
+        if side not in ('Left', 'Right'):
+            return
+        self.file_explorer_side = side
+        from qt_workspace_editor import QtWorkspaceEditor
+        for editor in tuple(self.editors) + tuple(self.library_previews):
+            try:
+                if isinstance(editor, QtWorkspaceEditor):
+                    editor.set_file_explorer_side(side)
+            except RuntimeError:
+                # Qt may have deleted a previously closed viewer.
+                continue
+        try:
+            self.persist()
+        except OSError as exc:
+            self._log('Could not save File Explorer position: ' + str(exc))
 
     def _save_ui_preferences(self, *_):
         self.ui_density = self.density_combo.currentText()
@@ -2545,6 +2579,7 @@ class QtManager(QMainWindow):
             'reduce_motion': self.reduce_motion,
             'keep_original_snapshots': self.keep_original_snapshots,
             'show_activity_on_tasks': self.show_activity_on_tasks,
+            'file_explorer_side': self.file_explorer_side,
             'appearance_mode': self.appearance_mode,
             'appearance_colors': self.appearance_overrides,
             'theme_presets': self.saved_theme_presets,
