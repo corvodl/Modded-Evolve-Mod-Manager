@@ -118,6 +118,47 @@ class UnrealStyleLevelEditorSmoke(unittest.TestCase):
         self.assertIs(self.editor.viewport.project,self.editor.project)
 
 
+class StreamedMapTextureRetentionTests(unittest.TestCase):
+    """Camera residency changes must not discard still-live GL uploads."""
+
+    def _fake_context(self, textures):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        return SimpleNamespace(
+            _textures=dict(textures), _terrain_texture=99,
+            _terrain_uvs={12: 'terrain UVs'}, isValid=lambda: True,
+            makeCurrent=Mock(), doneCurrent=Mock())
+
+    def test_unchanged_stream_keeps_gpu_textures_and_terrain(self):
+        from types import SimpleNamespace
+        from qt_level_scene_render import LevelGLViewport
+        live_image = object()
+        asset = SimpleNamespace(materials=SimpleNamespace(textures=(live_image,)))
+        context = self._fake_context({id(live_image): 42})
+        with patch('OpenGL.GL.glDeleteTextures') as delete:
+            LevelGLViewport._retain_streamed_textures(context, {'model': asset})
+        self.assertEqual(context._textures, {id(live_image): 42})
+        delete.assert_not_called()
+        context.makeCurrent.assert_not_called()
+        self.assertEqual(context._terrain_texture, 99)
+        self.assertEqual(context._terrain_uvs, {12: 'terrain UVs'})
+
+    def test_stream_eviction_deletes_only_unused_model_uploads(self):
+        from types import SimpleNamespace
+        from qt_level_scene_render import LevelGLViewport
+        live_image, evicted_image = object(), object()
+        asset = SimpleNamespace(materials=SimpleNamespace(textures=(live_image,)))
+        context = self._fake_context({id(live_image): 42, id(evicted_image): 43})
+        with patch('OpenGL.GL.glDeleteTextures') as delete:
+            LevelGLViewport._retain_streamed_textures(context, {'model': asset})
+        self.assertEqual(context._textures, {id(live_image): 42})
+        delete.assert_called_once_with([43])
+        context.makeCurrent.assert_called_once()
+        context.doneCurrent.assert_called_once()
+        self.assertEqual(context._terrain_texture, 99)
+
+
+
 
 if __name__=="__main__":
     unittest.main()
