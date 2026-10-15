@@ -90,9 +90,9 @@ class QtMigrationTests(unittest.TestCase):
 
     def test_all_pages_and_instruction_information_survive(self):
         self.assertEqual(SECTIONS, (
-            'Instructions','Asset Library','Modding','Play & Restore','Settings',
-            'Credits',"What's New",'Developer'))
-        self.assertEqual(self.win.stack.count(), 8)
+            'Home','Instructions','Asset Library','Modding','Play & Restore',
+            'Settings','Credits',"What's New",'Developer'))
+        self.assertEqual(self.win.stack.count(), 9)
         self.assertLess(SECTIONS.index('Asset Library'), SECTIONS.index('Modding'))
         self.assertEqual(self.win.asset_table.columnCount(), 6)
         self.assertTrue(any(
@@ -125,6 +125,30 @@ class QtMigrationTests(unittest.TestCase):
                           'Type / Project','Size'])
         self.assertEqual(self.win.file_filter.count(),3)
         self.assertTrue(self.win.version_label.text().startswith('v'))
+
+    def test_home_is_first_page_and_application_brand_navigates_home(self):
+        self.assertIs(self.win.stack.currentWidget(), self.win.home_dashboard)
+        self.assertEqual(self.win.home_brand_button.accessibleName(), 'Go to Home')
+        self.assertFalse(self.win.home_brand_button.icon().isNull())
+        self.assertEqual(len(self.win.rail_buttons), len(SECTIONS))
+        self.assertIsNotNone(self.win.pages['home'])
+        for section in SECTIONS[1:]:
+            self.assertIn(section, self.win.home_dashboard.tiles)
+            self.assertFalse(self.win.home_dashboard.tiles[section].isEnabled() is False)
+        self.win.open_page(SECTIONS.index('Modding'))
+        self.win.home_brand_button.click()
+        self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index('Home'))
+        self.assertEqual(self.win.page_location.text().strip(), '/  Home')
+
+    def test_developer_tile_cannot_bypass_access_code(self):
+        from PySide6.QtWidgets import QInputDialog
+        with patch('qt_manager.QInputDialog.getText',
+                   return_value=('', False)) as prompt:
+            self.win.home_dashboard.tiles['Developer'].click()
+            prompt.assert_called_once()
+        self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index('Home'))
+        self.assertFalse(self.win._developer_allow_writes)
+        self.assertFalse(self.win._developer_online_write_ack)
 
     def test_complete_manager_controls_present_not_hidden_by_redesign(self):
         names = [button.text() for button in self.win.findChildren(QPushButton)]
