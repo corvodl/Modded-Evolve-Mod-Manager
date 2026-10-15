@@ -10,6 +10,8 @@ from contextlib import nullcontext
 import hashlib
 from pathlib import Path
 import zlib
+import time
+from performance_trace import record, enabled
 
 from evolve_gameplay_editor import key_index
 from evolve_video_pak_tool_fixed import Twofish, file_iv, local_data_start
@@ -66,6 +68,10 @@ def stream_signed_entry(pak, info, entryname, destination, *, cancelled=None,
     crc = 0
     total = 0
     prefix = bytearray()
+    tracing = enabled()
+    totals = {'read': 0., 'ctr': 0., 'inflate': 0., 'output': 0.}
+    input_bytes = 0
+    chunks = 0
 
     def check_cancel():
         if cancelled is not None and cancelled():
@@ -80,9 +86,12 @@ def stream_signed_entry(pak, info, entryname, destination, *, cancelled=None,
             raise ValueError('Decompressed size exceeds signed directory')
         if len(prefix) < 8:
             prefix.extend(data[:8-len(prefix)])
+        started = time.perf_counter() if tracing else 0.
         handle.write(data)
         digest.update(data)
         crc = zlib.crc32(data, crc)
+        if tracing:
+            totals['output'] += (time.perf_counter() - started) * 1000
 
     def inflate_chunk(handle, data):
         if inflater is None:
@@ -92,9 +101,16 @@ def stream_signed_entry(pak, info, entryname, destination, *, cancelled=None,
         # max_length bounds each output, including highly compressible input.
         while True:
             check_cancel()
+            started = time.perf_counter() if tracing else 0.
+            original_pending = len(pending)
             block = inflater.decompress(pending, chunk_size)
+            remaining_pending = inflater.unconsumed_tail
+            if tracing:
+                totals['inflate'] += (time.perf_counter() - started) * 1000
             write_chunk(handle, block)
-            pending = inflater.unconsumed_tail
+            pending = remaining_pending
+            if pending and not block and len(pending) >= original_pending:
+                raise ValueError('Encrypted DEFLATE decoder made no progress')
             if pending or len(block) == chunk_size:
                 continue
             break
@@ -113,6 +129,7 @@ def stream_signed_entry(pak, info, entryname, destination, *, cancelled=None,
                 requested = min(chunk_size, remaining)
                 parts = []
                 received = 0
+                read_started = time.perf_counter() if tracing else 0.
                 while received < requested:
                     check_cancel()
                     part = source.read(requested - received)
@@ -121,12 +138,19 @@ def stream_signed_entry(pak, info, entryname, destination, *, cancelled=None,
                     parts.append(part)
                     received += len(part)
                 ciphertext = b''.join(parts)
+                if tracing:
+                    totals['read'] += (time.perf_counter() - read_started) * 1000
+                input_bytes += len(ciphertext)
+                chunks += 1
                 remaining -= requested
+                ctr_started = time.perf_counter() if tracing else 0.
                 blocks = (len(ciphertext) + 15) // 16
                 counters = b''.join(
                     ((iv + block_offset + i) & _MASK128).to_bytes(16, 'little')
                     for i in range(blocks))
                 clear = _xor_bulk(ciphertext, cipher.encrypt_blocks(counters))
+                if tracing:
+                    totals['ctr'] += (time.perf_counter() - ctr_started) * 1000
                 inflate_chunk(output, clear)
                 block_offset += blocks
             if inflater is not None:
@@ -143,6 +167,11 @@ def stream_signed_entry(pak, info, entryname, destination, *, cancelled=None,
             raise ValueError('Decompressed size does not match signed directory')
         if (crc & 0xffffffff) != int(meta['crc']):
             raise ValueError('Entry decryption CRC32 FAILED; refusing import')
+        if tracing:
+            for stage, milliseconds in totals.items():
+                record('pak', 'entry_' + stage,
+                       elapsed_ms=milliseconds, input_bytes=input_bytes,
+                       output_bytes=total, chunks=chunks, method=method)
         return {'bytes': total, 'sha256': digest.hexdigest(), 'head': bytes(prefix)}
     finally:
         if owns_cipher:
