@@ -394,7 +394,9 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
                             "name": source.name, "entries": len(prior_manifest["entries"])})
         except (OSError, ValueError, KeyError, TypeError):
             continue
-    sha = _sha_file(source)
+    from performance_trace import span, record
+    with span('pak', 'source_sha256', input_bytes=stat.st_size):
+        sha = _sha_file(source)
     slug = hashlib.sha256((source.name.casefold() + "|" + sha).encode()).hexdigest()[:20]
     if build_id is not None and relative_archive_path:
         from build_collections import catalog
@@ -437,7 +439,8 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
         key, signed_name = None, source.name
     else:
         # Signed CryPAKs still require their original cryptographic verification.
-        info, key, signed_name = _verify_pak(source, _keys(stage, extra_keys))
+        with span('pak', 'signature_directory_verify'):
+            info, key, signed_name = _verify_pak(source, _keys(stage, extra_keys))
     if len(info["entries"]) > MAX_ENTRIES:
         raise ValueError("Archive has too many entries.")
     estimated = sum(max(0, entry.get("original_size", 0))
@@ -474,7 +477,9 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
                     raise ValueError("Unsupported historical entry size/method: " + virtual)
                 skipped.append(virtual + ": unsupported size/method")
                 continue
-            data = archive.read(name) if plain_zip else decrypt_entry(source, info, name)
+            with span('pak', 'entry_read_decrypt', method=int(meta['method']),
+                      declared_bytes=length):
+                data = archive.read(name) if plain_zip else decrypt_entry(source, info, name)
             converted = False
             if data.startswith(b"CryXmlB\x00"):
                 element = decode_cryxml(data)
@@ -497,7 +502,9 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
                 skipped.append("Empty historical ZIP archive; no content to preview.")
             else:
                 raise ValueError("No supported PAK entries could be extracted.")
-        if _sha_file(source) != sha:
+        with span('pak', 'final_source_sha256', input_bytes=stat.st_size):
+            unchanged = _sha_file(source) == sha
+        if not unchanged:
             raise RuntimeError("PAK changed during extraction; import discarded.")
         manifest = {
             "version": VERSION, "name": source.name,
@@ -512,6 +519,7 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
         }
         (work / MANIFEST).write_text(json.dumps(manifest, indent=2), "utf-8")
         os.replace(work, target)
+        record('pak', 'archive_published', files=len(records), output_bytes=written)
         _invalidate()
         return finish({"status": "imported", "id": slug, "name": source.name,
                 "entries": len(records), "bytes": written, "skipped": len(skipped)})
