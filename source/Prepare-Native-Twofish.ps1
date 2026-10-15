@@ -2,10 +2,16 @@
 # PyInstaller. Input packages come from signed MSYS2/pacman packages installed
 # by GitHub Actions. Distribute the libraries with their actual LGPL licenses.
 param(
-    [string]$MingwRoot = "C:\msys64\mingw64",
+    [string]$MingwRoot = "",
     [switch]$Require
 )
 $ErrorActionPreference = "Stop"
+# setup-msys2@v2 installs under RUNNER_TEMP by default. Workflows pass its
+# exact msys2-location output; local developers may use C:\msys64 instead.
+if (-not $MingwRoot) {
+    $root = if ($env:MSYS2_ROOT) { $env:MSYS2_ROOT } else { 'C:\msys64' }
+    $MingwRoot = Join-Path $root 'mingw64'
+}
 $source = Join-Path $MingwRoot "bin"
 $share = Join-Path $MingwRoot "share/licenses"
 $dest = Join-Path $PSScriptRoot "native"
