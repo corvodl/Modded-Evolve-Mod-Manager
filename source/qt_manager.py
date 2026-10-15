@@ -3930,6 +3930,8 @@ class QtManager(QMainWindow):
             st = state_status(Path(self.swap_path))
             if st.phase in ('swapped', 'interrupted', 'restoring'):
                 helper = Path(self.swap_path) / 'auto_restore_watch.py'
+                if not helper.is_file() and Path(self.swap_path).is_dir():
+                    add_missing_scripts(Path(self.swap_path))
                 if helper.is_file():
                     start_auto_restore_monitor(Path(self.swap_path), resume=True)
                     self._log('Auto-restore monitor is watching game and launcher.')
@@ -3994,6 +3996,10 @@ class QtManager(QMainWindow):
         try:
             if self.busy:
                 raise RuntimeError('Another task is running.')
+            from launch_integration import auto_restore_monitor_running
+            if auto_restore_monitor_running(Path(self.swap_path)):
+                raise RuntimeError('Previous game session is still monitored for '
+                                   'automatic restoration. Wait until it finishes.')
             st = self.refresh_swap_status()
             if st.phase not in ('missing','prepared','restored'):
                 raise RuntimeError('Restore the original game files before launching mods.')
@@ -4047,6 +4053,12 @@ class QtManager(QMainWindow):
         try:
             if self.busy:
                 raise RuntimeError('Wait for the current manager task to finish.')
+            from launch_integration import auto_restore_monitor_running
+            if auto_restore_monitor_running(Path(self.swap_path)):
+                self.info('Restoration active',
+                          'The manager will restore the original files once '
+                          'the game and client close. Try again after restoration.')
+                return
             # The raw journal distinguishes a swap requiring normal restoration
             # from an orphaned backup that needs the dedicated recovery script.
             st = state_status(Path(self.swap_path))
@@ -4097,6 +4109,12 @@ class QtManager(QMainWindow):
         try:
             if self.busy:
                 raise RuntimeError('Wait for the current task to finish.')
+            from launch_integration import auto_restore_monitor_running
+            if auto_restore_monitor_running(Path(self.swap_path)):
+                self.info('Automatic restoration active',
+                          'Wait for Evolve and the client to close. The watchdog '
+                          'will restore verified originals without another action.')
+                return
             st = self.refresh_swap_status()
             game = Path(st.game) if st.game and Path(st.game).is_dir() else (
                 self.game_root or self._find_game_root())
