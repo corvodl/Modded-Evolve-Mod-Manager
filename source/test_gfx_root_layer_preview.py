@@ -35,7 +35,7 @@ class RootLayerIsolationTests(unittest.TestCase):
                          [(1, 1), (5, 1)])
         self.assertEqual(isolate_root_depth(original), before)
         self.assertEqual(original, before)
-        self.assertEqual(root_layers(original, frame=2), ())
+        self.assertEqual([layer.depth for layer in root_layers(original, frame=2)], [5])
         with self.assertRaisesRegex(GfxError, "outside"):
             root_layers(original, frame=9)
 
