@@ -67,6 +67,11 @@ class QtMigrationTests(unittest.TestCase):
             migrate.assert_called_once()
         self.assertTrue(self.win._library_inventory_initialized)
 
+    def test_footer_displays_only_release_version_not_patch(self):
+        from version_info import footer_version
+        self.assertEqual(self.win.version_label.text(), footer_version())
+        self.assertNotIn('Patch', self.win.version_label.text())
+
     def test_gpu_popup_toolbar_uses_real_icons(self):
         from qt_gpu_viewer import _viewport_tool_icon
         for kind in ('View','Materials','Animation','Grid','Solid','Wire'):
