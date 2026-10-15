@@ -173,6 +173,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.model_gpu = None
         self.model_panel = None
         self._sidebar_visibility = {'files': True, 'images': True, 'models': False}
+        self._gfx_editor_panel = None
         self.model_fallback = None
         self.model_cpu = None
         self.texture_folder = None
@@ -282,8 +283,11 @@ class QtWorkspaceEditor(QMainWindow):
                 view.setAlignment(Qt.AlignCenter)
                 view.setWordWrap(True)
             elif section == 'gfx':
-                view = GfxPreviewWidget(self)
-                self.gfx_view = view
+                self.gfx_view = GfxPreviewWidget(self)
+                self.gfx_pages = QStackedWidget()
+                self.gfx_pages.setObjectName("gfxInlineEditorPages")
+                self.gfx_pages.addWidget(self.gfx_view)
+                view = self.gfx_pages
             else:
                 view = QStackedWidget()
                 self.model_fallback = QLabel(
@@ -1233,6 +1237,8 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(str(exc))
 
     def load(self, rel, *, full_character=False):
+        if self._gfx_editor_panel is not None:
+            self._close_gfx_editor()
         if rel not in self.records:
             raise ValueError('This file is no longer in the extracted PAK.')
         # The internal pages are selected by file type; their tab bar is hidden.
@@ -1774,6 +1780,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_skin_choice = None
         self.current, self.loaded_text, self.raw = None, '', b''
         self.gfx_view.cancel_pending()
+        self._close_gfx_editor()
         if not self.read_only_library:
             self.manager.current_workspace = str(target)
             self.manager.archive_label = name
@@ -1892,8 +1899,19 @@ class QtWorkspaceEditor(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, 'File edit rejected', str(exc))
 
+    def _close_gfx_editor(self):
+        """Return to the built-in preview without leaving a second editor window."""
+        panel = self._gfx_editor_panel
+        if panel is None:
+            return
+        self._gfx_editor_panel = None
+        self.gfx_pages.setCurrentWidget(self.gfx_view)
+        self.gfx_pages.removeWidget(panel)
+        panel.close()
+        panel.deleteLater()
+
     def edit_gfx(self):
-        """Start a private FFDec authoring session; never mutate Library."""
+        """Open a private FFDec authoring session inside the normal file editor."""
         if self.read_only_library:
             QMessageBox.information(
                 self, 'Read-only Asset Library',
@@ -1912,9 +1930,13 @@ class QtWorkspaceEditor(QMainWindow):
                 return
             if self.manager.busy:
                 raise RuntimeError('Finish the current manager operation first.')
-            from qt_gfx_editor import GfxEditorDialog
-            dialog = GfxEditorDialog(self, self.current)
-            dialog.exec()
+            if self._gfx_editor_panel is None:
+                from qt_gfx_editor import GfxEditorDialog
+                self._gfx_editor_panel = GfxEditorDialog(
+                    self, self.current, embedded=True)
+                self.gfx_pages.addWidget(self._gfx_editor_panel)
+            self.gfx_view.cancel_pending()
+            self.gfx_pages.setCurrentWidget(self._gfx_editor_panel)
         except (OSError, ValueError, RuntimeError) as exc:
             QMessageBox.warning(self, 'GFX editor', str(exc))
 
@@ -2759,6 +2781,7 @@ class QtWorkspaceEditor(QMainWindow):
         self._save_project_session()
         self._model_generation += 1
         self.gfx_view.cancel_pending()
+        self._close_gfx_editor()
         if self.model_panel is not None and not self.model_panel.close():
             event.ignore()
             return
