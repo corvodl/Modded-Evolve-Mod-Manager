@@ -95,6 +95,12 @@ class GfxLayoutBackendTests(unittest.TestCase):
         self.assertIn("mcFeatureButtonTry._yscale = 75.0000", changed)
         self.assertIn("mcFeatureTry._visible = false", changed)
         self.assertNotIn("mcFeatureBuy._x", changed)
+        hidden = patch_featured_actionscript(source, "hide", "try")
+        self.assertIn("mcFeatureTry._visible = false", hidden)
+        self.assertNotIn("mcFeatureBuy._visible", hidden)
+        removed = patch_featured_actionscript(source, "remove", "buy")
+        self.assertIn("mcFeatureBuy.removeMovieClip()", removed)
+        self.assertNotIn("mcFeatureTry.removeMovieClip()", removed)
         with self.assertRaisesRegex(GfxError, "Layout"):
             patch_featured_actionscript(source, "layout", "all",
                                        layout=(1, 2, 1, 1, 0, True))
