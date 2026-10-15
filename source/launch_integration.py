@@ -199,3 +199,31 @@ def start_auto_restore_monitor(swap_dir: Path, resume=False):
             command, cwd=str(folder), stdin=subprocess.DEVNULL,
             stdout=output, stderr=subprocess.STDOUT, close_fds=True,
             creationflags=creationflags).pid
+
+
+def auto_restore_monitor_running(swap_dir: Path) -> bool:
+    """See whether a watchdog holds the independent restore lock."""
+    path = Path(swap_dir) / "auto_restore_watch.lock"
+    if not path.is_file():
+        return False
+    try:
+        with path.open("r+b") as stream:
+            stream.seek(0)
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            if sys.platform == "win32":
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            return False
+    except OSError:
+        # Fail closed if we cannot inspect the lock.
+        return True
