@@ -94,4 +94,4 @@ class GlossMaterialTests(unittest.TestCase):
         self.assertIn('texture2D(gloss_map,diffuse_coord)', FRAGMENT)
         self.assertIn('mix(8.0,128.0,smoothness)', FRAGMENT)
         self.assertIn('has_gloss', FRAGMENT)
-        self.assertIn('gloss_map', Renderer3.__init__.__code__.co_consts[1])
+        self.assertIn('gloss_map', str(Renderer3.__init__.__code__.co_consts))
