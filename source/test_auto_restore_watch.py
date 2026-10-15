@@ -28,8 +28,8 @@ class AutoRestoreWatchTests(unittest.TestCase):
         ])
         now = iter(range(100))
         with patch.object(watch.swap, "require_state",
-                          return_value={"phase": "swapped"}), \\
-             patch.object(watch.swap, "task_names", side_effect=lambda: next(processes)), \\
+                          return_value={"phase": "swapped"}), \
+             patch.object(watch.swap, "task_names", side_effect=lambda: next(processes)), \
              patch("reusable_restore.main", return_value=0) as restore:
             result = watch.watch(fresh=True, interval=0,
                                  monotonic=lambda: next(now),
@@ -39,7 +39,7 @@ class AutoRestoreWatchTests(unittest.TestCase):
 
     def test_watch_refuses_unknown_journal_phase(self):
         with patch.object(watch.swap, "require_state",
-                          return_value={"phase": "unsafe"}), \\
+                          return_value={"phase": "unsafe"}), \
              patch("reusable_restore.main") as restore:
             with self.assertRaisesRegex(RuntimeError, "unsafe phase"):
                 watch.watch(interval=0)
@@ -47,9 +47,9 @@ class AutoRestoreWatchTests(unittest.TestCase):
 
     def test_already_restored_does_not_change_files(self):
         for phase in ("prepared", "restored"):
-            with self.subTest(phase=phase), \\
+            with self.subTest(phase=phase), \
                  patch.object(watch.swap, "require_state",
-                              return_value={"phase": phase}), \\
+                              return_value={"phase": phase}), \
                  patch("reusable_restore.main") as restore:
                 self.assertEqual(watch.watch(interval=0), 0)
                 restore.assert_not_called()
