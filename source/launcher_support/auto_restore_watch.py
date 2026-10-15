@@ -25,9 +25,10 @@ def _lock():
     def guard():
         path = Path(__file__).with_name("auto_restore_watch.lock")
         with path.open("a+b") as stream:
-            stream.seek(0)
-            stream.write(b"0")
-            stream.flush()
+            # Never write through another watchdog's locked byte.
+            if stream.seek(0, 2) == 0:
+                stream.write(b"0")
+                stream.flush()
             stream.seek(0)
             try:
                 if os.name == "nt":
@@ -75,6 +76,9 @@ def watch(fresh=True, interval=2.0, monotonic=time.monotonic, sleeper=time.sleep
         state = swap.require_state()
         phase = state.get("phase")
         if phase in ("prepared", "restored"):
+            if any(Path(item["backup"]).exists()
+                   for item in state.get("files", ())):
+                raise RuntimeError("Original backup remains despite a clean journal.")
             print("Original files are already restored.", flush=True)
             return 0
         if phase not in ("swapped", "interrupted", "restoring"):
