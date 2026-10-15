@@ -126,7 +126,9 @@ def verify_local_listener(pid, port):
         "if ($r) { 'OWNED' } else { 'NOT_OWNED' }",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=6,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise EventBridgeError("Cannot verify the local game-bridge listener.") from exc
     if result.returncode or result.stdout.strip() != "OWNED":
