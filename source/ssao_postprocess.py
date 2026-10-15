@@ -95,6 +95,7 @@ class SsaoEffect:
             GL_FRAMEBUFFER, GL_FRAMEBUFFER_BINDING, GL_TEXTURE_2D,
             GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT24, GL_UNSIGNED_INT,
             GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_COMPLETE, GL_TEXTURE_MIN_FILTER,
+            glDrawBuffer, glReadBuffer, GL_NONE,
             GL_TEXTURE_MAG_FILTER, GL_NEAREST, GL_TEXTURE_WRAP_S,
             GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE, glGetIntegerv)
         old_fbo = int(glGetIntegerv(GL_FRAMEBUFFER_BINDING))
@@ -109,6 +110,10 @@ class SsaoEffect:
         try:
             glFramebufferTexture2D(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,
                                    GL_TEXTURE_2D,self.texture,0)
+            # Depth-only FBOs have no color target. On OpenGL 2.1 both
+            # draw/read buffers must be NONE before completeness testing.
+            glDrawBuffer(GL_NONE)
+            glReadBuffer(GL_NONE)
             status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
             if status != GL_FRAMEBUFFER_COMPLETE:
                 raise RuntimeError('SSAO depth framebuffer is unsupported (%s)' % status)
