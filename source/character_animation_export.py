@@ -50,8 +50,10 @@ def export_character_animation_folder(
     if not root.is_dir() or root.is_symlink():
         raise ValueError('Animation export root must be a real directory.')
     folder = root / 'animations'
-    if folder.exists() or folder.is_symlink():
-        raise FileExistsError('Animation export directory already exists.')
+    if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
+        raise FileExistsError('Animation output conflicts with an existing file.')
+    if (folder / 'animation_manifest.json').exists():
+        raise FileExistsError('Animation manifest already exists.')
     checkpoint()
     if references is None:
         selected = character.skeleton if character is not None else relative
@@ -69,9 +71,11 @@ def export_character_animation_folder(
     accepted = []
     sources = []
     total_bytes = 0
-    folder.mkdir()
+    folder.mkdir(exist_ok=True)
     raw_root = folder / 'sources'
-    raw_root.mkdir()
+    if raw_root.is_symlink():
+        raise ValueError('Refusing symlinked animation sources directory.')
+    raw_root.mkdir(exist_ok=True)
     source_names = set()
     chosen_dba = None
     for ref in references:
@@ -143,10 +147,11 @@ def export_character_animation_folder(
         for ref,row in accepted:
             checkpoint()
             try:
-                animated, details = append_caf_animations(
+                proposed, details = append_caf_animations(
                     animated, [(ref.name, Path(ref.file).read_bytes())])
-                if len(animated) > MAX_ANIMATED_GLB_BYTES:
+                if len(proposed) > MAX_ANIMATED_GLB_BYTES:
                     raise ValueError('Combined animation GLB exceeds safety budget')
+                animated = proposed
             except (OSError, ValueError) as exc:
                 row['conversion'] = 'Failed assembling: ' + str(exc)[:160]
                 continue
