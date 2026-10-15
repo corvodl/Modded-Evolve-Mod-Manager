@@ -4093,6 +4093,12 @@ class QtManager(QMainWindow):
                 # The existing launcher still verifies exact staged ownership.
                 self._prelaunch_safety_check(modded=True, game=self._developer_game())
                 set_offline(self._developer_game(), not self._developer_allow_online)
+                if not self._developer_allow_online:
+                    from online_guard import offline_rule_active
+                    if not offline_rule_active(self._developer_game()):
+                        raise RuntimeError(
+                            'Offline outbound firewall protection cannot be verified. '
+                            'Modded launch cancelled. Open System Health for details.')
                 self.run_steps(commands,'Play with Mods',self._after_modded_launch,
                                cwd=Path(self.swap_path))
         except Exception as exc:
