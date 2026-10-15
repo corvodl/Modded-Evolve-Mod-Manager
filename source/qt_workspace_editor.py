@@ -19,11 +19,11 @@ import time
 from threading import Event
 
 from PIL import Image
-from PySide6.QtCore import Qt, QUrl, QTimer, QSize
+from PySide6.QtCore import Qt, QUrl, QTimer, QSize, QModelIndex
 from PySide6.QtGui import QPixmap, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
+    QComboBox, QTreeWidget, QTreeWidgetItem, QTreeView, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
     QDockWidget, QTreeWidgetItemIterator, QFrame, QAbstractItemView, QHeaderView, QStyle,
     QSizePolicy,
@@ -52,6 +52,7 @@ from evolve_pak_workspace import normalized_name
 from version_info import app_version, footer_version
 from qt_navigation_icons import navigation_icon, action_icon
 from qt_ui_components import configure_splitter
+from qt_virtual_tree import VirtualTreeModel, TreeNode
 from studio_polish_117 import (prepare_model_cached, clear_model_cache,
     model_cache_stats, export_preflight, project_session_key,
     sanitized_project_session)
@@ -400,6 +401,22 @@ class QtWorkspaceEditor(QMainWindow):
         self.file_tree.customContextMenuRequested.connect(
             lambda point: self.show_context_menu('files', point))
         explorer_box.addWidget(self.file_tree, 1)
+        self.virtual_file_tree = QTreeView()
+        self.virtual_file_tree.setObjectName('virtualAssetExplorerTree')
+        self.virtual_file_tree.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.virtual_file_tree.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.virtual_file_tree.setTextElideMode(Qt.ElideMiddle)
+        self._virtual_model = VirtualTreeModel(self.virtual_file_tree,
+                                   labels=('File / Folder', 'Size'))
+        self.virtual_file_tree.setModel(self._virtual_model)
+        self.virtual_file_tree.selectionModel().selectionChanged.connect(
+            self._virtual_selection_changed)
+        self.virtual_file_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.virtual_file_tree.customContextMenuRequested.connect(
+            self._show_virtual_context_menu)
+        self.virtual_file_tree.hide()
+        self._virtual_active = False
+        explorer_box.addWidget(self.virtual_file_tree, 1)
         self.trees = {section: self.file_tree for section in self.TABS}
         self._explorer_visible = True
         # The preview stays on the left and the resizable File Explorer on
@@ -1130,9 +1147,125 @@ class QtWorkspaceEditor(QMainWindow):
             return 'models'
         return 'files'
 
+    def _populate_virtual_explorer(self):
+        """Construct metadata nodes, leaving Qt rows unloaded until expanded."""
+        started = time.perf_counter()
+        needle = self.search.text().casefold()
+        names = [rel for rel in sorted(self.records, key=str.casefold)
+                 if needle in rel.casefold() and
+                 (not self.favorites_only.isChecked() or
+                  str(self.workspace) + '|' + rel in self.favorites)]
+        first_stream = {}
+        for rel in names:
+            if is_split_dds(rel):
+                base, suffix = rel.rsplit('.', 1)
+                first_stream[base.casefold()] = min(
+                    first_stream.get(base.casefold(), 99), int(suffix))
+        names = [rel for rel in names if not is_split_dds(rel) or
+                 int(rel.rsplit('.', 1)[1]) ==
+                 first_stream[rel.rsplit('.', 1)[0].casefold()]]
+        from model_families import group_model_families
+        from character_full_models import discover_full_characters
+        families = group_model_families(names)
+        full_characters = discover_full_characters(names)
+        root = TreeNode('')
+        folders = {}
+        files = {}
+        for rel in names:
+            parts = rel.split('/')
+            parent = root
+            for position, piece in enumerate(parts[:-1]):
+                path = '/'.join(parts[:position+1])
+                child = folders.get(path)
+                if child is None:
+                    from character_aliases import pretty_folder
+                    child = TreeNode(pretty_folder(piece, '/'.join(parts[:position])),
+                                     'Folder', tooltip=path)
+                    parent.append(child)
+                    folders[path] = child
+                parent = child
+            data = self.records.get(rel, {})
+            count = data.get('bytes', data.get('size', 0))
+            size = (('%.1f MiB' % (count / 1048576)
+                     if count >= 1048576 else '%d KiB' % (count / 1024))
+                    if isinstance(count, (int, float)) and count > 0 else '')
+            node = TreeNode(parts[-1], self._category(rel), value=rel,
+                            tooltip=rel, size=size)
+            parent.append(node)
+            files[rel] = node
+        for primary, family in families.items():
+            owner = files.get(primary)
+            if owner is None:
+                continue
+            owner.label = family.title
+            owner.size = str(len(family.members)) + ' assets'
+            for member in family.members:
+                if member == primary:
+                    continue
+                child = files.get(member)
+                if child is None or child.parent is None:
+                    continue
+                old = child.parent
+                old.children.remove(child)
+                for ordinal, peer in enumerate(old.children):
+                    peer.ordinal = ordinal
+                owner.append(child)
+        for primary, full in full_characters.items():
+            owner = files.get(primary)
+            parent = owner.parent if owner else None
+            if parent is None:
+                continue
+            option = TreeNode(full.label, 'CDF assembly', value=primary,
+                              tooltip=full.definition, variant='full-character')
+            parent.children.insert(0, option)
+            for ordinal, peer in enumerate(parent.children):
+                peer.ordinal = ordinal
+                peer.parent = parent
+        self._virtual_active = True
+        self.file_tree.hide()
+        self.virtual_file_tree.show()
+        self._virtual_model.reset_root(root)
+        self.explorer_count.setText(str(len(names)) + ' files')
+        self.last_populate_ms = round((time.perf_counter()-started)*1000, 3)
+
+    def _virtual_selection_changed(self, _selected, _deselected):
+        if self._virtual_active:
+            self.load_selection()
+
+    def _show_virtual_context_menu(self, point):
+        index = self.virtual_file_tree.indexAt(point)
+        rel = index.data(Qt.UserRole) if index.isValid() else None
+        if not isinstance(rel, str):
+            return
+        self.virtual_file_tree.setCurrentIndex(index)
+        menu = QMenu(self.virtual_file_tree)
+        menu.addAction('Preview / Open', self.load_selection)
+        menu.addAction('Toggle Favorite ★', self.toggle_favorite)
+        if self.read_only_library:
+            menu.addAction('Export Original File…', self.export_raw)
+            menu.addAction('Open Asset Library Folder', self.explore)
+        else:
+            menu.addAction('Project History & Undo…', self.open_project_history)
+            menu.addAction('Import Over / Replace', self.import_raw)
+            menu.addAction('Restore Original Extraction', self.restore_original)
+            menu.addAction('Export Raw File', self.export_raw)
+            if self._category(rel) == 'gfx':
+                menu.addAction('Edit full Scaleform GFX…', self.edit_gfx)
+                menu.addAction('Export rendered PNG…', self.export_png)
+            menu.addAction('Reveal Extracted File in Explorer', self.explore)
+        menu.addAction('Copy Relative Path',
+                       lambda: QApplication.clipboard().setText(self.selected()))
+        menu.exec(self.virtual_file_tree.mapToGlobal(point))
+
     def populate(self):
         """One searchable PAK tree; entries open the matching viewer on click."""
         self._search_timer.stop()  # An explicit refresh supersedes pending text.
+        if len(self.records) > 1500:
+            self._populate_virtual_explorer()
+            return
+        self._virtual_active = False
+        self.virtual_file_tree.hide()
+        self.file_tree.show()
         started = time.perf_counter()
         needle = self.search.text().casefold()
         tree = self.file_tree
@@ -1277,6 +1410,12 @@ class QtWorkspaceEditor(QMainWindow):
         self.last_populate_ms = round((time.perf_counter() - started) * 1000, 3)
 
     def selected(self):
+        if self._virtual_active:
+            current = self.virtual_file_tree.currentIndex()
+            virtual = current.data(Qt.UserRole) if current.isValid() else None
+            if isinstance(virtual, str):
+                return virtual
+            raise ValueError('Choose an extracted file, not a directory.')
         items = self.file_tree.selectedItems()
         if not items:
             raise ValueError('Choose an extracted file first.')
@@ -1306,9 +1445,11 @@ class QtWorkspaceEditor(QMainWindow):
                 if not ffdec_is_ready(self.manager) and not getattr(self, '_gfx_requirement_notified', False):
                     self._gfx_requirement_notified = True
                     show_ffdec_requirement(self)
-            item = self.file_tree.currentItem()
+            item = self.file_tree.currentItem() if not self._virtual_active else None
             full_character = bool(
-                item and item.data(0, Qt.UserRole + 2) == 'full-character')
+                (item and item.data(0, Qt.UserRole + 2) == 'full-character') or
+                (self._virtual_active and
+                 self.virtual_file_tree.currentIndex().data(Qt.UserRole + 2) == 'full-character'))
             if chosen.casefold().endswith('.lyr') and not self.read_only_library:
                 self.manager.open_level_editor(self.workspace)
             else:
