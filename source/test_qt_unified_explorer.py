@@ -153,6 +153,56 @@ class UnifiedExplorerTests(unittest.TestCase):
             catalog.assert_called_once_with(
                 editor.manager.stage_path, 'characters/hero.skinm')
 
+    def test_left_side_setting_controls_new_editor(self):
+        self.editor.manager.settings['file_explorer_side'] = 'Left'
+        other = QtWorkspaceEditor(self.editor.manager, self.editor.workspace)
+        self.addCleanup(other.close)
+        self.assertEqual(other._file_explorer_side, 'Left')
+        self.assertIs(other.editor_split.widget(0), other.explorer)
+        self.assertIs(other.editor_split.widget(1), other.tabs)
+
+    def test_side_change_keeps_splitter_widths_and_hidden_visibility(self):
+        editor = self.editor
+        editor.show()
+        self.app.processEvents()
+        editor.editor_split.setSizes([800, 310])
+        self.app.processEvents()
+        before = editor._logical_split_sizes()
+        editor.set_file_explorer_side('Left')
+        self.app.processEvents()
+        self.assertIs(editor.editor_split.widget(0), editor.explorer)
+        self.assertIs(editor.editor_split.widget(1), editor.tabs)
+        after = editor._logical_split_sizes()
+        self.assertLessEqual(abs(before[0] - after[0]), 30)
+        self.assertLessEqual(abs(before[1] - after[1]), 30)
+        editor.toggle_file_explorer(False)
+        editor.set_file_explorer_side('Right')
+        self.assertFalse(editor._explorer_visible)
+        editor.toggle_file_explorer(True)
+        self.app.processEvents()
+        self.assertIs(editor.editor_split.widget(0), editor.tabs)
+        self.assertIs(editor.editor_split.widget(1), editor.explorer)
+        self.assertGreater(editor._logical_split_sizes()[1], 0)
+
+    def test_layout_presets_remain_semantic_after_changing_sides(self):
+        editor = self.editor
+        editor.show()
+        self.app.processEvents()
+        for side in ('Left', 'Right'):
+            editor.set_file_explorer_side(side)
+            editor.set_workspace_layout('Model Focus')
+            preview, explorer = editor._logical_split_sizes()
+            self.assertGreater(preview, explorer)
+            editor.set_workspace_layout('Files First')
+            preview, explorer = editor._logical_split_sizes()
+            self.assertGreater(explorer, preview)
+        editor.set_file_explorer_side('Left')
+        editor.save_workspace_layout()
+        editor.set_workspace_layout('Model Focus')
+        editor._restore_workspace_layout()
+        preview, explorer = editor._logical_split_sizes()
+        self.assertGreater(explorer, preview)
+
     def test_search_explorer_and_pak_selection_are_in_explorer(self):
         editor = self.editor
         self.assertIs(editor.search.parentWidget(), editor.explorer)
