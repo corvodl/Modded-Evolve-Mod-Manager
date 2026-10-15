@@ -1,25 +1,24 @@
-# Evolve Stage 2 Mod Manager — v1.1.18-beta.50
+# Evolve Stage 2 Mod Manager — v1.2.0
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.1.18-beta.50 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.2.0 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.1.17.1
+## Latest Stable — v1.2.0
 
-- Add a Windows installer with optional Desktop and Start Menu shortcuts.
-- Compare Stable and Beta releases and offer only the newest version.
-
-## Latest Beta — v1.1.18-beta.50
-
-- Render verified external DDS textures within static GFX frames while preserving alpha and placement.
-- Edit supported GFX menu layers visually with position, scale, rotation, visibility and undo.
-- Add experimental featured-title and TRY/BUY layout and text overrides for offline testing.
-
-Experimental Windows installer and portable ZIP: [Download Beta](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Beta).
-
-Versioned release: [v1.1.18-beta.50](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/v1.1.18-beta.50).
+- Modernize the Qt interface with contextual tools, cleaner Settings, Flaticon navigation icons, and improved workspace layouts.
+- Manage Stage 2 PAKs through build-scoped Asset Library browsing, dependencies, bulk imports, isolated edits, and safer mod staging.
+- Improve complete character assemblies, GPU materials, rig compatibility, CAF/DBA animation browsing, and supported idle playback.
+- Use higher-resolution streamed CryEngine DDS textures and normal maps in previews and Blender exports, with explicit diagnostics.
+- Export supported rigged character assemblies, textured GLBs, and terrain/level scenes for Blender with source-safe validation.
+- Expand the Level Editor with grouped map archives, combined scenes, previews, and missing-resource reports.
+- Preview and edit Scaleform GFX with external texture placement, transparent frames, and verified static layout controls.
+- Offer experimental main-menu promotional title and TRY/BUY overrides plus preview-only popup-layer isolation; verify results offline.
+- Inspect historical CryTek PAKs and compatible assets separately without promising playable cross-version conversions.
+- Improve offline project workflows, asset provenance, recovery, and update safety while preserving personal game and mod data.
+- Support versioned patch revisions and consolidate installation, update work, and logs under one manager folder.
 
 ## Download and install
 
