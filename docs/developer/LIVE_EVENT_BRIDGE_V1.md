@@ -1,6 +1,6 @@
 # Live Game Event Activation - Companion Bridge V1 (beta)
 
-The Developer > Game Events panel supports sending activation requests to a verified game-side module running INSIDE the selected offline Evolve.exe. This repository does NOT yet contain the native game-side dispatcher.
+The Developer > Game Events panel supports sending activation requests to a verified game-side module running INSIDE the selected offline Evolve.exe. Experimental Windows NativeAOT transport and token code is available in native/EvolveEventBridge. There is still NO verified native game-event dispatcher or game-integrated loader; real-game event activation has not been demonstrated.
 
 ## Important limitation
 

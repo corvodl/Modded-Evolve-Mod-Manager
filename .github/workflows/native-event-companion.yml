@@ -1,0 +1,78 @@
+name: Validate native game-side event companion (non-publishing)
+
+on:
+  push:
+    branches: [feature/beta17-native-game-bridge]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-event-companion-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-aot:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build native Windows x64 companion
+        shell: pwsh
+        run: |
+          dotnet publish native/EvolveEventBridge/EvolveEventBridge.csproj -c Release -r win-x64 -o dist/native-bridge
+          if ($LASTEXITCODE -ne 0) { throw 'NativeAOT companion compilation failed' }
+          if (!(Test-Path dist/native-bridge/EvolveEventBridge.dll)) { throw 'Native bridge DLL missing' }
+      - name: Verify DLL C exports (no Evolve binaries bundled)
+        shell: pwsh
+        run: |
+          $exports = (& dumpbin /exports dist/native-bridge/EvolveEventBridge.dll) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect companion exports' }
+          foreach ($name in @('EvolveBridge_Start','EvolveBridge_Stop',
+              'EvolveBridge_RegisterVerifiedEvent','EvolveBridge_Pump',
+              'EvolveBridge_CopyToken')) {
+            if ($exports -notmatch [regex]::Escape($name)) { throw "Missing native export: $name" }
+          }
+      - name: Compile simulated Evolve.exe smoke-test host
+        shell: pwsh
+        run: |
+          dotnet publish native/tests/FakeEvolve/Evolve.csproj -c Release -r win-x64 -o dist/fake-evolve
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path dist/fake-evolve/Evolve.exe)) {
+            throw 'Synthetic Evolve fixture host did not compile'
+          }
+      - name: Build deliberately isolated synthetic-test companion
+        shell: pwsh
+        run: |
+          # Production DLL validates the pinned exact Evolve.exe hash.
+          # The fixture variant cannot be mistaken for the release artifact.
+          dotnet publish native/EvolveEventBridge/EvolveEventBridge.csproj -c Release -r win-x64 -p:DefineConstants=EVOLVE_BRIDGE_SYNTHETIC_TEST -o dist/native-bridge-test
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path dist/native-bridge-test/EvolveEventBridge.dll)) {
+            throw 'Synthetic-test bridge DLL missing'
+          }
+      - name: Exercise authenticated bridge and game-thread callback with synthetic host
+        shell: pwsh
+        run: |
+          python native/tests/native_bridge_smoke.py dist/fake-evolve/Evolve.exe dist/native-bridge-test/EvolveEventBridge.dll
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Bridge transport / simulated game-thread smoke test failed'
+          }
+      - name: Validate existing Python bridge protocol tests
+        shell: pwsh
+        run: |
+          # The event protocol/catalog unit tests use Python's stdlib only.
+          Push-Location source
+          try {
+            python -m unittest -v test_developer_event_catalog test_developer_event_live
+            if ($LASTEXITCODE -ne 0) { throw 'Bridge client tests failed' }
+          } finally { Pop-Location }
+      - name: Upload native DLL as TEST artifact only
+        uses: actions/upload-artifact@v4
+        with:
+          name: EvolveNativeEventBridge-transport-only-not-game-ready
+          path: dist/native-bridge/EvolveEventBridge.dll
+          if-no-files-found: error
