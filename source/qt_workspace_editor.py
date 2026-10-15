@@ -617,7 +617,7 @@ class QtWorkspaceEditor(QMainWindow):
         self._explorer_visible = bool(visible)
         self.explorer.setVisible(bool(visible))
         if visible:
-            self.editor_split.setSizes([940, 310])
+            self.editor_split.setSizes([310, 940])
         self._sync_file_explorer_button()
 
     def set_workspace_layout(self, name):
@@ -627,7 +627,7 @@ class QtWorkspaceEditor(QMainWindow):
             raise ValueError('Unknown layout preset.')
         explorer_width, viewport_width = options[name]
         self.toggle_file_explorer(True)
-        self.editor_split.setSizes([viewport_width * 120, explorer_width * 120])
+        self.editor_split.setSizes([explorer_width * 120, viewport_width * 120])
 
     def save_workspace_layout(self):
         self.manager.settings['editor_workspace_layout'] = {
@@ -652,7 +652,8 @@ class QtWorkspaceEditor(QMainWindow):
             pair = sizes.get('models') or sizes.get('files')
             if (isinstance(pair, list) and len(pair) == 2 and
                     all(isinstance(n, int) and n > 0 for n in pair)):
-                self.editor_split.setSizes(pair)
+                # Saved widths used the old viewer-left/explorer-right order.
+                self.editor_split.setSizes(list(reversed(pair)))
 
     def _capture_playback_preferences(self):
         if self.current and self.mode=='models' and self.model_panel is not None:
