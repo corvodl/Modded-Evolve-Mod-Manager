@@ -7,8 +7,10 @@ Developer tools are deliberately absent from Home.
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Thread
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFrame, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QGridLayout, QScrollArea, QSizePolicy
@@ -20,7 +22,6 @@ from qt_ui_components import SurfacePanel
 NAVIGATION = (
     ("Modding", "Modding", "Open a project, edit assets and sign a PAK."),
     ("Asset Library", "Asset Library", "Browse textures, models, animation and GFX."),
-    ("Play & Restore", "Play & Restore", "Prepare an offline test or restore previous files."),
     ("Instructions", "Instructions", "First-time setup and safe modding workflow."),
     ("Settings", "Settings", "Appearance, paths, updates and maintenance."),
     ("What's New", "What's New", "Changes included in the latest release."),
@@ -29,10 +30,15 @@ NAVIGATION = (
 
 
 class HomeDashboard(QScrollArea):
+    client_manifest_checked = Signal(object)
+
     def __init__(self, manager, parent=None):
         super().__init__(parent)
         self.setObjectName("homeDashboard")
         self.manager = manager
+        self._client_requested_version = None
+        self._client_release_url = None
+        self.client_manifest_checked.connect(self._on_client_manifest_checked)
         self.setFrameShape(QFrame.NoFrame)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -77,6 +83,43 @@ class HomeDashboard(QScrollArea):
         hero_actions.addStretch(1)
         header.addLayout(hero_actions)
         outer.addWidget(hero)
+
+        # Launch shortcuts are visible without opening any other tab.
+        launch_panel = SurfacePanel("PLAY EVOLVE")
+        launch_panel.setObjectName("homeQuickPlay")
+        launch_panel.content.addWidget(QLabel(
+            "Choose an offline modded session or launch with original game files. "
+            "Original files are restored automatically after a modded session."))
+        play_actions = QHBoxLayout()
+        for title, method, icon_name, primary in (
+                ("Play with Mods", manager.launch, "Play with Mods", True),
+                ("Play without Mods", manager.play_without_mods, "Play without Mods", False)):
+            button = QPushButton(title)
+            button.setObjectName("primary" if primary else "homeSecondaryAction")
+            button.setAccessibleName(title)
+            button.setIcon(navigation_icon(icon_name, size=20))
+            button.setMinimumHeight(40)
+            button.clicked.connect(method)
+            play_actions.addWidget(button)
+        play_actions.addStretch(1)
+        launch_panel.content.addLayout(play_actions)
+        outer.addWidget(launch_panel)
+
+        # Client updates have their own clearly labelled Home section.
+        client_card = SurfacePanel("EVOLVE CLIENT")
+        client_card.setObjectName("homeClientSection")
+        self.client_version_label = QLabel("Client executable not configured")
+        self.client_version_label.setObjectName("homeStatusValue")
+        client_card.content.addWidget(self.client_version_label)
+        self.client_update_status = QLabel("Update status: not checked")
+        self.client_update_status.setObjectName("muted")
+        client_card.content.addWidget(self.client_update_status)
+        self.client_update_button = QPushButton("View client release")
+        self.client_update_button.setIcon(navigation_icon("external", size=18))
+        self.client_update_button.clicked.connect(self.open_client_release)
+        self.client_update_button.hide()
+        client_card.content.addWidget(self.client_update_button)
+        outer.addWidget(client_card)
 
         main = QHBoxLayout()
         main.setSpacing(15)
@@ -142,11 +185,10 @@ class HomeDashboard(QScrollArea):
         hint.setWordWrap(True)
         hint.setObjectName("muted")
         right.addWidget(hint)
-        self.status = {}
+        self.status = {"client_version": self.client_version_label}
         for key, title_text, fallback in (
                 ("game", "Game installation", "Not selected"),
                 ("game_version", "Game version", "Not detected"),
-                ("client_version", "Client version", "Not detected"),
                 ("stage", "Signing stage", "Not prepared"),
                 ("project", "Editing project", "None selected"),
                 ("output", "Last signed PAK", "No recent build")):
@@ -177,11 +219,22 @@ class HomeDashboard(QScrollArea):
             details["game"] or
             ("Version not reported" if details["game_found"]
              else "Game executable not found"))
+        installed = details["client"]
         self.status["client_version"].setText(
-            (details["client"] or
-             ("Version not reported" if details["client_found"]
-              else "Client executable not configured"))
+            (installed or ("Version not reported" if details["client_found"]
+                           else "Client executable not configured"))
             + (" · " + details["client_name"] if details["client_name"] else ""))
+        if installed and installed != self._client_requested_version:
+            self._client_requested_version = installed
+            self.client_update_status.setText("Checking official launcher manifest…")
+            self.client_update_button.hide()
+            from client_update_manifest import check_client_version
+            Thread(target=lambda version=installed: self.client_manifest_checked.emit(
+                {"installed": version, "result": check_client_version(version)}),
+                daemon=True, name="client-version-check").start()
+        elif not installed:
+            self.client_update_status.setText("Update status unknown — version metadata unavailable.")
+            self.client_update_button.hide()
         self.status["game"].setText(
             "Configured" if game and Path(game).is_dir()
             else "Not configured — use Settings")
@@ -197,3 +250,20 @@ class HomeDashboard(QScrollArea):
         self.status["output"].setText(
             output.name if output and output.is_file()
             else "No recent signed build")
+
+    def _on_client_manifest_checked(self, payload):
+        if payload.get("installed") != self._client_requested_version:
+            return
+        result = payload["result"]
+        latest = result.get("latest")
+        self.client_update_status.setText(
+            ("Latest manifest: " + latest + " · " if latest else "")
+            + result.get("message", "Update status unknown"))
+        self._client_release_url = result.get("url")
+        # Let users find the official download only when an update is needed.
+        self.client_update_button.setVisible(
+            bool(result.get("status") == "outdated" and self._client_release_url))
+
+    def open_client_release(self):
+        if self._client_release_url:
+            QDesktopServices.openUrl(QUrl(self._client_release_url))
