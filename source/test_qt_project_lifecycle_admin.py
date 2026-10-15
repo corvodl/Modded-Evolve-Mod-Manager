@@ -41,38 +41,55 @@ class AdminLaunchTests(unittest.TestCase):
 @unittest.skipUnless(os.environ.get('QT_QPA_PLATFORM') == 'offscreen', 'Offscreen Qt CI test')
 class QtProjectResumeTests(unittest.TestCase):
     def test_reopen_editor_reuses_valid_timers_and_keeps_editable_copy(self):
-        from PySide6.QtWidgets import QApplication
+        """Test manager reuse independently of GPU/editor resource setup."""
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication, QWidget
         from qt_manager import QtManager
-        from qt_workspace_editor import QtWorkspaceEditor
         from launch_integration import SwapStatus
         from shiboken6 import isValid
         app = QApplication.instance() or QApplication([])
+
+        class TestEditor(QWidget):
+            def __init__(self, parent, workspace, archive_map=None):
+                super().__init__(parent)
+                self.workspace = Path(workspace)
+                self.records = {}
+                self.read_only_library = False
+                self.recovery_timer = QTimer(self)
+                self.recovery_timer.setInterval(30000)
+                self.recovery_timer.start()
+
+            def resume_project_editor(self):
+                self.recovery_timer.start()
+
+            def closeEvent(self, event):
+                self.recovery_timer.stop()
+                super().closeEvent(event)
+
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            workspace = root / 'Project'
-            (workspace/'files').mkdir(parents=True)
-            with patch('qt_manager.settings_source', return_value=root/'settings.json'), \
-                    patch('qt_manager.allowed_paks', return_value={}), \
-                    patch('qt_manager.state_status', return_value=SwapStatus('missing', 'Not prepared')), \
-                    patch('qt_manager.save_settings', return_value=None):
+            workspace = root / "Project"
+            workspace.mkdir()
+            with patch("qt_manager.settings_source", return_value=root / "settings.json"), \
+                    patch("qt_manager.allowed_paks", return_value={}), \
+                    patch("qt_manager.state_status",
+                          return_value=SwapStatus("missing", "Not prepared")), \
+                    patch("qt_manager.save_settings", return_value=None), \
+                    patch("qt_workspace_editor.QtWorkspaceEditor", TestEditor):
                 manager = QtManager()
-                manager.projects_path = str(root/'Projects')
                 editor = None
                 try:
-                    # Use a minimal mocked editor to exercise manager reuse
-                    # separately from PAK-manifest-specific editor initialization.
-                    with patch.object(QtWorkspaceEditor, '_read_records', return_value={}):
-                        editor = manager._open_project_workspace(workspace)
-                        first_timer = editor.recovery_timer
-                        self.assertTrue(isValid(first_timer))
-                        editor.close()
-                        app.processEvents()
-                        self.assertFalse(first_timer.isActive())
-                        reopened = manager._open_project_workspace(workspace)
-                        self.assertIs(reopened, editor)
-                        self.assertTrue(isValid(reopened.recovery_timer))
-                        self.assertTrue(reopened.recovery_timer.isActive())
-                        self.assertEqual(len([x for x in manager.editors if x is editor]), 1)
+                    editor = manager._open_project_workspace(workspace)
+                    first_timer = editor.recovery_timer
+                    self.assertTrue(isValid(first_timer))
+                    editor.close()
+                    app.processEvents()
+                    self.assertFalse(first_timer.isActive())
+                    reopened = manager._open_project_workspace(workspace)
+                    self.assertIs(reopened, editor)
+                    self.assertTrue(isValid(reopened.recovery_timer))
+                    self.assertTrue(reopened.recovery_timer.isActive())
+                    self.assertEqual(sum(x is editor for x in manager.editors), 1)
                 finally:
                     if editor is not None:
                         editor.close()
