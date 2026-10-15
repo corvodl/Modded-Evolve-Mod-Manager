@@ -7,7 +7,7 @@ import argparse
 import hashlib
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 import json
 import re
 from types import SimpleNamespace
@@ -144,6 +144,12 @@ def _asset_index(batch, data):
 
 def _candidates(ref):
     """CryEngine .tif material references generally point to cooked DDS assets."""
+    # Companions created by skin_companion_path are pathlib objects, not
+    # strings. Preserve their virtual path semantics on Windows.
+    if isinstance(ref, PurePath):
+        ref = ref.as_posix()
+    if not isinstance(ref, str):
+        raise ValueError('Expected a virtual asset path.')
     rel = normalized_name(ref.strip().replace('\\', '/'))
     opts=[rel]
     if rel.casefold().endswith('.tif'):
@@ -163,7 +169,7 @@ def _content_fingerprint(path):
     return (path.stat().st_size, result.digest())
 
 
-def _resolve(index, ref, *, preferred_workspace=None):
+def _resolve(index, ref, *, preferred_workspace=None, build_id=None):
     """Resolve a virtual asset without conflating copies with real conflicts.
 
     The model's own workspace has an explicit, verifiable association with
@@ -178,12 +184,26 @@ def _resolve(index, ref, *, preferred_workspace=None):
     preferred = Path(preferred_workspace).resolve() if preferred_workspace is not None else None
     for name in candidates:
         hits = index.get(name.casefold(), [])
+        if build_id is not None:
+            if build_id == 'all':
+                raise ValueError('All Builds is an inventory filter, not a dependency context.')
+            hits = [hit for hit in hits if hit.get('build_id') == build_id]
         if not hits:
             continue
+        # Explicit extracted projects take precedence over background shared
+        # archives; only materialize an asset from shared PAKs when otherwise
+        # unavailable. Never decrypt every archive during startup.
+        concrete = [hit for hit in hits if "_shared_archive" not in hit]
+        if concrete:
+            hits = concrete
+        else:
+            from shared_pak_cache import materialize_shared_record
+            hits = [materialize_shared_record(hit) for hit in hits]
         # The project currently being edited is a stronger association than
         # duplicate material paths in older batch projects.
         if preferred is not None:
-            local = [hit for hit in hits if Path(hit['workspace']).resolve() == preferred]
+            local = [hit for hit in hits if hit.get('workspace') is not None
+                     and Path(hit['workspace']).resolve() == preferred]
             if len(local) == 1:
                 return local, 'found'
         # The same workspace may occur twice in the discovery catalog.
@@ -199,6 +219,74 @@ def _resolve(index, ref, *, preferred_workspace=None):
             return unique, 'ambiguous'
         return unique, 'ambiguous'
     return [], 'missing'
+
+def resolve_material_texture(index, reference, material_relative, *, preferred_workspace=None, build_id=None):
+    """Resolve the material's real game path before considering global assets.
+
+    Relative texture filenames are interpreted within their owning character,
+    not resolved against an unrelated global texture with the same basename.
+    Fully qualified virtual paths (including explicitly shared textures) are
+    authoritative and retain collision checks. Never guess a different actor.
+    """
+    if isinstance(reference, PurePath):
+        reference = reference.as_posix()
+    if not isinstance(reference, str):
+        return [], 'unsafe-path'
+    virtual = reference.strip().replace('\\', '/')
+    if (not virtual or virtual.startswith('/') or ':' in virtual or
+            any(part in ('', '.', '..') for part in virtual.split('/'))):
+        return [], 'unsafe-path'
+    rooted = virtual.casefold().startswith(
+        ('characters/', 'objects/', 'materials/', 'textures/', 'levels/', 'libs/'))
+    if rooted and not virtual.casefold().startswith('textures/'):
+        return _resolve(index, virtual, preferred_workspace=preferred_workspace, build_id=build_id)
+
+    parent_parts = Path(material_relative).parent.parts
+    character_scope = (len(parent_parts) >= 3
+                       and parent_parts[0].casefold() == 'characters'
+                       and parent_parts[1].casefold() in
+                       ('hunters', 'monsters', 'creatures'))
+    minimum = 3 if character_scope else 1
+    for count in range(len(parent_parts), minimum - 1, -1):
+        parent = '/'.join(parent_parts[:count])
+        candidates = [parent + '/' + virtual]
+        # A typical material lives inside the character's materials/
+        # directory while its .dds.0 is in its sibling textures/ directory.
+        if virtual.casefold().startswith('textures/'):
+            candidates.append(parent + '/' + virtual)
+        elif '/' not in virtual:
+            candidates.append(parent + '/textures/' + virtual)
+        for candidate in dict.fromkeys(candidates):
+            hits, state = _resolve(index, candidate,
+                                   preferred_workspace=preferred_workspace, build_id=build_id)
+            if state != 'missing':
+                return hits, state
+    if character_scope:
+        # Many Evolve hunter/monster materials refer to textures cooked into
+        # their category-wide SHARED TS PAK. Use only the correct category's
+        # exact virtual path, never a basename from another playable actor.
+        category = '/'.join(parent_parts[:2])
+        shared = None
+        if virtual.casefold().startswith('shared/'):
+            shared = category + '/' + virtual
+        elif virtual.casefold().startswith('textures/'):
+            shared = category + '/shared/' + virtual
+        elif '/' not in virtual:
+            shared = category + '/shared/textures/' + virtual
+        if shared:
+            hits, state = _resolve(index, shared,
+                                   preferred_workspace=preferred_workspace, build_id=build_id)
+            if state != 'missing':
+                return hits, state
+        # CryEngine materials can also explicitly address a genuine global
+        # virtual textures/ path. It is safe to honor that exact path AFTER
+        # character-local and category-shared candidates have been checked.
+        if virtual.casefold().startswith('textures/'):
+            return _resolve(index, virtual,
+                            preferred_workspace=preferred_workspace, build_id=build_id)
+        return [], 'missing'
+    return _resolve(index, virtual, preferred_workspace=preferred_workspace, build_id=build_id)
+
 
 MAX_DISCOVERY_PROJECTS = 200
 MAX_DISCOVERY_WORKSPACES = 256
@@ -290,6 +378,11 @@ def project_asset_index(workspace, projects_root, stage_root):
             catalog[rel.casefold()].append({'archive': Path(data['source_pak']).name,
                                              'workspace': other.resolve(),
                                              'relative': rel, 'file': path})
+    # Merge metadata from known shared archives only after the asynchronous
+    # signed-directory scan finishes. This does not eagerly unpack PAK data.
+    from shared_pak_cache import shared_asset_index
+    for key, hits in shared_asset_index(stage).items():
+        catalog[key].extend(hits)
     return catalog
 
 
@@ -299,7 +392,12 @@ def related_asset_index(workspace, projects_root=None, stage_root=None):
     if index is not None:
         return index
     collection = collection_for_workspace(workspace)
-    return _asset_index(*collection) if collection else None
+    result = _asset_index(*collection) if collection else None
+    if result is not None and stage_root:
+        from shared_pak_cache import shared_asset_index
+        for key, hits in shared_asset_index(stage_root).items():
+            result[key].extend(hits)
+    return result
 
 
 def locate_related_asset(workspace, virtual_path, projects_root=None, stage_root=None):
@@ -308,7 +406,7 @@ def locate_related_asset(workspace, virtual_path, projects_root=None, stage_root
         return None
     hits, status = _resolve(index, virtual_path, preferred_workspace=workspace)
     if status == 'ambiguous':
-        raise ValueError('Companion asset is ambiguous across extracted PAKs: ' + virtual_path)
+        raise ValueError('Companion asset is ambiguous across extracted PAKs: ' + str(virtual_path))
     return hits[0]['file'] if status == 'found' else None
 
 
@@ -328,7 +426,7 @@ def locate_batch_asset(workspace, virtual_path):
     return hits[0]['file'] if state == 'found' else None
 
 
-def model_material_links(workspace, model_relative, projects_root=None, stage_root=None):
+def model_material_links(workspace, model_relative, projects_root=None, stage_root=None, *, index=None):
     """Locate material texture references across a batch, WITHOUT applying shaders.
 
     Results are for the UI and manual selection only. Ambiguous paths are never
@@ -337,7 +435,15 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
     from xml.etree import ElementTree as ET
     workspace = Path(workspace).resolve()
     normalized_name(model_relative)
-    index = related_asset_index(workspace, projects_root, stage_root)
+    if index is None:
+        # An imported PAK has asset-library.json rather than an editable
+        # workspace manifest. Pull the complete verified Asset Library index
+        # so diagnostics agree with the GPU viewer.
+        if (workspace / 'asset-library.json').is_file():
+            from material_preview import _workspace_index
+            index = _workspace_index(workspace, projects_root, stage_root)
+        else:
+            index = related_asset_index(workspace, projects_root, stage_root)
     has_links = index is not None
     if index is None:
         index = defaultdict(list)
@@ -347,28 +453,29 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
             if candidate.is_relative_to((workspace/'files').resolve()) and candidate.is_file():
                 index[rel.casefold()].append({'archive': '(current PAK)', 'workspace': workspace,
                                              'relative': rel, 'file': candidate})
-    stem=Path(model_relative).with_suffix('').as_posix()
-    if stem.endswith('m') and Path(model_relative).suffix.lower() in ('.skinm','.chrm','.cgfm','.cgam'):
-        pass  # suffix removal already handled by Path.with_suffix
-    bases = [stem]
-    # LOD model files often use the base model's material.
-    clean = re.sub(r'_lod\d+$', '', stem, flags=re.IGNORECASE)
-    if clean not in bases:
-        bases.append(clean)
-    possible=[]
-    for base in bases:
-        possible.append(base+'.mtl')
-    material=None; state='missing'
-    for path in possible:
-        hits,state=_resolve(index,path, preferred_workspace=workspace)
-        if state == 'found':
-            material=hits[0]
-            break
-        if state=='ambiguous':
-            return {'material':path,'status':'ambiguous','textures':[], 'collection':has_links,
-                    'candidates':[{'archive':h['archive'], 'workspace':str(h['workspace'])} for h in hits]}
+    from model_material_resolve import (
+        AmbiguousMaterialError, find_model_material, nearby_model_materials)
+    try:
+        material, basis, checked = find_model_material(
+            index, model_relative, preferred_workspace=workspace)
+    except AmbiguousMaterialError as exc:
+        hits, _ = _resolve(index, exc.virtual, preferred_workspace=workspace)
+        return {
+            'material': exc.virtual, 'status': 'ambiguous', 'textures': [],
+            'collection': has_links,
+            'candidates': [{
+                'archive': hit.get('archive', 'Asset Library'),
+                'workspace': str(hit.get('workspace')),
+                'relative': hit.get('relative', exc.virtual),
+            } for hit in hits],
+        }
     if material is None:
-        return {'material':', '.join(possible), 'status':'missing', 'textures':[], 'collection':has_links}
+        return {
+            'material': ', '.join(checked[:6]),
+            'status': 'missing', 'textures': [], 'collection': has_links,
+            'basis': basis,
+            'nearby_materials': nearby_model_materials(index, model_relative),
+        }
     raw=material['file'].read_bytes()
     if len(raw)>MAX_MATERIAL_BYTES or b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
         return {'material':material['relative'],'status':'invalid-material','textures':[], 'collection':has_links}
@@ -389,12 +496,39 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
         if signature in seen:
             continue
         seen.add(signature)
-        matches,resolution = _resolve(index, ref, preferred_workspace=material['workspace'])
-        textures.append({'map':kind, 'reference':ref, 'status':resolution,
-                         'archives':[m['archive'] for m in matches],
-                         'paths':[m['relative'] for m in matches]})
-    return {'material':material['relative'],'material_archive':material['archive'],
-            'status':'found','textures':textures,'collection':has_links}
+        matches,resolution = resolve_material_texture(
+            index, ref, material['relative'],
+            preferred_workspace=material['workspace'])
+        fragments = []
+        for match in matches:
+            virtual = match.get('relative', '')
+            if not virtual.casefold().endswith('.dds.0'):
+                continue
+            prefix = virtual[:-2]
+            # Report exact virtual fragment owners, even when .0 and higher
+            # mip levels live in different imported PAK directories.
+            for i in range(64):
+                entry = prefix + '.' + str(i)
+                hits, status = _resolve(
+                    index, entry, preferred_workspace=material.get('workspace'))
+                if status != 'found':
+                    if i > 0:
+                        break
+                    continue
+                for hit in hits:
+                    fragments.append({
+                        'part': i, 'archive': hit.get('archive', 'Workspace'),
+                        'virtual': entry, 'physical': str(hit['file']),
+                    })
+        textures.append({
+            'map':kind, 'reference':ref, 'status':resolution,
+            'archives':[m.get('archive', 'Workspace') for m in matches],
+            'paths':[m.get('relative', '') for m in matches],
+            'physical_paths':[str(m['file']) for m in matches],
+            'stream_parts': fragments,
+        })
+    return {'material':material['relative'],'material_archive':material.get('archive', 'Asset Library'),
+            'status':'found','basis':basis,'textures':textures,'collection':has_links}
 
 
 def main():

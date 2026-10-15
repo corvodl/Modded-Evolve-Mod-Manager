@@ -32,3 +32,29 @@ def workspace_for_archive(stage, relative, current_workspace='', batch_workspace
         if workspace_matches(candidate,pak):
             return Path(candidate).resolve()
     return None
+
+
+def editor_collection_for_workspace(workspace, collection):
+    """Only expose batch PAK selectors belonging to the active editor.
+
+    The manager retains the last extracted batch when users create a new
+    standalone project. Showing that old batch in the new editor incorrectly
+    presents its first PAK as if it were the current project.
+    """
+    if not workspace or not collection:
+        return {}
+    try:
+        active = Path(workspace).resolve(strict=True)
+    except (OSError, ValueError):
+        return {}
+    result = {}
+    for archive, path in collection.items():
+        try:
+            resolved = Path(path).resolve(strict=True)
+        except (OSError, ValueError):
+            continue
+        if resolved.is_dir():
+            result[archive] = resolved
+    if active not in result.values():
+        return {}
+    return result

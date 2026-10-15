@@ -1,0 +1,91 @@
+name: Verify Scaleform GFX preview and rendered PNG
+on:
+  pull_request:
+    branches: [beta]
+    paths:
+      - 'source/gfx_preview_backend.py'
+      - 'source/gfx_external_bitmap_render.py'
+      - 'source/gfx_layout_backend.py'
+      - 'source/gfx_root_layer_preview.py'
+      - 'source/test_gfx_root_layer_preview.py'
+      - 'source/qt_gfx_layout_editor.py'
+      - 'source/test_gfx_layout_backend.py'
+      - 'source/test_gfx_external_bitmap_render.py'
+      - 'source/gfx_ui_dependencies.py'
+      - 'source/gfx_placement_diagnostics.py'
+      - 'source/test_gfx_placement_diagnostics.py'
+      - 'source/test_gfx_ui_dependencies.py'
+      - 'source/gfx_synthetic_fixtures.py'
+      - 'source/qt_gfx_preview.py'
+      - 'source/qt_workspace_editor.py'
+      - 'source/qt_asset_preview.py'
+      - 'source/asset_library_preview.py'
+      - 'source/test_gfx_preview.py'
+      - 'source/gfx_edit_backend.py'
+      - 'source/gfx_featured_promo.py'
+      - 'source/test_gfx_featured_promo.py'
+      - 'source/qt_gfx_editor.py'
+      - 'source/test_gfx_edit_backend.py'
+      - 'source/test_qt_gfx_editor.py'
+      - 'source/test_gfx_library_scope.py'
+      - 'source/test_qt_unified_explorer.py'
+      - 'source/test_qt_asset_preview.py'
+      - '.github/workflows/gfx-preview-validation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install bounded test dependencies
+        run: python -m pip install 'Pillow>=12,<13' 'PySide6>=6.8,<6.11' 'cryptography>=41,<48' 'numpy>=1.26,<3' 'PyOpenGL>=3.1.7,<4'
+      - name: Compile and run GFX and UI integration tests
+        shell: pwsh
+        env:
+          PYTHONPATH: ${{ github.workspace }}/source
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m compileall -q source
+          python -m unittest -v test_gfx_preview test_gfx_ui_dependencies test_gfx_placement_diagnostics test_gfx_external_bitmap_render test_gfx_layout_backend test_gfx_root_layer_preview test_qt_unified_explorer test_qt_asset_preview test_gfx_library_scope test_gfx_edit_backend test_gfx_featured_promo test_qt_gfx_editor
+  real-renderer:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install GFX editing test dependencies
+        run: python -m pip install 'Pillow>=12,<13' 'cryptography>=41,<48'
+      - name: Download exact pinned FFDec 26.3.0 ZIP and verify GitHub release SHA-256
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/jindrapetrik/jpexs-decompiler/releases/download/version26.3.0/ffdec_26.3.0.zip'
+          $zip = Join-Path $env:RUNNER_TEMP 'ffdec_26.3.0.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $digest = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -ne '35f4930eb7c380afe66f2117f90b006deac0631473ad7500bb39c78f68645ecd') {
+            throw "FFDec binary SHA-256 mismatch: $digest"
+          }
+          $dir = Join-Path $env:RUNNER_TEMP 'ffdec-extracted'
+          Expand-Archive -LiteralPath $zip -DestinationPath $dir
+          $jar = Get-ChildItem -Path $dir -Recurse -Filter ffdec.jar -File | Select-Object -First 1
+          if (-not $jar) { throw 'ffdec.jar missing from official ZIP' }
+          "EVOLVE_GFX_FFDEC=$($jar.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Render vector, transparent frame and nested sprite via real FFDec
+        shell: pwsh
+        env:
+          PYTHONPATH: ${{ github.workspace }}/source
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest -v test_gfx_preview.GfxStaticPreviewTests.test_real_ffdec_renders_red_vector_and_transparent_second_frame test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_shape_replace_produces_green_render_and_undo test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_tag_xml_roundtrip_retains_gfx_movie test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_edits_actionscript_and_recompiles_gfx test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_bitmap_replacement_exports_new_blue_image test_gfx_external_bitmap_render.ExternalBitmapRenderTests.test_real_ffdec_respects_original_bitmap_fill_and_translated_position test_gfx_root_layer_preview.RootLayerIsolationTests.test_real_ffdec_hiding_red_shape_yields_transparent_frame

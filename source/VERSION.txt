@@ -1,1 +1,1 @@
-1.1.17.1 - Windows Installer and Release Channels
+1.2.0 - Stable Release

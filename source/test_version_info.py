@@ -16,17 +16,30 @@ class VersionManifestTests(unittest.TestCase):
             path.write_text('bad', encoding='utf-8')
             self.assertEqual(app_version(path), 'Development build')
         self.assertEqual(app_version(Path(folder) / 'missing'), 'Development build')
-        (Path(folder)/'VERSION.txt').write_text('1.1.18-beta.1 - Preview')
-        self.assertEqual(app_version(Path(folder)/'VERSION.txt'), 'v1.1.18-beta.1')
+        with TemporaryDirectory() as beta_folder:
+            path = Path(beta_folder) / 'VERSION.txt'
+            path.write_text('1.1.18-beta.1 - Preview')
+            self.assertEqual(app_version(path), 'v1.1.18-beta.1')
 
-    def test_public_notes_are_brief_current_and_shared_with_readme(self):
+    def test_stable_12_notes_are_consolidated_and_hide_beta_history(self):
         from release_notes import RELEASE_NOTES, markdown
+        self.assertEqual(('1.2.0',), tuple(v for v, _ in RELEASE_NOTES[:1]))
         self.assertEqual('v' + RELEASE_NOTES[0][0], app_version())
         for version, notes in RELEASE_NOTES:
-            self.assertTrue(1 <= len(notes) <= 3, version)
-            self.assertTrue(all(len(note) <= 120 for note in notes), version)
+            self.assertTrue(1 <= len(notes) <= (12 if version == '1.2.0' else 3), version)
+            self.assertTrue(all(len(note) <= 185 for note in notes), version)
+            self.assertNotIn('-beta.', version)
         root = Path(__file__).resolve().parent.parent
-        self.assertIn(markdown().strip(), (root/'README.md').read_text('utf-8'))
+        readme = (root/'README.md').read_text('utf-8')
+        version, notes = RELEASE_NOTES[0]
+        self.assertIn('## Latest Stable — v' + version, readme)
+        section = readme.split('## Latest Stable — v' + version, 1)[1].split(
+            '## Download and install', 1)[0]
+        for note in notes:
+            self.assertIn('- ' + note, section)
+        self.assertNotIn('## Latest Beta', readme)
+        self.assertNotIn('1.1.18-beta.', readme)
+        self.assertNotIn('1.1.18-beta.', markdown())
         public = markdown() + (root/'source'/'VERSION.txt').read_text('utf-8')
         self.assertNotIn('developer', public.lower())
         self.assertNotIn('access code', public.lower())

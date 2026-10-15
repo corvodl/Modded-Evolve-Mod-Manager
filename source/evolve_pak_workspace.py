@@ -89,6 +89,9 @@ def cmd_extract(args):
     source_hash_at_start = sha_file(src)
     info,_,_,signed_name=extract_plain_cdr(src,pub)
     if not info['entries']:raise ValueError('Empty PAK')
+    from operation_progress import progress_line
+    total_entries = len(info['entries'])
+    print(progress_line(src.name, 0, total_entries), flush=True)
     records=[]; selected=0; other=0
     # Export may fail on a single malformed/unsupported CryXMLB entry.
     # Never clean up the partial workspace automatically: it may contain
@@ -102,6 +105,8 @@ def cmd_extract(args):
     try:
         seen=set()
         for idx,(name,meta) in enumerate(info['entries'].items(),1):
+            if idx == 1 or idx % 25 == 0 or idx == total_entries:
+                print(progress_line(src.name, idx, total_entries), flush=True)
             rel=normalized_name(name)
             if rel.casefold() in seen:raise ValueError(f'Case-insensitive duplicate archive path: {rel}')
             seen.add(rel.casefold())
@@ -198,6 +203,9 @@ def pack_changed_entry(plain, entry, keys, name, cdr_fields, local_offset):
 
 def cmd_build(args):
     wdir=args.workspace.resolve();data=load_workspace(wdir)
+    if data.get('reference_only'):
+        raise ValueError('Library-derived level copies cannot be signed directly; '
+                         'create a verified staged editing project first.')
     src=args.pak.resolve() if args.pak else Path(data['source_pak']).resolve()
     pub=args.public_key.resolve();priv=args.private_key.resolve();out=args.out.resolve()
     if not src.is_file():raise FileNotFoundError(f'Missing PAK source: {src}')

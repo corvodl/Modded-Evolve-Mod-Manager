@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $build = Join-Path $root ".build/app-dist/EvolveModManager"
-foreach ($name in @("EvolveModManager.exe","EvolveModWorker.exe","BUILD_COMMIT.txt","BUILD_CHANNEL.txt","_internal")) {
+foreach ($name in @("EvolveModManager.exe","EvolveModWorker.exe","BUILD_COMMIT.txt","BUILD_CHANNEL.txt","BUILD_REVISION.txt","_internal")) {
   if (-not (Test-Path -LiteralPath (Join-Path $build $name))) {
     throw "Windows application has not been built: $name"
   }
@@ -14,7 +14,7 @@ foreach ($name in @("EvolveModManager.exe","EvolveModWorker.exe","BUILD_COMMIT.t
 # folder in this build directory. It is deliberately *never* an installer source.
 # Inspect only whitelisted application resources, not the user's Data folder.
 $allowed = @("EvolveModManager.exe","EvolveModWorker.exe","_internal",
-             "Docs","START-HERE.txt","BUILD_COMMIT.txt","BUILD_CHANNEL.txt")
+             "Docs","START-HERE.txt","BUILD_COMMIT.txt","BUILD_CHANNEL.txt","BUILD_REVISION.txt")
 foreach ($file in @(Get-ChildItem -LiteralPath $build -Force)) {
   if ($file.Name -notin ($allowed + @("Data"))) {
     throw "Unexpected file at application build root: $($file.Name)"

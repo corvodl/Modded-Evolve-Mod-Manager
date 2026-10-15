@@ -10,14 +10,109 @@ import json
 from pathlib import Path
 import numpy as np
 
-from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess, QObject, Signal, QRunnable, QThreadPool
-from PySide6.QtGui import QSurfaceFormat
+from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QProcess, QObject, Signal, QRunnable, QThreadPool, QEvent, QSize, QPoint
+from PySide6.QtGui import QSurfaceFormat, QIcon, QPixmap, QPainter, QPen, QColor, QPolygon
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
-    QComboBox, QFileDialog, QMessageBox, QSlider)
+    QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup, QLineEdit, QLayout, QListWidget, QListWidgetItem, QAbstractItemView, QPlainTextEdit, QProgressBar)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
+
+
+from qt_navigation_icons import navigation_icon
+
+
+def _viewport_tool_icon(kind):
+    """Use the same offline pictograms as explorer and GFX controls."""
+    mapping = {
+        "View": "view", "Materials": "material", "Animation": "animation",
+        "Grid": "grid", "Wire": "wire", "Solid": "solid",
+    }
+    return navigation_icon(mapping.get(kind, kind.casefold()), size=18)
+
+
+class _CompactAnimationList(QListWidget):
+    """In-panel searchable animation list; never opens a screen-sized popup.
+
+    The tiny ComboBox-compatible API keeps existing catalog/filter callers
+    and tests usable while real Qt widgets display only six scrollable rows.
+    """
+    currentIndexChanged = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName('referencedNativeAnimations')
+        self.setMinimumHeight(112)
+        self.setMaximumHeight(152)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setSpacing(2)
+        self.setStyleSheet(
+            'QListWidget#referencedNativeAnimations {background:#22242b;'
+            'border:1px solid #3b3e4b;border-radius:8px;padding:4px;}'
+            'QListWidget#referencedNativeAnimations::item {color:#e5e6ed;'
+            'padding:6px 8px;border-radius:5px;}'
+            'QListWidget#referencedNativeAnimations::item:selected {'
+            'background:#433b64;color:#fff;}'
+            'QListWidget#referencedNativeAnimations::item:hover {background:#343340;}')
+        self.setTextElideMode(Qt.ElideMiddle)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.currentRowChanged.connect(self.currentIndexChanged.emit)
+
+    def addItem(self, title, data=None):
+        item = QListWidgetItem(str(title))
+        item.setData(Qt.UserRole, data)
+        super().addItem(item)
+
+    def currentData(self):
+        item = self.currentItem()
+        return item.data(Qt.UserRole) if item else None
+
+    def itemData(self, index, role=Qt.UserRole):
+        item = self.item(index)
+        return item.data(role) if item else None
+
+    def setItemData(self, index, value, role=Qt.UserRole):
+        item = self.item(index)
+        if item:
+            item.setData(role, value)
+
+    def itemText(self, index):
+        item = self.item(index)
+        return item.text() if item else ''
+
+    def currentIndex(self):
+        return self.currentRow()
+
+    def setCurrentIndex(self, index):
+        # QListWidget inherits QAbstractItemView.setCurrentIndex(QModelIndex).
+        # Qt may invoke that native slot while the mouse moves selection;
+        # retain its QModelIndex contract as well as the old combo int API.
+        from PySide6.QtCore import QModelIndex
+        if isinstance(index, QModelIndex):
+            return super().setCurrentIndex(index)
+        self.setCurrentRow(int(index))
+
+
+class _CompactDiagnosticText(QPlainTextEdit):
+    """Bounded, scrollable information with wrap-anywhere game paths."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        self.setMaximumHeight(90)
+        self.setMinimumHeight(60)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setObjectName('nativeAnimationDetail')
+        self.setToolTip('Scroll within the details to see full paths and errors.')
+
+    def setText(self, value):
+        self.setPlainText(str(value))
+
+    def text(self):
+        return self.toPlainText()
 
 
 class _NativeResult(QObject):
@@ -57,23 +152,32 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.shading = 'faceted'
         self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
         self.materials = materials
+        # Character assembled parts can use CryEngine alpha semantics that
+        # are not reproduced by the preview. Solid diagnostic rendering keeps
+        # all decoded geometry visible while missing materials are resolved.
+        self.force_opaque_preview = False
         self.textures = []
         self.normal_textures = []
         self.specular_textures = []
         self.translucent_slots = set()
         self._batch_sort_cache = None
         self.enhanced_materials = True
+        self.unlit_diffuse = False
         self._renderer3 = None
         self.rotation = [-30.0, 14.0]
         self.zoom = 1.0
         self.pan = [0., 0.]
+        self.navigation_mode = 'orbit'
+        self.grid_visible = True
+        self._grid_floor = min((vertex[2] for vertex in mesh.vertices), default=0.0)
         self.wireframe = False
         self.textured = True
         self._last = None
         self.gl_error = None
         self.gpu_upload_ms = None
         self.light_strength = 1.0
-        self.background_mode = 'Dark'
+        self.studio_fill = 0.35
+        self.background_mode = 'Studio Grey'
         self.visible_material_slot = None
         self.projection_mode = 'Orthographic'
         self.specular_intensity = 0.35
@@ -86,8 +190,10 @@ class QtGLModelCanvas(QOpenGLWidget):
         # uploaded until an unrelated OpenGL context reinitialization.
         self.mesh = mesh
         self.geometry = geometry
+        self._grid_floor = min((vertex[2] for vertex in mesh.vertices), default=0.0)
         self._batch_sort_cache = None
         self.materials = materials
+        self.force_opaque_preview = False
         if self.isValid():
             self.makeCurrent()
             try:
@@ -209,14 +315,13 @@ class QtGLModelCanvas(QOpenGLWidget):
             glGenTextures, glBindTexture, glTexImage2D, glTexParameteri,
             glPixelStorei, GL_TEXTURE_2D, GL_RGB, GL_UNSIGNED_BYTE,
             GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR,
-            GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_REPEAT,
-            GL_UNPACK_ALIGNMENT,
+            GL_LINEAR_MIPMAP_LINEAR, GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T,
+            GL_REPEAT, GL_UNPACK_ALIGNMENT, glGenerateMipmap,
         )
         if not self.materials:
             return
         from OpenGL.GL import GL_RGBA
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-        from PIL import Image as PILImage
         sources = (('textures', self.materials.textures),
                    ('normal_textures',getattr(self.materials,'normal_maps',())),
                    ('specular_textures',getattr(self.materials,'specular_maps',())))
@@ -227,17 +332,52 @@ class QtGLModelCanvas(QOpenGLWidget):
                     uploads.append(0)
                     continue
                 rgba = 'A' in im.getbands()
-                if target == 'textures' and rgba and im.getchannel('A').getextrema()[0] < 255:
+                # A diffuse texture's alpha may encode a mask unrelated to
+                # transparency. Trust the material flag, not raw alpha bytes.
+                if (target == 'textures' and rgba and self.materials and
+                        index < len(getattr(self.materials, 'alpha_modes', ())) and
+                        self.materials.alpha_modes[index] and
+                        im.getchannel('A').getextrema()[0] < 255):
                     self.translucent_slots.add(index)
                 mode = 'RGBA' if rgba else 'RGB'
-                sample = im.convert(mode).transpose(PILImage.Transpose.FLIP_TOP_BOTTOM)
+                # Pillow's first DDS row is top-left while OpenGL expects
+                # its first upload row at v=0 (bottom-left). The CPU UV preview
+                # already indexes the top row at v=0; reverse only GPU bytes.
+                from gl_texture_upload import gl_upload_pixels
+                pixels = gl_upload_pixels(im, mode)
                 format_id = GL_RGBA if rgba else GL_RGB
                 texid = int(glGenTextures(1))
                 glBindTexture(GL_TEXTURE_2D,texid)
-                glTexImage2D(GL_TEXTURE_2D,0,format_id,sample.width,sample.height,0,
-                             format_id,GL_UNSIGNED_BYTE,sample.tobytes())
-                for param in (GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER):
-                    glTexParameteri(GL_TEXTURE_2D,param,GL_LINEAR)
+                glTexImage2D(GL_TEXTURE_2D,0,format_id,im.width,im.height,0,
+                             format_id,GL_UNSIGNED_BYTE,pixels)
+                # Mipmaps and optional anisotropic filtering preserve fine
+                # detail on the oblique surfaces common in character previews.
+                # Never upscale decoded DDS images: the GPU receives the source
+                # resolution selected by the verified material resolver.
+                try:
+                    glGenerateMipmap(GL_TEXTURE_2D)
+                except Exception:
+                    # Some older OpenGL contexts lack a mipmap entry point.
+                    # Keep the model visible at its *original* image size.
+                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR)
+                else:
+                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,
+                                    GL_LINEAR_MIPMAP_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR)
+                try:
+                    from OpenGL.GL import glGetFloatv
+                    from OpenGL.GL.EXT.texture_filter_anisotropic import (
+                        GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                        GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)
+                    maximum=float(glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT))
+                    if maximum >= 2:
+                        from OpenGL.GL import glTexParameterf
+                        glTexParameterf(GL_TEXTURE_2D,
+                                        GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                                        min(maximum,8.))
+                except (ImportError,ValueError,RuntimeError):
+                    # Hardware lacking this extension still uses trilinear mipmaps.
+                    pass
                 for param in (GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T):
                     glTexParameteri(GL_TEXTURE_2D,param,GL_REPEAT)
                 uploads.append(texid)
@@ -273,6 +413,39 @@ class QtGLModelCanvas(QOpenGLWidget):
     def resizeGL(self, width, height):
         from OpenGL.GL import glViewport
         glViewport(0,0,max(1,width),max(1,height))
+
+    def _draw_reference_grid(self):
+        """Blender-like ground reference, drawn below the mesh in model space."""
+        if not self.grid_visible:
+            return
+        from OpenGL.GL import (
+            glBegin, glEnd, glVertex3f, glColor3f, glDisable, glEnable,
+            GL_LINES, GL_LIGHTING, GL_TEXTURE_2D,
+        )
+        radius = max(0.001,float(self.mesh.radius))
+        step = radius / 8.0
+        cx,cy,_ = self.mesh.center
+        floor = self._grid_floor - step * .05
+        glDisable(GL_LIGHTING)
+        glDisable(GL_TEXTURE_2D)
+        glBegin(GL_LINES)
+        for i in range(-12, 13):
+            p = i * step
+            if i == 0:
+                glColor3f(.58,.28,.31)
+            else:
+                glColor3f(.28,.28,.31)
+            glVertex3f(cx + p,cy - 12*step,floor)
+            glVertex3f(cx + p,cy + 12*step,floor)
+            if i == 0:
+                glColor3f(.32,.53,.34)
+            else:
+                glColor3f(.28,.28,.31)
+            glVertex3f(cx - 12*step,cy + p,floor)
+            glVertex3f(cx + 12*step,cy + p,floor)
+        glEnd()
+        glColor3f(1.0,1.0,1.0)
+        glEnable(GL_LIGHTING)
 
     def paintGL(self):
         from OpenGL.GL import (
@@ -317,6 +490,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         from OpenGL.GL import glScalef
         glScalef(scale,scale,scale)
         glTranslatef(-center[0],-center[1],-center[2])
+        glPolygonMode(GL_FRONT_AND_BACK,GL_FILL)
+        self._draw_reference_grid()
         glPolygonMode(GL_FRONT_AND_BACK,GL_LINE if self.wireframe else GL_FILL)
         arrays = self.geometry
         glEnableClientState(GL_VERTEX_ARRAY)
@@ -335,7 +510,12 @@ class QtGLModelCanvas(QOpenGLWidget):
             # Render translucent material groups after opaque ones. Geometry
             # in a material group still uses source ordering (no invented triangles).
             def is_translucent(slot):
+                if self.force_opaque_preview:
+                    return False
                 values=getattr(self.materials,'opacity',()) if self.materials else ()
+                cutoffs=getattr(self.materials,'alpha_cutoffs',())
+                if slot<len(cutoffs) and cutoffs[slot]>0:
+                    return False
                 return slot in self.translucent_slots or (slot<len(values) and values[slot]<.999)
             from renderer_3 import ordered_transparency_batches
             transparent_slots={slot for _,_,slot in arrays.draws if is_translucent(slot)}
@@ -348,10 +528,22 @@ class QtGLModelCanvas(QOpenGLWidget):
             else:
                 batches=self._batch_sort_cache[1]
             for first,count,slot in batches:
+                hidden = getattr(self.materials, 'hidden', ())
+                if slot < len(hidden) and hidden[slot]:
+                    continue
                 if self.visible_material_slot is not None and slot != self.visible_material_slot:
                     continue
                 alpha = (self.materials.opacity[slot] if self.materials and
                          slot<len(getattr(self.materials,'opacity',())) else 1.0)
+                if self.force_opaque_preview:
+                    alpha = 1.0
+                cutoffs = getattr(self.materials, 'alpha_cutoffs', ())
+                cutoff = cutoffs[slot] if not self.force_opaque_preview and slot < len(cutoffs) else 0.
+                from OpenGL.GL import GL_ALPHA_TEST, GL_GEQUAL, glAlphaFunc
+                if cutoff > 0:
+                    glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GEQUAL, cutoff)
+                else:
+                    glDisable(GL_ALPHA_TEST)
                 transparent = is_translucent(slot)
                 if transparent:
                     glEnable(GL_BLEND)
@@ -360,6 +552,12 @@ class QtGLModelCanvas(QOpenGLWidget):
                 else:
                     glDisable(GL_BLEND)
                     glDepthMask(True)
+                from texture_transform import transform_for, gl_matrix
+                from OpenGL.GL import glLoadMatrixf, GL_TEXTURE
+                glActiveTexture(GL_TEXTURE0)
+                glMatrixMode(GL_TEXTURE)
+                glLoadMatrixf(gl_matrix(transform_for(self.materials, slot)))
+                glMatrixMode(GL_MODELVIEW)
                 tex = self.textures[slot] if use_uv and slot < len(self.textures) else 0
                 if shader:
                     for unit,group in ((0,self.textures),(1,self.normal_textures),(2,self.specular_textures)):
@@ -367,23 +565,39 @@ class QtGLModelCanvas(QOpenGLWidget):
                         glActiveTexture(GL_TEXTURE0+unit)
                         glBindTexture(GL_TEXTURE_2D,handle)
                     glActiveTexture(GL_TEXTURE0)
-                    shader.bind(opacity=alpha,gloss=self.specular_intensity,
+                    shader.bind(opacity=alpha,gloss=self.specular_intensity, alpha_cutoff=cutoff or .02,
                                 illumination=strength,diffuse=bool(tex),
                                 normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
-                                specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]))
+                                specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
+                                alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
+                                unlit=self.unlit_diffuse,fill=self.studio_fill)
                 if tex:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D,tex)
                 else:
                     glDisable(GL_TEXTURE_2D)
-                glColor3f(0.84,0.82,0.82)
-                glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[0.81,0.8,0.82,alpha])
+                # For the legacy GL fallback an unlit view shows the actual
+                # diffuse DDS rather than applying two darkening multipliers.
+                if not shader and self.unlit_diffuse:
+                    glDisable(GL_LIGHTING)
+                elif not shader:
+                    glEnable(GL_LIGHTING)
+                glColor3f(1.0,1.0,1.0)
+                glMaterialfv(GL_FRONT_AND_BACK,GL_DIFFUSE,[1.0,1.0,1.0,alpha])
                 spec=self.specular_intensity
                 glMaterialfv(GL_FRONT_AND_BACK,GL_SPECULAR,[spec,spec,spec,1.0])
                 glMaterialf(GL_FRONT_AND_BACK,GL_SHININESS,38.0)
                 glDrawElements(GL_TRIANGLES,int(count),GL_UNSIGNED_INT,
                                arrays.indices[first:first+count])
         finally:
+            from OpenGL.GL import GL_TEXTURE, GL_ALPHA_TEST
+            glDisable(GL_ALPHA_TEST)
+            glActiveTexture(GL_TEXTURE0)
+            glMatrixMode(GL_TEXTURE)
+            glLoadIdentity()
+            glMatrixMode(GL_MODELVIEW)
+            if self.unlit_diffuse and not shader:
+                glEnable(GL_LIGHTING)
             if shader:
                 shader.unbind()
                 for unit in (2,1,0):
@@ -410,13 +624,16 @@ class QtGLModelCanvas(QOpenGLWidget):
             dx, dy = pos.x()-self._last.x(), pos.y()-self._last.y()
             if (event.buttons() & (Qt.MiddleButton | Qt.RightButton) or
                     (event.buttons() & Qt.LeftButton and
-                     event.modifiers() & Qt.ShiftModifier)):
+                     (event.modifiers() & Qt.ShiftModifier or self.navigation_mode == 'pan'))):
                 unit = 2.44 / max(1, self.height())
                 self.pan[0] += dx * unit
                 self.pan[1] -= dy * unit
             elif event.buttons() & Qt.LeftButton:
-                self.rotation[0] += dx*.55
-                self.rotation[1] = max(-89,min(89,self.rotation[1]+dy*.45))
+                if self.navigation_mode == 'zoom':
+                    self.zoom = max(.18,min(5.0,self.zoom * (1.0 - dy*.008)))
+                else:
+                    self.rotation[0] += dx*.55
+                    self.rotation[1] = max(-89,min(89,self.rotation[1]+dy*.45))
             self._last = pos
             self.update()
             event.accept()
@@ -455,23 +672,156 @@ class QtGPUModelPanel(QWidget):
         self.setObjectName('gpuModelControlPanel')
         self.setMinimumSize(300, 230)
         layout=QVBoxLayout(self)
+        layout.setContentsMargins(3,3,3,3)
+        layout.setSpacing(2)
         self._info=QLabel(mesh.source_name+'  •  '+mesh.description)
-        self._info.setWordWrap(True)
-        layout.addWidget(self._info)
+        self._info.setWordWrap(False)
+        self._info.setToolTip(mesh.source_name + '  •  ' + mesh.description)
+        self._info.setMaximumHeight(28)
+        # A viewport breadcrumb replaces the layout-consuming title row.
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        # Icon-only actions fit compact embedded GPU panes without clipping.
+        # Labels remain in Qt accessible names and hover tooltips.
+        toolbar.setSpacing(3)
+        mode_label = QLabel('Object Mode')
+        mode_label.setToolTip('Read-only CryEngine preview')
+        mode_label.hide()
+        self._overlay_buttons = {}
+        for section in ('View', 'Materials', 'Animation'):
+            button = QToolButton(self)
+            button.setObjectName('gpuOverlayButton' + section)
+            button.setText(section + ' ▾')
+            button.setIcon(_viewport_tool_icon(section))
+            button.setIconSize(QSize(17, 17))
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            button.setFixedSize(32, 32)
+            button.setAccessibleName(section + ' tools')
+            button.setToolTip('Open '+section+' tools over the 3D preview')
+            button.setCheckable(True)
+            button.clicked.connect(
+                lambda active=False, key=section: self.toggle_overlay(key, active))
+            toolbar.addWidget(button)
+            self._overlay_buttons[section] = button
+        toolbar.addStretch(1)
+        self._grid_toggle = QToolButton(self)
+        self._grid_toggle.setText('Grid')
+        self._grid_toggle.setIcon(_viewport_tool_icon('Grid'))
+        self._grid_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._grid_toggle.setCheckable(True)
+        self._grid_toggle.setChecked(True)
+        self._grid_toggle.toggled.connect(lambda state: (setattr(self.canvas,'grid_visible', state),self.canvas.update()))
+        self._grid_toggle.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._grid_toggle.setIconSize(QSize(18, 18))
+        self._grid_toggle.setFixedSize(32, 32)
+        self._grid_toggle.setAccessibleName(self._grid_toggle.text())
+        toolbar.addWidget(self._grid_toggle)
+        self._shading_group = QButtonGroup(self)
+        self._shading_group.setExclusive(True)
+        self._solid_shading = QToolButton(self)
+        self._solid_shading.setText('Solid')
+        self._solid_shading.setIcon(_viewport_tool_icon('Solid'))
+        self._solid_shading.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._solid_shading.setToolTip('Preview without texture colors')
+        self._solid_shading.setCheckable(True)
+        self._shading_group.addButton(self._solid_shading)
+        self._solid_shading.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._solid_shading.setIconSize(QSize(18, 18))
+        self._solid_shading.setFixedSize(32, 32)
+        self._solid_shading.setAccessibleName(self._solid_shading.text())
+        toolbar.addWidget(self._solid_shading)
+        self._material_shading = QToolButton(self)
+        self._material_shading.setText('Material')
+        self._material_shading.setIcon(_viewport_tool_icon('Materials'))
+        self._material_shading.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._material_shading.setToolTip('Preview with textures and CryEngine material approximation')
+        self._material_shading.setCheckable(True)
+        self._material_shading.setChecked(True)
+        self._shading_group.addButton(self._material_shading)
+        self._material_shading.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._material_shading.setIconSize(QSize(18, 18))
+        self._material_shading.setFixedSize(32, 32)
+        self._material_shading.setAccessibleName(self._material_shading.text())
+        toolbar.addWidget(self._material_shading)
+        self._wire_toggle = QToolButton(self)
+        self._wire_toggle.setText('Wire')
+        self._wire_toggle.setIcon(_viewport_tool_icon('Wire'))
+        self._wire_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._wire_toggle.setCheckable(True)
+        self._wire_toggle.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._wire_toggle.setIconSize(QSize(18, 18))
+        self._wire_toggle.setFixedSize(32, 32)
+        self._wire_toggle.setAccessibleName(self._wire_toggle.text())
+        toolbar.addWidget(self._wire_toggle)
+        self._play_shortcut = QToolButton(self)
+        self._play_shortcut.setText('Play')
+        self._play_shortcut.setToolTip('Play / pause current animation')
+        self._play_shortcut.setIcon(navigation_icon('play', size=18))
+        self._play_shortcut.setIconSize(QSize(18, 18))
+        self._play_shortcut.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._play_shortcut.setAccessibleName('Play or pause animation')
+        self._play_shortcut.setFixedSize(32, 32)
+        self._play_shortcut.clicked.connect(self.toggle_play)
+        layout.addLayout(toolbar)
         self.canvas=QtGLModelCanvas(mesh,materials,self,prepared_geometry=prepared_geometry)
         self.canvas.setObjectName('embeddedGpuCanvas')
         layout.addWidget(self.canvas,1)
+        self._info.setParent(self.canvas)
+        self._info.setObjectName('viewportBreadcrumb')
+        self._info.setText('User Perspective  •  '+mesh.source_name)
+        self._info.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._info.setStyleSheet('QLabel#viewportBreadcrumb { background: rgba(22,22,26,165); color: #f0edf2; padding: 4px 7px; border-radius: 4px; }')
+        self._info.show()
+        self._overlay = QScrollArea(self.canvas)
+        self._overlay.setObjectName('modelOverlayControls')
+        self._overlay.setWidgetResizable(True)
+        self._overlay.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._overlay.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._overlay.setToolTip('Scroll inside the popover to reach more tools.')
+        self._overlay.setStyleSheet(
+            '#modelOverlayControls { background: #1b1b21; border: 1px solid #45414a; '
+            'border-radius: 9px; }'
+            'QWidget#modelOverlayContent { background: #1b1b21; }')
+        self._overlay_content = QWidget()
+        self._overlay_content.setObjectName('modelOverlayContent')
+        self._overlay_body = QVBoxLayout(self._overlay_content)
+        # Qt must recompute scrollable content height after expanding a
+        # disclosure. Otherwise QScrollArea compresses or clips lower rows.
+        self._overlay_body.setSizeConstraint(QLayout.SetMinAndMaxSize)
+        self._overlay_body.setContentsMargins(9, 8, 9, 8)
+        self._overlay.setWidget(self._overlay_content)
+        self._overlay_sections = {}
+        self._active_overlay = None
+        for section in ('View', 'Materials', 'Animation'):
+            page = QWidget(self._overlay_content)
+            part = QVBoxLayout(page)
+            part.setSizeConstraint(QLayout.SetMinAndMaxSize)
+            part.setContentsMargins(0, 0, 0, 0)
+            part.setSpacing(7)
+            self._overlay_body.addWidget(page)
+            self._overlay_sections[section] = (page, part)
+            page.setVisible(False)
+        self._overlay.hide()
+        self.canvas.installEventFilter(self)
+        self._create_viewport_navigation()
         options = QWidget(self)
-        line=QHBoxLayout(options)
-        line.setContentsMargins(0, 0, 0, 0)
+        options_box = QVBoxLayout(options)
+        options_box.setContentsMargins(0,0,0,0)
+        line=QHBoxLayout()
+        options_box.addLayout(line)
         wire=QCheckBox('Wireframe')
         self.wire_checkbox = wire
         wire.toggled.connect(lambda value:(setattr(self.canvas,'wireframe',value),self.canvas.update()))
+        wire.toggled.connect(self._wire_toggle.setChecked)
+        self._wire_toggle.toggled.connect(wire.setChecked)
         line.addWidget(wire)
         textured=QCheckBox('Textures')
         self.texture_checkbox = textured
         textured.setChecked(True)
         textured.toggled.connect(lambda value:(setattr(self.canvas,'textured',value),self.canvas.update()))
+        textured.toggled.connect(lambda value: self._material_shading.setChecked(value) if value else self._solid_shading.setChecked(True))
+        self._solid_shading.clicked.connect(lambda: textured.setChecked(False))
+        self._material_shading.clicked.connect(lambda: textured.setChecked(True))
         line.addWidget(textured)
         line.addWidget(QLabel('Shading'))
         shading = QComboBox()
@@ -480,18 +830,20 @@ class QtGPUModelPanel(QWidget):
         shading.currentIndexChanged.connect(
             lambda i: self.canvas.set_shading('Smooth' if i else 'Faceted'))
         line.addWidget(shading)
-        line.addWidget(QLabel('Quality'))
+        line.addStretch()
+        detail_line = QHBoxLayout()
+        options_box.addLayout(detail_line)
+        detail_line.addWidget(QLabel('Quality'))
         quality=QComboBox()
         self.quality_combo = quality
         quality.addItems(('Performance','High'))
         quality.currentTextChanged.connect(self.canvas.set_quality)
-        line.addWidget(quality)
+        detail_line.addWidget(quality)
         reset=QPushButton('Reset Camera')
         reset.clicked.connect(self.reset_view)
-        line.addWidget(reset)
-        line.addStretch()
-        layout.addWidget(options)
-        options.setVisible(not compact)
+        detail_line.addWidget(reset)
+        detail_line.addStretch()
+        self._overlay_sections['View'][1].addWidget(options)
         # Short, always-visible controls also work in the embedded viewer.
         studio = QHBoxLayout()
         enhanced=QCheckBox('Renderer 3.0')
@@ -512,15 +864,20 @@ class QtGPUModelPanel(QWidget):
         self.lighting_slider.setMaximumWidth(125)
         self.lighting_slider.valueChanged.connect(self.canvas.set_light_strength)
         studio.addWidget(self.lighting_slider)
+        studio.addStretch()
+        studio_detail = QHBoxLayout()
         self.background_combo = QComboBox()
         self.background_combo.addItems(('Dark','Studio Grey'))
+        self.background_combo.setCurrentText('Studio Grey')
         self.background_combo.currentTextChanged.connect(self.canvas.set_background)
-        studio.addWidget(self.background_combo)
+        studio_detail.addWidget(QLabel('Background'))
+        studio_detail.addWidget(self.background_combo)
         save_view = QPushButton('Save View…')
         save_view.clicked.connect(self.save_viewport)
-        studio.addWidget(save_view)
-        studio.addStretch()
-        layout.addLayout(studio)
+        studio_detail.addWidget(save_view)
+        studio_detail.addStretch()
+        self._overlay_sections['View'][1].addLayout(studio)
+        self._overlay_sections['View'][1].addLayout(studio_detail)
         inspector=QHBoxLayout()
         inspector.addWidget(QLabel('Mesh materials'))
         self.part_select=QComboBox()
@@ -531,32 +888,248 @@ class QtGPUModelPanel(QWidget):
         uvbutton=QPushButton('Show UV Layout…')
         uvbutton.clicked.connect(self.show_uv_layout)
         inspector.addWidget(uvbutton)
-        inspector.addWidget(QLabel('Projection'))
+        inspector_secondary = QHBoxLayout()
+        inspector_secondary.addWidget(QLabel('Projection'))
         self.projection_select=QComboBox()
         self.projection_select.addItems(('Orthographic','Perspective'))
         self.projection_select.currentTextChanged.connect(self.canvas.set_projection)
-        inspector.addWidget(self.projection_select)
-        inspector.addWidget(QLabel('Gloss'))
+        inspector_secondary.addWidget(self.projection_select)
+        inspector_secondary.addWidget(QLabel('Gloss'))
         self.gloss_slider=QSlider(Qt.Horizontal)
         self.gloss_slider.setRange(0,100)
         self.gloss_slider.setValue(35)
         self.gloss_slider.setMaximumWidth(95)
         self.gloss_slider.valueChanged.connect(self.canvas.set_specular)
-        inspector.addWidget(self.gloss_slider)
-        layout.addLayout(inspector)
+        inspector_secondary.addWidget(self.gloss_slider)
+        inspector_secondary.addStretch()
+        self._overlay_sections['Materials'][1].addLayout(inspector)
+        self._overlay_sections['Materials'][1].addLayout(inspector_secondary)
+        self.solid_geometry = QCheckBox('Show all character geometry (ignore alpha)')
+        self.solid_geometry.setToolTip('Diagnostic view: shows every decoded part even if a CryEngine material uses unsupported transparency. Does not create absent mesh parts.')
+        self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
+        self.solid_geometry.toggled.connect(lambda checked: (setattr(self.canvas, 'force_opaque_preview', checked), self.canvas.update()))
+        self._overlay_sections['Materials'][1].addWidget(self.solid_geometry)
+        self.unlit_diffuse_checkbox=QCheckBox('Unlit diffuse (inspect dark textures)')
+        self.unlit_diffuse_checkbox.setObjectName('modelUnlitDiffuseDiagnostic')
+        self.unlit_diffuse_checkbox.setToolTip(
+            'Show the original diffuse texture pixels without lighting, normal maps, '
+            'or specular shading. A black surface here may have a genuinely dark '
+            'DDS or an unresolved material slot.')
+        self.unlit_diffuse_checkbox.toggled.connect(
+            lambda checked:(setattr(self.canvas,'unlit_diffuse',checked),
+                            self.canvas.update()))
+        self._overlay_sections['Materials'][1].addWidget(self.unlit_diffuse_checkbox)
+        ambient_row = QHBoxLayout()
+        ambient_row.addWidget(QLabel('Studio fill'))
+        self.studio_fill_slider = QSlider(Qt.Horizontal)
+        self.studio_fill_slider.setObjectName('modelStudioFillLighting')
+        self.studio_fill_slider.setRange(0, 100)
+        self.studio_fill_slider.setValue(35)
+        self.studio_fill_slider.setToolTip(
+            'Add a soft secondary light for dark materials. Does not alter source textures.')
+        self.studio_fill_slider.valueChanged.connect(
+            lambda value: (setattr(self.canvas, 'studio_fill', value/100.),
+                           self.canvas.update()))
+        ambient_row.addWidget(self.studio_fill_slider, 1)
+        self._overlay_sections['Materials'][1].addLayout(ambient_row)
+        self.diffuse_source_info = QLabel('Diffuse DDS diagnostics will appear here.')
+        self.diffuse_source_info.setObjectName('modelDiffuseSourceInfo')
+        self.diffuse_source_info.setWordWrap(True)
+        self.diffuse_source_info.setStyleSheet(
+            'QLabel#modelDiffuseSourceInfo {color:#bbb9c9;'
+            'background:#24252e;border-radius:6px;padding:8px;}')
+        self._overlay_sections['Materials'][1].addWidget(self.diffuse_source_info)
+        self.part_select.currentIndexChanged.connect(
+            lambda _index: self._update_source_brightness())
         self._populate_material_slots(mesh,materials)
-        self._prepare_animation_controls(layout)
-        self.native_info = QLabel('Native game animations: not scanned')
-        self.native_info.setWordWrap(True)
-        layout.addWidget(self.native_info)
+        self._prepare_animation_controls(self._overlay_sections['Animation'][1])
+        self.native_info = _CompactDiagnosticText(self)
+        self.native_info.setText('Native game animations: not scanned')
+        self._overlay_sections['Animation'][1].addWidget(self.native_info)
+        # Keep the selected clip's status immediately under its browser.
+        self._overlay_sections['Animation'][1].removeWidget(self.native_info)
+        self.native_info.setMaximumHeight(84)
+        self.animation_sections['Animations'][1].layout().addWidget(self.native_info)
         foot=QLabel('Renderer 3.0 approximates CryEngine materials; check optional maps in the texture diagnostics. '
                     'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
-        foot.setVisible(not compact)
-        layout.addWidget(foot)
+        self._overlay_sections['View'][1].addWidget(foot)
+        self._build_compact_timeline(layout)
+        QTimer.singleShot(0,self._position_overlay)
+
+    def _create_viewport_navigation(self):
+        self._tool_rail = QFrame(self.canvas)
+        self._tool_rail.setObjectName('viewportToolRail')
+        self._tool_rail.setStyleSheet('QFrame#viewportToolRail { background: rgba(31,31,36,220); border: 1px solid #49464e; border-radius: 5px; }')
+        rail = QVBoxLayout(self._tool_rail)
+        rail.setContentsMargins(3,4,3,4)
+        rail.setSpacing(3)
+        self._navigation_group = QButtonGroup(self)
+        self._navigation_group.setExclusive(True)
+        for symbol,mode,hint in (
+            ('R','orbit','Orbit with left drag'),
+            ('H','pan','Pan with left drag'),
+            ('Z','zoom','Zoom with vertical left drag')):
+            button = QToolButton(self._tool_rail)
+            button.setText(symbol)
+            button.setToolTip(hint)
+            button.setFixedSize(31,34)
+            button.setCheckable(True)
+            button.setChecked(mode == 'orbit')
+            self._navigation_group.addButton(button)
+            button.clicked.connect(lambda _checked=False,m=mode: setattr(self.canvas,'navigation_mode',m))
+            rail.addWidget(button)
+        fit = QToolButton(self._tool_rail)
+        fit.setText('F')
+        fit.setToolTip('Frame the character')
+        fit.setFixedSize(31,34)
+        fit.clicked.connect(self.reset_view)
+        rail.addWidget(fit)
+        rail.addStretch()
+        self._axis_widget = QFrame(self.canvas)
+        self._axis_widget.setObjectName('viewportAxisControls')
+        self._axis_widget.setStyleSheet('QFrame#viewportAxisControls { background: rgba(31,31,36,220); border: 1px solid #49464e; border-radius: 14px; }')
+        axes = QHBoxLayout(self._axis_widget)
+        axes.setContentsMargins(3,3,3,3)
+        axes.setSpacing(2)
+        for name,preset,color in (
+            ('X','Right','#d87982'), ('Y','Back','#91b88b'), ('Z','Top','#78a6d2')):
+            button = QToolButton(self._axis_widget)
+            button.setText(name)
+            button.setToolTip('View along '+name+' axis')
+            button.setStyleSheet('QToolButton { color: '+color+'; font-weight: bold; }')
+            button.clicked.connect(lambda _checked=False,p=preset: self.canvas.set_camera_preset(p))
+            axes.addWidget(button)
+
+    def _position_navigation(self):
+        if not hasattr(self,'_tool_rail'):
+            return
+        self._tool_rail.setGeometry(8,43,40,min(174,max(34,self.canvas.height()-48)))
+        self._tool_rail.raise_()
+        self._axis_widget.setGeometry(max(0,self.canvas.width()-117),8,108,36)
+        self._axis_widget.raise_()
+        self._info.setGeometry(12,7,max(30,self.canvas.width()-145),29)
+        self._info.raise_()
+
+    def _build_compact_timeline(self,parent_layout):
+        strip = QFrame(self)
+        strip.setObjectName('viewportTimeline')
+        strip.setStyleSheet('QFrame#viewportTimeline { background: #212126; border-top: 1px solid #47424a; }')
+        bar = QHBoxLayout(strip)
+        bar.setContentsMargins(6,2,6,2)
+        bar.setSpacing(5)
+        bar.addWidget(QLabel('Timeline'))
+        prev = QToolButton(strip)
+        prev.setText('◀')
+        prev.setToolTip('Previous frame')
+        prev.clicked.connect(lambda: self.step_frame(-1))
+        bar.addWidget(prev)
+        bar.addWidget(self._play_shortcut)
+        nxt = QToolButton(strip)
+        nxt.setText('▶|')
+        nxt.setToolTip('Next frame')
+        nxt.clicked.connect(lambda: self.step_frame(1))
+        bar.addWidget(nxt)
+        bar.addWidget(self.seek,1)
+        bar.addWidget(self.anim_time)
+        more = QToolButton(strip)
+        more.setText('⋮')
+        more.setToolTip('Animation tools')
+        more.clicked.connect(lambda: self.toggle_overlay('Animation'))
+        bar.addWidget(more)
+        strip.setFixedHeight(38)
+        parent_layout.addWidget(strip)
+
+    def toggle_overlay(self, section, shown=None):
+        """Display just one model tool group over the viewport."""
+        if section not in self._overlay_sections:
+            return
+        show = (self._active_overlay != section if shown is None else bool(shown))
+        self._active_overlay = section if show else None
+        for key, (page, _) in self._overlay_sections.items():
+            page.setVisible(show and key == section)
+            button = self._overlay_buttons[key]
+            button.blockSignals(True)
+            button.setChecked(show and key == section)
+            button.blockSignals(False)
+        self._overlay.setVisible(show)
+        if show:
+            self._position_overlay()
+            self._overlay.verticalScrollBar().setValue(0)
+            self._overlay.raise_()
+            QTimer.singleShot(0, self._update_animation_scrolling)
+
+    def _update_animation_scrolling(self):
+        if not hasattr(self, '_overlay') or self._overlay is None:
+            return
+        self._overlay_content.layout().invalidate()
+        self._overlay_content.updateGeometry()
+        self._overlay_content.adjustSize()
+        self._position_overlay()
+
+    def _position_overlay(self):
+        if not hasattr(self, '_overlay') or self._overlay is None:
+            return
+        width = max(190, min(420 if self._active_overlay == 'Animation' else 470,
+                             self.canvas.width() - 70))
+        page = self._overlay_sections.get(self._active_overlay)
+        wanted = (page[0].sizeHint().height() + 35) if page else 200
+        height = max(80, min(wanted, 415 if self._active_overlay == 'Animation' else 500, self.canvas.height() - 55))
+        self._overlay.setGeometry(56, 43, width, height)
+        self._position_navigation()
+
+    def eventFilter(self, obj, event):
+        if obj is getattr(self, 'canvas', None) and event.type() == QEvent.Resize:
+            self._position_overlay()
+        return super().eventFilter(obj, event)
+
+    def _update_source_brightness(self):
+        from material_preview import diffuse_source_stats
+        materials = self.canvas.materials
+        slots = (sorted({part[2] for part in self.canvas.mesh.subsets})
+                 if self.canvas.mesh.subsets else [0])
+        selected = self.part_select.currentData()
+        if selected is not None:
+            slots = [selected]
+        rows = [(slot, diffuse_source_stats(materials, slot)) for slot in slots]
+        found = [(slot, data) for slot, data in rows if data is not None]
+        if not found:
+            message = 'No decoded diffuse DDS for the selected material slot(s).'
+        elif selected is not None:
+            average, black = found[0][1]
+            message = ('DDS source brightness: %.0f/255 average; '
+                       '%d%% of sampled pixels near black.' % (average, black))
+            if black > 65:
+                message += ' The source texture itself is dark; try Unlit diffuse.'
+            else:
+                message += ' Dark shading may come from normals, UVs or lighting.'
+        else:
+            dark = sum(data[1] > 65 for _,data in found)
+            message = ('%d/%d used slots have decoded diffuse DDS; %d are '
+                       'mostly dark in the source image.' %
+                       (len(found),len(slots),dark))
+        if selected is not None and materials:
+            if (selected < len(materials.uv_available) and
+                    not materials.uv_available[selected]):
+                message += ('\nThis CDF part has no decoded UV coordinates; '
+                            'the texture cannot be mapped. Untextured shading is used.')
+            source = (materials.diffuse_sources[selected]
+                      if selected < len(materials.diffuse_sources) else None)
+            ref = (materials.diffuse_references[selected]
+                   if selected < len(materials.diffuse_references) else '')
+            if source:
+                message += ('\nActual source: ' + source[0] +
+                            '  ·  PAK: ' + source[1])
+            elif ref:
+                message += ('\nMissing cooked DDS for ' + ref +
+                            '. Check the owning texture PAK in Asset Library.')
+            else:
+                message += '\nNo Diffuse map declared in the MTL for this slot.'
+        self.diffuse_source_info.setText(message)
 
     def _populate_material_slots(self,mesh,materials):
+        from material_preview import diffuse_source_stats
         slots=sorted({part[2] for part in mesh.subsets}) if mesh.subsets else [0]
         self.part_select.blockSignals(True)
         self.part_select.clear()
@@ -565,8 +1138,27 @@ class QtGPUModelPanel(QWidget):
             title=(materials.names[slot] if materials and slot<len(materials.names)
                    else 'Material slot %d'%slot)
             self.part_select.addItem('%d — %s'%(slot,title[:75]),slot)
+            data = diffuse_source_stats(materials,slot)
+            source = (materials.diffuse_sources[slot] if materials and
+                      slot < len(materials.diffuse_sources) else None)
+            expected = (materials.diffuse_references[slot] if materials and
+                        slot < len(materials.diffuse_references) else '')
+            tip = ('No decoded diffuse DDS for this slot.'
+                   if data is None else
+                   ('Decoded DDS mean brightness %.0f/255; '
+                    '%d%% near-black source pixels' % data))
+            if source:
+                tip += '\nLoaded: %s\nPAK: %s' % source
+            elif expected:
+                tip += '\nMTL wants ' + expected
+            if (materials and slot < len(materials.uv_available) and
+                    not materials.uv_available[slot]):
+                tip += '\nNO UV STREAM — original DDS cannot map to this part'
+            self.part_select.setItemData(self.part_select.count()-1,tip,Qt.ToolTipRole)
         self.part_select.blockSignals(False)
         self.canvas.set_visible_material_slot(None)
+        if hasattr(self,'diffuse_source_info'):
+            self._update_source_brightness()
 
     def show_uv_layout(self):
         from io import BytesIO
@@ -609,6 +1201,7 @@ class QtGPUModelPanel(QWidget):
         self.anim_timer.stop()
         self.anim_playing = False
         self.play_button.setText('Play')
+        self._play_shortcut.setText('▶  Play')
         self.animated = None
         self.timeline_markers.clear()
         self.timeline_markers.addItem('Markers',None)
@@ -625,8 +1218,12 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.clear()
         self.native_info.setText('Native game animations: not scanned')
         self.canvas.set_mesh(mesh, materials, prepared_geometry=prepared_geometry)
+        self.solid_geometry.blockSignals(True)
+        self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
+        self.solid_geometry.blockSignals(False)
         self._populate_material_slots(mesh,materials)
-        self._info.setText(mesh.source_name + '  •  ' + mesh.description)
+        self._info.setText('User Perspective  •  ' + mesh.source_name)
+        self._info.setToolTip(mesh.source_name + '  •  ' + mesh.description)
 
     def save_viewport(self):
         filename,_=QFileDialog.getSaveFileName(
@@ -649,99 +1246,258 @@ class QtGPUModelPanel(QWidget):
         self.canvas.update()
 
     def _prepare_animation_controls(self, layout):
-        from PySide6.QtWidgets import QSlider
-        line = QHBoxLayout()
+        from PySide6.QtWidgets import QSlider, QToolButton, QWidget
+        # Reusable Blender-like disclosure rows: collapsed sections consume
+        # no height and keep the narrow GPU popover usable at 720p.
+        self.animation_sections = {}
+        def disclosure(title, opened):
+            heading = QToolButton(self)
+            heading.setObjectName('animationSection' + title.replace(' ', ''))
+            heading.setText(('▾  ' if opened else '▸  ') + title)
+            heading.setCheckable(True)
+            heading.setChecked(opened)
+            heading.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            heading.setMinimumHeight(31)
+            heading.setStyleSheet(
+                'QToolButton {text-align:left; padding:7px 10px;'
+                'background:#272932;color:#f0edf5;border:1px solid #3a3c48;'
+                'border-radius:7px;font-weight:600;}'
+                'QToolButton:checked {background:#302d43;'
+                'border:1px solid #635678;}'
+                'QToolButton:hover {background:#393543;}')
+            body = QWidget(self)
+            inner = QVBoxLayout(body)
+            inner.setSizeConstraint(QLayout.SetMinAndMaxSize)
+            inner.setContentsMargins(3, 3, 3, 6)
+            inner.setSpacing(4)
+            layout.addWidget(heading)
+            layout.addWidget(body)
+            body.setVisible(opened)
+            def toggle(active):
+                body.setVisible(active)
+                heading.setText(('▾  ' if active else '▸  ') + title)
+                QTimer.singleShot(0, self._update_animation_scrolling)
+            heading.toggled.connect(toggle)
+            self.animation_sections[title] = (heading, body)
+            return inner
+        catalog_layout = disclosure('Animations', True)
+        playback_layout = disclosure('Playback', False)
+        playlist_layout = disclosure('Playlists & markers', False)
+        import_row = QVBoxLayout()
         import_button = QPushButton('Load Animation GLB…')
         import_button.clicked.connect(self.load_animation)
-        import_button.setVisible(not self.compact)
-        line.addWidget(import_button)
+        import_row.addWidget(import_button)
         original = QPushButton('Import Original CAF/DBA…')
         original.clicked.connect(self.import_original)
-        original.setVisible(not self.compact)
-        line.addWidget(original)
+        import_row.addWidget(original)
+        playback_layout.addLayout(import_row)
+        line = QHBoxLayout()
         self.clip_select = QComboBox()
         self.clip_select.setMinimumWidth(130)
         self.clip_select.currentTextChanged.connect(self.select_clip)
         line.addWidget(self.clip_select, 1)
         self.play_button = QPushButton('Play')
+        self.play_button.setIcon(navigation_icon('play'))
         self.play_button.clicked.connect(self.toggle_play)
         line.addWidget(self.play_button)
-        layout.addLayout(line)
-        native_row = QHBoxLayout()
-        native_row.addWidget(QLabel('Game clips'))
-        self.native_clip_select = QComboBox()
-        self.native_clip_select.setObjectName('referencedNativeAnimations')
+        playback_layout.addLayout(line)
+        native_header = QVBoxLayout()
+        native_header.setSpacing(5)
+        self.native_search = QLineEdit()
+        self.native_search.setObjectName('nativeAnimationSearch')
+        self.native_search.setPlaceholderText('Search game animations…')
+        self.native_search.setClearButtonEnabled(True)
+        self.native_search.textChanged.connect(self._filter_native_catalog)
+        native_header.addWidget(self.native_search, 1)
+        self.native_refresh_button = QPushButton('Refresh Library')
+        self.native_refresh_button.setIcon(navigation_icon('refresh'))
+        self.native_refresh_button.setObjectName('refreshNativeLibrary')
+        self.native_refresh_button.setToolTip(
+            'Re-read the current Asset Library and update this model\'s animation references.')
+        self.native_refresh_button.clicked.connect(self.refresh_native_catalog)
+        self.native_refresh_button.setText('')
+        self.native_refresh_button.setFixedWidth(35)
+        self.native_refresh_button.setToolTip('Refresh animations from the Asset Library')
+        search_row=QHBoxLayout()
+        search_row.setSpacing(5)
+        native_header.removeWidget(self.native_search)
+        search_row.addWidget(self.native_search,1)
+        search_row.addWidget(self.native_refresh_button)
+        native_header.addLayout(search_row)
+        catalog_layout.addLayout(native_header)
+
+        native_filters = QHBoxLayout()
+        native_filters.setSpacing(5)
+        self.native_state_filter = QComboBox()
+        self.native_state_filter.setObjectName('nativeAnimationStateFilter')
+        self.native_state_filter.addItems((
+            'All availability', 'Ready in library', 'In PAK (extract on play)',
+            'Not found', 'Layered / additive', 'Graph / unavailable', 'DBA converter'))
+        self.native_state_filter.currentIndexChanged.connect(self._filter_native_catalog)
+        native_filters.addWidget(self.native_state_filter)
+        self.native_motion_filter = QComboBox()
+        self.native_motion_filter.setObjectName('nativeAnimationMotionFilter')
+        self.native_motion_filter.addItems((
+            'All motions', 'Idle / Stand', 'Move / Run', 'Combat / Aim',
+            'Actions / Other'))
+        self.native_motion_filter.currentIndexChanged.connect(self._filter_native_catalog)
+        native_filters.addWidget(self.native_motion_filter)
+        catalog_layout.addLayout(native_filters)
+        self.native_result_count = QLabel('No animation references loaded')
+        self.native_result_count.setStyleSheet('color:#aeb1c1;font-size:11px;')
+        self.native_result_count.setWordWrap(True)
+        catalog_layout.addWidget(self.native_result_count)
+        self.native_capabilities = QLabel('')
+        self.native_capabilities.setObjectName('historicalNativeCapabilityStatus')
+        self.native_capabilities.setStyleSheet('color:#acb0bd;font-size:10px;')
+        self.native_capabilities.setWordWrap(True)
+        self.native_capabilities.hide()
+        catalog_layout.addWidget(self.native_capabilities)
+
+        self.native_clip_select = _CompactAnimationList(self)
         self.native_clip_select.setToolTip(
-            'CryEngine references are indexed here. Only converted GLB clips can be played.')
+            'Search or filter the animation index above. Only a manageable '
+            'subset is listed; no unrelated CAF is substituted.')
         self.native_clip_select.currentIndexChanged.connect(self._native_selection)
-        native_row.addWidget(self.native_clip_select, 1)
-        self.play_native_button = QPushButton('Play Game Clip')
+        self.play_native_button = QPushButton('▶  Play')
+        self.play_native_button.setObjectName('playSelectedNativeAnimation')
+        self.play_native_button.setMinimumHeight(34)
+        self.play_native_button.setStyleSheet(
+            'QPushButton#playSelectedNativeAnimation {background:#4e3f73;'
+            'color:#fff;font-weight:600;border-radius:7px;padding:6px 14px;}'
+            'QPushButton#playSelectedNativeAnimation:hover {background:#665394;}'
+            'QPushButton#playSelectedNativeAnimation:disabled {'
+            'background:#33333d;color:#888995;}')
         self.play_native_button.clicked.connect(self.load_native)
-        native_row.addWidget(self.play_native_button)
-        layout.addLayout(native_row)
-        line2 = QHBoxLayout()
+        catalog_layout.addWidget(self.native_clip_select, 1)
+        native_controls = QHBoxLayout()
+        native_controls.setSpacing(5)
+        native_controls.addWidget(self.play_native_button, 1)
+        self.cancel_native_button = QPushButton('×')
+        self.cancel_native_button.setObjectName('cancelNativeAnimationDecode')
+        self.cancel_native_button.setFixedWidth(34)
+        self.cancel_native_button.setToolTip(
+            'Cancel current character motion conversion without editing assets.')
+        self.cancel_native_button.setEnabled(False)
+        self.cancel_native_button.clicked.connect(self.cancel_native_conversion)
+        native_controls.addWidget(self.cancel_native_button)
+        catalog_layout.addLayout(native_controls)
+        self.native_clip_select.itemDoubleClicked.connect(lambda _item: self.load_native())
+        self.layer_row_widget = QWidget(self)
+        layer_row = QVBoxLayout(self.layer_row_widget)
+        layer_row.setContentsMargins(0, 1, 0, 1)
+        base_row = QHBoxLayout()
+        base_row.addWidget(QLabel('Base clip'))
+        self.layer_base_select = QComboBox()
+        self.layer_base_select.setObjectName('layeredBaseAnimation')
+        self.layer_base_select.setToolTip(
+            'Choose a real neutral/movement CAF from the same skeleton. '
+            'The overlay affects only its animated joints.')
+        base_row.addWidget(self.layer_base_select, 1)
+        layer_row.addLayout(base_row)
+        weight_row = QHBoxLayout()
+        weight_row.addWidget(QLabel('Layer weight'))
+        self.layer_weight = QSlider(Qt.Horizontal)
+        self.layer_weight.setObjectName('layeredAnimationWeight')
+        self.layer_weight.setRange(0, 100)
+        self.layer_weight.setValue(65)
+        self.layer_weight.setMinimumWidth(60)
+        self.layer_weight.valueChanged.connect(self._layer_weight_changed)
+        weight_row.addWidget(self.layer_weight, 1)
+        self.layer_weight_label = QLabel('65%')
+        weight_row.addWidget(self.layer_weight_label)
+        layer_row.addLayout(weight_row)
+        catalog_layout.addWidget(self.layer_row_widget)
+        self.layer_row_widget.hide()
+        self._layered_pair = None
+        # Scrubber lives in the always-visible narrow playback strip.
         self.seek = QSlider(Qt.Horizontal)
         self.seek.setRange(0, 1000)
         self.seek.sliderMoved.connect(self.seek_to)
-        line2.addWidget(self.seek, 1)
         self.anim_time = QLabel('0.00 / 0.00 s')
-        line2.addWidget(self.anim_time)
-        layout.addLayout(line2)
-        timeline=QHBoxLayout()
-        timeline.addWidget(QLabel('Speed'))
+        timeline=QVBoxLayout()
+        playback_options = QHBoxLayout()
+        playback_options.addWidget(QLabel('Speed'))
         self.playback_speed=QComboBox()
         for label,number in (('0.25×',0.25),('0.5×',0.5),('1×',1.0),
                              ('1.5×',1.5),('2×',2.0)):
             self.playback_speed.addItem(label,number)
         self.playback_speed.setCurrentIndex(2)
-        timeline.addWidget(self.playback_speed)
+        playback_options.addWidget(self.playback_speed)
         self.loop_enabled=QCheckBox('Loop')
         self.loop_enabled.setChecked(True)
-        timeline.addWidget(self.loop_enabled)
+        playback_options.addWidget(self.loop_enabled)
+        timeline.addLayout(playback_options)
+        step_controls = QHBoxLayout()
         previous=QPushButton('◀ Frame')
         previous.clicked.connect(lambda: self.step_frame(-1))
-        timeline.addWidget(previous)
+        step_controls.addWidget(previous)
         nxt=QPushButton('Frame ▶')
         nxt.clicked.connect(lambda: self.step_frame(1))
-        timeline.addWidget(nxt)
+        step_controls.addWidget(nxt)
+        step_controls.addStretch()
+        timeline.addLayout(step_controls)
+        timeline_secondary = QHBoxLayout()
         marker=QPushButton('Add Marker')
         marker.clicked.connect(self.add_timeline_marker)
-        timeline.addWidget(marker)
+        timeline_secondary.addWidget(marker)
         self.timeline_markers=QComboBox()
         self.timeline_markers.addItem('Markers',None)
         self.timeline_markers.currentIndexChanged.connect(self.goto_timeline_marker)
-        timeline.addWidget(self.timeline_markers,1)
-        layout.addLayout(timeline)
+        timeline_secondary.addWidget(self.timeline_markers,1)
+        playback_layout.addLayout(timeline)
+        playback_layout.addLayout(timeline_secondary)
         navigation = QHBoxLayout()
         for title, seconds in (('−1s', -1.), ('−0.1s', -.1), ('+0.1s', .1), ('+1s', 1.)):
             item = QPushButton(title)
             item.clicked.connect(lambda checked=False, delta=seconds: self.nudge_timeline(delta))
             navigation.addWidget(item)
+        playback_layout.addLayout(navigation)
+        navigation_secondary = QVBoxLayout()
         self.playlist_items = QComboBox()
         self.playlist_items.setToolTip('Ordered decoded animation clips; no unconverted CAF data is inferred.')
-        navigation.addWidget(self.playlist_items, 1)
+        navigation_secondary.addWidget(self.playlist_items)
+        playlist_buttons = QHBoxLayout()
         for title, callback in (('+ Clip', self.add_playlist_clip),
                                 ('− Clip', self.remove_playlist_clip),
                                 ('Prev', lambda: self.move_playlist(-1)),
                                 ('Next', lambda: self.move_playlist(1))):
             btn=QPushButton(title)
             btn.clicked.connect(lambda checked=False, fn=callback: fn())
-            navigation.addWidget(btn)
-        layout.addLayout(navigation)
-        presets = QHBoxLayout()
+            playlist_buttons.addWidget(btn)
+        navigation_secondary.addLayout(playlist_buttons)
+        playlist_layout.addLayout(navigation_secondary)
+        presets = QVBoxLayout()
         for title, callback in (('Save Playlist…', self.save_animation_playlist),
                                 ('Load Playlist…', self.load_animation_playlist),
                                 ('Compare Clips', self.compare_playlist_clips)):
             btn=QPushButton(title)
             btn.clicked.connect(lambda checked=False, fn=callback: fn())
             presets.addWidget(btn)
-        presets.addStretch()
-        layout.addLayout(presets)
+        playlist_layout.addLayout(presets)
         self.anim_status = QLabel('Animation playback: load a rigged GLB containing clips, or '
                                   'use an optional CryEngine converter for CAF/DBA files.')
         self.anim_status.setWordWrap(True)
-        self.anim_status.setVisible(not self.compact)
-        layout.addWidget(self.anim_status)
+        self.anim_status.setVisible(True)
+        playback_layout.addWidget(self.anim_status)
+        # Converter diagnostics must be readable without opening Playback
+        # Controls; the live progress strip stays in the browser section.
+        self.conversion_progress = QProgressBar(self)
+        self.conversion_progress.setObjectName('animationConversionProgress')
+        self.conversion_progress.setRange(0, 0)
+        self.conversion_progress.setFixedHeight(11)
+        self.conversion_progress.hide()
+        catalog_layout.insertWidget(0, self.conversion_progress)
+        self.conversion_status = _CompactDiagnosticText(self)
+        self.conversion_status.setMaximumHeight(72)
+        self.conversion_status.setText('Converter idle.')
+        self.conversion_status.hide()
+        catalog_layout.insertWidget(0, self.conversion_status)
+        self.stop_conversion_button = QPushButton('Stop Conversion', self)
+        self.stop_conversion_button.setObjectName('stopAnimationConversion')
+        self.stop_conversion_button.clicked.connect(self.stop_conversion)
+        self.stop_conversion_button.hide()
+        catalog_layout.insertWidget(2, self.stop_conversion_button)
         self.animated = None
         self.anim_position = 0.
         self.anim_playing = False
@@ -752,6 +1508,7 @@ class QtGPUModelPanel(QWidget):
         self.converter_process = None
         self._native_generation = 0
         self._native_references = ()
+        self._auto_dba_loading = False
         self._native_loader = None
         self._pending_playback_preferences = None
         self._native_pool = QThreadPool(self)
@@ -759,64 +1516,303 @@ class QtGPUModelPanel(QWidget):
         self._native_signals = _NativeResult(self)
         self._native_signals.completed.connect(self._native_ready)
 
-    def set_native_catalog(self, references, idle=None, description='', loader=None):
-        """Only submitted matching native clips are decoded, off the GUI thread."""
+    def set_native_catalog(self, references, idle=None, description='',
+                           loader=None, refresh_library=None, character=None,
+                           historical_character=False):
+        """Filter a potentially huge native animation catalog on the GUI thread."""
+        from character_animation_catalog import (
+            native_clip_playability, preferred_third_person_dba)
         self._native_generation += 1
+        self._auto_dba_loading = False
+        self.cancel_native_button.setEnabled(False)
+        # A new character should never inherit the old character's filter,
+        # which could conceal the exact 3P DBA and prevent default playback.
+        identity = str(character or description).casefold()
+        if identity != getattr(self, '_catalog_character', None):
+            self.native_search.blockSignals(True)
+            self.native_state_filter.blockSignals(True)
+            self.native_motion_filter.blockSignals(True)
+            self.native_search.clear()
+            self.native_state_filter.setCurrentIndex(0)
+            self.native_motion_filter.setCurrentIndex(0)
+            self.native_search.blockSignals(False)
+            self.native_state_filter.blockSignals(False)
+            self.native_motion_filter.blockSignals(False)
+        self._catalog_character = identity
         self._native_loader = loader
         self._native_references = tuple(references)
+        self._historical_character = bool(historical_character)
+        if historical_character:
+            found = any(ref.kind == 'dba' and ref.available for ref in references)
+            self.native_capabilities.setText(
+                '2012 CryTek • Mesh: available • Rig: not yet validated • '
+                'DBA: ' + ('found' if found else 'not indexed') +
+                ' • Clips: not decoded • Playback: not verified • '
+                'Rigged export: requires validation')
+            self.native_capabilities.show()
+        else:
+            self.native_capabilities.hide()
+        # The selected row from another character must not carry over:
+        # the numeric catalog index may now name a completely different clip.
         self.native_clip_select.blockSignals(True)
         self.native_clip_select.clear()
-        self.native_clip_select.addItem('Select referenced animation', -1)
-        for i, ref in enumerate(references):
-            label = ref.name + ('' if ref.available else ' (not extracted)')
-            self.native_clip_select.addItem(label, i)
-        auto = -1
-        if idle is not None:
-            auto = next((i for i, ref in enumerate(references)
-                         if ref.name == idle.name and ref.virtual_path == idle.virtual_path), -1)
-            if auto >= 0:
-                self.native_clip_select.setCurrentIndex(auto+1)
         self.native_clip_select.blockSignals(False)
-        count = sum(ref.kind == 'caf' and ref.available for ref in references)
-        self.native_info.setText(
-            '%d available CAFs of %d mappings%s' %
-            (count, len(references), ' • Idle: ' + idle.name if idle else ''))
-        self.play_native_button.setEnabled(bool(loader and count))
+        previous_base = self.layer_base_select.currentData()
+        self.layer_base_select.clear()
+        for idx, ref in enumerate(references):
+            state, _ = native_clip_playability(ref)
+            if state not in ('candidate', 'extractable') or ref.kind != 'caf':
+                continue
+            if not (ref.available or ref.in_archive):
+                continue
+            self.layer_base_select.addItem(ref.name, idx)
+        if previous_base is not None:
+            for idx in range(self.layer_base_select.count()):
+                if self.layer_base_select.itemData(idx) == previous_base:
+                    self.layer_base_select.setCurrentIndex(idx)
+                    break
+        if self.layer_base_select.count() and self.layer_base_select.currentIndex() < 0:
+            self.layer_base_select.setCurrentIndex(0)
+        self._native_refresh = refresh_library
+        self.native_refresh_button.setEnabled(refresh_library is not None)
+        available = [(i, ref) for i, ref in enumerate(references)
+                     if native_clip_playability(ref)[0] == 'candidate']
+        preferred_db = preferred_third_person_dba(references, character)
+        auto = next((i for i, ref in enumerate(references)
+                     if preferred_db is not None and
+                     ref.virtual_path == preferred_db.virtual_path
+                     and ref.kind == 'dba'), -1)
+        if auto < 0:
+            auto = next((i for i, ref in available
+                         if idle is not None and ref.virtual_path == idle.virtual_path
+                         and ref.name == idle.name), -1)
+        if auto < 0 and available:
+            auto = min(available, key=lambda pair: (
+                not any(x in pair[1].name.casefold()
+                        for x in ('idle', 'stand', 'walk', 'run')),
+                pair[1].name.casefold()))[0]
+        self._native_suggested = auto
+        counts = {k: 0 for k in
+                  ('candidate', 'extractable', 'missing', 'layered', 'metadata', 'converter')}
+        for ref in references:
+            state, _ = native_clip_playability(ref)
+            counts[state] += 1
+        self._native_catalog_summary = (
+            '%d loose CAF candidates • %d packed CAF paths • %d no standalone CAF '
+            '• %d layered • %d graph • %d DBA databases • %d total mappings' %
+            (counts['candidate'], counts['extractable'], counts['missing'],
+             counts['layered'], counts['metadata'], counts['converter'],
+             len(references)))
+        if description:
+            self._native_catalog_summary += ' • Map: ' + description[:75]
+        self._filter_native_catalog()
         if auto >= 0 and loader:
-            token = self._native_generation
-            QTimer.singleShot(80, lambda: self.load_native()
-                              if token == self._native_generation else None)
+            generation = self._native_generation
+            def start_default():
+                if (generation != self._native_generation or
+                        self.native_clip_select.currentData() != auto):
+                    return
+                self._auto_dba_loading = (
+                    preferred_db is not None and references[auto].kind == 'dba')
+                self.load_native()
+            QTimer.singleShot(120, start_default)
+
+    @staticmethod
+    def _animation_motion(name):
+        label = name.casefold()
+        if any(word in label for word in ('idle', 'stand', 'relax')):
+            return 1
+        if any(word in label for word in
+               ('walk', 'run', 'sprint', 'jump', 'swim', 'move')):
+            return 2
+        if any(word in label for word in
+               ('fire', 'shoot', 'aim', 'reload', 'combat', 'hit', 'attack')):
+            return 3
+        return 4
+
+    def _filter_native_catalog(self, *_args):
+        from character_animation_catalog import native_clip_playability
+        selected = self.native_clip_select.currentData()
+        if not isinstance(selected, int) or selected < 0:
+            selected = getattr(self, '_native_suggested', -1)
+        search = self.native_search.text().strip().casefold()
+        filt = self.native_state_filter.currentIndex()
+        motion = self.native_motion_filter.currentIndex()
+        kinds = {1: 'candidate', 2: 'extractable', 3: 'missing',
+                 4: 'layered', 5: 'metadata', 6: 'converter'}
+        matching = []
+        for i, ref in enumerate(self._native_references):
+            state, _ = native_clip_playability(ref)
+            if search and search not in (ref.name + ' ' + ref.virtual_path).casefold():
+                continue
+            if filt and state != kinds[filt]:
+                continue
+            if motion and self._animation_motion(ref.name) != motion:
+                continue
+            matching.append((i, ref, state))
+        max_rows = 90
+        shown = matching[:max_rows]
+        # Keep the selected clip reachable even when it falls after row 90.
+        if any(i == selected for i, _, _ in matching) and not any(
+                i == selected for i, _, _ in shown):
+            chosen = next(item for item in matching if item[0] == selected)
+            shown = [chosen] + shown[:max_rows-1]
+        self.native_clip_select.blockSignals(True)
+        self.native_clip_select.clear()
+        self.native_clip_select.addItem('Select an animation…', -1)
+        suffixes = {
+            'candidate': '  • Ready', 'extractable': '  • Packed',
+            'missing': '  • Missing', 'layered': '  • Layered',
+            'metadata': '  • Graph',
+            'converter': '  • DBA'}
+        preferred = 0
+        for position, (i, ref, state) in enumerate(shown, 1):
+            self.native_clip_select.addItem(ref.name + suffixes[state], i)
+            source = ('\nExtracted: ' + str(ref.file)
+                      if ref.file is not None else '')
+            if ref.dba_file is not None:
+                source += ('\nPacked database: ' + str(ref.dba_file) +
+                           '\nVirtual DBA: ' + str(ref.dba_virtual_path))
+            self.native_clip_select.setItemData(
+                position, native_clip_playability(ref)[1] +
+                '\nVirtual: ' + ref.virtual_path + source,
+                Qt.ToolTipRole)
+            if i == selected:
+                preferred = position
+        self.native_clip_select.setCurrentIndex(preferred)
+        self.native_clip_select.blockSignals(False)
+        self.native_result_count.setText(
+            '%d shown  ·  %d matching  ·  %d total' %
+            (len(shown), len(matching), len(self._native_references)))
+        self._native_selection(self.native_clip_select.currentIndex())
+
+    def refresh_native_catalog(self):
+        self.native_info.setText(
+            'Refreshing the current Asset Library and model dependencies…')
+        callback = getattr(self, '_native_refresh', None)
+        if callback is not None:
+            callback()
 
     def _native_selection(self, index):
-        i = self.native_clip_select.itemData(index)
-        if not isinstance(i, int) or i < 0 or i >= len(self._native_references):
+        from character_animation_catalog import native_clip_playability
+        self._auto_dba_loading = False
+        # A pending asynchronous conversion belongs to the previous choice.
+        # Do not let it replace the currently selected animation after a click.
+        self._native_generation += 1
+        ref_index = self.native_clip_select.itemData(index)
+        if not isinstance(ref_index, int) or ref_index < 0 or ref_index >= len(self._native_references):
+            self.play_native_button.setEnabled(False)
+            self.native_info.setText(getattr(self, '_native_catalog_summary',
+                                             'Choose a native animation.'))
             return
-        ref = self._native_references[i]
-        self.native_info.setText(
-            ('Available: ' if ref.available else 'Missing: ') + ref.virtual_path)
+        ref = self._native_references[ref_index]
+        state, detail = native_clip_playability(ref)
+        if ref.annotation:
+            detail += '\nSource annotation: ' + ref.annotation + ' (base motion preview)'
+        self.layer_row_widget.setVisible(state == 'layered')
+        layered_ready = (
+            state == 'layered' and self._native_loader is not None
+            and self.layer_base_select.currentData() is not None
+            and bool(ref.available or ref.in_archive))
+        self.play_native_button.setEnabled(
+            bool(layered_ready or state == 'converter') or bool(
+                self._native_loader and state in ('candidate', 'extractable', 'missing')))
+        self.play_native_button.setText('▶  Play')
+        self.play_native_button.setToolTip(
+            detail + '\\nThe matching file will be extracted or converted '
+            'when necessary. Animation and rig compatibility are validated.')
+        if state == 'layered':
+            available_note = (
+                'Select a compatible base and adjust the layer weight, then play.'
+                if layered_ready else
+                'Layer source is not extracted or no compatible base CAF is indexed. '
+                'Import its PAK or convert its DBA first.')
+            self.native_info.setText(
+                'Layered pose: ' + ref.name + '\n' + available_note +
+                '\nThis is an approximate skeletal blend, not native CryEngine aim IK.')
+        elif state == 'candidate':
+            self.native_info.setText(
+                'Ready to test: ' + ref.virtual_path +
+                '\nNative decoder checks skeleton compatibility before playback.')
+        else:
+            source = str(ref.file or ref.dba_file or 'Not indexed')
+            self.native_info.setText(
+                detail + '\nGame path: ' + ref.virtual_path +
+                '\nAsset Library path: ' + source)
+
+    def cancel_native_conversion(self):
+        # The background converter polls this generation and terminates its
+        # child process. Old QThreadPool results are ignored by token.
+        self._native_generation += 1
+        self._auto_dba_loading = False
+        self.cancel_native_button.setEnabled(False)
+        self.play_native_button.setEnabled(True)
+        self.native_info.setText('Motion decoding cancelled. Source assets were not changed.')
 
     def load_native(self):
+        from character_animation_catalog import native_clip_playability
         i = self.native_clip_select.currentData()
-        if (self._native_loader is None or not isinstance(i,int)
+        if (not isinstance(i, int)
                 or i < 0 or i >= len(self._native_references)):
             return
         ref = self._native_references[i]
-        if ref.kind != 'caf' or not ref.available:
-            self.native_info.setText('This native clip has not been extracted.')
+        state, reason = native_clip_playability(ref)
+        if state == 'converter' and self._native_loader is None:
+            self.import_original()
+            return
+        if self._native_loader is None:
+            return
+        if state == 'layered':
+            base_index = self.layer_base_select.currentData()
+            if (not isinstance(base_index, int) or
+                    not 0 <= base_index < len(self._native_references)):
+                self.native_info.setText('Choose a compatible base CAF.')
+                return
+            if not (ref.available or ref.in_archive):
+                self.native_info.setText(
+                    'This layered CAF has no verified extractable standalone track. '
+                    'A DBA conversion may be needed.')
+                return
+            base = self._native_references[base_index]
+            self._native_generation += 1
+            token = self._native_generation
+            self.play_native_button.setEnabled(False)
+            self.native_info.setText(
+                'Decoding base + additive/aimpose CAF on one verified skeleton…')
+            self.cancel_native_button.setEnabled(True)
+            self._native_pool.start(_NativeConversion(
+                lambda unused: self._native_loader(ref, base_ref=base),
+                ref, token, self._native_signals))
+            return
+        if state not in ('candidate', 'extractable', 'missing', 'converter'):
+            self.native_info.setText(reason + '\n' + ref.virtual_path)
+            self.play_native_button.setEnabled(False)
             return
         self._native_generation += 1
         token = self._native_generation
-        self.native_info.setText('Decoding native CAF and rigged model in background…')
+        self.native_info.setText(
+            ('Converting DBA with the selected character rig…' if state == 'converter' else
+             'Locating and extracting exact CAF from verified game PAK…'
+             if state != 'candidate' else 'Decoding standalone CAF and rigged model…'))
         self.play_native_button.setEnabled(False)
+        self.cancel_native_button.setEnabled(True)
         job = _NativeConversion(self._native_loader, ref, token, self._native_signals)
         self._native_pool.start(job)
 
     def _native_ready(self, token, result, error):
         if token != self._native_generation:
             return
+        self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
+        was_default_dba = self._auto_dba_loading
+        self._auto_dba_loading = False
         if error:
-            self.native_info.setText('Native CAF unavailable: ' + error[:230])
+            if getattr(self, '_historical_character', False):
+                self.native_capabilities.setText(
+                    '2012 CryTek • Mesh: available • Rig/clip: not verified • '
+                    'DBA: indexed only • Playback/export: needs validated rig; '
+                    'see diagnostic below')
+            self.native_info.setText('Native animation unavailable: ' + error[:230])
             return
         payload, details = result
         try:
@@ -826,13 +1822,41 @@ class QtGPUModelPanel(QWidget):
                 from model_animation import AnimatedGLB
                 imported = AnimatedGLB(payload, 'Native Evolve animation')
                 geometry = None
-            self._show_animated(imported, auto_play=True,
-                                prepared_geometry=geometry)
+            pair = details.get('_layered_pair')
+            self._show_animated(
+                imported, auto_play=not bool(pair),
+                prepared_geometry=geometry, choose_dba_fallback=was_default_dba)
+            self._layered_pair = pair
+            if pair:
+                base_name, overlay_name = pair
+                if base_name not in imported.clips or overlay_name not in imported.clips:
+                    raise ValueError('Converted layered animation lost its base or overlay track.')
+                self.clip_select.setCurrentText(base_name)
+                self._display_animation_frame()
+                if not self.anim_playing:
+                    self.toggle_play()
         except (ValueError, OSError) as exc:
-            self.native_info.setText('CAF playback rejected: ' + str(exc)[:230])
+            self.native_info.setText('Animation playback rejected: ' + str(exc)[:230])
             return
+        if getattr(self, '_historical_character', False):
+            self.native_capabilities.setText(
+                '2012 CryTek • Mesh: available • Rig: validated • '
+                'DBA: found • Clips: decoded and verified • '
+                'Playback: available • Rigged export: available')
+        resolved = details.get('_resolved_caf_reference')
+        if resolved is not None:
+            from character_animation_catalog import native_clip_playability
+            i = self.native_clip_select.currentData()
+            if isinstance(i, int) and 0 <= i < len(self._native_references):
+                updated = list(self._native_references)
+                updated[i] = resolved
+                self._native_references = tuple(updated)
+                self._filter_native_catalog()
+                self.play_native_button.setText('▶  Play')
+        origin = details.get('_animation_asset_origin', '')
+        fetched = 'Extracted on demand from ' + origin + ' • ' if details.get('_extracted_on_play') else ''
         self.native_info.setText(
-            'Native motion playing • %d bone channels • %s' %
+            fetched + 'Native motion playing • %d bone channels • %s' %
             (details.get('bone_channels',0), self.clip_select.currentText()))
 
     def load_animation(self):
@@ -853,10 +1877,12 @@ class QtGPUModelPanel(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, 'Animation import failed', str(exc))
 
-    def _show_animated(self, imported, *, auto_play, prepared_geometry=None):
+    def _show_animated(self, imported, *, auto_play, prepared_geometry=None,
+                       choose_dba_fallback=False):
         self.anim_timer.stop()
         self.anim_playing = False
         self.play_button.setText('Play')
+        self._layered_pair = None
         self.animated = imported
         self.canvas.set_mesh(imported.preview_mesh, imported.materials,
                              prepared_geometry=prepared_geometry)
@@ -867,6 +1893,15 @@ class QtGPUModelPanel(QWidget):
         self.playlist_items.addItems(tuple(imported.clips))
         idle = next((name for name in imported.clips if
                      'idle' in name.casefold() and 'additive' not in name.casefold()), None)
+        if idle is None and choose_dba_fallback:
+            idle = next((name for name in imported.clips if
+                         'stand' in name.casefold() and
+                         'additive' not in name.casefold()), None)
+            if idle is None and imported.clips:
+                idle = next(iter(imported.clips))
+                self.anim_status.setText(
+                    'No named idle in this DBA; playing the first verified '
+                    'clip. Choose another motion from Playback if needed.')
         if idle:
             self.clip_select.setCurrentText(idle)
         self.clip_select.blockSignals(False)
@@ -1037,6 +2072,11 @@ class QtGPUModelPanel(QWidget):
             self.anim_position=data[1]
             self._display_animation_frame()
 
+    def _layer_weight_changed(self, weight):
+        self.layer_weight_label.setText('%d%%' % weight)
+        if self._layered_pair and self.animated is not None:
+            self._display_animation_frame()
+
     def select_clip(self, _name):
         self.anim_position = 0.
         self._display_animation_frame()
@@ -1047,7 +2087,13 @@ class QtGPUModelPanel(QWidget):
         name = self.clip_select.currentText()
         duration = self.animated.clips[name][0]
         try:
-            frame = self.animated.sample(name, self.anim_position)
+            pair = self._layered_pair
+            if pair and name == pair[0]:
+                frame = self.animated.sample_layered(
+                    pair[0], pair[1], self.anim_position,
+                    self.layer_weight.value() / 100.)
+            else:
+                frame = self.animated.sample(name, self.anim_position)
             self.canvas.set_animated_vertices(frame)
             self.anim_time.setText('%.2f / %.2f s' % (self.anim_position, duration))
             self.seek.blockSignals(True)
@@ -1057,6 +2103,7 @@ class QtGPUModelPanel(QWidget):
             self.anim_timer.stop()
             self.anim_playing = False
             self.play_button.setText('Play')
+            self._play_shortcut.setText('▶  Play')
             self.anim_status.setText('Animation stopped: '+str(exc))
 
     def toggle_play(self):
@@ -1068,6 +2115,7 @@ class QtGPUModelPanel(QWidget):
             return
         self.anim_playing = not self.anim_playing
         self.play_button.setText('Pause' if self.anim_playing else 'Play')
+        self._play_shortcut.setText('❚❚  Pause' if self.anim_playing else '▶  Play')
         if self.anim_playing:
             self.anim_clock.start()
             self.anim_timer.start()
@@ -1105,63 +2153,162 @@ class QtGPUModelPanel(QWidget):
             self.anim_position = duration * value/1000.
             self._display_animation_frame()
 
+    def stop_conversion(self):
+        process = self.converter_process
+        if process is None or process.state() == QProcess.NotRunning:
+            return
+        self.conversion_status.show()
+        self.conversion_status.setText('Stopping converter process…')
+        process.terminate()
+        QTimer.singleShot(
+            2500, lambda: process.kill()
+            if process.state() != QProcess.NotRunning else None)
+
+    def _converter_output(self):
+        """Stream real converter stdout/stderr into the always-visible browser."""
+        process = self.converter_process
+        if process is None:
+            return
+        chunk = bytes(process.readAllStandardOutput()).decode('utf-8', 'replace')
+        if not chunk:
+            return
+        self._converter_log = (getattr(self, '_converter_log', '') + chunk)[-8000:]
+        tail = self._converter_log.strip()[-1400:]
+        self.conversion_status.setText(tail)
+        self.conversion_status.verticalScrollBar().setValue(
+            self.conversion_status.verticalScrollBar().maximum())
+
+    def _converter_error(self, error):
+        process = self.converter_process
+        detail = process.errorString() if process is not None else str(error)
+        self.conversion_progress.hide()
+        self.stop_conversion_button.hide()
+        self.conversion_status.show()
+        self.conversion_status.setText('Converter process error: ' + detail)
+        self.anim_status.setText('Animation conversion failed: ' + detail)
+        self.play_native_button.setEnabled(True)
+
     def import_original(self):
-        """Explicit optional local converter; never downloads or bundles GPL code."""
+        """Convert selected CAF/DBA with the bundled independent executable."""
         from animation_converter_bridge import validate_conversion
+        if self.converter_process is not None and self.converter_process.state() != QProcess.NotRunning:
+            self.conversion_status.setText(
+                'A conversion is already running. Wait for it to finish before starting another.')
+            return
         selected = self.native_clip_select.currentData()
-        source = (str(self._native_references[selected].file)
-                  if isinstance(selected,int) and 0 <= selected < len(self._native_references)
-                  and self._native_references[selected].available else None)
+        ref = (self._native_references[selected]
+               if isinstance(selected,int) and
+               0 <= selected < len(self._native_references) else None)
+        if (self._native_loader is not None and ref is not None and
+                (ref.kind == 'dba' or (not ref.available and ref.dba_file is not None))):
+            self.play_native()
+            return
+        self._pending_dba_clip = (
+            ref.virtual_path if ref is not None and ref.kind == 'caf'
+            and not ref.available and ref.dba_file is not None else None)
+        source = (
+            str(ref.dba_file) if self._pending_dba_clip else
+            str(ref.file) if ref is not None and ref.available and ref.file else None)
         if not source:
             source, _ = QFileDialog.getOpenFileName(
                 self, 'Select native character or original animation source', '',
                 'CryEngine models and animations (*.chr *.skin *.caf *.dba)')
         if not source:
             return
-        converter, _ = QFileDialog.getOpenFileName(
-            self, 'Select installed Cryengine-Converter executable (not bundled)',
-            '', 'Converter executable (*.exe)')
-        if not converter:
+        is_dba = Path(source).suffix.casefold() == '.dba'
+        from animation_converter_bridge import (
+            bundled_converter, extracted_asset_root, preview_output_folder)
+        try:
+            converter = bundled_converter()
+        except FileNotFoundError as exc:
+            QMessageBox.warning(self, 'Bundled animation converter', str(exc))
             return
-        asset_root = QFileDialog.getExistingDirectory(
-            self, 'Choose unpacked game asset root containing animation files')
-        if not asset_root:
-            return
-        output = QFileDialog.getExistingDirectory(
-            self, 'Choose an empty or dedicated output folder for converted GLBs')
-        if not output:
-            return
-        if QMessageBox.question(self, 'Run external converter?',
-                'The manager will launch the executable you selected locally '
-                'to convert original CAF/DBA tracks into GLB. '
-                'Only run software you trust. Continue?',
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No) != QMessageBox.Yes:
-            return
+        asset_root = extracted_asset_root(source)
+        if asset_root is None:
+            root = QFileDialog.getExistingDirectory(
+                self, 'Choose extracted game asset root (not an executable)')
+            if not root:
+                return
+            asset_root = Path(root)
+        output = preview_output_folder()
         try:
             program, args = validate_conversion(
                 converter, source, asset_root, output)
             self.converter_process = QProcess(self)
             self.converter_process.setProgram(program)
             self.converter_process.setArguments(args)
-            self.converter_process.setWorkingDirectory(output)
+            # PySide6 QProcess requires QString/str, not WindowsPath.
+            self.converter_process.setWorkingDirectory(str(output))
+            self.converter_process.setProcessChannelMode(QProcess.MergedChannels)
+            self._dba_conversion = is_dba
+            self._converter_log = ''
+            self._converter_output_folder = str(output)
+            self.converter_process.readyReadStandardOutput.connect(self._converter_output)
             self.converter_process.finished.connect(
                 lambda code, status: self._conversion_finished(code, status, output))
-            self.converter_process.errorOccurred.connect(
-                lambda _err: self.anim_status.setText(
-                    'Converter failed to start. Check its installation and permissions.'))
+            self.converter_process.errorOccurred.connect(self._converter_error)
+            self.play_native_button.setEnabled(False)
+            self.conversion_progress.show()
+            self.stop_conversion_button.show()
+            self.conversion_status.show()
+            self.conversion_status.setText(
+                'Starting bundled converter…\nSource: ' + str(source) +
+                '\nOutput: ' + str(output))
             self.converter_process.start()
-            self.anim_status.setText('Converting original CryEngine animations…')
+            self.anim_status.setText('Converting animation…')
+            QTimer.singleShot(0, self._update_animation_scrolling)
         except Exception as exc:
+            self.conversion_progress.hide()
+            self.stop_conversion_button.hide()
+            self.conversion_status.show()
+            self.play_native_button.setEnabled(True)
+            self.conversion_status.setText('Conversion setup failed: ' + str(exc))
             QMessageBox.warning(self, 'Animation conversion', str(exc))
 
     def _conversion_finished(self, code, status, folder):
+        self._converter_output()
+        self.conversion_progress.hide()
+        self.stop_conversion_button.hide()
+        self.play_native_button.setEnabled(True)
         if code != 0 or status != QProcess.NormalExit:
-            self.anim_status.setText(
-                'External conversion failed (exit %d). Verify that CAF/DBA '
-                'tracks and matching skeleton are unpacked.' % code)
+            message = (
+                'Converter exited with code %d. The animation/skeleton may be '
+                'unsupported or dependencies may be in other imported PAKs.' % code)
+            self.anim_status.setText(message)
+            self.conversion_status.setText(
+                message + '\n' + getattr(self, '_converter_log', '')[-2400:])
             return
-        self.anim_status.setText('Conversion finished. Select its animated GLB.')
+        # A missing CAF may live inside a DBA. Never play the wrong packed
+        # motion just because it was the first converted output.
+        exact_clip = getattr(self, '_pending_dba_clip', None)
+        self._pending_dba_clip = None
+        if exact_clip:
+            try:
+                from converted_motion import converted_motion
+                file, clip = converted_motion(folder, exact_clip)
+                self._load_animation_file(str(file))
+                if self.animated is not None:
+                    self.clip_select.setCurrentText(clip)
+                    self.select_clip(clip)
+                    self.toggle_play() if not self.anim_playing else None
+            except (OSError, ValueError) as exc:
+                self.anim_status.setText('Exact DBA clip unavailable: ' + str(exc)[:220])
+                self.conversion_status.setText(
+                    'Conversion finished but the selected motion was not found.\n' +
+                    str(exc) + '\n' + getattr(self, '_converter_log', '')[-900:])
+            return
+        paths = [path for path in Path(folder).rglob('*.glb')
+                 if path.is_file() and not path.is_symlink()]
+        if len(paths) == 1:
+            self._load_animation_file(str(paths[0]))
+            return
+        self.anim_status.setText(
+            'Converter produced %d GLB(s). Select the corresponding animation.' % len(paths))
+        if not paths:
+            self.conversion_status.setText(
+                'Conversion completed without any .glb output.\n' +
+                getattr(self, '_converter_log', '')[-2000:])
+            return
         file, _ = QFileDialog.getOpenFileName(
             self, 'Select converted animation GLB', folder, 'Animated GLB (*.glb)')
         if file:

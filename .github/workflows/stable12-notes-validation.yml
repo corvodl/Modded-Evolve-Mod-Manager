@@ -1,0 +1,56 @@
+name: Verify stable 1.2 release notes and channel separation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'README.md'
+      - 'source/release_notes.py'
+      - 'source/VERSION.txt'
+      - 'source/test_version_info.py'
+      - '.github/workflows/stable12-notes-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stable-notes:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - name: Validate stable version and release note visibility
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'source')
+          from release_notes import RELEASE_NOTES, markdown
+          from version_info import app_version
+          readme = Path('README.md').read_text(encoding='utf-8')
+          assert app_version() == 'v1.2.0'
+          assert RELEASE_NOTES[0][0] == '1.2.0'
+          assert len(RELEASE_NOTES[0][1]) >= 8
+          assert all('-beta.' not in name for name, _ in RELEASE_NOTES)
+          assert '## Latest Beta' not in readme
+          assert '1.1.18-beta.' not in readme
+          assert '1.1.18-beta.' not in markdown()
+          for note in RELEASE_NOTES[0][1]:
+              assert '- ' + note in readme
+          print('Stable channel release notes contain no beta entries.')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'Stable release notes verification failed.' }
+      - name: Run version-info and stable note regression tests
+        shell: pwsh
+        run: |
+          Push-Location source
+          try {
+            python -m unittest -v test_version_info
+            if ($LASTEXITCODE -ne 0) { throw 'Stable version tests failed.' }
+          } finally { Pop-Location }

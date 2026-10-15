@@ -157,48 +157,70 @@ class AnimatedGLB:
             raise ValueError('Skin inverse-bind count mismatch.')
         meshes=doc['meshes'][instance['mesh']]
         pos_list=[];uv_list=[];face_list=[];joint_list=[];weight_list=[];groups=[]
-        for primitive in meshes.get('primitives',[]):
-            if primitive.get('mode',4)!=4:
+        # glb_bytes() deliberately shares one set of vertex attributes across
+        # material primitives. Count that vertex array once; otherwise every
+        # material repeats the WHOLE mesh and large CDF characters hit the
+        # render limit even when the actual mesh is small enough.
+        vertex_sources = {}
+        for primitive in meshes.get('primitives', []):
+            if primitive.get('mode', 4) != 4:
                 continue
-            attributes=primitive['attributes']
+            attributes = primitive['attributes']
             if 'JOINTS_0' not in attributes or 'WEIGHTS_0' not in attributes:
                 raise ValueError('Skinned glTF primitive lacks joint or weight data.')
-            coords=_accessor(doc,self.binary,attributes['POSITION']).astype(np.float64)
-            joint=_accessor(doc,self.binary,attributes['JOINTS_0']).astype(np.int32)
-            weights=_accessor(doc,self.binary,attributes['WEIGHTS_0']).astype(np.float64)
-            if joint.shape != (len(coords),4) or weights.shape!=(len(coords),4):
-                raise ValueError('Malformed joint or weight attribute.')
-            if joint.min()<0 or joint.max()>=len(self.joints):
-                raise ValueError('GLB skin joint index out of range.')
-            sums=weights.sum(axis=1)
-            if np.any(sums<.95) or np.any(sums>1.05):
-                raise ValueError('GLB skin weights are not normalized.')
-            weights=weights/sums[:,None]
-            idx=_accessor(doc,self.binary,primitive['indices']).reshape(-1).astype(np.int64)
-            if len(idx)%3 or len(idx)>1_500_000 or idx.min()<0 or idx.max()>=len(coords):
+            keys = ('POSITION', 'JOINTS_0', 'WEIGHTS_0', 'TEXCOORD_0', 'JOINTS_1', 'WEIGHTS_1')
+            signature = tuple(attributes.get(key) for key in keys)
+            if signature not in vertex_sources:
+                coords = _accessor(doc, self.binary, attributes['POSITION']).astype(np.float64)
+                joint = _accessor(doc, self.binary, attributes['JOINTS_0']).astype(np.int32)
+                weights = _accessor(doc, self.binary, attributes['WEIGHTS_0']).astype(np.float64)
+                if joint.shape != (len(coords), 4) or weights.shape != (len(coords), 4):
+                    raise ValueError('Malformed joint or weight attribute.')
+                if ('JOINTS_1' in attributes) != ('WEIGHTS_1' in attributes):
+                    raise ValueError('Incomplete secondary skin influences.')
+                if 'JOINTS_1' in attributes:
+                    extra_ids = _accessor(doc, self.binary, attributes['JOINTS_1']).astype(np.int32)
+                    extra_weights = _accessor(doc, self.binary, attributes['WEIGHTS_1']).astype(np.float64)
+                    if extra_ids.shape != (len(coords),4) or extra_weights.shape != (len(coords),4):
+                        raise ValueError('Malformed secondary skin influences.')
+                    joint = np.concatenate((joint, extra_ids), axis=1)
+                    weights = np.concatenate((weights, extra_weights), axis=1)
+                if joint.min() < 0 or joint.max() >= len(self.joints):
+                    raise ValueError('GLB skin joint index out of range.')
+                sums = weights.sum(axis=1)
+                if np.any(sums < .95) or np.any(sums > 1.05):
+                    raise ValueError('GLB skin weights are not normalized.')
+                weights = weights / sums[:, None]
+                first_vertex = sum(len(x) for x in pos_list)
+                pos_list.append(coords)
+                joint_list.append(joint)
+                weight_list.append(weights)
+                if 'TEXCOORD_0' in attributes:
+                    uv_list.append(_accessor(doc, self.binary, attributes['TEXCOORD_0']))
+                else:
+                    uv_list.append(np.zeros((len(coords), 2)))
+                vertex_sources[signature] = (first_vertex, len(coords))
+            first_vertex, vertex_count = vertex_sources[signature]
+            idx = _accessor(doc, self.binary, primitive['indices']).reshape(-1).astype(np.int64)
+            if (not len(idx) or len(idx) % 3 or len(idx) > 1_500_000 or
+                    idx.min() < 0 or idx.max() >= vertex_count):
                 raise ValueError('Invalid animated mesh triangle indices.')
-            previous=sum(len(x) for x in pos_list)
-            previous_indices=sum(len(x)*3 for x in face_list)
-            face_list.append(idx.reshape(-1,3)+previous)
-            groups.append((previous_indices,len(idx),min(254,primitive.get('material',0))))
-            pos_list.append(coords)
-            joint_list.append(joint)
-            weight_list.append(weights)
-            if 'TEXCOORD_0' in attributes:
-                uv_list.append(_accessor(doc,self.binary,attributes['TEXCOORD_0']))
-            else:
-                uv_list.append(np.zeros((len(coords),2)))
+            previous_indices = sum(len(x) * 3 for x in face_list)
+            face_list.append(idx.reshape(-1, 3) + first_vertex)
+            groups.append((previous_indices, len(idx), min(254, primitive.get('material', 0))))
         if not pos_list:
             raise ValueError('Animated GLB has no supported triangle primitives.')
         self.positions=np.vstack(pos_list)
-        self.skin_ids=np.vstack(joint_list)
-        self.weights=np.vstack(weight_list)
+        width = max(j.shape[1] for j in joint_list)
+        self.skin_ids=np.vstack([np.pad(j, ((0,0),(0,width-j.shape[1]))) for j in joint_list])
+        self.weights=np.vstack([np.pad(w, ((0,0),(0,width-w.shape[1]))) for w in weight_list])
         self.faces=np.vstack(face_list)
         self.groups=tuple(groups)
         self.uvs=np.vstack(uv_list)
         if len(self.positions)>250_000 or len(self.faces)>500_000:
             raise ValueError('Animated mesh exceeds render limits.')
         self.clips={}
+        self.clip_modes={}
         for i,animation in enumerate(doc.get('animations',[])):
             tracks=[];duration=0.
             for channel in animation.get('channels',[]):
@@ -224,6 +246,11 @@ class AnimatedGLB:
                 while name in self.clips:
                     name+=' (copy)'
                 self.clips[name]=(duration,tracks)
+                info = animation.get('extras') or {}
+                self.clip_modes[name] = {
+                    'layered': bool(info.get('evolveLayered')),
+                    'additive': bool(info.get('evolveAdditive')),
+                }
         if not self.clips:
             raise ValueError('No supported skeletal animation tracks in this GLB.')
         self.basename=name
@@ -240,7 +267,14 @@ class AnimatedGLB:
         embedded = self.doc.get('images', [])
         textures = self.doc.get('textures', [])
         used = []
+        transforms = []; opacities = []; alpha_modes = []; cutoffs = []
         for material in materials[:64]:
+            mode = material.get('alphaMode', 'OPAQUE')
+            alpha_modes.append(mode in ('MASK', 'BLEND'))
+            cutoffs.append(float(material.get('alphaCutoff', .5)) if mode == 'MASK' else 0.)
+            opacities.append(float(material.get('pbrMetallicRoughness', {}).get('baseColorFactor', [1,1,1,1])[3]) if mode != 'OPAQUE' else 1.)
+            transform = material.get('pbrMetallicRoughness', {}).get('baseColorTexture', {}).get('extensions', {}).get('KHR_texture_transform', {})
+            transforms.append((*transform.get('scale', [1., 1.]), *transform.get('offset', [0., 0.]), transform.get('rotation', 0.)))
             index = material.get('pbrMetallicRoughness',{}).get(
                 'baseColorTexture',{}).get('index', -1)
             image = None
@@ -257,13 +291,14 @@ class AnimatedGLB:
                                 with Image.open(BytesIO(self.binary[start:start+length])) as im:
                                     if im.width*im.height<=8_000_000:
                                         im.load()
-                                        image=im.convert('RGB')
+                                        image=im.convert('RGBA' if mode in ('MASK', 'BLEND') else 'RGB')
                             except (OSError,ValueError):
                                 pass
             used.append(image)
         return PreviewMaterials(tuple(used),
             tuple(m.get('name','Material %d'%i) for i,m in enumerate(materials[:64])),
-            'Embedded GLB textures')
+            'Embedded GLB textures', uv_transforms=tuple(transforms), opacity=tuple(opacities),
+            alpha_modes=tuple(alpha_modes), alpha_cutoffs=tuple(cutoffs))
 
     @classmethod
     def from_file(cls,path):
@@ -313,13 +348,70 @@ class AnimatedGLB:
         return self.groups if hasattr(self,'groups') else (
             (0,len(self.faces)*3,0),)
 
-    def sample(self,clip,seconds):
+    def _clip_changes(self, clip, seconds):
         if clip not in self.clips:
             raise ValueError('Select an available animation clip.')
-        duration,tracks=self.clips[clip]
-        seconds=float(seconds)%max(.001,duration)
-        changes={}
+        duration, tracks = self.clips[clip]
+        seconds = float(seconds) % max(.001, duration)
+        changes = {}
         for track in tracks:
-            changes.setdefault(track.node,{})[track.path]=track.sample(seconds)
-        pose=self._transform_pose(changes)
-        return np.stack((pose[:,0],-pose[:,2],pose[:,1]),axis=1).astype(np.float32)
+            changes.setdefault(track.node, {})[track.path] = track.sample(seconds)
+        return changes
+
+    def sample(self, clip, seconds):
+        pose = self._transform_pose(self._clip_changes(clip, seconds))
+        return np.stack((pose[:,0], -pose[:,2], pose[:,1]), axis=1).astype(np.float32)
+
+    def sample_layered(self, base_clip, overlay_clip, seconds, weight=0.65):
+        """Blend a verified aim/additive controller over a base pose.
+
+        This is a simplified glTF rig preview, not CryEngine's full directional
+        aim-IK/blendspace solver. Both clips must belong to this very same
+        skinned model; overlay channels affect only explicitly keyed joints.
+        """
+        if not (base_clip in self.clips and overlay_clip in self.clips):
+            raise ValueError('Both base and layered clips must use the same rigged GLB.')
+        if self.clip_modes.get(base_clip, {}).get('layered'):
+            raise ValueError('The base clip must not be a layered pose.')
+        mode = self.clip_modes.get(overlay_clip, {})
+        if not mode.get('layered'):
+            raise ValueError('Choose a marked layered/additive overlay clip.')
+        alpha = float(weight)
+        if not np.isfinite(alpha) or alpha < 0 or alpha > 1:
+            raise ValueError('Layer weight must be between 0 and 1.')
+        base_changes = self._clip_changes(base_clip, seconds)
+        overlay_changes = self._clip_changes(overlay_clip, seconds)
+        identity = np.asarray((0., 0., 0., 1.), dtype=np.float64)
+        blended = {node: dict(channels) for node, channels in base_changes.items()}
+        for node, channels in overlay_changes.items():
+            current = blended.setdefault(node, {})
+            rest = self.nodes[node]
+            if 'matrix' in rest:
+                raise ValueError('Layered glTF joint must use TRS, not a matrix.')
+            for path, value in channels.items():
+                sampled = np.asarray(value, dtype=np.float64)
+                start = np.asarray(current.get(
+                    path, rest.get(path, {'rotation': identity,
+                                          'translation': [0., 0., 0.],
+                                          'scale': [1., 1., 1.]}[path])), dtype=np.float64)
+                if path == 'rotation':
+                    if mode.get('additive'):
+                        delta = _slerp(identity, sampled, alpha)
+                        x1,y1,z1,w1 = start
+                        x2,y2,z2,w2 = delta
+                        output = np.asarray((
+                            w1*x2 + x1*w2 + y1*z2 - z1*y2,
+                            w1*y2 - x1*z2 + y1*w2 + z1*x2,
+                            w1*z2 + x1*y2 - y1*x2 + z1*w2,
+                            w1*w2 - x1*x2 - y1*y2 - z1*z2))
+                        current[path] = output / max(1e-12, np.linalg.norm(output))
+                    else:
+                        current[path] = _slerp(start, sampled, alpha)
+                elif mode.get('additive') and path == 'translation':
+                    current[path] = start + alpha * sampled
+                elif mode.get('additive') and path == 'scale':
+                    current[path] = start * (1. + alpha * (sampled - 1.))
+                else:
+                    current[path] = start * (1. - alpha) + sampled * alpha
+        pose = self._transform_pose(blended)
+        return np.stack((pose[:,0], -pose[:,2], pose[:,1]), axis=1).astype(np.float32)

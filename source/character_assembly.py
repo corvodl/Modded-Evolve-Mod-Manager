@@ -1,7 +1,8 @@
 """Assemble a whole character preview from its CryEngine .cdf skin bindings.
 
-Render-only, never changes the source archive.  Body + one selected equipment
-skin is intentional: drawing every CDF equipment attachment at the same time
+Render-only, never changes the source archive. Monster/creature skin parts and
+hunter body accessories stay assembled, with one selected equipment skin.
+Drawing every equipment attachment at the same time
 would superimpose mutually exclusive weapons.  Bone-attached rigid geometry
 requires its socket transforms and is not guessed by this path.
 """
@@ -40,13 +41,15 @@ def _parse_cdf(raw):
     skeleton = normalized_name(model.get('File'))
     refs = []
     for row in root.findall('./AttachmentList/Attachment'):
-        if row.get('Type', '').casefold() != 'ca_skin' or not row.get('Binding'):
+        if row.get('Type', '').casefold() not in ('ca_skin', 'ca_skin_unique') or not row.get('Binding'):
             continue
         try:
             binding = normalized_name(row.get('Binding'))
         except ValueError:
             continue
-        if binding.casefold().endswith('.skin'):
+        # Some retail Legacy CDFs use a CA_SKIN binding to a renderable
+        # .chr rather than to .skin. Do not manufacture a .skinm name.
+        if binding.casefold().endswith(('.skin', '.chr')):
             refs.append((row.get('AName', '') or Path(binding).stem, binding))
     sets = {}
     for group in root.findall('./SkinSets/SkinSet'):
@@ -98,6 +101,9 @@ def combine_meshes(items):
         raise ValueError('No compatible character parts to combine.')
     vertices, triangles, uvs, subsets = [], [], [], []
     textures, names, issues = [], [], []
+    normals, speculars, opacities, alpha_modes = [], [], [], []
+    transforms, sources, references, uv_available = [], [], [], []
+    cutoffs = []; hidden = []
     included = []
     for name, mesh, materials in items:
         if len(vertices) + len(mesh.vertices) > MAX_VERTICES or len(triangles) + len(mesh.triangles) > MAX_TRIANGLES:
@@ -110,14 +116,42 @@ def combine_meshes(items):
         slots = sorted({slot for _, _, slot in source_subsets})
         if len(textures) + len(slots) > 256:
             raise ValueError('Combined character exceeds 256 GPU material slots.')
+        has_uv = len(mesh.uvs) == len(mesh.vertices)
+        if not has_uv:
+            issues.append(
+                name + ': render mesh has no decoded UV stream; source textures '
+                'cannot be mapped, using untextured shading for this part')
         remap = {}
         for slot in slots:
             remap[slot] = len(textures)
-            tex = (materials.textures[slot] if materials and
+            hidden.append(bool(materials and slot < len(materials.hidden) and materials.hidden[slot]))
+            tex = (materials.textures[slot] if has_uv and materials and
                    slot < len(materials.textures) else None)
+            uv_available.append(has_uv)
             label = (materials.names[slot] if materials and
                      slot < len(materials.names) else 'unresolved slot ' + str(slot))
             textures.append(tex)
+            source = (materials.diffuse_sources[slot] if materials and
+                      slot < len(materials.diffuse_sources) else None)
+            reference = (materials.diffuse_references[slot] if materials and
+                         slot < len(materials.diffuse_references) else '')
+            sources.append(source)
+            references.append(reference)
+            from texture_transform import transform_for
+            transforms.append(transform_for(materials, slot))
+            # Preserve per-part material settings when combining CDF skins.
+            # Dropping alpha/material mode made opaque character body geometry
+            # appear transparent when its diffuse DDS carried auxiliary alpha.
+            normals.append(materials.normal_maps[slot] if has_uv and materials and
+                           slot < len(materials.normal_maps) else None)
+            speculars.append(materials.specular_maps[slot] if has_uv and materials and
+                             slot < len(materials.specular_maps) else None)
+            opacities.append(materials.opacity[slot] if materials and
+                             slot < len(materials.opacity) else 1.0)
+            alpha_modes.append(materials.alpha_modes[slot] if has_uv and materials and
+                               slot < len(materials.alpha_modes) else False)
+            cutoffs.append(materials.alpha_cutoffs[slot] if materials and
+                           slot < len(materials.alpha_cutoffs) else 0.)
             names.append(name + ': ' + label)
         vertices.extend(mesh.vertices)
         triangles.extend(tuple(v + base_vertex for v in tri) for tri in mesh.triangles)
@@ -136,13 +170,16 @@ def combine_meshes(items):
                        'Character assembly: ' + ', '.join(included),
                        tuple(uvs), tuple(subsets))
     material = PreviewMaterials(tuple(textures), tuple(names),
-                                'CDF character assembly', tuple(issues))
+                                'CDF character assembly', tuple(issues),
+                                tuple(normals), tuple(speculars),
+                                tuple(opacities), tuple(alpha_modes), tuple(transforms),
+                                tuple(sources), tuple(references), tuple(uv_available), tuple(cutoffs), hidden=tuple(hidden))
     return mesh, material
 
 
 def assemble_character(workspace, selected, index, *, texture_folder=None,
                        projects_root=None, stage_root=None, equipment=None):
-    """Return None when no owning CDF exists or fewer than two skins resolve.
+    """Return None when no owning CDF or no renderable bound skin exists.
 
     Only select the character body and explicitly selected weapon/skin. Extra
     equipment can be added through a future attachment choice UI.
@@ -154,10 +191,29 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
     selected_skin = normalized_name(selected).casefold()
     if selected_skin.endswith('.skinm'):
         selected_skin = selected_skin[:-1]
+    # Cockpit is a permanent character mesh (Lennox's head/face/eyes),
+    # not a mutually exclusive weapon. Its submaterial table is distinct
+    # from the body and must be included even when a rifle is equipped.
     primary = [(label, rel) for label, rel in skins
-               if label.casefold() in ('body', 'hands', 'character', 'base', 'main')]
+               if label.casefold() in
+               ('body', 'hands', 'character', 'base', 'main', 'cockpit')]
     if not primary and skins:
-        primary = [skins[0]]
+        # CDF labels are arbitrary (e.g. maggiebody). Prefer the owning CDF's
+        # matching main skin before falling back to attachment order.
+        main_skin = str(Path(cdf).with_suffix('.skin')).replace('\\', '/').casefold()
+        primary = [(label, rel) for label, rel in skins if rel.casefold() == main_skin]
+        if not primary:
+            primary = [skins[0]]
+    # Monster/creature attachments are body parts, not mutually exclusive guns.
+    if normalized_name(selected).split('/')[1].casefold() in ('monsters', 'creatures'):
+        primary = sorted(skins, key=lambda item: item[0].casefold() not in ('body', 'character', 'base', 'main'))
+    else:
+        # Hunter body accessories (mask, scarf, flashlight, etc.) stay visible
+        # when a weapon changes; only separate equipment is selectable.
+        body_stems = [Path(rel).stem.casefold() + '_' for _, rel in primary]
+        primary.extend((label, rel) for label, rel in skins
+                       if (label, rel) not in primary and
+                       any(Path(rel).stem.casefold().startswith(stem) for stem in body_stems))
     options = [(label, rel) for label, rel in skins if (label, rel) not in primary]
     if equipment == 'body':
         chosen = []
@@ -185,7 +241,7 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         return None
     included, omitted, parts, rig_parts = [], [], [], []
     for label, skin in requested[:8]:
-        render = skin + 'm'
+        render = skin if skin.casefold().endswith('.chr') else skin + 'm'
         path = _resolve_file(index, render, workspace)
         if path is None:
             omitted.append(label + ': missing ' + render)
@@ -198,18 +254,27 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         try:
             materials = load_preview_materials(
                 workspace, render, texture_folder, projects_root=projects_root,
-                stage_root=stage_root, index=index)
+                stage_root=stage_root, index=index, cdf=cdf)
         except (ValueError, OSError) as exc:
             materials = None
             omitted.append(label + ' textures: ' + str(exc))
         parts.append((label, mesh, materials))
-        skin_path = _resolve_file(index, skin, workspace)
+        skin_path = (_resolve_file(index, skin, workspace)
+                     if skin.casefold().endswith('.skin') else None)
+        # Legacy .chr body geometry must not be misrepresented as .skin
+        # rigging; animated GLB export still requires separate validation.
         rig_parts.append((render, Path(path), Path(skin_path) if skin_path else None,
                           len(mesh.vertices)))
         included.append(label)
     if not parts:
         return None
     mesh, materials = combine_meshes(parts)
+    if omitted and materials is not None:
+        from dataclasses import replace
+        # Render failures must show which actual CDF part/MTL/texture failed,
+        # even if the assembled mesh itself remains visible.
+        materials = replace(
+            materials, issues=tuple(materials.issues) + tuple(omitted))
     return CharacterPreview(mesh, materials, cdf, skeleton,
                             tuple(included), tuple(omitted),
                             tuple(options), chosen[0][1] if chosen else 'body', tuple(rig_parts))

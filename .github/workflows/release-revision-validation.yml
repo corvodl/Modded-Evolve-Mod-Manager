@@ -1,0 +1,55 @@
+name: Validate release patch revisions and in-place updater
+
+on:
+  pull_request:
+    paths:
+      - 'source/app_updater.py'
+      - 'source/release_revision.py'
+      - 'source/test_app_updater.py'
+      - 'source/test_release_revisions.py'
+      - 'source/version_info.py'
+      - 'source/qt_manager.py'
+      - 'source/publish_release.py'
+      - 'installer/**'
+      - 'Build-Windows-EXE.cmd'
+      - '.github/workflows/windows-release.yml'
+      - '.github/workflows/windows-beta-release.yml'
+      - '.github/workflows/release-revision-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-updater-revisions:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - name: Compile revised updater, packaging, and manifest code
+        run: python -m py_compile source/app_updater.py source/release_revision.py source/version_info.py source/publish_release.py source/qt_manager.py
+      - name: Test version, manifest, zip, PowerShell rollback and release policies
+        shell: pwsh
+        run: |
+          Push-Location source
+          try {
+            python -m unittest -v test_app_updater test_release_channels test_release_revisions test_version_info test_release_dependency_policy
+            if ($LASTEXITCODE -ne 0) { throw 'Release revision tests failed.' }
+          } finally { Pop-Location }
+      - name: Validate both release workflow YAML documents
+        shell: pwsh
+        run: |
+          python -m pip install PyYAML
+          @'
+          import yaml
+          for path in ('.github/workflows/windows-beta-release.yml',
+                       '.github/workflows/windows-release.yml'):
+              data = yaml.safe_load(open(path, encoding='utf-8'))
+              assert 'jobs' in data and len(data['jobs']) >= 1, path
+              assert 'concurrency' in data, path
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid release workflow YAML.' }

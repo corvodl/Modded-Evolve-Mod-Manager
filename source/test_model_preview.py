@@ -45,7 +45,7 @@ class MeshPreviewTests(unittest.TestCase):
         for i in range(count):
             kind, cid, size, offset = struct.unpack_from('<4I', source, 16+16*i)
             entries.append(struct.pack('<4I', kind, cid, size, offset+16))
-        subset = struct.pack('<4I', 1, 0, 0, 0) + struct.pack(
+        subset = struct.pack('<4I', 6, 1, 0, 0) + struct.pack(
             '<9I', 0, 6, 0, 4, 3, 0, 0, 0, 0)
         subset_offset = 64 + len(original_chunks)
         entries.append(struct.pack('<4I', 0x08001017, 3,

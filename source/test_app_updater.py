@@ -142,6 +142,20 @@ class UpdateTests(unittest.TestCase):
             values = [n for phase, n, _ in progress if phase == stage]
             self.assertEqual(values, sorted(values))
 
+    def test_backup_stage_has_bounded_locked_file_retry_and_diagnostics(self):
+        script = u.APPLY_PS1
+        self.assertIn("UPDATE BACKUP:", script)
+        self.assertIn("UPDATE FAILURE STAGE:", script)
+        self.assertIn("backing up $name", script)
+        self.assertIn("Could not back up ", script)
+        self.assertIn("file may still be in use", script)
+        self.assertIn("for ($attempt = 0; $attempt -lt 6; $attempt++)", script)
+        self.assertIn("Backup state is ambiguous", script)
+        self.assertIn("$Moved.Add($name)", script)
+        self.assertIn("ROLLBACK INCOMPLETE", script)
+        self.assertIn("try { Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction Stop }", script)
+        self.assertIn("ROLLBACK COMPLETE", script)
+
     def test_detached_installer_has_visible_progress_and_restart(self):
         script = u.APPLY_PS1
         self.assertIn('System.Windows.Forms.ProgressBar', script)
@@ -184,8 +198,8 @@ class UpdateTests(unittest.TestCase):
         workflow = Path(__file__).resolve().parent.parent/'.github'/'workflows'/'windows-release.yml'
         if workflow.is_file():
             text = workflow.read_text(encoding='utf-8')
-            self.assertLess(text.index('gh release upload Main "dist/EvolveModManager-Windows.zip"'),
-                            text.index('gh release upload Main "dist/update-manifest.json"'))
+            self.assertLess(text.index('gh release upload Main "dist/$file"'),
+                            text.index("gh release upload Main 'dist/update-manifest.json'"))
             self.assertIn('Get-FileHash', text)
             self.assertIn('github.sha', text)
 
@@ -197,7 +211,7 @@ class UpdateTests(unittest.TestCase):
             app = base / 'app'
             app.mkdir()
             (app / 'BUILD_COMMIT.txt').write_text(COMMIT)
-            scratch = base / 'EvolveModManagerUpdates' / 'unique'
+            scratch = app / 'UpdateWork' / 'unique'
             scratch.mkdir(parents=True)
             ack = scratch / 'startup-ok-123.txt'
             with patch.dict(os.environ, {'LOCALAPPDATA': str(base),

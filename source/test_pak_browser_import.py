@@ -23,11 +23,11 @@ class BrowserLogicTests(unittest.TestCase):
 
     def test_filename_inferred_descriptions(self):
         self.assertEqual(archive_description('Game/characters_monsters_goliath_data.pak'),
-                         'Goliath Models')
+                         'Goliath Models / Skeletons / Animation References')
         self.assertEqual(archive_description('Game/characters_monsters_goliath_ts.pak'),
-                         'Goliath Textures')
+                         'Goliath Textures / Animation Assets (if present)')
         self.assertEqual(archive_description('Game/characters_hunters_merc_caira_ts.pak'),
-                         'Caira Textures')
+                         'Caira Textures / Animation Assets (if present)')
         self.assertEqual(archive_description('Game/objects_basic_props.pak'),
                          'Basic Props Objects')
         self.assertEqual(archive_description('Game/UI_Data.pak'), 'Interface Data')
@@ -96,7 +96,7 @@ class BrowserInterfaceTests(unittest.TestCase):
         self.assertEqual(tree.item('Game/goliath.pak')['values'][:3],
                          ['Game', 'Goliath', 'goliath.pak'])
         self.assertEqual(tree.item('Game/characters_monsters_goliath_data.pak')['values'][1],
-                         'Goliath Models')
+                         'Goliath Models / Skeletons / Animation References')
         # A broad search now matches both exact filenames and readable labels.
         self.manager.search.set('goliath')
         self.root.update()

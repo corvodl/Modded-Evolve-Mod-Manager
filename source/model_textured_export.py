@@ -1,4 +1,4 @@
-"""GLB diffuse texture embedding and honest skinning-readiness diagnostics.
+"""GLB diffuse/normal texture embedding and skinning-readiness diagnostics.
 
 Uses the existing verified material/DDS streaming decoder and extracted-PAK
 project catalog. Unsupported or ambiguous textures remain unbound rather than
@@ -15,7 +15,7 @@ from model_asset import DATA_STREAM_CHUNK
 from model_preview import read_preview_mesh
 
 MAX_TEXTURES = 64
-MAX_IMAGE_BYTES = 12 * 1024 * 1024
+MAX_IMAGE_BYTES = 64 * 1024 * 1024  # preserve full-res PNG, still bounded per material
 
 
 def _unpack_glb(blob):
@@ -52,6 +52,21 @@ def embed_diffuse_textures(blob, materials):
     if materials is None:
         return blob, 0
     doc, binary = _unpack_glb(blob)
+    # Keep common vertex accessors intact for skinning; omit only hidden draws.
+    hidden_materials = set()
+    for i, material in enumerate(doc.get('materials', [])):
+        name = material.get('name', '')
+        prefix = 'CryEngine material slot '
+        if name.startswith(prefix):
+            try:
+                slot = int(name[len(prefix):].split()[0])
+                if 0 <= slot < len(materials.hidden) and materials.hidden[slot]:
+                    hidden_materials.add(i)
+            except ValueError:
+                pass
+    for mesh in doc.get('meshes', []):
+        mesh['primitives'] = [p for p in mesh.get('primitives', [])
+                              if p.get('material') not in hidden_materials]
     images = doc.setdefault('images', [])
     textures = doc.setdefault('textures', [])
     count = 0
@@ -71,9 +86,12 @@ def embed_diffuse_textures(blob, materials):
             continue
         if count >= MAX_TEXTURES:
             raise ValueError('Exceeded texture export safety limit.')
+        alpha_mode = slot < len(materials.alpha_modes) and materials.alpha_modes[slot]
+        cutoff = materials.alpha_cutoffs[slot] if slot < len(materials.alpha_cutoffs) else 0.
+        opacity = materials.opacity[slot] if slot < len(materials.opacity) else 1.
         with BytesIO() as output:
             # Original DDS may use BCn compression; embed a portable PNG.
-            image.convert('RGB').save(output, format='PNG')
+            image.convert('RGBA' if alpha_mode else 'RGB').save(output, format='PNG')
             payload = output.getvalue()
         if len(payload) > MAX_IMAGE_BYTES:
             raise ValueError('A material diffuse PNG is too large to embed.')
@@ -85,11 +103,72 @@ def embed_diffuse_textures(blob, materials):
                        'mimeType': 'image/png',
                        'name': 'Diffuse slot %d' % slot})
         textures.append({'source': len(images)-1})
-        material['pbrMetallicRoughness']['baseColorFactor'] = [1, 1, 1, 1]
+        material['pbrMetallicRoughness']['baseColorFactor'] = [1, 1, 1, opacity]
+        material['alphaMode'] = 'MASK' if cutoff > 0 else ('BLEND' if alpha_mode or opacity < .999 else 'OPAQUE')
+        if cutoff > 0:
+            material['alphaCutoff'] = cutoff
         material['pbrMetallicRoughness']['baseColorTexture'] = {
             'index': len(textures)-1}
+        from texture_transform import transform_for, IDENTITY
+        transform = transform_for(materials, slot)
+        if transform != IDENTITY:
+            su, sv, ou, ov, angle = transform
+            material['pbrMetallicRoughness']['baseColorTexture']['extensions'] = {
+                'KHR_texture_transform': {'scale': [su, sv], 'offset': [ou, ov], 'rotation': angle}}
+            extensions = doc.setdefault('extensionsUsed', [])
+            if 'KHR_texture_transform' not in extensions:
+                extensions.append('KHR_texture_transform')
         count += 1
-    if not count:
+    # Normal maps were already decoded through material_preview's verified
+    # material/Asset-Library DDS resolver. Preserve them as *linear* tangent
+    # space PNGs, not as sRGB diffuse maps. glTF normalTexture is what Blender
+    # imports into a Normal Map node.
+    from gltf_normal_materials import attach_normal_texture
+    from texture_transform import transform_for, IDENTITY
+    for material in doc.get('materials', []):
+        name = material.get('name', '')
+        prefix = 'CryEngine material slot '
+        if not name.startswith(prefix):
+            continue
+        try:
+            slot = int(name[len(prefix):].split()[0])
+        except ValueError:
+            continue
+        for role, collection in (('normal', getattr(materials, 'normal_maps', ())),
+                                 ('specular', getattr(materials, 'specular_maps', ()))):
+            if slot < 0 or slot >= len(collection) or collection[slot] is None:
+                continue
+            if len(images) >= MAX_TEXTURES:
+                raise ValueError('Exceeded texture export safety limit.')
+            source = collection[slot]
+            with BytesIO() as output:
+                source.convert('RGB').save(output, format='PNG')
+                payload = output.getvalue()
+            if len(payload) > MAX_IMAGE_BYTES:
+                raise ValueError('A material %s PNG is too large to embed.' % role)
+            binary.extend(bytes(-len(binary) % 4))
+            view = {'buffer': 0, 'byteOffset': len(binary), 'byteLength': len(payload)}
+            binary.extend(payload)
+            doc['bufferViews'].append(view)
+            images.append({'bufferView': len(doc['bufferViews']) - 1,
+                           'mimeType': 'image/png',
+                           'name': '%s slot %d' % (role.title(), slot)})
+            textures.append({'source': len(images) - 1})
+            if role == 'normal':
+                attach_normal_texture(doc, doc['materials'].index(material), len(textures) - 1)
+                transform = transform_for(materials, slot)
+                if transform != IDENTITY:
+                    su, sv, ou, ov, angle = transform
+                    material['normalTexture']['extensions'] = {
+                        'KHR_texture_transform': {'scale': [su, sv],
+                                                  'offset': [ou, ov], 'rotation': angle}}
+                    extensions = doc.setdefault('extensionsUsed', [])
+                    if 'KHR_texture_transform' not in extensions:
+                        extensions.append('KHR_texture_transform')
+            # Other optional maps remain explicitly named image resources in
+            # the GLB/textures folder; don't guess glTF PBR packing for CryEngine
+            # specular/gloss maps whose semantics differ between shaders.
+    if not images:
         doc.pop('images', None)
         doc.pop('textures', None)
     return _pack_glb(doc, binary), count
@@ -140,23 +219,85 @@ def _workspace_for_file(source, projects_root):
 
 def textured_model_from_workspace(mesh, workspace, relative,
                                   *, texture_folder=None, projects_root=None,
-                                  stage_root=None):
+                                  stage_root=None, index=None, materials=None):
     """Return GLB plus texturing/rig readiness information, no on-disk writes."""
-    from material_preview import load_preview_materials
+    from material_preview import load_preview_materials, _workspace_index
+    if index is None:
+        # Use the same cross-PAK index for textures AND the native rig companion.
+        # In particular, an Asset Library model's .skin may be in a different
+        # imported game archive, and extracted folders need the shared TS PAK.
+        try:
+            index = _workspace_index(workspace, projects_root, stage_root)
+        except (OSError, ValueError, KeyError):
+            index = None
+    if str(relative).casefold().endswith('.chr') and index is not None:
+        # Prototype CA_SKIN attachments use a renderable .chr rather than
+        # .skinm/.skin. Use its verified CDF master skeleton when available,
+        # and never export a decorative, unweighted armature.
+        from character_assembly import assemble_character
+        character = assemble_character(
+            workspace, relative, index, texture_folder=texture_folder,
+            projects_root=projects_root, stage_root=stage_root)
+        if (character is not None and
+                any(virtual.casefold() == str(relative).casefold()
+                    for virtual, _, _, _ in character.rig_parts)):
+            from native_character_glb import create_character_glb
+            payload, details = create_character_glb(
+                workspace, relative, index, character=character,
+                texture_folder=texture_folder, projects_root=projects_root,
+                stage_root=stage_root)
+            return payload, {
+                'texture_count': details['texture_count'],
+                'texture_status': 'Historical material preview (textures optional)',
+                'rig_status': details['rig_status'],
+                'bone_count': details['bone_count'],
+                'rig_layout': details['rig_layout']}
     payload = glb_bytes(mesh, name=Path(relative).stem)
     report = {'texture_count': 0, 'texture_status': 'No material resources found',
               'rig_status': 'Unrigged: no compatible skin source found',
               'bone_count': 0}
     try:
-        mats = load_preview_materials(
+        mats = materials if materials is not None else load_preview_materials(
             workspace, relative, texture_folder,
-            projects_root=projects_root, stage_root=stage_root)
+            projects_root=projects_root, stage_root=stage_root, index=index)
     except (ValueError, OSError) as exc:
         report['texture_status'] = str(exc)
     else:
         payload, count = embed_diffuse_textures(payload, mats)
+        warnings = tuple(mats.issues)
         report.update(texture_count=count,
-                      texture_status='%d diffuse textures embedded from unpacked PAKs' % count)
+                      texture_status='%d diffuse textures embedded from unpacked PAKs' % count,
+                      texture_warnings=warnings)
+    if str(relative).casefold().endswith('.chr'):
+        # Animals, wildlife, and many prototype characters have their own
+        # fully weighted 0x745 .chr but no CDF. Their embedded bone chunk is
+        # a legitimate static Blender skin source. Do not invent a CDF or
+        # assert compatibility with an external animation master.
+        from model_asset import inspect_model
+        from legacy_crytek_rig import skin_glb_legacy
+        from multi_pak_assets import _resolve
+        hits, state = (_resolve(index, relative, preferred_workspace=workspace)
+                       if index is not None else ((), 'missing'))
+        if state == 'found':
+            model_file = Path(hits[0]['file'])
+        else:
+            model_file = (Path(workspace).resolve() / 'files' / relative).resolve()
+        files_root = (Path(workspace).resolve() / 'files').resolve()
+        if (model_file.is_file() and not model_file.is_symlink()
+                and (state == 'found' or model_file.is_relative_to(files_root))):
+            try:
+                raw = model_file.read_bytes()
+                if inspect_model(raw).format_name == 'CryTek':
+                    payload, rig = skin_glb_legacy(payload, raw, raw)
+                    report['rig_status'] = (
+                        'Rigged: %d bones, %d active (standalone 2012 body bind; '
+                        'no animation master)' %
+                        (rig['bone_count'], rig['active_bones']))
+                    report['bone_count'] = rig['bone_count']
+                    report['rig_layout'] = 'standalone-body'
+                    return payload, report
+            except (OSError, ValueError) as exc:
+                report['rig_status'] = 'Unrigged: standalone CryTek rig: ' + str(exc)
     # Resolve the original .skin/.chr companion in a safe, read-only way.
     # CompiledBones stores inverse-bind and rest-pose matrices; each mesh
     # subset has its own local-to-global bone palette.
@@ -168,8 +309,18 @@ def textured_model_from_workspace(mesh, workspace, relative,
         model_file = (files_root / relative).resolve()
         bone_file = (files_root / companion).resolve()
         if not bone_file.is_file() or not bone_file.is_relative_to(files_root):
-            bone_file = locate_related_asset(
-                workspace, companion, projects_root, stage_root)
+            # The selected model may come from the permanent Asset Library,
+            # with its matching .skin/.chr in another imported PAK. Honor the
+            # same virtual-path catalog used to render its materials.
+            if index is not None:
+                from multi_pak_assets import _resolve
+                hits, state = _resolve(index, companion, preferred_workspace=workspace)
+                bone_file = Path(hits[0]['file']) if state == 'found' else None
+                if state == 'ambiguous':
+                    report['rig_status'] = 'Unrigged: multiple different skin companions'
+            else:
+                bone_file = locate_related_asset(
+                    workspace, companion.as_posix(), projects_root, stage_root)
         if (model_file.is_file() and model_file.is_relative_to(files_root)
                 and bone_file is not None and Path(bone_file).is_file()):
             try:
@@ -200,6 +351,19 @@ def export_extracted_model(source, destination, *, projects_root=None,
         report = {'texture_count': 0,
                   'texture_status': 'Texture lookup requires a compatible unpacked project.',
                   'rig_status': 'Unrigged: native skin companion not found', 'bone_count': 0}
+        if source.suffix.casefold() == '.chr':
+            from model_asset import inspect_model
+            from legacy_crytek_rig import skin_glb_legacy
+            try:
+                raw = source.read_bytes()
+                if inspect_model(raw).format_name == 'CryTek':
+                    blob, rig = skin_glb_legacy(blob, raw, raw)
+                    report['bone_count'] = rig['bone_count']
+                    report['rig_status'] = (
+                        'Rigged: %d bones, %d active (standalone historical body)' %
+                        (rig['bone_count'], rig['active_bones']))
+            except (OSError, ValueError) as exc:
+                report['rig_status'] = 'Unrigged: historical rig: ' + str(exc)
         if companion is not None and companion.is_file() and not companion.is_symlink():
             try:
                 blob, rig = skin_glb(
@@ -213,6 +377,8 @@ def export_extracted_model(source, destination, *, projects_root=None,
         if destination.suffix.casefold() != '.glb' or not destination.parent.is_dir():
             raise ValueError('Choose an existing export folder and .glb filename.')
         destination.write_bytes(blob)
+        from blender_texture_folder import write_texture_folder
+        write_texture_folder(blob, destination)
         return (len(mesh.vertices), len(mesh.triangles)), report
     mesh = read_preview_mesh(source.read_bytes(), source.name)
     glb, report = textured_model_from_workspace(
@@ -223,12 +389,15 @@ def export_extracted_model(source, destination, *, projects_root=None,
     if destination.resolve() == source:
         raise ValueError('Cannot overwrite the original CryEngine model.')
     destination.write_bytes(glb)
+    from blender_texture_folder import write_texture_folder
+    write_texture_folder(glb, destination)
     report['weight_status'] = weight_stream_status(source.read_bytes())['status']
     return (len(mesh.vertices), len(mesh.triangles)), report
 
 
 def export_extracted_folder(folder, destination, *, projects_root=None,
-                            stage_root=None, texture_folder=None):
+                            stage_root=None, texture_folder=None,
+                            progress=None, cancelled=None):
     from model_blender_export import MAX_FOLDER_FILES
     folder, destination = Path(folder).resolve(), Path(destination).resolve()
     if not folder.is_dir() or not destination.is_dir():
@@ -237,13 +406,19 @@ def export_extracted_folder(folder, destination, *, projects_root=None,
         raise ValueError('Choose a separate export folder outside model sources.')
     candidates = sorted((p for p in folder.rglob('*') if p.is_file() and
                          not p.is_symlink() and p.suffix.casefold() in
-                         ('.skinm', '.chrm', '.cgf', '.cgfm', '.cga', '.cgam')))
+                         ('.skinm', '.chrm', '.chr', '.cgf', '.cgfm', '.cga', '.cgam')))
     if len(candidates) > MAX_FOLDER_FILES:
         raise ValueError('Model count exceeds exporter limit.')
     done, errors = [], []
-    for p in candidates:
+    if progress:
+        progress('Exporting Blender models', 0, len(candidates))
+    for i, p in enumerate(candidates, 1):
+        if cancelled and cancelled():
+            raise InterruptedError('Blender folder export cancelled.')
         rel = p.relative_to(folder)
         if p.suffix.casefold() == '.chrm' and p.with_suffix('.skinm').exists():
+            if progress:
+                progress('Exporting Blender models', i, len(candidates))
             continue
         target = destination / rel.with_suffix('.glb')
         try:
@@ -254,4 +429,6 @@ def export_extracted_folder(folder, destination, *, projects_root=None,
             done.append((str(rel), str(target.relative_to(destination)), counts, details))
         except (ValueError, OSError) as exc:
             errors.append((str(rel), str(exc)))
+        if progress:
+            progress('Exporting Blender models', i, len(candidates))
     return done, errors

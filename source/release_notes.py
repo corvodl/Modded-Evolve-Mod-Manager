@@ -1,9 +1,22 @@
 """Curated public notes shared by the app, README and release description.
 
-Keep each version to at most three short bullets. Internal gated tools must
+Earlier versions use short bullets; stable 1.2 is a curated feature summary. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.2.0', (
+        "Modernize the Qt interface with contextual tools, cleaner Settings, Flaticon navigation icons, and improved workspace layouts.",
+        "Manage Stage 2 PAKs through build-scoped Asset Library browsing, dependencies, bulk imports, isolated edits, and safer mod staging.",
+        "Improve complete character assemblies, GPU materials, rig compatibility, CAF/DBA animation browsing, and supported idle playback.",
+        "Use higher-resolution streamed CryEngine DDS textures and normal maps in previews and Blender exports, with explicit diagnostics.",
+        "Export supported rigged character assemblies, textured GLBs, and terrain/level scenes for Blender with source-safe validation.",
+        "Expand the Level Editor with grouped map archives, combined scenes, previews, and missing-resource reports.",
+        "Preview and edit Scaleform GFX with external texture placement, transparent frames, and verified static layout controls.",
+        "Offer experimental main-menu promotional title and TRY/BUY overrides plus preview-only popup-layer isolation; verify results offline.",
+        "Inspect historical CryTek PAKs and compatible assets separately without promising playable cross-version conversions.",
+        "Improve offline project workflows, asset provenance, recovery, and update safety while preserving personal game and mod data.",
+        "Support versioned patch revisions and consolidate installation, update work, and logs under one manager folder.",
+    )),
     ('1.1.17.1', (
         'Add a Windows installer with optional Desktop and Start Menu shortcuts.',
         'Compare Stable and Beta releases and offer only the newest version.',

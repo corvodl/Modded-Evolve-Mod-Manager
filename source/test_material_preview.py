@@ -4,6 +4,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 from PIL import Image
 
 from model_preview import read_preview_mesh
@@ -83,6 +84,28 @@ class MaterialRenderingTests(unittest.TestCase):
                 finally:editor.window.destroy()
         finally:root.destroy()
 
+    def test_unstaged_model_workspace_uses_permanent_shared_library(self):
+        from material_preview import _workspace_index
+        with tempfile.TemporaryDirectory() as directory:
+            workspace=Path(directory)/"model"
+            file=workspace/"files"/"characters"/"hunters"/"merc_tech"/"tech_3p.mtl"
+            file.parent.mkdir(parents=True)
+            file.write_text("<Material/>")
+            shared=Path(directory)/"library"/"eyeball_3p_diff.dds.0"
+            shared.parent.mkdir(parents=True)
+            shared.write_bytes(b"fixture")
+            key="characters/hunters/shared/textures/eyeball_3p_diff.dds.0"
+            with patch("material_preview.related_asset_index",return_value=None), \
+                 patch("material_preview.load_workspace",
+                       return_value={"entries":[
+                           {"path":"characters/hunters/merc_tech/tech_3p.mtl"}]}), \
+                 patch("asset_library.extracted_index",return_value={
+                     key:[{"file":shared,"relative":key,"workspace":None}]}):
+                index=_workspace_index(workspace)
+            self.assertIn(key,index)
+            self.assertIn("characters/hunters/merc_tech/tech_3p.mtl",index)
+            self.assertEqual(index[key][0]["file"],shared)
+
     def test_nested_extracted_ts_textures_and_bad_diffuse_are_reported(self):
         from material_preview import _external_lookup
         with tempfile.TemporaryDirectory() as folder:
@@ -109,7 +132,9 @@ class MaterialRenderingTests(unittest.TestCase):
                     'path':'characters/hunters/merc_tech/tech_3p.mtl','format':'raw'}]}))
             item = _external_lookup(ts_root,
                 'characters/hunters/merc_tech/textures/tech_diff.tif')
-            self.assertEqual(item['file'], textures/'tech_diff.dds')
+            # Windows runners may expose the temp root as RUNNER~1 or
+            # runneradmin. Verify the same real file, not path spelling.
+            self.assertTrue(item['file'].samefile(textures/'tech_diff.dds'))
             result = load_preview_materials(
                 ws, 'characters/hunters/merc_tech/tech_3p.skinm', ts_root)
             self.assertEqual(result.count, 1)
@@ -119,9 +144,9 @@ class MaterialRenderingTests(unittest.TestCase):
             second = ts_root/'another'
             second.mkdir()
             Image.new('RGB',(8,8),(0,0,0)).save(second/'tech_diff.dds',format='DDS')
-            self.assertEqual(_external_lookup(ts_root,
-                'characters/hunters/merc_tech/textures/tech_diff.tif')['file'],
-                textures/'tech_diff.dds')
+            self.assertTrue(_external_lookup(ts_root,
+                'characters/hunters/merc_tech/textures/tech_diff.tif')['file']
+                .samefile(textures/'tech_diff.dds'))
 
     def test_duplicate_basename_without_full_path_is_ambiguous(self):
         from material_preview import _external_lookup

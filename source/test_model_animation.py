@@ -59,6 +59,20 @@ class AnimationEngineTests(unittest.TestCase):
         self.assertEqual(len(preview.preview_mesh.subsets),1)
         self.assertEqual(len(preview.preview_mesh.triangles),4)
 
+    def test_material_primitives_share_one_skinned_vertex_array(self):
+        import copy
+        doc, binary = _unpack_glb(animated_fixture())
+        primitives = doc['meshes'][0]['primitives']
+        # CryEngine CDF parts and materials commonly reuse the same global
+        # vertex attributes with different indexed triangle ranges.
+        base = copy.deepcopy(primitives[0])
+        primitives.extend(copy.deepcopy(base) for _ in range(5))
+        preview = AnimatedGLB(_pack_glb(doc, binary))
+        self.assertEqual(len(preview.positions), 4)
+        self.assertEqual(len(preview.faces), 24)
+        self.assertEqual(len(preview.preview_mesh.subsets), 6)
+        self.assertEqual(len(preview.sample('Raise Head', .5)), 4)
+
     def test_clip_validation(self):
         with self.assertRaisesRegex(ValueError,'clip'):
             AnimatedGLB(animated_fixture()).sample('missing',.1)

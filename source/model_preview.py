@@ -1,7 +1,7 @@
 """Read-only preview of verified CryEngine CrChF v7 skinned render meshes.
 
-This decoder currently understands the Goliath-family POSITION half4 stream
-(type 0, stride 8) and 16-bit triangle-index stream (type 5, stride 2).
+Supports half4/float3 positions, packed half-position/UV streams and
+16-bit triangle indices used by Evolve character and designer meshes.
 Unsupported layouts are never guessed; no source file is modified.
 """
 from __future__ import annotations
@@ -35,41 +35,121 @@ class PreviewMesh:
         return f'{len(self.vertices):,} vertices | {len(self.triangles):,} triangles'
 
 
+def _skinned_node_transform(data, info):
+    """Return the single render node's native affine transform for skin vertices.
+
+    CrChF 0x823/0x824 NODE stores row-vector axes and centimeter translation.
+    Compiled bone binds are already in character space (meters). Baking this
+    transform puts render vertices in that same space before skinning.
+    """
+    chunks = [struct.unpack_from('<4I', info.chunk_table, i * 16)
+              for i in range(info.chunks)]
+    skinned = any(kind == DATA_STREAM_CHUNK and size >= 24 and
+                  struct.unpack_from('<I', data, offset + 4)[0] == 9
+                  for kind, _, size, offset in chunks)
+    if not skinned:
+        return None
+    meshes = {cid for kind, cid, _, _ in chunks if kind == 0x08001000}
+    nodes = []
+    for kind, _, size, offset in chunks:
+        if kind not in (0x0823100B, 0x0824100B):
+            continue
+        if size < 204:
+            raise ValueError('Truncated skinned render node.')
+        mesh, parent = struct.unpack_from('<2i', data, offset + 64)
+        if mesh not in meshes:
+            continue
+        if parent != -1:
+            raise ValueError('Parented skinned render nodes are not yet supported.')
+        values = struct.unpack_from('<16f', data, offset + 84)
+        if not all(math.isfinite(v) for v in values):
+            raise ValueError('Non-finite skinned render node transform.')
+        # The unused fourth column is commonly all zero in cooked NODE chunks.
+        if any(abs(values[i]) > 1e-6 for i in (3, 7, 11)):
+            raise ValueError('Unsupported projective skinned render node.')
+        nodes.append(values)
+    if len(nodes) > 1:
+        raise ValueError('Multiple skinned render nodes are not supported.')
+    return nodes[0] if nodes else None
+
+
 def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
     """Decode known stream types, validating all mesh bounds before rendering."""
     info = inspect_model(data)
+    if info.format_name == 'CryTek':
+        from legacy_crytek_mesh import read_crytek_geometry
+        positions, triangles, uvs, subsets = read_crytek_geometry(data)
+        xs, ys, zs = zip(*positions)
+        center = ((max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2,
+                  (max(zs) + min(zs)) / 2)
+        radius = max(max(xs) - min(xs), max(ys) - min(ys),
+                     max(zs) - min(zs)) / 2
+        if radius <= 1e-7:
+            raise ValueError('Legacy render geometry has degenerate bounds.')
+        # Index ranges and original material IDs are verified against the
+        # historical subset table; rigging remains a separate validation gate.
+        return PreviewMesh(positions, triangles, center, radius, source_name,
+                           uvs, subsets)
     if info.format_name != 'CrChF' or info.version != 7:
-        raise ValueError('3D preview currently supports CrChF v7 geometry only.')
+        raise ValueError('3D preview supports CrChF v7 or validated CryTek 0x745 geometry only.')
     streams = {}
     for i in range(info.chunks):
         kind, chunk_id, size, offset = struct.unpack_from('<4I', info.chunk_table, i * 16)
         if kind != DATA_STREAM_CHUNK:
             continue
         _flags, stream_type, count, stride, _a, _b = struct.unpack_from('<6I', data, offset)
-        if stream_type in (0, 2, 5):
+        if stream_type in (0, 2, 5, 15):
             if stream_type in streams:
                 raise ValueError('Multiple mesh position/index streams; grouped meshes are not yet supported.')
             streams[stream_type] = (count, stride, offset + 24)
-    if 0 not in streams or 5 not in streams:
-        raise ValueError('No supported render mesh: select its .skinm or .chrm companion, if available.')
-    vertex_count, vertex_stride, vertex_at = streams[0]
+    if (0 not in streams and 15 not in streams) or 5 not in streams:
+        raise ValueError('No supported render mesh: position/index streams are missing; a compatible render companion or LOD may be needed.')
+    packed_stream = 0 not in streams
+    vertex_count, vertex_stride, vertex_at = streams[15 if packed_stream else 0]
     index_count, index_stride, index_at = streams[5]
     if not (3 <= vertex_count <= MAX_VERTICES and 3 <= index_count <= MAX_TRIANGLES * 3):
         raise ValueError('Mesh exceeds the preview safety limits.')
     if index_count % 3:
         raise ValueError('Index stream does not contain complete triangles.')
-    if vertex_stride != 8:
+    if vertex_stride not in ((16,) if packed_stream else (8, 12)):
         raise ValueError(f'Unsupported position encoding (stride {vertex_stride}). This model cannot yet be previewed.')
     if index_stride != 2:
         raise ValueError(f'Unsupported index encoding (stride {index_stride}). This model cannot yet be previewed.')
     positions = []
     xs = []; ys = []; zs = []
-    for x, y, z, w in struct.iter_unpack('<4e', memoryview(data)[vertex_at:vertex_at + vertex_count * 8]):
-        if not all(math.isfinite(v) for v in (x,y,z,w)) or abs(w - 1) > 0.01:
-            raise ValueError('Invalid packed half-float vertex coordinates.')
-        positions.append((x,y,z))
-        xs.append(x);ys.append(y);zs.append(z)
-    uv_coordinates = ()
+    raw_vertices = memoryview(data)[vertex_at:vertex_at + vertex_count * vertex_stride]
+    if len(raw_vertices) != vertex_count * vertex_stride:
+        raise ValueError('Truncated mesh position data.')
+    packed_uvs = ()
+    if packed_stream:
+        # Evolve VERTSUVS: half3 position, 2 padding bytes, RGBA8, half2 UV.
+        rows = tuple(struct.iter_unpack('<3e2x4B2e', raw_vertices))
+        points = [row[:3] for row in rows]
+        packed_uvs = tuple(row[-2:] for row in rows)
+        if not all(math.isfinite(v) and abs(v) <= 1e4 for uv in packed_uvs for v in uv):
+            raise ValueError('Invalid packed texture coordinates.')
+    elif vertex_stride == 8:
+        points = []
+        for x, y, z, w in struct.iter_unpack('<4e', raw_vertices):
+            if not all(math.isfinite(v) for v in (x,y,z,w)) or abs(w - 1) > 0.01:
+                raise ValueError('Invalid packed half-float vertex coordinates.')
+            points.append((x, y, z))
+    else:
+        # Level designer brush positions may be three 32-bit floats.
+        # Do not reinterpret a stride12 stream as packed half floats.
+        points = struct.iter_unpack('<3f', raw_vertices)
+    transform = _skinned_node_transform(data, info)
+    for x, y, z in points:
+        if transform is not None:
+            m = transform
+            x, y, z = (x*m[0] + y*m[4] + z*m[8] + m[12]*.01,
+                       x*m[1] + y*m[5] + z*m[9] + m[13]*.01,
+                       x*m[2] + y*m[6] + z*m[10] + m[14]*.01)
+        if not all(math.isfinite(v) and abs(v) < 1e7 for v in (x, y, z)):
+            raise ValueError('Invalid mesh vertex coordinates.')
+        positions.append((x, y, z))
+        xs.append(x); ys.append(y); zs.append(z)
+    uv_coordinates = packed_uvs
     if 2 in streams:
         count_uv, uv_stride, uv_at = streams[2]
         if count_uv == vertex_count and uv_stride == 8:
@@ -81,7 +161,8 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
         kind, _cid, size, offset = struct.unpack_from('<4I', info.chunk_table, i * 16)
         if kind != 0x08001017 or size < 16:
             continue
-        num = struct.unpack_from('<I', data, offset)[0]
+        # SUBSETS flags precede the actual subset count (also used by rigging).
+        _flags, num = struct.unpack_from('<2I', data, offset)
         if not (1 <= num <= 128) or 16 + num * 36 > size:
             continue
         rows = []
@@ -113,22 +194,114 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
     return PreviewMesh(tuple(positions), triangles, center, radius, source_name, uv_coordinates, subsets)
 
 
-def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_root=None):
-    """Prefer the selected render mesh; fall back to its same-folder companion."""
-    suffix = Path(relative).suffix.lower()
-    if suffix in ('.skin', '.chr', '.cgf', '.cga'):
-        companion_rel = relative + 'm'
-        root = (Path(workspace) / 'files').resolve()
-        file = (root / companion_rel).resolve()
-        if file.is_relative_to(root) and file.is_file() and not file.is_symlink():
-            return read_preview_mesh(file.read_bytes(), companion_rel)
-        # Companion assets can live in another extracted PAK from the same batch.
-        from multi_pak_assets import locate_related_asset
-        linked = locate_related_asset(workspace, companion_rel, projects_root, stage_root)
-        if linked is not None:
-            return read_preview_mesh(linked.read_bytes(), companion_rel)
-        raise ValueError('This character file stores skeleton/metadata. A .skinm or .chrm render-mesh companion is needed for preview.')
-    return read_preview_mesh(raw, relative)
+def find_preview_mesh(workspace, relative, raw, *, projects_root=None, stage_root=None, index=None):
+    """Preview a model from its real render streams or explicit companions.
+
+    Older character archives may contain renderable .chr LODs with no .skinm.
+    Never guess unrelated characters by basename, mix build indexes, or
+    modify the original reference files.
+    """
+    suffix = Path(relative).suffix.casefold()
+    if suffix not in ('.skin', '.chr', '.cgf', '.cga'):
+        return read_preview_mesh(raw, relative)
+
+    from evolve_pak_workspace import normalized_name
+    root = (Path(workspace) / 'files').resolve()
+    errors = []
+    if suffix == '.chr':
+        # Some .chr files contain the geometry itself. The prior code skipped
+        # this possibility and immediately demanded a .chrm companion.
+        try:
+            return read_preview_mesh(raw, relative)
+        except ValueError as exc:
+            errors.append((relative, str(exc)))
+
+    def resolve_exact(virtual):
+        """Look only in this workspace or the explicitly provided index."""
+        name = normalized_name(virtual)
+        local = root.joinpath(*name.split('/'))
+        if (local.is_file() and
+                not any(p.is_symlink() for p in (local, *local.parents)
+                        if p == root or root in p.parents) and
+                local.resolve().is_relative_to(root)):
+            return local
+        if index is not None:
+            from multi_pak_assets import _resolve
+            matches, state = _resolve(index, name, preferred_workspace=workspace)
+            if state == 'ambiguous':
+                raise ValueError('Conflicting model companions: ' + name)
+            candidate = Path(matches[0]['file']) if state == 'found' else None
+        else:
+            from multi_pak_assets import locate_related_asset
+            candidate = locate_related_asset(
+                workspace, name, projects_root, stage_root)
+            candidate = Path(candidate) if candidate is not None else None
+        if candidate is not None and candidate.is_file() and not candidate.is_symlink():
+            return candidate
+        return None
+
+    candidates = [normalized_name(relative + 'm')]
+    if suffix == '.chr':
+        import re
+        base = re.sub(r'(?i)_lod[0-9]+(?=\.chr$)', '', relative)
+        cdf = normalized_name(str(Path(base).with_suffix('.cdf')).replace('\\', '/'))
+        cdf_file = resolve_exact(cdf)
+        if cdf_file is not None:
+            # CDF references are authoritative; only use actual bindings.
+            from character_assembly import _parse_cdf
+            from xml.etree import ElementTree as ET
+            try:
+                _, skins, _ = _parse_cdf(cdf_file.read_bytes())
+            except (OSError, ValueError, ET.ParseError):
+                skins = ()
+            for _, skin in skins[:16]:
+                if skin.casefold().endswith('.skin'):
+                    candidates.append(normalized_name(skin + 'm'))
+                elif skin.casefold().endswith('.chr'):
+                    candidates.append(normalized_name(skin))
+        candidates.append(normalized_name(str(Path(base).with_suffix('.skinm')).replace('\\', '/')))
+        # A character with no .skinm may keep render geometry in a numbered
+        # .chr LOD. Only exact same-stem LODs, lowest index first.
+        for lod in range(5):
+            candidate = normalized_name(str(Path(base).with_suffix('')).replace('\\', '/')
+                                        + '_LOD' + str(lod) + '.chr')
+            if candidate.casefold() != relative.casefold():
+                candidates.append(candidate)
+
+    tried = []
+    seen = {relative.casefold()}
+    for candidate in candidates:
+        if candidate.casefold() in seen:
+            continue
+        seen.add(candidate.casefold())
+        linked = resolve_exact(candidate)
+        if linked is None:
+            continue
+        tried.append(candidate)
+        try:
+            return read_preview_mesh(linked.read_bytes(), candidate)
+        except ValueError as exc:
+            errors.append((candidate, str(exc)))
+
+    old_format = []
+    for name, issue in errors:
+        if 'supports geometry version 0x745 only' in issue:
+            old_format.append(name)
+    if old_format:
+        raise ValueError(
+            'CryTek model files require a supported geometry layout (0x745). '
+            'Unsupported files: ' + ', '.join(old_format[:4])
+            + '. Native raw export remains available.')
+    if tried:
+        raise ValueError(
+            'Found character companion files but none contain a supported '
+            'render mesh: ' + '; '.join(name + ': ' + error for name, error in errors[:3]))
+    raise ValueError(
+        'No supported render geometry for ' + relative
+        + '. Checked direct model data, same-stem render companions '
+          '(.chrm/.skinm), CDF skin bindings, and same-stem .chr LODs. '
+          'Do not assume this character must have a .skinm.')
+
 
 
 def render_mesh(mesh: PreviewMesh, width=720, height=480, yaw=-0.5, elevation=0.24,

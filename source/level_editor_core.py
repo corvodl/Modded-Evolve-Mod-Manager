@@ -1,0 +1,346 @@
+"""Evolve Stage 2 Level Editor 1.0: editable CryEngine placed-object layers.
+
+Only extracted .lyr objects and their transforms are editable.  This is NOT a
+CryEngine level compiler, terrain sculptor, or collision/navmesh rebuilder.
+Saves are confined to the extracted project and retain original backups.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from level_scene_core import build_scene, model_reference
+import math
+import os
+from pathlib import Path
+import re
+import shutil
+import xml.etree.ElementTree as ET
+
+MAX_LAYERS = 1024
+MAX_LAYER_BYTES = 48 * 1024 * 1024
+MAX_OBJECTS = 200000
+
+
+def parse_vec(raw, dimension=3):
+    if not isinstance(raw, str):
+        return None
+    parts = re.split(r"[\s,]+", raw.strip())
+    if len(parts) != dimension:
+        return None
+    try:
+        nums = tuple(float(x) for x in parts)
+    except ValueError:
+        return None
+    return nums if all(math.isfinite(v) and abs(v) < 1e9 for v in nums) else None
+
+
+def _serialize_vec(values, dimension):
+    if len(values) != dimension:
+        raise ValueError("Incorrect transform component count.")
+    vals = tuple(float(v) for v in values)
+    if not all(math.isfinite(v) and abs(v) < 1e9 for v in vals):
+        raise ValueError("Transform values must be finite and bounded.")
+    return ",".join(format(v, ".9g") for v in vals)
+
+
+@dataclass(frozen=True)
+class PlacedObject:
+    layer: str
+    index: int
+    name: str
+    kind: str
+    geometry: str
+    pos: tuple
+    rotate: tuple | None
+    scale: tuple | None
+
+
+class LevelProject:
+    """Reversible transform edits scoped to an extracted level workspace."""
+
+    def __init__(self, workspace):
+        from evolve_pak_workspace import load_workspace, normalized_name
+        self.workspace = Path(workspace).resolve(strict=True)
+        self.root = (self.workspace / "files").resolve(strict=True)
+        manifest = load_workspace(self.workspace)
+        available = [normalized_name(entry["path"]) for entry in manifest["entries"]]
+        names = [name for name in available if name.casefold().endswith(".lyr")]
+        self.layer_source = "CryEngine .lyr object layers"
+        if not names:
+            # Actual Evolve Stage 2 runtime level.pak archives frequently
+            # contain NO .lyr files. Their placed objects live in Mission XML,
+            # accompanied by leveldata.xml and levelinfo.xml.
+            names = [name for name in available
+                     if re.fullmatch(r"(?:.*/)?mission_[^/]+\.xml", name, re.I)]
+            if names and not any(
+                    Path(item).name.casefold() in ("leveldata.xml", "levelinfo.xml")
+                    for item in available):
+                names = []  # Avoid opening an unrelated mission XML as a map.
+            self.layer_source = "CryEngine mission_*.xml object placements"
+        if not names:
+            raise ValueError("No supported .lyr or mission_*.xml level placement data found.")
+        if len(names) > MAX_LAYERS:
+            raise ValueError("Too many level layers.")
+        self.layers = {}
+        self.objects = []
+        self._originals = {}
+        self._original_attrs = {}
+        self.skipped = []
+        self.scene = ()
+        self.scene_diagnostics = ()
+        self.known_layers = []
+        # Runtime level.pak archives store editor layer declarations in
+        # leveldata.xml even when no standalone .lyr files exist.
+        meta = next((name for name in available
+                     if Path(name).name.casefold() == "leveldata.xml"), None)
+        if meta:
+            path = self.root.joinpath(*meta.split("/"))
+            if path.is_file() and not path.is_symlink() and path.stat().st_size < MAX_LAYER_BYTES:
+                try:
+                    from evolve_gameplay_editor import parse_cryxml_text
+                    root = parse_cryxml_text(path.read_bytes())
+                    layers = root.find("Layers")
+                    if layers is not None:
+                        self.known_layers = sorted({
+                            el.get("Name") for el in layers if el.get("Name")
+                        }, key=str.casefold)
+                except (OSError, ValueError, ET.ParseError):
+                    pass
+        self.undo_stack = []
+        self.redo_stack = []
+        if names[0].casefold().startswith("levels/"):
+            self.level_name = names[0].split("/")[1]
+        else:
+            self.level_name = self.workspace.name
+            info_name = next((p for p in available if
+                              Path(p).name.casefold() == "levelinfo.xml"), None)
+            if info_name:
+                info_path = self.root.joinpath(*info_name.split("/"))
+                if info_path.is_file() and info_path.stat().st_size < 2_000_000:
+                    try:
+                        from evolve_gameplay_editor import parse_cryxml_text
+                        info_root = parse_cryxml_text(info_path.read_bytes())
+                        self.level_name = (info_root.get("Name") or self.level_name).split("/")[-1]
+                    except (OSError, ValueError, ET.ParseError):
+                        pass
+        for name in sorted(names, key=str.casefold):
+            path = self.root.joinpath(*name.split("/"))
+            if (path.is_symlink() or not path.is_file() or
+                    not path.resolve().is_relative_to(self.root) or
+                    path.stat().st_size > MAX_LAYER_BYTES):
+                self.skipped.append(name + ": unsafe, missing or too large")
+                continue
+            data = path.read_bytes()
+            try:
+                if data.startswith(b"CryXmlB\x00"):
+                    self.skipped.append(name + ": binary CryXmlB is unsupported by the verified decoder")
+                    continue
+                # Preserve CryXMLB workspace namespace prefixes and attributes.
+                from evolve_gameplay_editor import parse_cryxml_text
+                root = parse_cryxml_text(data)
+            except ET.ParseError:
+                self.skipped.append(name + ": invalid XML layer")
+                continue
+            if name.casefold().endswith(".lyr"):
+                nodes = [node for node in root.iter()
+                         if node.tag.split("}")[-1].casefold() in ("object", "entity", "brush", "prefab")
+                         and ("Pos" in node.attrib or "Name" in node.attrib)]
+            else:
+                containers = [el for el in root
+                              if el.tag.split("}")[-1].casefold() == "objects"]
+                nodes = [node for container in containers for node in container
+                         if node.tag.split("}")[-1].casefold()
+                         in ("entity", "object", "brush", "prefab")
+                         and parse_vec(node.get("Pos")) is not None
+                         and (node.get("Name") or node.get("EntityId") or node.get("Id"))]
+            if len(self.objects) + len(nodes) > MAX_OBJECTS:
+                raise ValueError("Too many placed level objects.")
+            self.layers[name] = (path, root, nodes)
+            self._originals[name] = data
+            for i, node in enumerate(nodes):
+                self._original_attrs[(name, i)] = {
+                    k: node.get(k) for k in ("Pos", "Rotate", "Scale", "Material")}
+                if parse_vec(node.get("Pos")) is None:
+                    continue
+                a = node.attrib
+                self.objects.append(PlacedObject(
+                    name, i, a.get("Name", a.get("EntityId", a.get("Id", "Unnamed"))),
+                    a.get("Type", node.tag.split("}")[-1]),
+                    model_reference(a) or a.get("EntityClass", a.get("Material", "")),
+                    parse_vec(a["Pos"]), parse_vec(a.get("Rotate"), 4),
+                    parse_vec(a.get("Scale"))))
+        self.scene, self.scene_diagnostics = build_scene(
+            (name, payload[2]) for name, payload in self.layers.items())
+        if not self.layers:
+            raise ValueError("No readable object layers in this level.")
+        self._scene_indices = {(o.layer,o.index): n
+                               for n,o in enumerate(self.objects)}
+
+    @staticmethod
+    def contains_levels(workspace):
+        from evolve_pak_workspace import load_workspace
+        try:
+            entries = [str(x["path"]).casefold()
+                       for x in load_workspace(Path(workspace))["entries"]]
+            if any(p.endswith(".lyr") for p in entries):
+                return True
+            return (any(re.fullmatch(r"(?:.*/)?mission_[^/]+\.xml", p)
+                        for p in entries)
+                    and any(Path(p).name in ("leveldata.xml", "levelinfo.xml")
+                            for p in entries))
+        except (ValueError, OSError, KeyError):
+            return False
+
+    def _node(self, layer, index):
+        if layer not in self.layers:
+            raise ValueError("Unknown layer")
+        nodes = self.layers[layer][2]
+        if not 0 <= index < len(nodes):
+            raise ValueError("Unknown object")
+        return nodes[index]
+
+    def get(self, layer, index):
+        node = self._node(layer, index)
+        a = node.attrib
+        return PlacedObject(
+            layer, index, a.get("Name", a.get("EntityId", a.get("Id", "Unnamed"))),
+            a.get("Type", node.tag.split("}")[-1]),
+            model_reference(a) or a.get("EntityClass", a.get("Material", "")),
+            parse_vec(a.get("Pos")) or (0, 0, 0),
+            parse_vec(a.get("Rotate"), 4), parse_vec(a.get("Scale")))
+
+    def apply(self, layer, index, key, values):
+        if key not in ("Pos", "Rotate", "Scale"):
+            raise ValueError("Only object transforms are editable in Level Editor 1.0.")
+        values = tuple(float(v) for v in values)
+        if key == "Scale" and any(abs(v) < 0.000001 for v in values):
+            raise ValueError("Zero object scale is not supported.")
+        updated = _serialize_vec(values, 4 if key == "Rotate" else 3)
+        node = self._node(layer, index)
+        before = node.get(key)
+        if before == updated:
+            return False
+        self.undo_stack.append((layer, index, key, before, updated))
+        self.redo_stack.clear()
+        node.set(key, updated)
+        self._refresh_object(layer,index)
+        self.refresh_scene()
+        return True
+
+    def apply_material(self, layer, index, value):
+        """Set a verified-looking material virtual path on an editable copy.
+
+        Missing/ambiguous materials are diagnosed during preview; this does
+        not silently alter the referenced mesh or unpacked game archive.
+        """
+        from level_scene_core import normalize_reference
+        material = str(value).strip().replace("\\", "/")
+        if material:
+            if len(material) > 190:
+                raise ValueError("Material reference is too long.")
+            normalized = normalize_reference(material)
+            if normalized.endswith(".mtl"):
+                material = material[:-4]
+            elif "." in Path(material).name:
+                raise ValueError("Select a CryEngine .mtl or extensionless material.")
+        node = self._node(layer, index)
+        before = node.get("Material")
+        after = material or None
+        if before == after:
+            return False
+        self.undo_stack.append((layer, index, "Material", before, after))
+        self.redo_stack.clear()
+        if after is None:
+            node.attrib.pop("Material", None)
+        else:
+            node.set("Material", after)
+        self._refresh_object(layer, index)
+        self.refresh_scene()
+        return True
+
+    def undo(self):
+        if not self.undo_stack:
+            return False
+        change = self.undo_stack.pop()
+        layer, index, key, before, after = change
+        node = self._node(layer, index)
+        if before is None:
+            node.attrib.pop(key, None)
+        else:
+            node.set(key, before)
+        self.redo_stack.append(change)
+        self._refresh_object(layer,index)
+        self.refresh_scene()
+        return True
+
+    def redo(self):
+        if not self.redo_stack:
+            return False
+        change = self.redo_stack.pop()
+        layer, index, key, before, after = change
+        node = self._node(layer, index)
+        if after is None:
+            node.attrib.pop(key, None)
+        else:
+            node.set(key, after)
+        self.undo_stack.append(change)
+        self._refresh_object(layer,index)
+        self.refresh_scene()
+        return True
+
+    def _refresh_object(self, layer, index):
+        item=self._scene_indices.get((layer,index))
+        if item is not None:
+            self.objects[item]=self.get(layer,index)
+
+    def refresh_scene(self):
+        self.scene, self.scene_diagnostics = build_scene(
+            (name, payload[2]) for name, payload in self.layers.items())
+
+    def dirty_layers(self):
+        dirty = set()
+        for (name, i), old in self._original_attrs.items():
+            node = self._node(name, i)
+            if any(node.get(k) != v for k, v in old.items()):
+                dirty.add(name)
+        return dirty
+
+    def save(self):
+        """Atomic replacement of modified layer/mission files; no live PAK writes."""
+        changed = self.dirty_layers()
+        if not changed:
+            return ()
+        results = []
+        for name in sorted(changed):
+            path, root, nodes = self.layers[name]
+            if path.is_symlink() or not path.resolve().is_relative_to(self.root):
+                raise ValueError("Level file moved outside the editable project.")
+            if path.read_bytes() != self._originals[name]:
+                raise ValueError("Layer changed on disk. Reopen to avoid overwriting edits.")
+            backup = self.workspace / ".level-editor-backups"
+            backup_file = backup.joinpath(*name.split("/"))
+            if backup_file.is_symlink():
+                raise ValueError("Linked backup path is not supported.")
+            backup_file.parent.mkdir(parents=True, exist_ok=True)
+            if not backup_file.is_file():
+                shutil.copy2(path, backup_file)
+            payload = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            tmp = path.with_name(path.name + ".level-editor-saving")
+            if tmp.exists():
+                raise ValueError("Interrupted level save requires manual review: " + str(tmp))
+            try:
+                with tmp.open("xb") as output:
+                    output.write(payload)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(tmp, path)
+            finally:
+                tmp.unlink(missing_ok=True)
+            self._originals[name] = payload
+            results.append(name)
+        for (name, i) in self._original_attrs:
+            node = self._node(name, i)
+            self._original_attrs[(name, i)] = {
+                key: node.get(key) for key in ("Pos", "Rotate", "Scale", "Material")}
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        return tuple(results)

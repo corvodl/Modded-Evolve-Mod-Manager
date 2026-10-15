@@ -26,7 +26,8 @@ _cache_lock = threading.RLock()
 
 
 def model_cache_key(workspace, relative, *, projects_root=None, stage_root=None,
-                    texture_folder=None, equipment=None, animation_index=None, index=None):
+                    texture_folder=None, equipment=None, animation_index=None,
+                    index=None, require_assembly=False):
     """Cheap signature of the project, source asset and optional loose texture tree.
 
     Related extracted workspaces can be edited independently; TTL bounds
@@ -37,7 +38,12 @@ def model_cache_key(workspace, relative, *, projects_root=None, stage_root=None,
     if not path.is_relative_to((root/'files').resolve()):
         raise ValueError('Unsafe model path')
     stat = path.stat()
-    manifest = (root/'.evolve-pak-workspace.json').stat()
+    # Editable projects use the signing workspace manifest; imported
+    # read-only Asset Library PAKs use their own distinct manifest.
+    manifest_path = root / '.evolve-pak-workspace.json'
+    if not manifest_path.is_file():
+        manifest_path = root / 'asset-library.json'
+    manifest = manifest_path.stat()
     def folder_marker(folder):
         if not folder:
             return None
@@ -52,7 +58,8 @@ def model_cache_key(workspace, relative, *, projects_root=None, stage_root=None,
     return (str(root),relative,stat.st_size,stat.st_mtime_ns,
             manifest.st_size,manifest.st_mtime_ns,str(equipment),id(index) if index is not None else None,
             folder_marker(texture_folder),folder_marker(projects_root),
-            folder_marker(stage_root),animation_index is None)
+            folder_marker(stage_root),animation_index is None,
+            bool(require_assembly))
 
 
 def _result_size(result):

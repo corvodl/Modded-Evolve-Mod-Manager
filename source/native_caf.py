@@ -226,7 +226,18 @@ def _matrix_quaternion(m):
     return (q/np.linalg.norm(q)).astype(np.float32)
 
 
-def append_caf_animations(glb, clips):
+def minimum_matching_controllers(total):
+    """Fail closed when a CAF targets a different monster stage/skeleton.
+
+    Previously any large motion with three matching CRCs was accepted,
+    even if the other 97 joints were missing. This creates visibly twisted
+    animation rigs. Partial tracks are permitted only if *their controllers*
+    are almost all present in the selected skeleton.
+    """
+    return max(1, math.ceil(int(total) * 0.8))
+
+
+def append_caf_animations(glb, clips, *, allow_layered=False):
     """Add native CAF tracks to a *rigged* manager GLB.
 
     clips: iterable of (display_name, CAF bytes). Matches bone names by CRC,
@@ -249,11 +260,29 @@ def append_caf_animations(glb, clips):
     animations = []
     for name, raw in clips:
         motion = decode_caf(raw)
-        if motion.additive or 'aimpose' in name.casefold() or 'additive' in name.casefold():
+        layered = (motion.additive or 'aimpose' in name.casefold()
+                   or 'additive' in name.casefold())
+        if layered and not allow_layered:
+            # A layer alone is not a complete motion. Callers must supply
+            # an explicit verified base clip and opt into layered export.
             continue
         matched = [t for t in motion.tracks if t.controller_id in crc_nodes]
-        if len(matched) < min(3, max(1, len(motion.tracks)//4)):
-            raise ValueError('CAF %s does not match this model skeleton' % name)
+        required = minimum_matching_controllers(len(motion.tracks))
+        if len(matched) < required:
+            raise ValueError(
+                'CAF %s skeleton mismatch: %d/%d controllers match; %d required. '
+                'Choose the matching monster stage/CDF and exact animation PAK.' %
+                (name,len(matched),len(motion.tracks),required))
+        # Use one timeline origin across ALL bone controllers. Previously
+        # every joint subtracted its own first key's timestamp, shifting
+        # late-starting tracks to frame zero and desynchronizing creature
+        # joints (particularly multi-track monster idle animations).
+        start_keys = [float(times[0]) for track in motion.tracks
+                      for times in (track.rotation_times, track.position_times)
+                      if times]
+        if not start_keys:
+            raise ValueError('CAF has no controller timestamps.')
+        time_origin = min(start_keys)
         channels, samplers = [], []
         for track in matched:
             node = crc_nodes[track.controller_id]
@@ -273,7 +302,7 @@ def append_caf_animations(glb, clips):
                 if not values:
                     continue
                 time = np.asarray(times, dtype=np.float32)
-                time = (time - time[0])/motion.fps
+                time = (time - time_origin)/motion.fps
                 # glTF accessors require increasing keys.
                 if len(time) > 1 and np.any(np.diff(time) <= 0):
                     unique = np.concatenate(([True], np.diff(time) > 0))
@@ -310,7 +339,11 @@ def append_caf_animations(glb, clips):
                                  'target':{'node':node,'path':path}})
         if not channels:
             raise ValueError('CAF has no compatible transform tracks')
-        animations.append({'name':name,'samplers':samplers,'channels':channels})
+        animations.append({
+            'name': name, 'samplers': samplers, 'channels': channels,
+            'extras': {'evolveLayered': bool(layered),
+                       'evolveAdditive': bool(motion.additive)},
+        })
     if not animations:
         raise ValueError('No standalone compatible CAF animations found')
     document.setdefault('animations',[]).extend(animations)

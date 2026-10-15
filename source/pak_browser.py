@@ -38,10 +38,14 @@ def archive_description(relative: str) -> str:
             if parts[1].casefold() == 'hunters' and subject.casefold().startswith('merc_'):
                 subject = subject[5:]
             if subject:
+                from character_aliases import character_name_for_internal
+                ingame = character_name_for_internal(subject)
+                label = (ingame + ' (internal: ' + subject + ')'
+                         if ingame else _title_words(subject))
                 kind = ('Models / Skeletons / Animation References'
                         if parts[-1].casefold() == 'data'
                         else 'Textures / Animation Assets (if present)')
-                return _title_words(subject) + ' ' + kind
+                return label + ' ' + kind
         if len(parts) >= 3:
             return _title_words('_'.join(parts[2:])) + ' Characters'
     if lower.startswith('objects_'):

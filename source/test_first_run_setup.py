@@ -136,6 +136,7 @@ class PublishTests(unittest.TestCase):
             for name in ('EvolveModManager.exe','EvolveModWorker.exe'):(built/name).write_bytes(b'fixture')
             (built/'BUILD_COMMIT.txt').write_text('a'*40)
             (built/'BUILD_CHANNEL.txt').write_text('main')
+            (built/'BUILD_REVISION.txt').write_text('0')
             dist=root/'dist';previous=dist/'ExistingApp'/'Data';previous.mkdir(parents=True)
             (previous/'private_key.pem').write_text('DO NOT TOUCH')
             release,archive=publish(built,dist)

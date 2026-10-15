@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from character_animation_catalog import (
     AnimationReference, caf_header, discover_animations,
-    parse_animation_references, prefer_idle,
+    parse_animation_references, prefer_idle, native_clip_playability,
 )
 from character_assembly import assemble_character, combine_meshes
 from material_preview import PreviewMaterials
@@ -28,13 +28,85 @@ class CharacterPipelineTests(unittest.TestCase):
             file.write_bytes(b'CrChF\x07\x00\x00' + struct.pack('<II', 1, 16) + b'\0'*16)
             refs = parse_animation_references(payload,
                 lambda virtual: file if virtual.endswith('/tech_idle_forward.caf') else None)
-            self.assertEqual(2, len(refs))
+            self.assertEqual(3, len(refs))
+            self.assertEqual('dba', refs[0].kind)
+            self.assertEqual('DBA: tech_3p', refs[0].name)
+            self.assertEqual('metadata', native_clip_playability(refs[0])[0])
             self.assertEqual('characters/hunters/merc_tech/animations/3p/tech_idle_forward.caf',
-                             refs[0].virtual_path)
-            self.assertTrue(refs[0].available)
-            self.assertFalse(refs[1].available)
+                             refs[1].virtual_path)
+            self.assertTrue(refs[1].available)
+            self.assertFalse(refs[2].available)
             self.assertTrue(caf_header(file))
             self.assertEqual('nw_alert_stand_idle_forward', prefer_idle(refs).name)
+
+    def test_database_source_can_use_external_converter_for_playback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            database = Path(folder) / 'hunter_tracks.dba'
+            database.write_bytes(b'DBA fixture only: no native decoder')
+            ref = AnimationReference(
+                'DBA: hunter_tracks', 'characters/hunters/merc_tech/animations/3p/hunter_tracks.dba',
+                'dba', True, database)
+            state, hint = native_clip_playability(ref)
+            self.assertEqual('converter', state)
+            self.assertIn('converter', hint)
+            self.assertIn('bundled converter', hint)
+
+    def test_layered_aimposes_are_not_claimed_as_standalone_playback(self):
+        layered = AnimationReference(
+            'nw_alert_stand_aimposes_forward',
+            'characters/hunters/merc_tech/animations/3p/nw_alert_stand_aimposes_forward.caf',
+            'caf', True, Path('synthetic.caf'))
+        additive = AnimationReference('nw_stand_additive', 'foo.caf',
+                                      'caf', True, Path('synthetic.caf'))
+        standalone = AnimationReference(
+            'nw_alert_stand_idle_forward', 'idle.caf', 'caf', True,
+            Path('synthetic.caf'))
+        missing = AnimationReference('missing', 'missing.caf', 'caf', False)
+        blendspace = AnimationReference('look_blendspace', 'look.bspace',
+                                        'bspace', True, Path('look.bspace'))
+        self.assertEqual(native_clip_playability(layered)[0], 'layered')
+        self.assertEqual(native_clip_playability(additive)[0], 'layered')
+        self.assertIn('base animation', native_clip_playability(layered)[1])
+        self.assertEqual(native_clip_playability(missing)[0], 'missing')
+        self.assertEqual(native_clip_playability(blendspace)[0], 'metadata')
+        self.assertEqual(native_clip_playability(standalone)[0], 'candidate')
+        self.assertIs(prefer_idle((layered, standalone)), standalone)
+
+    def test_animation_catalog_uses_newly_imported_caf_without_reloading_model(self):
+        from animation_on_demand import _exact_loose
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            name = 'characters/hunters/merc_tech/tech_3p_skeleton.chrparams'
+            clip = ('characters/hunters/merc_tech/animations/3p/'
+                    'tech_idle_forward.caf')
+            params = root/'config.chrparams'
+            params.write_text(
+                '<Params><AnimationList>'
+                '<Animation name="#filepath" '
+                'path="characters/hunters/merc_tech/animations/3p"/>'
+                '<Animation name="stand_idle" path="tech_idle_forward.caf"/>'
+                '</AnimationList></Params>')
+            header = b'CrChF\x07\x00\x00' + struct.pack('<II', 1, 16) + b'\0' * 16
+            a, b = root/'animations1.caf', root/'animations2.caf'
+            a.write_bytes(header)
+            b.write_bytes(header)
+            stale_model_index = {
+                name: [{'workspace': root, 'file': params, 'relative': name}]}
+            imported = {
+                clip: [{'workspace': None, 'file': a, 'relative': clip,
+                        '_asset_library': 'first'},
+                       {'workspace': None, 'file': b, 'relative': clip,
+                        '_asset_library': 'second'}]}
+            with patch('asset_library.extracted_index', return_value=imported):
+                refs, idle, source = discover_animations(
+                    'characters/hunters/merc_tech/tech_3p.skinm',
+                    stale_model_index, preferred_workspace=root)
+            self.assertEqual(len(refs), 1)
+            self.assertTrue(refs[0].available)
+            self.assertEqual(refs[0].file, a)
+            self.assertEqual(idle.name, 'stand_idle')
+            b.write_bytes(header[:-1] + b'X')
+            self.assertIsNone(_exact_loose(imported, clip))
 
     def test_native_catalog_uses_character_specific_skeleton(self):
         with tempfile.TemporaryDirectory() as temporary:

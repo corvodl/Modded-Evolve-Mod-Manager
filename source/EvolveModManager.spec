@@ -7,6 +7,14 @@ import ast
 root = Path(SPECPATH)
 datas = [(str(p), '.') for p in root.glob('*.py')
          if not p.name.startswith(('test_', 'Test-', 'build_'))]
+# The converter is redistributed as an independent GPLv2 executable,
+# together with complete corresponding upstream source and license.
+third_party = root / 'third_party' / 'Cryengine-Converter'
+for name in ('cgf-converter.exe', 'Cryengine-Converter-source-v2.0.0.zip', 'NOTICE.txt'):
+    asset = third_party / name
+    if not asset.is_file():
+        raise FileNotFoundError('Bundled Cryengine-Converter missing: ' + str(asset))
+    datas.append((str(asset), 'third_party/Cryengine-Converter'))
 datas += [(str(root/'launcher_support'), 'launcher_support'),
           (str(root/'assets'), 'assets'),
           (str(root/'reference'), 'reference'),
@@ -14,15 +22,19 @@ datas += [(str(root/'launcher_support'), 'launcher_support'),
           (str(root/'VERSION.txt'), '.')]
 binaries = []
 hidden = [
+    'level_blender_export', 'blender_native_project', 'blender_texture_folder',
+    'level_terrain_decode', 'level_dependency_loader', 'qt_level_scene_render',
+    'database_animation', 'texture_selection', 'texture_transform', 'qt_texture_selection',
     'evolve_pak_workspace', 'evolve_pak_rekey', 'evolve_gameplay_editor',
     'evolve_video_pak_tool_fixed', 'dds_texture', 'dds_png_import',
     'dds_streaming', 'model_asset', 'model_preview', 'gpu_model_preview',
-    'material_preview', 'multi_pak_assets', 'decode_cryxml',
+    'material_preview', 'model_material_resolve', 'multi_pak_assets', 'decode_cryxml',
     'universal_stage', 'refresh_originals', 'workspace_editor',
     'workspace_file_actions', 'pak_browser', 'portable_bundle',
     'first_run_setup', 'old_prepared', 'loose_game_files',
     'loose_file_editor', 'qt_manager', 'qt_workspace_editor',
-    'qt_gpu_viewer', 'qt_asset_studio', 'studio_tools', 'qt_asset_intelligence', 'asset_intelligence', 'qt_workflow_lab', 'workflow_lab', 'qt_task_queue', 'asset_geometry_cache', 'material_editor_v2', 'qt_developer_lab', 'developer_runtime_lab', 'developer_network_lab', 'developer_private_services', 'developer_support_lab', 'developer_write_policy', 'project_lifecycle', 'project_selection', 'qt_theme_116', 'quality_lab_116', 'studio_polish_117', 'renderer_3', 'developer_diagnostics_116', 'qt_font_health', 'desktop_shortcut', 'orphaned_swap_recovery',
+    'qt_asset_library', 'qt_asset_preview', 'asset_library_preview', 'legacy_pak_workspace', 'legacy_texture_preview', 'qt_legacy_pak_editor', 'legacy_pak_import', 'gfx_preview_backend', 'qt_gfx_preview', 'gfx_edit_backend', 'qt_gfx_editor', 'animation_converter_bridge', 'converted_motion', 'character_aliases',
+    'qt_gpu_viewer', 'qt_asset_studio', 'studio_tools', 'qt_asset_intelligence', 'asset_intelligence', 'qt_workflow_lab', 'workflow_lab', 'qt_task_queue', 'asset_geometry_cache', 'operation_progress', 'qt_operation_progress', 'qt_background_exports', 'material_editor_v2', 'qt_developer_lab', 'developer_runtime_lab', 'developer_network_lab', 'developer_private_services', 'developer_support_lab', 'developer_write_policy', 'project_lifecycle', 'project_selection', 'qt_theme_116', 'quality_lab_116', 'studio_polish_117', 'renderer_3', 'developer_diagnostics_116', 'qt_font_health', 'desktop_shortcut', 'orphaned_swap_recovery',
 ]
 for package in ('cryptography', 'frida', 'twofish', 'PIL'):
     d, b, h = collect_all(package)
