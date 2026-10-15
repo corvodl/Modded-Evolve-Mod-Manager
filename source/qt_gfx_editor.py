@@ -12,7 +12,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QFileDialog, QMessageBox, QGroupBox, QWidget, QMenuBar,
-    QLineEdit,
+    QLineEdit, QSplitter, QScrollArea,
 )
 from gfx_preview_backend import inspect_gfx, GfxError, resolve_imports, export_gfx_png
 from gfx_edit_backend import (
@@ -28,11 +28,14 @@ from qt_gfx_layout_editor import GfxLayoutDialog
 
 
 class GfxEditorDialog(QDialog):
-    def __init__(self, owner, relative):
+    def __init__(self, owner, relative, *, embedded=False):
         if owner.read_only_library:
             raise PermissionError(
                 "Asset Library originals are read-only. Open an editable Modding project.")
         super().__init__(owner)
+        self.embedded = embedded
+        if embedded:
+            self.setWindowFlags(Qt.Widget)
         self.owner = owner
         self.manager = owner.manager
         self.relative = relative
@@ -67,7 +70,24 @@ class GfxEditorDialog(QDialog):
         outer.addWidget(self.warning)
         self.viewer = GfxPreviewWidget(self)
         self.viewer.setup.setEnabled(True)
-        outer.addWidget(self.viewer, 1)
+        # Reuse the authoring panel within the ordinary file editor. The canvas
+        # gets most of the width; edit controls scroll in a compact inspector.
+        self.editor_split = QSplitter(Qt.Horizontal, self)
+        self.editor_split.setObjectName("gfxAuthoringSplitter")
+        self.editor_split.addWidget(self.viewer)
+        self.inspector_scroll = QScrollArea(self)
+        self.inspector_scroll.setObjectName("gfxAuthoringInspector")
+        self.inspector_scroll.setWidgetResizable(True)
+        self.inspector_content = QWidget()
+        self.inspector_layout = QVBoxLayout(self.inspector_content)
+        self.inspector_layout.setContentsMargins(7, 7, 7, 7)
+        self.inspector_layout.setSpacing(8)
+        self.inspector_scroll.setWidget(self.inspector_content)
+        self.editor_split.addWidget(self.inspector_scroll)
+        self.editor_split.setStretchFactor(0, 5)
+        self.editor_split.setStretchFactor(1, 2)
+        self.editor_split.setSizes([900, 310])
+        outer.addWidget(self.editor_split, 1)
 
         tools = QGroupBox("Editing and rebuild")
         layout = QVBoxLayout(tools)
@@ -158,7 +178,7 @@ class GfxEditorDialog(QDialog):
         layout.addWidget(self.layout_button)
         self.tools_menu.addAction("Visual layout editor…", self.open_layout)
         self._layout_dialog = None
-        outer.addWidget(tools)
+        self.inspector_layout.addWidget(tools)
 
         # Retail main_menu.gfx receives its featured offer from a game
         # callback. Only expose guarded script edits for this exact movie;
@@ -202,10 +222,11 @@ class GfxEditorDialog(QDialog):
             self.promo_target.currentIndexChanged.connect(self._promo_options_changed)
             self.promo_text.textChanged.connect(self._promo_options_changed)
             self._promo_options_changed()
-            outer.addWidget(self.promo_group)
+            self.inspector_layout.addWidget(self.promo_group)
             self.tools_menu.addAction(
                 "Featured promotional UI…", self._focus_featured_promo)
 
+        self.inspector_layout.addStretch(1)
         footer = QHBoxLayout()
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -215,8 +236,8 @@ class GfxEditorDialog(QDialog):
         self.apply.setObjectName("gfxApplyToProject")
         self.apply.clicked.connect(self.apply_to_workspace)
         footer.addWidget(self.apply)
-        cancel = QPushButton("Close without applying")
-        cancel.clicked.connect(self.close)
+        cancel = QPushButton("Back to preview" if embedded else "Close without applying")
+        cancel.clicked.connect(owner._close_gfx_editor if embedded else self.close)
         footer.addWidget(cancel)
         outer.addLayout(footer)
         self._reload_preview()
@@ -440,7 +461,8 @@ class GfxEditorDialog(QDialog):
                 expected_sha256=self.snapshot.original_sha256)
             if result["changed"]:
                 self.owner.load(self.relative)
-                self.accept()
+                if not self.embedded:
+                    self.accept()
         except Exception as exc:
             QMessageBox.critical(self, "Edited GFX was not applied", str(exc))
 
