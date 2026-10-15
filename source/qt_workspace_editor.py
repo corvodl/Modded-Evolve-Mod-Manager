@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
     QDockWidget, QTreeWidgetItemIterator, QFrame, QAbstractItemView, QHeaderView, QStyle,
+    QSizePolicy,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
@@ -244,6 +245,11 @@ class QtWorkspaceEditor(QMainWindow):
         self.editor_split.setObjectName('unifiedEditorSplitter')
         self.tabs = QTabWidget()
         self.tabs.setObjectName('internalFileTypeViewer')
+        # Hidden GFX/media tabs contribute oversized minimumSizeHint widths.
+        # Let the user expand the explorer under Files First without forcing
+        # a near-full-width viewport merely to fit inactive toolbar rows.
+        self.tabs.setMinimumWidth(320)
+        self.tabs.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.tabs.tabBar().hide()
         self.tabs.setDocumentMode(True)
         self.tabs.setStyleSheet('QTabWidget::pane { border: 0; }')
