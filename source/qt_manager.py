@@ -855,14 +855,13 @@ class QtManager(QMainWindow):
         self.asset_table.setAlternatingRowColors(True)
         self.asset_table.setSortingEnabled(True)
         self.asset_table.verticalHeader().hide()
-        for index in (0, 1):
+        # Fit real PAK names/paths/descriptions instead of truncating them
+        # into fixed or Stretch columns. Users can still drag each separator.
+        for index in range(6):
             self.asset_table.horizontalHeader().setSectionResizeMode(
                 index, QHeaderView.Interactive)
-        self.asset_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.asset_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        for index in (4, 5):
-            self.asset_table.horizontalHeader().setSectionResizeMode(
-                index, QHeaderView.ResizeToContents)
+        self.asset_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.asset_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.asset_table.setColumnWidth(0, 215)
         self.asset_table.setColumnWidth(1, 150)
         self.asset_table.itemDoubleClicked.connect(
@@ -910,6 +909,20 @@ class QtManager(QMainWindow):
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
             self.failure('Windows Explorer could not open the Asset Library folder.')
+
+    def _fit_library_column_widths(self):
+        """Grow clipped columns after filtering or importing new PAK names.
+
+        Avoid shrinking a user-expanded column. Wide libraries remain
+        horizontally scrollable rather than clipping filenames/descriptions.
+        """
+        table = self.asset_table
+        header = table.horizontalHeader()
+        for column in range(table.columnCount()):
+            required = max(90, header.sectionSizeHint(column),
+                           table.sizeHintForColumn(column) + 12)
+            if table.columnWidth(column) < required:
+                table.setColumnWidth(column, required)
 
     def refresh_library_table(self, *_unused):
         if not hasattr(self, 'asset_table'):
@@ -992,6 +1005,7 @@ class QtManager(QMainWindow):
                 table.setItem(row, col, cell)
         table.setSortingEnabled(True)
         table.sortItems(0, Qt.AscendingOrder)
+        self._fit_library_column_widths()
         if selected_ids:
             # Refreshes can occur while shared PAK imports finish. Preserve
             # visible multi-selection by archive ID even after sorting or
