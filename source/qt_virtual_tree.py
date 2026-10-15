@@ -17,6 +17,7 @@ class TreeNode:
     value: object = None
     tooltip: str = ''
     size: str = ''
+    variant: str = ''
     parent: object = field(default=None, repr=False)
     children: list = field(default_factory=list, repr=False)
     loaded: int = 0
@@ -86,6 +87,10 @@ class VirtualTreeModel(QAbstractItemModel):
             return node.tooltip or node.kind
         if role == Qt.UserRole:
             return node.value
+        if role == Qt.UserRole + 1:
+            return node.tooltip if node.kind == 'Folder' else None
+        if role == Qt.UserRole + 2:
+            return node.variant
         if role == Qt.ToolTipRole:
             return node.tooltip or node.label
         return None
