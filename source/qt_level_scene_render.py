@@ -232,6 +232,8 @@ class LevelGLViewport(QOpenGLWidget):
         self._streaming = False
         self._preparing = True
         self._last_request = None
+        self._placement_index = None
+        self._placement_scene = None
         self._upload_remaining = 0
         self._terrain_uvs = {}
         self._terrain_texture = 0
@@ -311,6 +313,8 @@ class LevelGLViewport(QOpenGLWidget):
         self._streaming = False
         self._preparing = True
         self._last_request = None
+        self._placement_index = None
+        self._placement_scene = None
         self.terrain = None
         self.terrain_chunks = ()
         self.terrain_atlas = None
@@ -364,6 +368,8 @@ class LevelGLViewport(QOpenGLWidget):
             return
         self._preparing = details.get("pending",False)
         self.scene = details.get("scene", self.project.scene)
+        self._placement_index = None
+        self._placement_scene = None
         self._residency = details.get("residency")
         self._issues = issues
         self._dependency_report = details.get('dependencies', {})
@@ -443,22 +449,21 @@ class LevelGLViewport(QOpenGLWidget):
         if request == self._last_request:
             return
         self._last_request = request
-        # Prioritize nearest instances, not the arbitrary last placement of a
-        # material variant. Membership always remains in self.scene.
-        distances = {}
-        for obj in self.scene:
-            if not obj.model or obj.status == 'hidden in editor':
-                continue
-            key = _asset_key(obj)
-            distance = sum((obj.world.pos[i]-self.camera[i])**2 for i in range(3))
-            distances[key] = min(distance, distances.get(key,float('inf')))
+        # Build the grid only when a scene is installed/replaced. Camera
+        # changes probe nearby occupied cells, not every placement twice.
+        if self._placement_index is None or self._placement_scene is not self.scene:
+            from level_working_set import PlacementGrid
+            self._placement_index = PlacementGrid(self.scene, _asset_key)
+            self._placement_scene = self.scene
         eye = self._eye()
-        forward = tuple((self.camera[i]-eye[i])/max(self.distance,1e-8) for i in range(3))
-        facing = set()
-        for obj in self.scene:
-            if sum((obj.world.pos[i]-eye[i])*forward[i] for i in range(3)) > 0:
-                facing.add(_asset_key(obj))
-        keys = sorted(distances, key=lambda k:(k not in facing,distances[k]))
+        forward = tuple((self.camera[i] - eye[i]) / max(self.distance, 1e-8)
+                        for i in range(3))
+        # A margin keeps already decoded resources resident under small pans.
+        nearby = self._placement_index.nearby(
+            self.camera, max(100., self.distance * 3.), eye=eye,
+            forward=forward, retain=self.assets.keys(), margin=1.2)
+        keys = sorted(nearby, key=lambda key: (
+            not nearby[key][1], nearby[key][0]))
         if set(keys) == set(self.assets):
             return
         store, cancel, token, queue = self._residency,self._cancel,self._generation,self._results
