@@ -1474,8 +1474,13 @@ class QtManager(QMainWindow):
             except (OSError, ValueError) as exc:
                 archives_result = ()
                 failures.append('Archives: ' + str(exc)[:160])
-            self.signals.inventory_ready.emit(
-                projects_result, archives_result, '; '.join(failures))
+            try:
+                self.signals.inventory_ready.emit(
+                    projects_result, archives_result, '; '.join(failures))
+            except RuntimeError:
+                # The owning Qt window may close while background discovery
+                # is finishing. Never dereference a deleted QObject signal.
+                pass
 
         threading.Thread(target=worker, daemon=True,
                          name='ModdingInventory').start()
