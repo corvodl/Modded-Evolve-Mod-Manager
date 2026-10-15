@@ -123,6 +123,11 @@ class GameStorageTests(unittest.TestCase):
                 patch("universal_stage.allowed_paks", return_value={
                     "game/libs.pak": "Game/libs.pak"}):
             self.assertTrue(reusable_setup(self.stage, self.swap, self.game, launcher))
+            # Setup initially ships core helpers; the extra watchdog is
+            # installed by the launch path, not by first-run signing.
+            with patch("launch_integration.missing_scripts",
+                       return_value=["auto_restore_watch.py"]):
+                self.assertTrue(reusable_setup(self.stage, self.swap, self.game, launcher))
             self.assertFalse(reusable_setup(self.stage, self.swap, self.game,
                                             Path(self.temp.name) / "wrong.exe"))
             journal = self.swap / "controlled_swap_state.json"
