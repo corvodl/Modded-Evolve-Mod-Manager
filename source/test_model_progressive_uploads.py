@@ -46,6 +46,9 @@ class ProgressiveTextureUploadTests(unittest.TestCase):
         self.assertEqual(canvas.textures, [41])
         self.assertEqual(canvas.normal_textures, [42])
         self.assertEqual(canvas.specular_textures, [43])
+        # One repaint per upload, including the final one, ensures the last
+        # submitted texture actually appears in a later visible frame.
+        self.assertEqual(canvas.update.call_count, 3)
         self.assertEqual(QtGLModelCanvas._upload_textures(
             canvas, max_uploads=1), 0)
 
