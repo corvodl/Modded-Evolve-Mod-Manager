@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from qt_navigation_icons import navigation_icon
 from qt_ui_components import SurfacePanel
+from qt_system_health import SystemHealthPanel
 
 NAVIGATION = (
     ("Modding", "Modding", "Open a project, edit assets and sign a PAK."),
@@ -107,6 +108,11 @@ class HomeDashboard(QScrollArea):
         self.client_version_label.setObjectName("homeStatusValue")
         client_card.content.addWidget(self.client_version_label)
         outer.addWidget(client_card)
+
+        # Collapsed by default. No diagnostics, registry reads, process scans
+        # or expensive PAK checks happen on initial Home render.
+        self.system_health = SystemHealthPanel(manager, self)
+        outer.addWidget(self.system_health)
 
         main = QHBoxLayout()
         main.setSpacing(15)
