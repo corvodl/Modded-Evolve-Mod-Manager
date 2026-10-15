@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build-and-install:
-    if: github.event_name != 'pull_request' || github.event.pull_request.number == 76 || github.event.pull_request.number == 77 || github.event.pull_request.number == 78
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 76 || github.event.pull_request.number == 77 || github.event.pull_request.number == 78 || github.event.pull_request.number == 79
     runs-on: windows-2022
     timeout-minutes: 120
     env:
