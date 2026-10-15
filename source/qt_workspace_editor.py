@@ -2619,14 +2619,24 @@ class QtWorkspaceEditor(QMainWindow):
         Item labels can be friendly character aliases or grouped model names,
         so always use exact virtual path metadata, never visible text.
         """
-        item = self.file_tree.currentItem()
-        if item is not None:
-            virtual = item.data(0, Qt.UserRole)
-            if virtual:
-                return Path(normalized_name(virtual)).parent.as_posix()
-            folder = item.data(0, Qt.UserRole + 1)
-            if folder:
-                return normalized_name(folder)
+        if self._virtual_active:
+            index = self.virtual_file_tree.currentIndex()
+            if index.isValid():
+                rel = index.data(Qt.UserRole)
+                if rel:
+                    return Path(normalized_name(rel)).parent.as_posix()
+                folder = index.data(Qt.UserRole + 1)
+                if folder:
+                    return normalized_name(folder)
+        else:
+            item = self.file_tree.currentItem()
+            if item is not None:
+                virtual = item.data(0, Qt.UserRole)
+                if virtual:
+                    return Path(normalized_name(virtual)).parent.as_posix()
+                folder = item.data(0, Qt.UserRole + 1)
+                if folder:
+                    return normalized_name(folder)
         if self.current:
             return Path(normalized_name(self.current)).parent.as_posix()
         raise ValueError('Select a model or a folder in File Explorer first.')
