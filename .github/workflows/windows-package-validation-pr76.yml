@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build-and-install:
-    if: github.event_name != 'pull_request' || github.event.pull_request.number == 76
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 76 || github.event.pull_request.number == 77
     runs-on: windows-2022
     timeout-minutes: 120
     env:
@@ -70,6 +70,7 @@ jobs:
             $required = @(
               'EvolveModManager/EvolveModManager.exe',
               'EvolveModManager/EvolveModWorker.exe',
+              'EvolveModManager/_internal/launcher_support/auto_restore_watch.py',
               'EvolveModManager/BUILD_COMMIT.txt',
               'EvolveModManager/BUILD_CHANNEL.txt',
               'EvolveModManager/_internal/libgcrypt-20.dll',
