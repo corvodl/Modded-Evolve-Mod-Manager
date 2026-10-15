@@ -2,7 +2,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from version_info import app_version
+from version_info import app_version, footer_version
 
 
 class VersionManifestTests(unittest.TestCase):
@@ -20,6 +20,20 @@ class VersionManifestTests(unittest.TestCase):
             path = Path(beta_folder) / 'VERSION.txt'
             path.write_text('1.1.18-beta.1 - Preview')
             self.assertEqual(app_version(path), 'v1.1.18-beta.1')
+
+    def test_footer_displays_milestone_without_patch_revision(self):
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / 'VERSION.txt'
+            revision = Path(folder) / 'BUILD_REVISION.txt'
+            path.write_text('1.2.0 - Stable Release', encoding='utf-8')
+            revision.write_text('2', encoding='ascii')
+            self.assertEqual(app_version(path), 'v1.2.0 · Patch 2')
+            self.assertEqual(footer_version(path), 'v1.2.0')
+            path.write_text('1.1.18-beta.50 - Beta', encoding='utf-8')
+            self.assertEqual(app_version(path), 'v1.1.18-beta.50 · Patch 2')
+            self.assertEqual(footer_version(path), 'v1.1.18-beta.50')
+            revision.write_text('0', encoding='ascii')
+            self.assertEqual(footer_version(path), 'v1.1.18-beta.50')
 
     def test_stable_12_notes_are_consolidated_and_hide_beta_history(self):
         from release_notes import RELEASE_NOTES, markdown
