@@ -61,6 +61,47 @@ class AddModRestoredTests(unittest.TestCase):
         self.assertEqual(digest(self.staged), self.stage_original_hash)
         self.assertEqual(self.pak.read_bytes(), original_game)
 
+    def test_rebuild_after_staged_mod_uses_exact_verified_backup(self):
+        backup = self._install()
+        workspace = self.root / 'mod-project'
+        output = self.root / 'rebuild' / 'libs.pak'
+        output.parent.mkdir()
+        baseline_bytes = (backup / 'before.pak').read_bytes()
+        installed_bytes = self.staged.read_bytes()
+        journal_bytes = self.journal.read_bytes()
+        cmd_build(SimpleNamespace(
+            workspace=workspace, pak=None,
+            public_key=self.new_stage / 'mykeys' / 'public_key.bin',
+            private_key=self.new_stage / 'mykeys' / 'private_key.pem',
+            out=output, stage=self.new_stage, backup_root=self.backup_root))
+        self.assertTrue(output.is_file())
+        self.assertEqual((backup / 'before.pak').read_bytes(), baseline_bytes)
+        self.assertEqual(self.staged.read_bytes(), installed_bytes)
+        self.assertEqual(self.journal.read_bytes(), journal_bytes)
+        verified, signed = load_with_signed_basename(
+            output, self.new_stage / 'mykeys' / 'public_key.bin')
+        self.assertEqual(signed, 'libs.pak')
+        self.assertEqual(verified['count'], 1)
+
+    def test_stale_source_never_rebases_on_edited_staged_pak(self):
+        from evolve_pak_workspace import resolve_build_source
+        backup = self._install()
+        workspace = self.root / 'mod-project'
+        metadata = json.loads((workspace / '.evolve-pak-workspace.json').read_text())
+        with self.assertRaisesRegex(ValueError, 'Workspace source PAK changed'):
+            resolve_build_source(workspace, metadata)
+        source, restored = resolve_build_source(
+            workspace, metadata, backup_root=self.backup_root,
+            stage=self.new_stage)
+        self.assertEqual(source, backup / 'before.pak')
+        self.assertTrue(restored)
+        # A tampered backup must not become a new automatic baseline.
+        (backup / 'before.pak').write_bytes(b'different bytes')
+        with self.assertRaisesRegex(ValueError, 'no exact verified baseline'):
+            resolve_build_source(
+                workspace, metadata, backup_root=self.backup_root,
+                stage=self.new_stage)
+
     def test_prepared_without_archive_record_is_rejected(self):
         state = json.loads(self.journal.read_text())
         state['phase'] = 'prepared'
