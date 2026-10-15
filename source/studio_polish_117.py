@@ -14,6 +14,7 @@ import threading
 import time
 
 from qt_theme_116 import PALETTES, ROLES, palette
+from performance_trace import span, record
 
 MODEL_CACHE_LIMIT = 3
 MODEL_CACHE_TTL = 30
@@ -106,8 +107,10 @@ def prepare_model_cached(workspace,relative,*,force=False,cancel=None,**kwargs):
                 _cache.move_to_end(key)
                 if cancel is not None and cancel():
                     raise InterruptedError('Obsolete model preparation cancelled')
+                record('model', 'prepared_cache_hit', elapsed_ms=(time.perf_counter()-start)*1000, cache_hit=True)
                 return _detached(hit[1]),True,(time.perf_counter()-start)*1000
-    result=resolve_model(workspace,relative,cancel=cancel,**kwargs)
+    with span('model', 'cpu_resolve', cache_hit=False):
+        result=resolve_model(workspace,relative,cancel=cancel,**kwargs)
     if cancel is not None and cancel():
         raise InterruptedError('Obsolete model preparation cancelled')
     size=_result_size(result)
@@ -121,6 +124,8 @@ def prepare_model_cached(workspace,relative,*,force=False,cancel=None,**kwargs):
             while len(_cache)>MODEL_CACHE_LIMIT or _cache_bytes>MAX_CACHE_BYTES:
                 _,entry=_cache.popitem(last=False)
                 _cache_bytes-=entry[2]
+    record('model', 'prepared_ready', elapsed_ms=(time.perf_counter()-start)*1000,
+           cache_hit=False, estimated_bytes=size)
     return result,False,(time.perf_counter()-start)*1000
 
 
