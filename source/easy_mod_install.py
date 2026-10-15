@@ -133,15 +133,10 @@ def import_reviewed_mod(review, stage, catalog_root, profile_id):
     confirmation through the existing ModProfiles worker.
     """
     from mod_profiles import ModProfiles
-    from launch_integration import state_status
     if not isinstance(review, ModReview):
         raise TypeError("Expected a verified ModReview.")
     stage = Path(stage).resolve(strict=True)
     store = ModProfiles(catalog_root)
-    if state_status(stage.parent / "swap").phase in ("swapped", "swapping"):
-        # The caller still validates its actual configured swap directory
-        # via ModProfiles.apply; this check is advisory only.
-        pass
     with tempfile.TemporaryDirectory(prefix="evolve-mod-import-") as temp:
         source = review.source.resolve(strict=True)
         if source.suffix.casefold() == ".zip":
