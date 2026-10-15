@@ -4,6 +4,11 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.2.2', (
+        "Speed up Modding and Asset Library navigation with background inventory, virtualized large asset trees, and demand-driven file metadata.",
+        "Show verified model and map geometry earlier, retain unchanged map textures, and invalidate prepared caches when source assets change.",
+        "Stream RSA-verified signed PAK entries in bounded chunks with native Twofish acceleration, cancellation, and preserved CRC checks.",
+    )),
     ('1.2.1', (
         "Patch 1: introduce Home as the launch dashboard, with workspace shortcuts, quick setup status and a persistent outlined-icon navigation rail.",
         "Patch 1: let the application logo return to Home while preserving restricted-page access controls.",
