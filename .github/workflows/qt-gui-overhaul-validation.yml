@@ -5,6 +5,8 @@ on:
     branches: [main, beta]
     paths:
       - 'source/qt_*.py'
+      - 'source/developer_*.py'
+      - 'source/test_developer_console_windows.py'
       - 'source/test_qt_*.py'
       - 'source/test_version_info.py'
       - 'source/version_info.py'
@@ -35,7 +37,7 @@ jobs:
       - name: Exercise design system, workspaces and protected navigation
         shell: pwsh
         run: |
-          python -m unittest -v test_qt_design_system test_version_info test_qt_migration test_qt_modern_navigation test_qt_unified_explorer test_qt_gfx_editor test_qt_level_editor
+          python -m unittest -v test_qt_design_system test_version_info test_qt_migration test_qt_modern_navigation test_qt_unified_explorer test_qt_gfx_editor test_qt_level_editor test_developer_console_windows
           if ($LASTEXITCODE -ne 0) { throw 'Native GUI regression suite failed.' }
       - name: Capture actual Qt Windows widgets at four major pages
         shell: pwsh
