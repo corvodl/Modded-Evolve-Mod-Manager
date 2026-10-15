@@ -969,7 +969,7 @@ class QtGPUModelPanel(QWidget):
         self._overlay.setWidgetResizable(True)
         self._overlay.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._overlay.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._overlay.setToolTip('Scroll inside the popover to reach more tools.')
+        self._overlay.setToolTip('Advanced tools are collapsed; expand only the settings you need.')
         # Shared theme colors cover the scrollable inspector in light/dark mode.
         self._overlay_content = QWidget()
         self._overlay_content.setObjectName('modelOverlayContent')
@@ -1167,7 +1167,7 @@ class QtGPUModelPanel(QWidget):
                     'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
-        self._overlay_sections['View'][1].addWidget(foot)
+        self._view_advanced.addWidget(foot)
         self._build_compact_timeline(layout)
         QTimer.singleShot(0,self._position_overlay)
 
