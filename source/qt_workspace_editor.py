@@ -1381,19 +1381,16 @@ class QtWorkspaceEditor(QMainWindow):
         from evolve_pak_workspace import normalized_name
         name = normalized_name(virtual).casefold()
         if self.read_only_library:
-            from asset_library_preview import archive_entries
-            identifier = self.library_archive['id']
-            # Own exact path wins. Foreign ambiguous copies are rejected.
-            local = [(virtual_path, path) for virtual_path, path in
-                     archive_entries(identifier).items()
-                     if virtual_path.casefold() == name]
-            if len(local) == 1:
-                file = local[0][1]
-            else:
-                hits = self._gfx_scoped_index().get(name, ())
-                if len(hits) != 1:
-                    return None
-                file = Path(hits[0]['file'])
+            # Reuse the scoped, validated index instead of rereading and
+            # checking every file in the enormous UI_Assets manifest for
+            # each GFX import or UI_Data XML reference.
+            hits = self._gfx_scoped_index().get(name, ())
+            local = [r for r in hits
+                     if r.get('_asset_library') == self.library_archive['id']]
+            choices = local if local else hits
+            if len(choices) != 1:
+                return None  # Cross-PAK/build ambiguity must not be guessed.
+            file = Path(choices[0]['file'])
             if file.is_symlink() or not file.is_file() or file.stat().st_size > MAX_SOURCE:
                 return None
             return file.read_bytes()
