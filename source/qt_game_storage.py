@@ -29,7 +29,13 @@ SEGMENTS = {
 
 
 def _size(n):
-    return f"{n / (1024**3):.2f} GiB" if n >= 1024**3 else f"{n / 1024**2:.1f} MiB"
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024**2:
+        return f"{n / 1024:.1f} KiB"
+    if n < 1024**3:
+        return f"{n / 1024**2:.1f} MiB"
+    return f"{n / 1024**3:.2f} GiB"
 
 
 class _Signals(QObject):
