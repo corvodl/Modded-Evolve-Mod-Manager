@@ -30,8 +30,9 @@ class _Canvas(QWidget):
         self._pixmap = QPixmap()
         self._original = QPixmap()
         self._visible_rect = QRect()
+        self._fully_opaque = None
         self._background = "transparent"
-        self._trim = True
+        self._trim = False
         self._zoom = 1.0
         self._fit = True
         self.setMinimumSize(160, 120)
@@ -43,10 +44,16 @@ class _Canvas(QWidget):
         # Alpha bounding boxes are computed from FFDec's actual PNG, never
         # from opaque white/black guesses. Cropping affects the viewer only.
         bounds = None
+        opaque = None
         if picture.width() * picture.height() <= 16_000_000:
             with Image.open(BytesIO(content)) as image:
                 if "A" in image.getbands():
-                    bounds = image.getchannel("A").getbbox()
+                    alpha = image.getchannel("A")
+                    bounds = alpha.getbbox()
+                    opaque = alpha.getextrema()[0] == 255
+                else:
+                    opaque = True
+        self._fully_opaque = opaque
         self._original = picture
         self._visible_rect = (QRect(bounds[0], bounds[1],
                                    bounds[2] - bounds[0], bounds[3] - bounds[1])
@@ -57,6 +64,7 @@ class _Canvas(QWidget):
         self._original = QPixmap()
         self._pixmap = QPixmap()
         self._visible_rect = QRect()
+        self._fully_opaque = None
         self.update()
 
     def _refresh_pixmap(self):
@@ -198,12 +206,12 @@ class GfxPreviewWidget(QWidget):
         self.background.setToolTip(
             "Preview background only. White artwork drawn in the movie stays opaque.")
         canvas_controls.addWidget(self.background)
-        self.trim = QCheckBox("Fit visible content")
+        self.trim = QCheckBox("Zoom to visible content (preview only)")
         self.trim.setObjectName("gfxTrimTransparentMargins")
         self.trim.setToolTip(
             "Trim transparent PNG margins only in the viewer; exported PNG "
             "keeps the original full frame. Opaque white is never discarded.")
-        self.trim.setChecked(True)
+        self.trim.setChecked(False)
         canvas_controls.addWidget(self.trim)
         canvas_controls.addStretch(1)
         layout.addLayout(canvas_controls)
@@ -447,6 +455,11 @@ class GfxPreviewWidget(QWidget):
         self._zoom_changed()
         self.export.setEnabled(True)
         diagnostics = (*self._info.notes, *self._warnings)
+        if self.canvas._fully_opaque is True:
+            diagnostics += (
+                "This rendered frame is fully opaque. Canvas color cannot "
+                "remove white shapes painted in the GFX.",
+            )
         self.note.setText("Static PNG ready. " + " ".join(diagnostics))
 
     def _done(self, worker):
