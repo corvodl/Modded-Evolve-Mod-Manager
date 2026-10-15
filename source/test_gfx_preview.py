@@ -63,6 +63,56 @@ class GfxStaticPreviewTests(unittest.TestCase):
             lambda _: imported[:-3])
         self.assertTrue(any("length" in warning for warning in errors))
 
+    def test_compiled_gfx_satisfies_swf_import_in_same_directory(self):
+        from types import SimpleNamespace
+        info = SimpleNamespace(imports=("effectsModeSelect.swf",))
+        compiled = synthetic_gfx()
+        compressed = synthetic_gfx(compressed=True)
+        for binary, expected in ((compiled, b"FWS"), (compressed, b"CWS")):
+            with self.subTest(signature=binary[:3]):
+                found, warnings = resolve_imports(
+                    info, "Libs/UI/main_menu.gfx",
+                    lambda name: binary if name == "Libs/UI/effectsModeSelect.gfx" else None)
+                self.assertFalse(warnings)
+                self.assertEqual(found["Libs/UI/effectsModeSelect.swf"][:3], expected)
+                self.assertEqual(found["Libs/UI/effectsModeSelect.swf"][3:], binary[3:])
+
+        # Exact SWF must be preferred even if a compiled copy exists.
+        native = b"FWS" + compiled[3:]
+        found, issues = resolve_imports(
+            info, "Libs/UI/main_menu.gfx",
+            lambda name: native if name.endswith(".swf") else compiled)
+        self.assertFalse(issues)
+        self.assertEqual(found["Libs/UI/effectsModeSelect.swf"], native)
+
+        # A damaged GFX must not be used as an unchecked SWF payload.
+        found, issues = resolve_imports(
+            info, "Libs/UI/main_menu.gfx",
+            lambda name: b"GFX" + compiled[3:-6] if name.endswith(".gfx") else None)
+        self.assertFalse(found)
+        self.assertTrue(issues)
+
+    def test_compiled_import_is_staged_under_expected_swf_name(self):
+        from types import SimpleNamespace
+        base = synthetic_gfx()
+        deps, errors = resolve_imports(
+            SimpleNamespace(imports=("effectsMainMenuFocus.swf",)),
+            "Libs/UI/main_menu.gfx",
+            lambda name: base if name.endswith(".gfx") else None)
+        self.assertFalse(errors)
+        with tempfile.TemporaryDirectory() as tmp:
+            tool = Path(tmp) / "ffdec-cli.exe"
+            tool.write_bytes(b"mock")
+            def fake_ffdec(args, *, cwd, cancelled, timeout):
+                staged = Path(cwd) / "Libs/UI/effectsMainMenuFocus.swf"
+                self.assertTrue(staged.is_file())
+                self.assertEqual(staged.read_bytes(), b"FWS" + base[3:])
+                Image.new("RGBA", (64, 48)).save(Path(args[-2]) / "1.png")
+            with patch("gfx_preview_backend._execute", side_effect=fake_ffdec):
+                frame = render_gfx(base, virtual="Libs/UI/main_menu.gfx",
+                                   imports=deps, backend=str(tool))
+            self.assertTrue(frame.startswith(b"\\x89PNG"))
+
     def test_cfx_zlib_movie_matches_uncompressed_metadata(self):
         a = inspect_gfx(synthetic_gfx())
         b = inspect_gfx(synthetic_gfx(compressed=True))

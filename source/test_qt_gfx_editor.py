@@ -77,6 +77,31 @@ class GfxQtEditorTests(unittest.TestCase):
         self.assertEqual(backups[0].read_bytes(), self.original)
         self.assertFalse((self.project / "GfxEditSessions").is_symlink())
 
+    def test_ui_data_texture_gallery_loads_only_selected_image(self):
+        from PIL import Image
+        widget = self.win.gfx_view
+        refs = {
+            "UI/UIElements/MainMenu.xml": (
+                b'<UIElements><UIElement><GFx file="main_menu.gfx"/></UIElement></UIElements>'),
+            "UI/TexturePreload.xml": (
+                b'<Preload><NoLevel><Preload file="Libs/UI/effects*"/></NoLevel></Preload>')
+        }
+        files = (*refs, "Libs/UI/main_menu_I9.dds.0",
+                 "Libs/UI/effectsModeSelect_I100.dds.0")
+        loads = []
+        def load_image(path):
+            loads.append(path)
+            return Image.new("RGBA", (16, 16), (80, 120, 160, 255))
+        widget.open_movie(self.original, self.relative,
+                          resolve=lambda path: refs.get(path),
+                          available_paths=files, texture_preview=load_image,
+                          context="test")
+        self.assertEqual(widget.texture_select.count(), 2)
+        self.assertEqual(loads, [])  # No eager decoding of large UI_Assets.
+        widget.tabs.setCurrentIndex(1)
+        self.assertEqual(len(loads), 1)
+        self.assertFalse(widget.texture_image.pixmap().isNull())
+
     def test_advanced_gfx_commands_fit_under_menus(self):
         dialog = GfxEditorDialog(self.win, self.relative)
         self.addCleanup(dialog.close)

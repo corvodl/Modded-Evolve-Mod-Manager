@@ -6,14 +6,16 @@ raster directly, never the zoomed QLabel or a screenshot of this widget.
 from __future__ import annotations
 
 from threading import Event
+from io import BytesIO
 
 from PySide6.QtCore import QSize, Qt, QRect, QThread, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
-    QPushButton, QScrollArea, QFileDialog, QMessageBox,
+    QPushButton, QScrollArea, QFileDialog, QMessageBox, QTabWidget,
 )
 from qt_navigation_icons import navigation_icon
+from gfx_ui_dependencies import related_ui_textures
 from gfx_preview_backend import (
     inspect_gfx, resolve_imports, ffdec_command, render_gfx, GfxError,
 )
@@ -97,6 +99,8 @@ class GfxPreviewWidget(QWidget):
         self._context = None
         self._imports = {}
         self._warnings = ()
+        self._texture_loader = None
+        self._texture_paths = ()
         self._info = None
         self._backend = None
         layout = QVBoxLayout(self)
@@ -139,7 +143,29 @@ class GfxPreviewWidget(QWidget):
         self.area.setAlignment(Qt.AlignCenter)
         self.canvas = _Canvas(self)
         self.area.setWidget(self.canvas)
-        layout.addWidget(self.area, 1)
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("gfxPreviewTabs")
+        self.tabs.addTab(self.area, "GFX frame")
+        textures = QWidget()
+        tex_layout = QVBoxLayout(textures)
+        self.texture_select = QComboBox()
+        self.texture_select.setObjectName("gfxReferencedTexture")
+        tex_layout.addWidget(self.texture_select)
+        self.texture_status = QLabel("UI_Data and compiled GFX textures are read-only.")
+        self.texture_status.setObjectName("gfxTextureStatus")
+        self.texture_status.setWordWrap(True)
+        tex_layout.addWidget(self.texture_status)
+        self.texture_image = QLabel("Select a referenced DDS image.")
+        self.texture_image.setAlignment(Qt.AlignCenter)
+        self.texture_image.setWordWrap(True)
+        tex_scroll = QScrollArea()
+        tex_scroll.setWidgetResizable(True)
+        tex_scroll.setAlignment(Qt.AlignCenter)
+        tex_scroll.setWidget(self.texture_image)
+        tex_layout.addWidget(tex_scroll, 1)
+        self.tabs.addTab(textures, "Referenced textures")
+        self.tabs.setTabEnabled(1, False)
+        layout.addWidget(self.tabs, 1)
         self.note = QLabel("Static movie preview; original GFX remains unchanged.")
         self.note.setObjectName("gfxPreviewStatus")
         self.note.setWordWrap(True)
@@ -177,6 +203,8 @@ class GfxPreviewWidget(QWidget):
         self.scale.currentIndexChanged.connect(self._changed)
         self.fit.toggled.connect(self._zoom_changed)
         self.zoom.currentIndexChanged.connect(self._zoom_changed)
+        self.texture_select.currentIndexChanged.connect(self._texture_changed)
+        self.tabs.currentChanged.connect(self._texture_tab_changed)
 
     def cancel_pending(self):
         self._serial += 1
@@ -186,7 +214,7 @@ class GfxPreviewWidget(QWidget):
         self.export.setEnabled(False)
 
     def open_movie(self, data, relative, *, resolve=None, context=None,
-                   backend=None):
+                   backend=None, available_paths=(), texture_preview=None):
         self.cancel_pending()
         self._raw = None
         self._virtual = relative
@@ -194,6 +222,14 @@ class GfxPreviewWidget(QWidget):
         self._backend = backend
         self._imports = {}
         self._warnings = ()
+        self._texture_loader = texture_preview
+        self._texture_paths = ()
+        self.texture_select.blockSignals(True)
+        self.texture_select.clear()
+        self.texture_select.blockSignals(False)
+        self.tabs.setTabEnabled(1, False)
+        self.texture_image.clear()
+        self.texture_status.setText("No matching same-build UI textures found.")
         self.canvas._pixmap = QPixmap()
         self.canvas.update()
         try:
@@ -202,6 +238,20 @@ class GfxPreviewWidget(QWidget):
                 info, relative, resolve or (lambda _name: None))
             self._info, self._raw = info, data
             self._imports, self._warnings = resolved, warnings
+            self._texture_paths = related_ui_textures(
+                relative, available_paths, resolve or (lambda _path: None),
+                imports=info.imports)
+            self.texture_select.blockSignals(True)
+            for path, origin in self._texture_paths:
+                self.texture_select.addItem(f"{path}  [{origin}]", path)
+            self.texture_select.blockSignals(False)
+            self.tabs.setTabEnabled(1, bool(self._texture_paths and texture_preview))
+            self.tabs.setTabText(1, f"Referenced textures ({len(self._texture_paths)})")
+            if self._texture_paths:
+                self.texture_status.setText(
+                    f"{len(self._texture_paths)} matching images; selected DDS is "
+                    "decoded on demand. UI_Data preloads do not imply "
+                    "the image is visible in this GFX frame.")
             self.symbol.blockSignals(True)
             self.symbol.clear()
             self.symbol.addItem("Main timeline", (0, info.frames))
@@ -233,6 +283,34 @@ class GfxPreviewWidget(QWidget):
             self._info = None
             self.note.setText(str(exc))
             self.details.setText("Unsupported or damaged Scaleform movie.")
+
+    def _texture_tab_changed(self, tab):
+        if tab == 1:
+            self._texture_changed()
+
+    def _texture_changed(self, *_):
+        if self.tabs.currentIndex() != 1 or self._texture_loader is None:
+            return
+        path = self.texture_select.currentData()
+        if not path:
+            return
+        self.texture_image.clear()
+        try:
+            image = self._texture_loader(path)
+            if image is None:
+                raise ValueError("Matching texture is not available in this build.")
+            image = image.copy()
+            image.thumbnail((960, 640))
+            payload = BytesIO()
+            image.convert("RGBA").save(payload, format="PNG")
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(payload.getvalue(), "PNG"):
+                raise ValueError("Qt could not display the decoded DDS image.")
+            self.texture_image.setPixmap(pixmap)
+            self.texture_status.setText(path + f" — {image.width}×{image.height} preview")
+        except (OSError, ValueError, TypeError) as exc:
+            self.texture_image.setText("Referenced DDS could not be decoded.")
+            self.texture_status.setText(path + ": " + str(exc)[:240])
 
     def _symbol_changed(self, *_):
         selected = self.symbol.currentData()

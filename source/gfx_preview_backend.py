@@ -289,16 +289,29 @@ def _validate_imported_movie(content, relative):
 
 
 def resolve_imports(info, virtual, resolver):
-    """Resolve only unique, intact per-build/project providers supplied by UI.
+    """Resolve exact imports or validated, same-folder compiled GFX.
 
-    Resolver receives a full virtual path and returns bytes or None. Import
-    candidates are never looked up across arbitrary independent builds.
+    Evolve's ImportAssets2 URLs can name SWF files while the retail PAK
+    contains only GFX/CFX. Reheader a VERIFIED compiled movie to FWS/CWS
+    under the original SWF import name, which FFDec understands. This does
+    not reconstruct CryEngine's external DDS texture tags or run ActionScript.
+    The caller's resolver enforces project/build isolation and ambiguity.
     """
     resolved, failures = {}, []
     for url in info.imports:
         try:
             relative = safe_import_path(url, virtual)
             content = resolver(relative)
+            if content is None and relative.casefold().endswith(".swf"):
+                # Evolve packs the compiled counterpart in UI_Assets as GFX,
+                # while ImportAssets2 in the parent still names its SWF.
+                # Keep the requested path when staging for FFDec; don't
+                # rename arbitrary files or fetch across game builds.
+                compiled = relative[:-4] + ".gfx"
+                binary = resolver(compiled)
+                if binary is not None:
+                    inspect_gfx(binary)  # reject damaged/unsupported compiled imports
+                    content = (b"FWS" if binary[:3] == b"GFX" else b"CWS") + binary[3:]
             if content is None:
                 failures.append(f"Missing matching-context movie: {relative}")
                 continue
