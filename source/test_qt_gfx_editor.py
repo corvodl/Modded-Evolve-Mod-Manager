@@ -218,6 +218,24 @@ class GfxQtEditorTests(unittest.TestCase):
         self.assertFalse(dialog.promo_text.isEnabled())
         self.assertTrue(dialog.promo_stage.isEnabled())
 
+    def test_external_dds_frame_toggle_is_default_on_and_reversible(self):
+        from test_gfx_external_bitmap_render import synthetic_compiled_bitmap
+        from PIL import Image
+        viewer = self.win.gfx_view
+        movie = synthetic_compiled_bitmap()
+        source = bytes(movie)
+        viewer.open_movie(
+            movie, "Libs/UI/test.gfx",
+            available_paths=("Libs/UI/test_I9.dds.0",),
+            texture_preview=lambda _path: Image.new("RGBA", (24, 24)))
+        self.assertTrue(viewer.external_images.isEnabled())
+        self.assertTrue(viewer.external_images.isChecked())
+        viewer.external_images.setChecked(False)
+        self.assertFalse(viewer.external_images.isChecked())
+        viewer.external_images.setChecked(True)
+        self.assertEqual(source, movie)
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
     def test_advanced_gfx_commands_fit_under_menus(self):
         dialog = GfxEditorDialog(self.win, self.relative)
         self.addCleanup(dialog.close)

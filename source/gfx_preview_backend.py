@@ -395,11 +395,14 @@ _CACHE_LOCK = threading.RLock()
 
 
 def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
-               imports=None, build_context=None, backend=None, cancelled=None):
+               imports=None, build_context=None, backend=None, cancelled=None,
+               texture_loader=None, available_paths=(), render_diagnostics=None):
     """Return unscaled PNG raster bytes for the selected frame or sprite.
 
     Do not use a Qt screenshot. FFDec renders the Scaleform display-list.
-    A cache key includes imported movie payload digests and build identity.
+    A cache key includes staged render-only bitmap payloads, imported
+    movie digests and the selected build identity. The original GFX is
+    never modified; ActionScript-driven positions still need game context.
     """
     info = inspect_gfx(data)
     # FFDec itself understands ImportAssets2. Reject unsafe URLs before
@@ -427,6 +430,44 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
             raise GfxError("Invalid external dependency type.")
         _validate_imported_movie(blob, virtual_dep)
         checked[virtual_dep] = blob
+    # External Scaleform 1008/1009 image definitions are not ordinary SWF
+    # bitmaps. Replace verified external atlas slices with DefineBitsLossless2
+    # in *temporary render-only bytes*. FFDec then applies the unchanged
+    # bitmap FillStyle matrices, display-list transforms, depths and masks.
+    # Unavailable/unsupported bitmaps stay untouched and are reported.
+    if texture_loader is not None:
+        from gfx_external_bitmap_render import prepare_textured_gfx
+        stage = prepare_textured_gfx(
+            data, name, available_paths, texture_loader, cancelled=cancelled)
+        data = stage.movie
+        if render_diagnostics is not None:
+            render_diagnostics.extend(stage.diagnostics)
+            if stage.skipped:
+                render_diagnostics.append(
+                    f"{stage.skipped} external images remain unrendered.")
+        for rel, source in tuple(checked.items()):
+            if cancelled and cancelled():
+                raise InterruptedError("Scaleform rendering cancelled.")
+            if source[:3] not in (b"FWS", b"CWS", b"GFX", b"CFX"):
+                continue
+            # FFDec imported movies refer to .swf URLs even though the game
+            # keeps the compiled .gfx bytes. Reconstruct their image IDs too.
+            compiled = (b"GFX" if source[:3] in (b"FWS", b"GFX")
+                        else b"CFX") + source[3:]
+            try:
+                nested = prepare_textured_gfx(
+                    compiled, rel[:-4] + ".gfx" if rel.casefold().endswith(".swf") else rel,
+                    available_paths, texture_loader, cancelled=cancelled)
+            except (GfxError, OSError, ValueError):
+                continue  # Preserve original validated imported movie.
+            if nested.converted:
+                rebuilt = (b"FWS" if rel.casefold().endswith(".swf")
+                           else b"GFX") + nested.movie[3:]
+                if len(rebuilt) <= MAX_DECOMPRESSED:
+                    checked[rel] = rebuilt
+                    if render_diagnostics is not None:
+                        render_diagnostics.append(
+                            f"{rel}: {nested.converted} imported image definitions")
     executable = Path(command[-1] if command[-1].endswith(".jar") else command[0])
     stamp = (executable.stat().st_size, executable.stat().st_mtime_ns)
     digest = hashlib.sha256(data).hexdigest()

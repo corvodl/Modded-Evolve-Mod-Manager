@@ -124,11 +124,13 @@ class _RenderTask(QThread):
     result = Signal(int, object, object)
 
     def __init__(self, token, data, virtual, *, frame, symbol, scale, imports,
-                 context, backend):
+                 context, backend, texture_loader=None, available_paths=()):
         super().__init__()
         self.token, self.data, self.virtual = token, data, virtual
         self.frame, self.symbol, self.scale = frame, symbol, scale
         self.imports, self.context, self.backend = imports, context, backend
+        self.texture_loader = texture_loader
+        self.available_paths = available_paths
         self._cancel = Event()
 
     def cancel(self):
@@ -136,12 +138,16 @@ class _RenderTask(QThread):
 
     def run(self):
         try:
+            diagnostics = []
             png = render_gfx(
                 self.data, virtual=self.virtual, frame=self.frame,
                 symbol=self.symbol, scale=self.scale, imports=self.imports,
                 build_context=self.context, backend=self.backend,
-                cancelled=self._cancel.is_set)
-            self.result.emit(self.token, png, None)
+                cancelled=self._cancel.is_set,
+                texture_loader=self.texture_loader,
+                available_paths=self.available_paths,
+                render_diagnostics=diagnostics)
+            self.result.emit(self.token, (png, tuple(diagnostics)), None)
         except Exception as exc:
             self.result.emit(self.token, None, str(exc))
 
@@ -159,6 +165,8 @@ class GfxPreviewWidget(QWidget):
         self._imports = {}
         self._warnings = ()
         self._texture_loader = None
+        self._available_paths = ()
+        self._render_notes = ()
         self._texture_paths = ()
         self._bitmap_bindings = ()
         self._info = None
@@ -215,6 +223,15 @@ class GfxPreviewWidget(QWidget):
             "keeps the original full frame. Opaque white is never discarded.")
         self.trim.setChecked(False)
         canvas_controls.addWidget(self.trim)
+        self.external_images = QCheckBox("Render referenced DDS in frame")
+        self.external_images.setObjectName("gfxRenderExternalTextures")
+        self.external_images.setToolTip(
+            "Uses verified Scaleform 1008/1009 atlas regions in a temporary "
+            "render-only movie. Correct static FillStyle transforms and masks "
+            "are retained; ActionScript/game callbacks are not simulated.")
+        self.external_images.setChecked(True)
+        self.external_images.setEnabled(False)
+        canvas_controls.addWidget(self.external_images)
         canvas_controls.addStretch(1)
         layout.addLayout(canvas_controls)
         self.details = QLabel("Select a .gfx movie")
@@ -314,6 +331,7 @@ class GfxPreviewWidget(QWidget):
         self.zoom.currentIndexChanged.connect(self._zoom_changed)
         self.background.currentIndexChanged.connect(self._background_changed)
         self.trim.toggled.connect(self.canvas.set_trim)
+        self.external_images.toggled.connect(self._changed)
         self.texture_select.currentIndexChanged.connect(self._texture_changed)
         self.bitmap_select.currentIndexChanged.connect(self._bitmap_changed)
         self.tabs.currentChanged.connect(self._texture_tab_changed)
@@ -335,7 +353,10 @@ class GfxPreviewWidget(QWidget):
         self._imports = {}
         self._warnings = ()
         self._texture_loader = texture_preview
+        self._available_paths = tuple(available_paths)
+        self._render_notes = ()
         self._texture_paths = ()
+        self.external_images.setEnabled(False)
         self._bitmap_bindings = ()
         self.bitmap_select.blockSignals(True)
         self.bitmap_select.clear()
@@ -356,6 +377,9 @@ class GfxPreviewWidget(QWidget):
                 info, relative, resolve or (lambda _name: None))
             self._info, self._raw = info, data
             self._imports, self._warnings = resolved, warnings
+            self.external_images.setEnabled(bool(
+                texture_preview and 1008 in info.extension_tags
+                and 1009 in info.extension_tags))
             self._texture_paths = related_ui_textures(
                 relative, available_paths, resolve or (lambda _path: None),
                 imports=info.imports, movie_bytes=data)
@@ -536,7 +560,10 @@ class GfxPreviewWidget(QWidget):
         worker = _RenderTask(
             token, self._raw, self._virtual, frame=frame, symbol=symbol,
             scale=scale, imports=self._imports, context=self._context,
-            backend=self._backend)
+            backend=self._backend,
+            texture_loader=(self._texture_loader if self.external_images.isChecked()
+                            and self.external_images.isEnabled() else None),
+            available_paths=self._available_paths)
         self._jobs.append(worker)
         worker.result.connect(self._finished)
         worker.finished.connect(lambda job=worker: self._done(job))
@@ -548,6 +575,10 @@ class GfxPreviewWidget(QWidget):
         if error:
             self.note.setText("Could not render selected GFX content: " + str(error))
             return
+        if isinstance(png, tuple):
+            png, self._render_notes = png
+        else:
+            self._render_notes = ()
         self._png = png
         try:
             self.canvas.set_png(png)
@@ -557,7 +588,7 @@ class GfxPreviewWidget(QWidget):
             return
         self._zoom_changed()
         self.export.setEnabled(True)
-        diagnostics = (*self._info.notes, *self._warnings)
+        diagnostics = (*self._render_notes, *self._info.notes, *self._warnings)
         if self.canvas._fully_opaque is True:
             diagnostics += (
                 "This rendered frame is fully opaque. Canvas color cannot "
