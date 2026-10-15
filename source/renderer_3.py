@@ -27,9 +27,11 @@ FRAGMENT = """
 uniform sampler2D diffuse_map;
 uniform sampler2D normal_map;
 uniform sampler2D specular_map;
+uniform sampler2D gloss_map;
 uniform int has_diffuse;
 uniform int has_normal;
 uniform int has_specular;
+uniform int has_gloss;
 uniform float opacity;
 uniform float alpha_cutoff;
 uniform int use_alpha_texture;
@@ -77,7 +79,13 @@ void main() {
     vec3 light = normalize(vec3(0.45,0.75,0.85));
     vec3 view = normalize(-eye_position);
     float diffuse = max(0.0,dot(n,light));
-    float gloss = pow(max(0.0,dot(n,normalize(light+view))),42.0);
+    // Dedicated CryEngine gloss/smoothness maps define per-pixel
+    // highlight sharpness. Unmapped slots retain the legacy exponent.
+    float smoothness = has_gloss == 1 ?
+          clamp(dot(texture2D(gloss_map,diffuse_coord).rgb,
+                    vec3(0.299,0.587,0.114)),0.0,1.0) : 0.2833333;
+    float gloss = pow(max(0.0,dot(n,normalize(light+view))),
+                      mix(8.0,128.0,smoothness));
     float specular = has_specular == 1 ?
                      dot(texture2D(specular_map,diffuse_coord).rgb,vec3(0.333333))
                      : 0.4;
@@ -110,18 +118,19 @@ class Renderer3:
             shaders.compileShader(FRAGMENT,GL_FRAGMENT_SHADER))
         glUseProgram(self.program)
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
-            'diffuse_map','normal_map','specular_map','has_diffuse','has_normal',
-            'has_specular','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
-        for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2)):
+            'diffuse_map','normal_map','specular_map','gloss_map','has_diffuse','has_normal',
+            'has_specular','has_gloss','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
+        for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2),('gloss_map',3)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
-             alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
+             gloss_texture=False, alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f
         glUseProgram(self.program)
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
-                           ('has_specular',specular), ('use_alpha_texture',alpha_texture),
+                           ('has_specular',specular), ('has_gloss',gloss_texture),
+                           ('use_alpha_texture',alpha_texture),
                            ('unlit_diffuse',unlit)):
             glUniform1i(self.uniforms[name],int(bool(value)))
         for name,value in (('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),

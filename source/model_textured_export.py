@@ -135,14 +135,21 @@ def embed_diffuse_textures(blob, materials):
         except ValueError:
             continue
         for role, collection in (('normal', getattr(materials, 'normal_maps', ())),
-                                 ('specular', getattr(materials, 'specular_maps', ()))):
+                                 ('specular', getattr(materials, 'specular_maps', ())),
+                                 ('gloss', getattr(materials, 'gloss_maps', ()))):
             if slot < 0 or slot >= len(collection) or collection[slot] is None:
                 continue
             if len(images) >= MAX_TEXTURES:
                 raise ValueError('Exceeded texture export safety limit.')
             source = collection[slot]
+            # glTF expects LINEAR roughness in the green metallic-roughness
+            # channel; CryEngine gloss is inverse smoothness. Do not interpret
+            # arbitrary RGB specular maps as gloss.
+            from material_gloss import gloss_to_metallic_roughness
+            texture = (gloss_to_metallic_roughness(source)
+                       if role == 'gloss' else source.convert('RGB'))
             with BytesIO() as output:
-                source.convert('RGB').save(output, format='PNG')
+                texture.save(output, format='PNG')
                 payload = output.getvalue()
             if len(payload) > MAX_IMAGE_BYTES:
                 raise ValueError('A material %s PNG is too large to embed.' % role)
@@ -152,7 +159,9 @@ def embed_diffuse_textures(blob, materials):
             doc['bufferViews'].append(view)
             images.append({'bufferView': len(doc['bufferViews']) - 1,
                            'mimeType': 'image/png',
-                           'name': '%s slot %d' % (role.title(), slot)})
+                           'name': ('Roughness from gloss slot %d' % slot
+                                    if role == 'gloss' else
+                                    '%s slot %d' % (role.title(), slot))})
             textures.append({'source': len(images) - 1})
             if role == 'normal':
                 attach_normal_texture(doc, doc['materials'].index(material), len(textures) - 1)
@@ -165,9 +174,24 @@ def embed_diffuse_textures(blob, materials):
                     extensions = doc.setdefault('extensionsUsed', [])
                     if 'KHR_texture_transform' not in extensions:
                         extensions.append('KHR_texture_transform')
-            # Other optional maps remain explicitly named image resources in
-            # the GLB/textures folder; don't guess glTF PBR packing for CryEngine
-            # specular/gloss maps whose semantics differ between shaders.
+            if role == 'gloss':
+                # Metallic stays zero unless actual metalness information is
+                # provided, while roughnessFactor=1 keeps full texture range.
+                pbr = material.setdefault('pbrMetallicRoughness', {})
+                pbr['metallicFactor'] = 0.0
+                pbr['roughnessFactor'] = 1.0
+                pbr['metallicRoughnessTexture'] = {'index': len(textures)-1}
+                transform = transform_for(materials, slot)
+                if transform != IDENTITY:
+                    su, sv, ou, ov, angle = transform
+                    pbr['metallicRoughnessTexture']['extensions'] = {
+                        'KHR_texture_transform': {'scale': [su, sv],
+                                                  'offset': [ou, ov], 'rotation': angle}}
+                    extensions = doc.setdefault('extensionsUsed', [])
+                    if 'KHR_texture_transform' not in extensions:
+                        extensions.append('KHR_texture_transform')
+            # Specular maps remain named optional resources; CryEngine
+            # specular tint cannot safely be guessed as glTF metalness.
     if not images:
         doc.pop('images', None)
         doc.pop('textures', None)

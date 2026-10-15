@@ -43,6 +43,7 @@ class PreviewMaterials:
     issues: tuple = ()
     normal_maps: tuple = ()
     specular_maps: tuple = ()
+    gloss_maps: tuple = ()  # Explicit Gloss/Glossiness/Smoothness texture slots only.
     opacity: tuple = ()
     alpha_modes: tuple = ()  # True only where material explicitly uses texture alpha
 
@@ -489,7 +490,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         return _decode_texture(hit, index=index, max_dimension=decode_max,
                                normal_map=normal, historical_2012=historical_2012)
 
-    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
+    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; sources = []; references = []; hidden = []
     for item in subs:
         checkpoint()
@@ -523,7 +524,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         alpha_modes.append(bool(alpha_test) or opacity < 0.999 or
                            any(word in shader for word in ('glass', 'transparent', 'translucent', 'decal')))
         for target,keys in ((normals,('bumpmap','normal','normalmap')),
-                            (speculars,('specular','specularcolor','gloss'))):
+                            (speculars,('specular','specularcolor')),
+                            (glosses,('gloss','glossiness','smoothness'))):
             try:
                 target.append(optional_map(item,keys))
             except (OSError,ValueError) as error:
@@ -584,7 +586,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
-                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
+                            tuple(issues),tuple(normals),tuple(speculars),tuple(glosses),tuple(opacities),tuple(alpha_modes),
                             tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden))
 
 

@@ -160,6 +160,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.textures = []
         self.normal_textures = []
         self.specular_textures = []
+        self.gloss_textures = []
         self._pending_texture_uploads = []
         self._gpu_upload_total_ms = 0.0
         self._frame_started_at = time.perf_counter()
@@ -335,7 +336,7 @@ class QtGLModelCanvas(QOpenGLWidget):
 
     def _release_textures(self):
         from OpenGL.GL import glDeleteTextures
-        for name in ('textures','normal_textures','specular_textures'):
+        for name in ('textures','normal_textures','specular_textures','gloss_textures'):
             handles = getattr(self,name,[])
             if handles:
                 try:
@@ -360,6 +361,7 @@ class QtGLModelCanvas(QOpenGLWidget):
             ('textures', getattr(self.materials, 'textures', ()) if self.materials else ()),
             ('normal_textures', getattr(self.materials, 'normal_maps', ()) if self.materials else ()),
             ('specular_textures', getattr(self.materials, 'specular_maps', ()) if self.materials else ()),
+            ('gloss_textures', getattr(self.materials, 'gloss_maps', ()) if self.materials else ()),
         )
         for target, images in groups:
             setattr(self, target, [0] * len(images))
@@ -639,7 +641,8 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glMatrixMode(GL_MODELVIEW)
                 tex = self.textures[slot] if use_uv and slot < len(self.textures) else 0
                 if shader:
-                    for unit,group in ((0,self.textures),(1,self.normal_textures),(2,self.specular_textures)):
+                    for unit,group in ((0,self.textures),(1,self.normal_textures),
+                                       (2,self.specular_textures),(3,self.gloss_textures)):
                         handle = group[slot] if use_uv and slot<len(group) else 0
                         glActiveTexture(GL_TEXTURE0+unit)
                         glBindTexture(GL_TEXTURE_2D,handle)
@@ -648,6 +651,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 illumination=strength,diffuse=bool(tex),
                                 normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
                                 specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
+                                gloss_texture=slot<len(self.gloss_textures) and bool(self.gloss_textures[slot]),
                                 alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
                                 unlit=self.unlit_diffuse,fill=self.studio_fill)
                 if tex:
@@ -679,7 +683,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glEnable(GL_LIGHTING)
             if shader:
                 shader.unbind()
-                for unit in (2,1,0):
+                for unit in (3,2,1,0):
                     glActiveTexture(GL_TEXTURE0+unit)
                     glBindTexture(GL_TEXTURE_2D,0)
                 glEnable(GL_LIGHTING)
@@ -926,7 +930,7 @@ class QtGPUModelPanel(QWidget):
         # Short, always-visible controls also work in the embedded viewer.
         studio = QHBoxLayout()
         enhanced=QCheckBox('Renderer 3.0')
-        enhanced.setToolTip('Enhanced shader supports normal/specular maps and opacity. Legacy fallback remains available.')
+        enhanced.setToolTip('Enhanced shader supports normal, specular and explicit gloss/smoothness maps plus opacity. Legacy fallback remains available.')
         enhanced.setChecked(True)
         enhanced.toggled.connect(self.canvas.set_enhanced_materials)
         self.enhanced_checkbox=enhanced
@@ -978,6 +982,9 @@ class QtGPUModelPanel(QWidget):
         self.gloss_slider.setRange(0,100)
         self.gloss_slider.setValue(35)
         self.gloss_slider.setMaximumWidth(95)
+        self.gloss_slider.setToolTip(
+            'Overall specular highlight strength. Explicit gloss/smoothness maps '
+            'control highlight sharpness across the texture.')
         self.gloss_slider.valueChanged.connect(self.canvas.set_specular)
         inspector_secondary.addWidget(self.gloss_slider)
         inspector_secondary.addStretch()
