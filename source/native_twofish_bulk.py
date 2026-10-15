@@ -48,7 +48,15 @@ class GcryptBulkTwofish:
             failures = []
             for candidate in candidate_libraries():
                 try:
-                    library = ctypes.CDLL(candidate)
+                    # Python 3.8+ excludes arbitrary PATH directories from
+                    # dependency lookup. Keep the approved DLL directory
+                    # scoped to this exact load so libgpg-error resolves on
+                    # clean Windows installations without PATH modification.
+                    if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
+                        with os.add_dll_directory(str(Path(candidate).parent)):
+                            library = ctypes.CDLL(candidate)
+                    else:
+                        library = ctypes.CDLL(candidate)
                     break
                 except OSError as exc:
                     failures.append(str(exc))
