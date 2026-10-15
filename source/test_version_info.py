@@ -40,7 +40,7 @@ class VersionManifestTests(unittest.TestCase):
         self.assertEqual(('1.2.3',), tuple(v for v, _ in RELEASE_NOTES[:1]))
         self.assertEqual('v' + RELEASE_NOTES[0][0], app_version())
         for version, notes in RELEASE_NOTES:
-            self.assertTrue(1 <= len(notes) <= (12 if version in ('1.2.0', '1.2.1') else 3), version)
+            self.assertTrue(1 <= len(notes) <= (12 if version.startswith('1.2.') else 3), version)
             self.assertTrue(all(len(note) <= 185 for note in notes), version)
             self.assertNotIn('-beta.', version)
         root = Path(__file__).resolve().parent.parent

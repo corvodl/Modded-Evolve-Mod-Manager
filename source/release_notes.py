@@ -5,9 +5,9 @@ never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
     ('1.2.3', (
-        "Patch 1: Support higher-resolution CryEngine DDS textures, verified packed gloss/AO channels, original mesh normals/tangents, detail maps, separate UV transforms, and optional environment reflections.",
+        "Patch 1: Decode higher-resolution DDS, explicit gloss/AO channels, original normals/tangents, detail maps, independent UVs, and environment reflections.",
         "Patch 1: Add optional GPU SSAO quality presets and smaller, expandable View, Materials, and Animation controls; show individual material and animation loading stages.",
-        "Patch 1: Export editable PNG textures in a shared textures/ folder and compatible verified CAF/DBA animations in animations/ with rigged Blender GLB clips and an honest source/compatibility manifest.",
+        "Patch 1: Export GLBs with editable PNGs in textures/ and verified rigged CAF/DBA clips in animations/, with source files and compatibility reports.",
         "Pin Play with Mods, Play without Mods, and Settings at the bottom of the sidebar; add quick launch buttons to Home.",
         "Restore original PAK files automatically after the game and client close, with journal-backed recovery in Settings.",
         "Show installed client version separately without an unverified update checker.",
