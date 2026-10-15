@@ -16,11 +16,17 @@ from gfx_preview_backend import _virtual_path, safe_import_path
 
 _IMAGE_SUFFIX = (".dds", ".dds.0")
 _COMPANION = re.compile(r"_i[0-9a-f]+\.dds(?:\.0)?$", re.I)
+# Scaleform tag 1009 contains source .tif names while cooked assets
+# are .dds/.dds.0. A GFX may also embed literal DDS paths in scripts.
+_GFX_REF = re.compile(
+    rb"(?:Libs/UI/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+)\\.(?:dds|tif)(?:\\.0)?",
+    re.I,
+)
 _MAX_UI_XML = 512 * 1024
 _MAX_TEXTURES = 512
 
 
-def related_ui_textures(movie, available_paths, resolver, *, imports=()):
+def related_ui_textures(movie, available_paths, resolver, *, imports=(), movie_bytes=b''):
     """Return (virtual DDS path, origin) for verified same-build resources.
 
     Paths are from the selected project's manifest or the explicitly selected
@@ -63,6 +69,27 @@ def related_ui_textures(movie, available_paths, resolver, *, imports=()):
         for key, path in entries.items():
             if key.startswith(prefix) and _COMPANION.search(key):
                 add(path, origin)
+
+    # Only trust strings present in the selected compiled movie. CryEngine
+    # converts tag 1009's .tif names to packed .dds(.0) companions; the
+    # XML preload list alone cannot establish image-to-symbol placement.
+    if isinstance(movie_bytes, bytes):
+        for match in _GFX_REF.findall(movie_bytes):
+            try:
+                raw = match.decode("ascii")
+                virtual = raw if raw.casefold().startswith("libs/ui/") else str(
+                    base.parent / raw)
+                virtual = _virtual_path(virtual)
+                if virtual.casefold().endswith(".tif"):
+                    candidates = (virtual[:-4] + ".dds", virtual[:-4] + ".dds.0")
+                elif virtual.casefold().endswith(".dds"):
+                    candidates = (virtual, virtual + ".0")
+                else:
+                    candidates = (virtual,)
+                for candidate in candidates:
+                    add(candidate, "GFX resource reference")
+            except (UnicodeError, ValueError):
+                continue
 
     def parse_ui_xml(path):
         try:
