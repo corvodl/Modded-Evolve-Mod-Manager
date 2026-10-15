@@ -36,7 +36,8 @@ def list_evolve_processes():
     _require_windows()
     process = subprocess.run(
         ["tasklist", "/FI", "IMAGENAME eq Evolve.exe", "/FO", "CSV", "/NH"],
-        capture_output=True, text=True, timeout=10)
+        capture_output=True, text=True, timeout=10,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     if process.returncode:
         raise RuntimeError("Unable to inspect running processes.")
     ids = []
