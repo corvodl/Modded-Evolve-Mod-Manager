@@ -106,9 +106,6 @@ class HomeDashboard(QScrollArea):
         self.client_version_label = QLabel("Client executable not configured")
         self.client_version_label.setObjectName("homeStatusValue")
         client_card.content.addWidget(self.client_version_label)
-        self.client_update_status = QLabel("Update status: not verified")
-        self.client_update_status.setObjectName("muted")
-        client_card.content.addWidget(self.client_update_status)
         outer.addWidget(client_card)
 
         main = QHBoxLayout()
@@ -214,8 +211,6 @@ class HomeDashboard(QScrollArea):
             (installed or ("Version not reported" if details["client_found"]
                            else "Client executable not configured"))
             + (" · " + details["client_name"] if details["client_name"] else ""))
-        self.client_update_status.setText(
-            "Update status: not verified — check the client's own updater.")
         self.status["game"].setText(
             "Configured" if game and Path(game).is_dir()
             else "Not configured — use Settings")
