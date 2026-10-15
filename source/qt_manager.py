@@ -4005,6 +4005,9 @@ class QtManager(QMainWindow):
             commands = launcher_commands(Path(self.swap_path),Path(self.stage_path),st.phase)
             if self.confirm('Play with Mods?',
                              'Mods are intended for private/offline testing.\nClose game/launcher first, then wait for the launcher-ready message before pressing Play.'):
+                # Check just before any privileged firewall write or PAK swap.
+                # The existing launcher still verifies exact staged ownership.
+                self._prelaunch_safety_check(modded=True, game=self._developer_game())
                 set_offline(self._developer_game(), not self._developer_allow_online)
                 self.run_steps(commands,'Play with Mods',self._after_modded_launch,
                                cwd=Path(self.swap_path))
@@ -4022,6 +4025,19 @@ class QtManager(QMainWindow):
         else:
             self._log('No active mod swap; no restoration monitor required.')
 
+    def _prelaunch_safety_check(self, *, modded, game):
+        """Block unsafe launch conditions without changing any Windows state."""
+        from system_health_extras import prelaunch_check
+        errors, notes = prelaunch_check(
+            swap_root=self.swap_path, game_root=game, modded=modded,
+            status=self.refresh_swap_status())
+        if errors:
+            raise RuntimeError("Pre-launch safety check blocked the game:\n" +
+                               "\n".join("• " + item for item in errors) +
+                               "\nOpen System Health or Settings to investigate.")
+        for item in notes:
+            self._log("Pre-launch: " + item)
+
     def _launch_unmodded_client(self):
         """Launch only after a fresh journal, backup and injector check.
 
@@ -4032,6 +4048,7 @@ class QtManager(QMainWindow):
             Path(self.swap_path), self.game_root or self._find_game_root())
         from orphaned_swap_recovery import ensure_game_closed
         ensure_game_closed()
+        self._prelaunch_safety_check(modded=False, game=game)
         # An earlier modded session may have left our firewall rule enabled.
         # For normal play, failure to remove it is an error, not a success.
         set_offline(game, False)
