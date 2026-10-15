@@ -67,6 +67,55 @@ def qt_modern_style(values, *, density="Comfortable"):
         border-radius: 12px;
     }
     QFrame#drawer { background: %(sidebar)s; border: 0; border-right: 1px solid %(separator)s; }
+    /* Permanent navigation rail: dark, quiet, outlined, keyboard accessible. */
+    QFrame#homeNavigationRail { background: %(sidebar)s;
+        border: 1px solid %(separator)s; border-radius: 12px; }
+    QToolButton#railButton, QToolButton#railActive {
+        background: transparent; border: 0; border-radius: 9px;
+        padding: 8px; }
+    QToolButton#railButton:hover { background: %(hover)s; }
+    QToolButton#railActive { background: %(selected)s; border-left: 3px solid %(accent)s; }
+    QToolButton#railButton:focus, QToolButton#railActive:focus {
+        border: 1px solid %(accent)s; }
+    QToolButton#homeBrandButton {
+        background: transparent; border: none; color: %(text)s;
+        font-size: 13pt; font-weight: 650; padding: 3px 10px;
+    }
+    QToolButton#homeBrandButton:hover { background: %(hover)s; border-radius: 9px; }
+    QToolButton#homeBrandButton:focus { border: 1px solid %(accent)s; }
+    QScrollArea#homeDashboard, QWidget#homeDashboardContent,
+    QWidget#homeWorkspace, QWidget#homeStatusColumn {
+        background: %(background)s; border: none; }
+    QFrame#homeHero {
+        background: %(raised)s;
+        border: 1px solid %(separator)s;
+        border-left: 4px solid %(accent)s;
+        border-radius: 16px;
+    }
+    QLabel#homeEyebrow {
+        font-size: 9pt; letter-spacing: 1px; font-weight: 600;
+        color: %(accent)s; }
+    QLabel#homeHeroTitle { font-size: 26pt; font-weight: 700; color: %(text)s; }
+    QLabel#homeHeroDescription { color: %(muted)s; font-size: 11pt; }
+    QLabel#homeSectionTitle { font-size: 15pt; color: %(text)s; font-weight: 650; }
+    QPushButton#homeSecondaryAction {
+        background: %(field)s; color: %(text)s; border: 1px solid %(separator)s;
+        border-radius: 8px; }
+    QPushButton#homeSecondaryAction:hover { background: %(hover)s; }
+    QPushButton#homeTile {
+        background: %(surface)s; border: 1px solid %(separator)s;
+        border-radius: 12px; text-align: left; padding: 0;
+    }
+    QPushButton#homeTile:hover {
+        background: %(hover)s; border-color: %(border)s; }
+    QPushButton#homeTile:pressed { background: %(selected)s; border-color: %(accent)s; }
+    QPushButton#homeTile:focus { border: 1px solid %(accent)s; }
+    QLabel#homeTileTitle { font-weight: 650; font-size: 11pt; color: %(text)s; }
+    QLabel#homeTileDescription { font-size: 9pt; color: %(muted)s; }
+    QLabel#homeStatusValue { color: %(muted)s; font-size: 10pt; }
+    QFrame#homeStatusCard { background: %(surface)s; border: 1px solid %(separator)s;
+        border-radius: 10px; }
+
     QFrame#fileExplorerPane { background: %(sidebar)s; border: 0;
                               border-left: 1px solid %(separator)s; }
     QFrame#workspaceSurface, QFrame#workspaceEditorFrame {
