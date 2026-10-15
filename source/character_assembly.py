@@ -260,7 +260,7 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
             materials = load_preview_materials(
                 workspace, render, texture_folder, projects_root=projects_root,
                 stage_root=stage_root, index=index, cdf=cdf,
-                cancel=cancel)
+                **({'cancel': cancel} if cancel is not None else {}))
         except (ValueError, OSError) as exc:
             materials = None
             omitted.append(label + ' textures: ' + str(exc))
