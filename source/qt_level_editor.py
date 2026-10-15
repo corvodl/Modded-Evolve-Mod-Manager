@@ -233,9 +233,11 @@ class UnrealStyleLevelEditor(QMainWindow):
     mapProgress = Signal(object)
     levelExportReady = Signal(object,object)
 
-    def __init__(self,parent,workspace):
+    def __init__(self,parent,workspace,*,prepared=None):
         super().__init__(parent)
-        self.project=LevelProject(workspace)
+        # The manager parses new maps off the GUI thread and passes an already
+        # verified project. Standalone callers remain backward-compatible.
+        self.project=prepared if prepared is not None else LevelProject(workspace)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setWindowTitle("Level Editor 3D Preview — "+self.project.level_name+" — Evolve")
         self.resize(1510,900)
