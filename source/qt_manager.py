@@ -77,11 +77,12 @@ from online_guard import set_offline, target_executable
 from release_notes import RELEASE_NOTES
 from qt_navigation_icons import navigation_icon
 from qt_ui_components import WorkspaceHeader, ContextActions, DisclosurePanel, configure_splitter
+from qt_home_dashboard import HomeDashboard
 
 ROOT = Path(__file__).resolve().parent
 COLORS = {'bg':'#0b0b0d','surface':'#17171d','panel':'#202027',
           'text':'#f5f3f6','muted':'#a6a3ae','accent':'#cf394b','outline':'#353139'}
-SECTIONS = ('Instructions','Asset Library','Modding','Play & Restore','Settings','Credits',
+SECTIONS = ('Home','Instructions','Asset Library','Modding','Play & Restore','Settings','Credits',
             "What's New",'Developer')
 
 
@@ -401,7 +402,7 @@ class QtManager(QMainWindow):
         self.update_progress_dialog = None
         self._success = None
         self._drawer_open = False
-        # The Instructions page is the first window. Delay disk-heavy
+        # The Home page is the first window. Delay disk-heavy
         # archive/project inventory until the corresponding page is used.
         # This makes first paint independent of enormous Asset Libraries.
         self._startup_inventory_pending = True
@@ -416,24 +417,56 @@ class QtManager(QMainWindow):
         top = QHBoxLayout()
         self.menu_button = _button('☰  Menu', self.toggle_menu)
         self.menu_button.setObjectName('menuTrigger')
-        self.menu_button.setToolTip('Show navigation (Esc to close)')
+        self.menu_button.setToolTip('Expand navigation (Esc to close)')
         top.addWidget(self.menu_button)
-        app_icon = QLabel()
-        png = ROOT / 'assets' / 'hunt.png'
-        if png.is_file():
-            app_icon.setPixmap(QPixmap(str(png)).scaled(
-                33, 33, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        top.addWidget(app_icon)
-        brand = _label('EVOLVE / MOD MANAGER')
-        brand.setObjectName('brand')
-        top.addWidget(brand)
-        self.page_location = _label('  /  Instructions', muted=True, wrap=False)
+        # The application icon and brand work as a Home navigation control.
+        self.home_brand_button = QToolButton(self)
+        self.home_brand_button.setObjectName('homeBrandButton')
+        self.home_brand_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.home_brand_button.setText('EVOLVE  /  MOD MANAGER')
+        self.home_brand_button.setAccessibleName('Go to Home')
+        self.home_brand_button.setToolTip('Return to Home')
+        app_png = ROOT / 'assets' / 'hunt.png'
+        self.home_brand_button.setIcon(
+            QIcon(str(app_png)) if app_png.is_file() else navigation_icon('Home'))
+        self.home_brand_button.setIconSize(QSize(34, 34))
+        self.home_brand_button.clicked.connect(
+            lambda _checked=False: self.open_page(SECTIONS.index('Home')))
+        top.addWidget(self.home_brand_button)
+        self.page_location = _label('  /  Home', muted=True, wrap=False)
         self.page_location.setObjectName('currentPageContext')
         top.addWidget(self.page_location)
         top.addStretch()
         top.addWidget(_button('Help', self.show_help))
         top.addWidget(_button('Activity', self.toggle_activity))
         body.addLayout(top)
+
+        # Persistent icon navigation is a structural departure from the old
+        # popup-only shell; the expanded drawer remains accessible on demand.
+        self.workspace_shell = QHBoxLayout()
+        self.workspace_shell.setContentsMargins(0, 0, 0, 0)
+        self.workspace_shell.setSpacing(12)
+        self.nav_rail = QFrame(self)
+        self.nav_rail.setObjectName('homeNavigationRail')
+        self.nav_rail.setFixedWidth(66)
+        rail_layout = QVBoxLayout(self.nav_rail)
+        rail_layout.setContentsMargins(7, 12, 7, 12)
+        rail_layout.setSpacing(7)
+        self.rail_buttons = []
+        for index, title in enumerate(SECTIONS):
+            button = QToolButton(self.nav_rail)
+            button.setObjectName('railActive' if index == 0 else 'railButton')
+            button.setIcon(navigation_icon(title, size=23))
+            button.setIconSize(QSize(23, 23))
+            button.setFixedSize(51, 43)
+            button.setAccessibleName(title)
+            button.setToolTip(title)
+            button.clicked.connect(
+                lambda _checked=False, target=index: self.open_page(target))
+            rail_layout.addWidget(button)
+            self.rail_buttons.append(button)
+        rail_layout.addStretch()
+        self.workspace_shell.addWidget(self.nav_rail, 0)
 
         self.stage_holder = QWidget()
         self.stage_holder.setObjectName('stageHolder')
@@ -443,13 +476,14 @@ class QtManager(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.setObjectName('pages')
         self.stage_holder.layout().addWidget(self.stack)
-        body.addWidget(self.stage_holder, stretch=1)
+        self.workspace_shell.addWidget(self.stage_holder, 1)
+        body.addLayout(self.workspace_shell, stretch=1)
 
         self.drawer = _widget(QFrame, self.stage_holder, name='drawer')
         self.drawer.setFixedWidth(194)
         navlay = QVBoxLayout(self.drawer)
-        navlay.setContentsMargins(10, 15, 10, 15)
-        navlay.setSpacing(6)
+        navlay.setContentsMargins(10, 7, 10, 7)
+        navlay.setSpacing(3)
         navlay.addWidget(_label('WORKSPACE', muted=True))
         self.nav_buttons = []
         for index, title in enumerate(SECTIONS):
@@ -480,6 +514,7 @@ class QtManager(QMainWindow):
         self.menu_animation.finished.connect(self._after_drawer_animation)
 
         self.pages = {}
+        self._home_page()
         self._instructions_page()
         # Library folder migration runs at the first actual Library refresh,
         # before any paths are exposed to the preview/editor.
@@ -502,7 +537,7 @@ class QtManager(QMainWindow):
         self.stack.setCurrentIndex(0)
         self._log_dialog = None
         self.log_lines = ['Manager started. No installed game files were changed.']
-        self.status = _label('Ready — read Instructions before connecting an installed game.', muted=True)
+        self.status = _label('Ready — choose a workspace on Home. Installed game files unchanged.', muted=True)
         footer = QHBoxLayout()
         footer.addWidget(self.status, 1)
         self.operation_progress = QProgressBar(self)
@@ -539,6 +574,7 @@ class QtManager(QMainWindow):
         self._shared_catalog_timer.timeout.connect(self._shared_catalog_tick)
         self._shared_catalog_timer.start()
         QTimer.singleShot(0, self._position_drawer)
+        QTimer.singleShot(0, self.home_dashboard.refresh_status)
         QTimer.singleShot(400, lambda: report_startup_ready(APP_HOME))
         # Both release channels are verified; beta updates always need approval.
         if (self.build_channel() in ('main','beta') and
@@ -659,9 +695,15 @@ class QtManager(QMainWindow):
             self._startup_inventory_pending = False
         self._highlight_page(index)
         self.page_location.setText('  /  ' + SECTIONS[index])
+        if index == SECTIONS.index('Home'):
+            self.home_dashboard.refresh_status()
         self.toggle_menu(False)
 
     def _highlight_page(self, index):
+        for i, button in enumerate(self.rail_buttons):
+            button.setObjectName('railActive' if i == index else 'railButton')
+            button.style().unpolish(button)
+            button.style().polish(button)
         for i, button in enumerate(self.nav_buttons):
             button.setObjectName('navActive' if i == index else 'nav')
             button.style().unpolish(button)
@@ -676,6 +718,15 @@ class QtManager(QMainWindow):
 
     def t(self, key):
         return self.copy.get(key, key.replace('_',' ').capitalize())
+
+    def section_index(self, name):
+        """One dispatcher for Home cards, rail and expanded drawer."""
+        return SECTIONS.index(name)
+
+    def _home_page(self):
+        self.home_dashboard = HomeDashboard(self, self)
+        self.pages['home'] = self.home_dashboard
+        self.stack.addWidget(self.home_dashboard)
 
     def _instructions_page(self):
         scroll, lay = _scroll_page()
@@ -1881,6 +1932,14 @@ class QtManager(QMainWindow):
             # fixed geometry *after* applying the global stylesheet so
             # all 30px navigation icons stay unclipped.
             button.setFixedSize(174, 48)
+        for index, button in enumerate(getattr(self, 'rail_buttons', ())):
+            button.setIcon(navigation_icon(SECTIONS[index], icon_color, 23))
+        if getattr(self, 'home_dashboard', None):
+            for section, tile in self.home_dashboard.tiles.items():
+                icons = tile.findChildren(QLabel, 'homeTileIcon')
+                if icons:
+                    icons[0].setPixmap(
+                        navigation_icon(section, icon_color, 27).pixmap(27, 27))
         for editor in getattr(self, 'editors', []):
             if editor is not None:
                 editor.setStyleSheet(style)
@@ -3439,7 +3498,9 @@ class QtManager(QMainWindow):
             dest.parent.mkdir(parents=True, exist_ok=False)
             cmd = [sys.executable,'-u',str(ROOT/'evolve_pak_workspace.py'),
                    'build','--workspace',str(ws),'--public-key',str(pub),
-                   '--private-key',str(priv),'--out',str(dest)]
+                   '--private-key',str(priv),'--out',str(dest),
+                   '--stage',str(self.stage_path),
+                   '--backup-root',str(Path(self.projects_path)/'Backups')]
             self.run_steps([('Rebuilding and signing PAK',cmd)], 'Build Mod',
                            lambda: self._after_build(dest))
         except Exception as exc:
@@ -3490,7 +3551,8 @@ class QtManager(QMainWindow):
             cmd=[sys.executable,'-u',str(ROOT/'evolve_pak_workspace.py'),
                  'build','--workspace',str(workspace),
                  '--public-key',str(pub),'--private-key',str(priv),
-                 '--out',str(output)]
+                 '--out',str(output), '--stage',str(self.stage_path),
+                 '--backup-root',str(Path(self.projects_path)/'Backups')]
             self.run_steps([('Validate and sign offline test PAK',cmd)],
                 'Build Offline Test',
                 lambda:self._stage_offline_test(output,relative))

@@ -6,8 +6,11 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 **Version:** 1.2.1 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.1
+## Latest Stable — v1.2.1 (Patch 1)
 
+- Patch 1: introduce Home as the launch dashboard, with workspace shortcuts, quick setup status and a persistent outlined-icon navigation rail.
+- Patch 1: let the application logo return to Home while preserving restricted-page access controls.
+- Patch 1: rebuild modified PAK workspaces using an exact SHA-verified retained original, when available, without overwriting edited files or swap journals.
 - Refresh every Qt workspace with a cohesive charcoal interface, muted panels, restrained red accents, and reusable controls.
 - Improve Modding and Asset Library navigation with resizable project lists, contextual actions, and collapsible advanced tools.
 - Modernize File, GFX, GPU Model, and Level editors with clearer inspectors, shared toolbars, and more room for previews.
@@ -20,7 +23,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 ## Download and install
 
 1. Download the **Windows installer** or **portable ZIP** from the [Main Windows release](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Main). Release filenames include the version and patch revision. If using the portable ZIP, extract the **entire** `EvolveModManager` folder to a writable location.
-2. Run `EvolveModManager.exe`. The **Instructions** tab is shown first with a link to the required Modded Evolve website. No installation folder picker opens until you click Set Up Manager.
+2. Run `EvolveModManager.exe`. The **Home** dashboard opens first, with a shortcut to the Instructions tab and the required Modded Evolve website. No installation folder picker opens until you click Set Up Manager.
 3. After the normal client has installed Evolve Stage 2, close the game and client. Click **Set Up Manager**, select the client-installed **EvolveGame** folder, and select the normal Modded Evolve client executable.
 4. The manager builds local signing resources, an injector and staged custom-signed PAKs from **your installed game files**. It does not alter the original installed PAKs during setup. Allow substantial free disk space for staging; the amount depends on the game files and original-snapshot option.
 5. Open **Modding** to edit archives. Use **Play & Restore** to play privately/offline and restore originals afterward.
@@ -33,6 +36,7 @@ The portable Windows release bundles Python and its required application depende
 
 | Tab | What it does |
 | --- | --- |
+| **Home** | Dashboard with workspace icons, setup/build information, and quick links to all manager sections |
 | **Instructions** | Required Modded Evolve installation, first-run setup, modding and restoration walkthrough |
 | **Modding** | Archive browser, unpacking, extracted-file editing, building and adding mods |
 | **Play & Restore** | Guided offline launch, swap state, and restoration/recovery of original game files |
