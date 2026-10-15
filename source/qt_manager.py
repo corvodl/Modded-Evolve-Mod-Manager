@@ -400,6 +400,11 @@ class QtManager(QMainWindow):
         self.update_progress_dialog = None
         self._success = None
         self._drawer_open = False
+        # The Instructions page is the first window. Delay disk-heavy
+        # archive/project inventory until the corresponding page is used.
+        # This makes first paint independent of enormous Asset Libraries.
+        self._startup_inventory_pending = True
+        self._library_inventory_initialized = False
 
         base = QWidget()
         self.setCentralWidget(base)
@@ -470,10 +475,8 @@ class QtManager(QMainWindow):
 
         self.pages = {}
         self._instructions_page()
-        # Migrate old hash-only archive folders BEFORE an editor can retain
-        # a path into the Asset Library. Stable 20-character archive IDs remain.
-        from asset_library import migrate_readable_archive_folders
-        migrate_readable_archive_folders()
+        # Library folder migration runs at the first actual Library refresh,
+        # before any paths are exposed to the preview/editor.
         self._asset_library_page()
         self._modding_page()
         self._play_page()
@@ -482,7 +485,6 @@ class QtManager(QMainWindow):
         self.asset_library_controller.finished.connect(self._asset_library_finished)
         self.asset_library_controller.started.connect(self._library_task_started)
         self.asset_library_controller.progress.connect(self._library_task_progress)
-        self.refresh_library_table()
         self._auto_library_scanned_game = None
         self._settings_page()
         self._credits_page()
@@ -516,16 +518,15 @@ class QtManager(QMainWindow):
         # Beta.34 workspaces can yield review warnings during migration.
         # Previously this ran above, before self.status/self.log_lines existed,
         # causing Qt startup to abort on existing installations.
-        self.refresh_project_list()
         self._apply_appearance()
         self._load_batch()
-        self.refresh_archives()
-        # Project scanning can log errors or show warnings. Run it only after
-        # the activity log and footer status widget exist (below).
+        # Archive and project validation may traverse large staged/game PAK
+        # collections. Modding loads them on first use, not before first paint.
+        # Restore status is cheap and remains visible on launch.
         self.refresh_swap_status()
         # Verify the six Shared asset directories off the GUI thread.
-        QTimer.singleShot(150, self._warm_shared_assets)
-        QTimer.singleShot(700, self._warm_asset_library)
+        QTimer.singleShot(500, self._warm_shared_assets)
+        QTimer.singleShot(1300, self._warm_asset_library)
         self._shared_catalog_last_status = ''
         self._shared_catalog_timer = QTimer(self)
         self._shared_catalog_timer.setInterval(1000)
@@ -646,6 +647,10 @@ class QtManager(QMainWindow):
         self.stack.setCurrentIndex(index)
         if SECTIONS[index] == 'Asset Library':
             self.refresh_library_table()
+        elif SECTIONS[index] == 'Modding' and self._startup_inventory_pending:
+            self.refresh_project_list()
+            self.refresh_archives()
+            self._startup_inventory_pending = False
         self._highlight_page(index)
         self.toggle_menu(False)
 
@@ -829,6 +834,13 @@ class QtManager(QMainWindow):
     def refresh_library_table(self, *_unused):
         if not hasattr(self, 'asset_table'):
             return
+        if not self._library_inventory_initialized:
+            # One-time folder migration must finish before handing out paths.
+            # When the user never opens the library, no manifest crawl delays
+            # the initial Instructions screen.
+            from asset_library import migrate_readable_archive_folders
+            migrate_readable_archive_folders()
+            self._library_inventory_initialized = True
         from asset_library import imported_archives
         from pak_dependencies import group_title
         selected_ids = self._selected_library_ids()
