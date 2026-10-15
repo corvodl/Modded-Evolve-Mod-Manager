@@ -60,6 +60,36 @@ class UnrealStyleLevelEditorSmoke(unittest.TestCase):
             finally:
                 other.close()
 
+    def test_large_outliner_uses_virtual_model_and_selects_exact_object(self):
+        from types import SimpleNamespace
+        from xml.etree.ElementTree import Element
+        editor = self.editor
+        old = editor.project
+        fake = SimpleNamespace(
+            objects=tuple(SimpleNamespace(name='Stone ' + str(i),
+                kind='Brush', layer=LAYER_A, geometry='objects/stone.cgf',
+                index=i) for i in range(2500)),
+            _node=lambda layer, index: Element('Object', {'Layer': 'TestLayer'}))
+        try:
+            editor.project = fake
+            editor._populate_outliner()
+            self.assertTrue(editor.virtual_outliner.isVisibleTo(editor)) if editor.isVisible() else self.assertTrue(editor.outliner.isHidden())
+            self.assertTrue(editor.outliner.isHidden())
+            self.assertEqual(len(editor._outliner_model.root.children[0].children), 2500)
+            folder = editor._outliner_model.index(0, 0)
+            editor._outliner_model.fetchMore(folder)
+            self.assertEqual(editor._outliner_model.rowCount(folder), 256)
+            editor.filter.setText('Stone 2499')
+            editor._populate_outliner()
+            self.assertEqual(len(editor._outliner_model.root.children[0].children), 1)
+            self.assertEqual(editor._outliner_model.root.children[0].children[0].value,
+                             (LAYER_A, 2499))
+        finally:
+            editor.project = old
+            editor._outliner_catalog = None
+            editor.filter.clear()
+            editor._populate_outliner()
+
     def test_unreal_layout_widgets_and_outliner(self):
         e=self.editor
         self.assertEqual(len(e.project.objects),3)
