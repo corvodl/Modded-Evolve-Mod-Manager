@@ -101,6 +101,25 @@ class ExtendedTexturePipelineTests(unittest.TestCase):
             self.assertEqual(next(x for x in layers if x['role']=='detail')
                              ['uvTransform'][:2],[4.,6.])
 
+    def test_combined_level_scene_remaps_both_gloss_textures(self):
+        from material_preview import PreviewMaterials
+        from level_blender_export import SceneAssembler
+        mesh=SimpleNamespace(vertices=[(0.,0.,0.),(1.,0.,0.),(0.,1.,0.)],
+             triangles=[(0,1,2)],uvs=[(0.,0.),(1.,0.),(0.,1.)],subsets=())
+        materials=PreviewMaterials(
+            (Image.new('RGB',(4,4),(80,80,80)),),('slot',),'test.mtl',
+            gloss_maps=(Image.new('L',(4,4),200),))
+        blob,_=embed_diffuse_textures(glb_bytes(mesh),materials)
+        scene=SceneAssembler('two materials')
+        scene.append_glb('one',blob)
+        scene.append_glb('two',blob)
+        doc,_=_unpack_glb(scene.finish())
+        self.assertEqual(len(doc['materials']),2)
+        self.assertEqual(len(doc['textures']),4)
+        a=doc['materials'][0]['pbrMetallicRoughness']['metallicRoughnessTexture']['index']
+        b=doc['materials'][1]['pbrMetallicRoughness']['metallicRoughnessTexture']['index']
+        self.assertEqual((a,b),(1,3))
+
     def test_sampler_uvs_and_dual_normal_shader_paths(self):
         self.assertIn('texture2D(normal_map,normal_coord)', FRAGMENT)
         self.assertIn('texture2D(detail_map,detail_coord)', FRAGMENT)
