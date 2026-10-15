@@ -76,3 +76,24 @@ def span(operation, stage, **counters):
         record(operation, stage,
                elapsed_ms=(time.perf_counter() - start) * 1000,
                **counters)
+
+
+def start_qt_heartbeat(owner, interval_ms=100):
+    """Watch large main-thread stalls without adding a timer when disabled."""
+    if not enabled():
+        return None
+    from PySide6.QtCore import QTimer
+    timer = QTimer(owner)
+    timer.setInterval(interval_ms)
+    previous = [time.perf_counter()]
+
+    def sample():
+        now = time.perf_counter()
+        delay_ms = max(0., (now - previous[0]) * 1000 - interval_ms)
+        previous[0] = now
+        if delay_ms >= 50.:
+            record('ui', 'event_loop_delay', delay_ms=round(delay_ms, 3))
+
+    timer.timeout.connect(sample)
+    timer.start()
+    return timer
