@@ -282,8 +282,13 @@ def asset_directory_index(folder, *, max_files=60000):
     return result
 
 
-def discover_animations(selected, index, *, preferred_workspace=None, loose_index=None):
+def discover_animations(selected, index, *, preferred_workspace=None,
+                        loose_index=None, cancel=None):
     """Resolve a model's named animations from its own skeleton's .chrparams."""
+    def checkpoint():
+        if cancel is not None and cancel():
+            raise InterruptedError('Animation discovery cancelled')
+    checkpoint()
     # The model viewer may have opened before the background Asset Library
     # finished importing its CAF PAKs. Merge its CURRENT extracted files, not
     # the one-time geometry index captured when the model first loaded.
@@ -292,6 +297,7 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
     if library:
         merged = dict(index)
         for name, records in library.items():
+            checkpoint()
             if not name.endswith(('.caf', '.chrparams', '.dba', '.bspace', '.comb')):
                 continue
             present = {str(row.get('file', '')) for row in merged.get(name, ())}
@@ -300,6 +306,7 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
             if extra:
                 merged[name] = list(merged.get(name, ())) + extra
         index = merged
+    checkpoint()
     config_name, config_file = selected_character_params(
         selected, index, preferred_workspace)
     if config_file is None:
@@ -325,6 +332,7 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
         return (), None, 'Cannot read skeleton animation map: ' + str(exc)
     confirmed = []
     for item in refs:
+        checkpoint()
         if item.available and item.kind == 'caf' and not caf_header(item.file):
             confirmed.append(AnimationReference(item.name, item.virtual_path,
                                                 item.kind, False))
@@ -344,6 +352,7 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
     extra_graph = []
     known = {ref.virtual_path.casefold() for ref in confirmed}
     for row in raw_mappings:
+        checkpoint()
         label = (row.get('name') or '').strip()
         path = (row.get('path') or '').replace('\\', '/').strip()
         if label.casefold() == '#filepath':
@@ -387,6 +396,7 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
     # Also expand explicit $TracksDatabase wildcard declarations against
     # verified extracted files. Never select an arbitrary other character DBA.
     for row in raw_mappings:
+        checkpoint()
         if (row.get('name') or '').strip().casefold() != '$tracksdatabase':
             continue
         pattern = (row.get('path') or '').replace('\\', '/').strip()
@@ -431,6 +441,7 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
             seen = {r.virtual_path.casefold() for r in confirmed}
             paths = {}
             for key, entries in index.items():
+                checkpoint()
                 if key.startswith(prefix) and key.endswith('.caf'):
                     # Skip encrypted-on-demand entries here; the name alone
                     # does not establish a compatible skeleton/controller.
@@ -442,6 +453,7 @@ def discover_animations(selected, index, *, preferred_workspace=None, loose_inde
                     if key.startswith(prefix) and key.endswith('.caf') and file and key not in paths:
                         paths[key] = file
             for key, file in sorted(paths.items()):
+                checkpoint()
                 if key in seen:
                     continue
                 try:
