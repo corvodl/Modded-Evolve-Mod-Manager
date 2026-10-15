@@ -92,9 +92,9 @@ class QtMigrationTests(unittest.TestCase):
 
     def test_all_pages_and_instruction_information_survive(self):
         self.assertEqual(SECTIONS, (
-            'Home','Instructions','Asset Library','Modding','Play & Restore',
+            'Home','Instructions','Asset Library','Modding',
             'Settings','Credits',"What's New",'Developer'))
-        self.assertEqual(self.win.stack.count(), 9)
+        self.assertEqual(self.win.stack.count(), 8)
         self.assertLess(SECTIONS.index('Asset Library'), SECTIONS.index('Modding'))
         self.assertEqual(self.win.asset_table.columnCount(), 6)
         self.assertTrue(any(
@@ -167,7 +167,7 @@ class QtMigrationTests(unittest.TestCase):
             'Unpack selected PAKs + dependencies','Edit Files','Review Changes',
             'Build Mod','Add Mod','Import Modified PAK','Undo Staged Mod',
             'Mod Profiles…',
-            'Play With Mods','Restore Game Files',
+            'Play with Mods','Play without Mods','Restore Game Files',
             'Status Details','Set Up Launcher','Refresh Original PAKs',
             'Check Setup','Open Projects','Save Settings','Check for Updates',
             'Create Desktop Shortcut','Export Complete Manager ZIP',
@@ -177,34 +177,29 @@ class QtMigrationTests(unittest.TestCase):
             with self.subTest(control=name):
                 self.assertIn(name,names)
 
-    def test_play_restore_menu_escapes_literal_ampersand(self):
-        # QPushButton interprets an unescaped & as a Windows mnemonic.
-        self.assertEqual(self.win.nav_buttons[SECTIONS.index('Play & Restore')].text(), 'Play && Restore')
-        self.assertEqual(self.win.nav_buttons[SECTIONS.index('Play & Restore')].accessibleName(), 'Play & Restore')
-        help_texts = [b.text() for b in
-                      self.win.pages['play'].findChildren(QPushButton)]
-        self.assertIn('How Play && Restore works', help_texts)
-        self.win.nav_buttons[SECTIONS.index('Play & Restore')].click()
-        self.application.processEvents()
-        self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index('Play & Restore'))
+    def test_quick_play_replaces_old_page_and_uses_pinned_actions(self):
+        self.assertNotIn('Play & Restore', SECTIONS)
+        self.assertNotIn('play', self.win.pages)
+        layout = self.win.nav_rail.layout()
+        bottom = [layout.itemAt(layout.count() - i).widget()
+                  for i in (3, 2, 1)]
+        self.assertEqual([button.accessibleName() for button in bottom],
+                         ['Play with Mods', 'Play without Mods', 'Settings'])
+        self.assertIs(bottom[-1], self.win.rail_buttons[SECTIONS.index('Settings')])
+        for button in bottom:
+            self.assertFalse(button.icon().isNull())
 
-    def test_play_refresh_icon_is_adjacent_and_replaces_full_button(self):
-        buttons = [b.text() for b in self.win.pages['play'].findChildren(QPushButton)]
-        self.assertNotIn('Refresh Status', buttons)
-        self.assertIn('Play With Mods', buttons)
-        icon = self.win.refresh_status_icon
-        self.assertIsInstance(icon, QToolButton)
-        self.assertEqual(icon.accessibleName(), 'Refresh Status')
-        self.assertTrue(bool(icon.toolTip()))
-        self.assertFalse(icon.icon().isNull())
-        self.assertEqual(self.win.launch_status_row.itemAt(0).widget(), self.win.launch_status)
-        self.assertEqual(self.win.launch_status_row.itemAt(1).widget(), icon)
-        with patch.object(self.win, 'refresh_swap_status') as refresh:
-            icon.click()
-            refresh.assert_called_once_with()
+    def test_restore_status_and_recovery_are_now_in_settings(self):
+        buttons = [button.text() for button in
+                   self.win.pages['settings'].findChildren(QPushButton)]
+        self.assertIn('Restore Game Files', buttons)
+        self.assertIn('Set Up Launcher', buttons)
+        self.assertIn('Refresh Original PAKs', buttons)
+        self.assertTrue(self.win.launch_status.text())
+        self.assertNotIn('Play & Restore', SECTIONS)
 
     def test_hover_information_icons_explain_actions_without_extra_pages(self):
-        for section in ('modding', 'play', 'settings'):
+        for section in ('modding', 'settings'):
             icons = self.win.pages[section].findChildren(QToolButton, 'infoIcon')
             self.assertGreaterEqual(len(icons), 0)  # Compact menus may replace inline info icons.
             for widget in icons:
