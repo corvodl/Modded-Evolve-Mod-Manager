@@ -150,8 +150,8 @@ jobs:
         run: |
           $version=((Get-Content 'source/VERSION.txt' -Raw).Trim() -split ' - ',2)[0]
           $revision=[int]$env:EVOLVE_RELEASE_REVISION
-          $zipName="EvolveModManager-Windows-$version-p$revision.zip"
-          $setupName="EvolveModManager-Setup-$version-p$revision.exe"
+          $zipName="EvolveModManager-Windows-$($version)-p$($revision).zip"
+          $setupName="EvolveModManager-Setup-$($version)-p$($revision).exe"
           Copy-Item 'dist/EvolveModManager-Windows.zip' "dist/$zipName" -Force
           Copy-Item 'dist/EvolveModManager-Setup.exe' "dist/$setupName" -Force
           $data=[ordered]@{
