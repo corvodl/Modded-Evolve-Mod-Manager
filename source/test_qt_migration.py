@@ -54,11 +54,13 @@ class QtMigrationTests(unittest.TestCase):
         from qt_manager import SECTIONS
         self.assertTrue(self.win._startup_inventory_pending)
         self.assertFalse(self.win._library_inventory_initialized)
-        with patch.object(self.win, "refresh_project_list") as projects, \
+        with patch.object(self.win, "_load_initial_modding_inventory") as loading, \
+             patch.object(self.win, "refresh_project_list") as projects, \
              patch.object(self.win, "refresh_archives") as archives:
             self.win.open_page(SECTIONS.index("Modding"))
-            projects.assert_called_once()
-            archives.assert_called_once()
+            loading.assert_called_once()
+            projects.assert_not_called()
+            archives.assert_not_called()
         self.assertFalse(self.win._startup_inventory_pending)
         with patch("asset_library.migrate_readable_archive_folders") as migrate:
             self.win.open_page(SECTIONS.index("Asset Library"))
@@ -111,7 +113,8 @@ class QtMigrationTests(unittest.TestCase):
             item.text() for item in
             self.win.pages['asset_library'].findChildren(QLabel)).casefold())
         self.assertEqual(self.win.stack.currentIndex(), 0)
-        self.assertTrue(self.win.menu_button.text().startswith('☰'))
+        self.assertFalse(hasattr(self.win, 'menu_button'))
+        self.assertEqual(self.win.nav_rail.width(), 66)
         self.assertIn('modded-evolve.com',
             ' '.join(widget.text() for widget in
                      self.win.pages['instructions'].findChildren(QLabel)))
@@ -132,19 +135,21 @@ class QtMigrationTests(unittest.TestCase):
         self.assertFalse(self.win.home_brand_button.icon().isNull())
         self.assertEqual(len(self.win.rail_buttons), len(SECTIONS))
         self.assertIsNotNone(self.win.pages['home'])
-        for section in SECTIONS[1:]:
+        for section in SECTIONS[1:-1]:
             self.assertIn(section, self.win.home_dashboard.tiles)
-            self.assertFalse(self.win.home_dashboard.tiles[section].isEnabled() is False)
+            self.assertTrue(self.win.home_dashboard.tiles[section].isEnabled())
+            self.assertIn(section, self.win.home_dashboard.tiles[section]
+                          .findChildren(QLabel)[1].text())
         self.win.open_page(SECTIONS.index('Modding'))
         self.win.home_brand_button.click()
         self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index('Home'))
         self.assertEqual(self.win.page_location.text().strip(), '/  Home')
 
-    def test_developer_tile_cannot_bypass_access_code(self):
-        from PySide6.QtWidgets import QInputDialog
+    def test_developer_is_not_on_home_and_rail_stays_gated(self):
+        self.assertNotIn('Developer', self.win.home_dashboard.tiles)
         with patch('qt_manager.QInputDialog.getText',
                    return_value=('', False)) as prompt:
-            self.win.home_dashboard.tiles['Developer'].click()
+            self.win.rail_buttons[SECTIONS.index('Developer')].click()
             prompt.assert_called_once()
         self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index('Home'))
         self.assertFalse(self.win._developer_allow_writes)
@@ -176,6 +181,9 @@ class QtMigrationTests(unittest.TestCase):
         # QPushButton interprets an unescaped & as a Windows mnemonic.
         self.assertEqual(self.win.nav_buttons[SECTIONS.index('Play & Restore')].text(), 'Play && Restore')
         self.assertEqual(self.win.nav_buttons[SECTIONS.index('Play & Restore')].accessibleName(), 'Play & Restore')
+        help_texts = [b.text() for b in
+                      self.win.pages['play'].findChildren(QPushButton)]
+        self.assertIn('How Play && Restore works', help_texts)
         self.win.nav_buttons[SECTIONS.index('Play & Restore')].click()
         self.application.processEvents()
         self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index('Play & Restore'))
@@ -212,7 +220,8 @@ class QtMigrationTests(unittest.TestCase):
     def test_qpropertyanimation_is_an_overlay_and_does_not_resize(self):
         width = self.win.stack.width()
         self.assertFalse(self.win._drawer_open)
-        self.win.menu_button.click()
+        from PySide6.QtCore import QEvent
+        self.win.eventFilter(self.win.nav_rail, QEvent(QEvent.Enter))
         self.assertTrue(self.win._drawer_open)
         self.assertEqual(self.win.menu_animation.duration(),205)
         self.assertTrue(self.win.drawer.isVisible())
