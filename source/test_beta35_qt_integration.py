@@ -73,7 +73,7 @@ class Beta35QtIntegrationTests(unittest.TestCase):
                 # first paint, performs the expensive legacy-project scan.
                 ready = QSignalSpy(restored.signals.inventory_ready)
                 restored.open_page(SECTIONS.index("Modding"))
-                self.assertTrue(len(ready) or ready.wait(5000),
+                self.assertTrue(ready.count() or ready.wait(5000),
                                 'Background inventory did not finish')
                 self.app.processEvents()
             try:
@@ -105,7 +105,7 @@ class Beta35QtIntegrationTests(unittest.TestCase):
                 restored = QtManager()
                 ready = QSignalSpy(restored.signals.inventory_ready)
                 restored.open_page(SECTIONS.index("Modding"))
-                self.assertTrue(len(ready) or ready.wait(5000),
+                self.assertTrue(ready.count() or ready.wait(5000),
                                 'Background inventory did not finish')
                 self.app.processEvents()
                 # Changes are intentionally deferred until an explicit row
