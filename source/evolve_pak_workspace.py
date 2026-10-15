@@ -203,6 +203,9 @@ def pack_changed_entry(plain, entry, keys, name, cdr_fields, local_offset):
 
 def cmd_build(args):
     wdir=args.workspace.resolve();data=load_workspace(wdir)
+    if data.get('reference_only'):
+        raise ValueError('Library-derived level copies cannot be signed directly; '
+                         'create a verified staged editing project first.')
     src=args.pak.resolve() if args.pak else Path(data['source_pak']).resolve()
     pub=args.public_key.resolve();priv=args.private_key.resolve();out=args.out.resolve()
     if not src.is_file():raise FileNotFoundError(f'Missing PAK source: {src}')

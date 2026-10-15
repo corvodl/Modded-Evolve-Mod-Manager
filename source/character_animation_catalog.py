@@ -7,6 +7,7 @@ optionally selected loose asset directory. Actual CAF playback needs a decoder.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 import os
 import re
@@ -28,6 +29,7 @@ class AnimationReference:
     in_archive: bool = False  # signed directory names known; bytes still unextracted
     dba_file: Path | None = None  # verified declared database, not a guessed CAF
     dba_virtual_path: str | None = None
+    annotation: str = ''
 
 
 def _xml(data):
@@ -63,6 +65,10 @@ def parse_animation_references(data, exists, can_extract=None):
                 or name.startswith('#')
                 or (name.startswith(chr(36)) and not database)):
             continue
+        annotation = ''
+        annotated = re.fullmatch(r'(.+\.caf)\s+\(([^()]*)\)', ref, re.I)
+        if annotated:
+            ref, annotation = annotated.groups()
         ext = Path(ref).suffix.casefold()
         if ext not in ('.caf', '.bspace', '.comb', '.dba'):
             continue
@@ -77,12 +83,46 @@ def parse_animation_references(data, exists, can_extract=None):
         archived = bool(can_extract(virtual)) if can_extract else False
         label = ('DBA: ' + Path(virtual).stem) if database else name
         out.append(AnimationReference(label, virtual, ext[1:], resolved is not None,
-                                      resolved, archived))
+                                      resolved, archived, annotation=annotation))
     return tuple(out)
 
 
+
+def _is_additive_caf(path):
+    """Read motion flags so unnamed additive clips are not offered standalone."""
+    try:
+        path = Path(path)
+        stat = path.stat()
+        return _cached_additive_flag(str(path), stat.st_mtime_ns, stat.st_size)
+    except (OSError, ValueError, struct.error):
+        return False  # The playback decoder will explain invalid/missing CAFs.
+
+
+@lru_cache(maxsize=512)
+def _cached_additive_flag(path, modified, size):
+    if not 32 <= size <= 64 * 1024 * 1024:
+        return False
+    with open(path, 'rb') as source:
+        header = source.read(16)
+        if header[:8] != b'CrChF\x07\0\0':
+            return False
+        count, table = struct.unpack_from('<II', header, 8)
+        if not 1 <= count <= 1520 or table < 16 or table + count * 16 > size:
+            return False
+        source.seek(table)
+        entries = source.read(count * 16)
+        for kind, _ident, length, offset in struct.iter_unpack('<4I', entries):
+            if kind != 0x09253002:
+                continue
+            if length < 40 or offset < table + count * 16 or offset + length > size:
+                return False
+            source.seek(offset)
+            return bool(struct.unpack('<I', source.read(4))[0] & 1)
+    return False
+
+
 def native_clip_playability(reference):
-    """Classify playback without attempting CAF decoding or I/O.
+    """Classify playback without decoding CAF controllers.
 
     Missing standalone CAFs can trigger exact-path extraction on Play.
     Aimposes require a separate CryEngine base animation and are never
@@ -99,7 +139,9 @@ def native_clip_playability(reference):
     if reference.kind != 'caf':
         return 'metadata', 'Blendspaces / combination graphs are not standalone motions.'
     name = reference.name.casefold()
-    if ('aimpose' in name or 'additive' in name or
+    flagged_additive = (reference.available and reference.file is not None
+                        and _is_additive_caf(reference.file))
+    if (flagged_additive or 'aimpose' in name or 'additive' in name or
             re.search(r'(^|[_\\-])aim[_\\-]', name)):
         return 'layered', (
             'Layered/additive aim pose. Needs a compatible base animation and '
@@ -135,6 +177,40 @@ def prefer_idle(references):
         return (bad, not any(x in n for x in ('stand', 'neutral', 'relaxed')),
                 'loop' not in n, n)
     return min(available, key=rank)
+
+
+
+def preferred_third_person_dba(references, character=None):
+    """Prefer one *verified* <character>_3p DBA from this skeleton's catalog.
+
+    A DBA's filename is not proof that its tracks can animate the model.
+    The bundled converter and bind-pose checks remain mandatory on Play.
+    In particular, never choose an unrelated wildcard/other character DBA.
+    """
+    from pathlib import PurePosixPath
+    ready = [ref for ref in references
+             if ref.kind == 'dba' and ref.available and ref.file is not None
+             and native_clip_playability(ref)[0] == 'converter'
+             and PurePosixPath(ref.virtual_path).stem.casefold().endswith('_3p')]
+    if not ready:
+        return None
+    if character:
+        selected = PurePosixPath(str(character).replace('\\', '/').casefold())
+        stem = selected.stem
+        for suffix in ('_skeleton', '_3p', '_fp'):
+            if stem.endswith(suffix):
+                stem = stem[:-len(suffix)]
+        parent = selected.parent.name.casefold()
+        names = {stem, parent, parent.removeprefix('merc_')}
+        direct = [ref for ref in ready
+                  if PurePosixPath(ref.virtual_path).stem.casefold()[:-3] in names
+                  and (ref.virtual_path.casefold().startswith(
+                       selected.parent.as_posix().casefold().rstrip('/') + '/'))]
+        if len(direct) == 1:
+            return direct[0]
+    # The catalog is already parsed from this exact skeleton chrparams.
+    # A sole 3P database is unambiguous; multiple different choices aren't.
+    return ready[0] if len(ready) == 1 else None
 
 
 def caf_header(path):

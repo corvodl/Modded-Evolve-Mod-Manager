@@ -58,5 +58,18 @@ def qt_palette_style(base, mode='Dark', overrides=None):
         margin:-5px 0; border-radius:7px; }
     QProgressBar { background:%(field)s; color:%(text)s; border:1px solid %(border)s; }
     QProgressBar::chunk { background:%(accent)s; }
+    QDialog QPushButton, QToolButton { min-height:26px; }
+    QDialog QPushButton:focus, QToolButton:focus,
+    QTabBar::tab:focus, QCheckBox:focus {
+        border:2px solid %(accent)s; }
+    QTreeWidget::item:selected, QTreeView::item:selected,
+    QListWidget::item:selected, QTableWidget::item:selected {
+        background:%(selection)s; color:%(text)s; }
+    QTreeWidget::item, QTreeView::item, QListWidget::item {
+        padding:3px 5px; }
+    QLineEdit:disabled, QComboBox:disabled, QPushButton:disabled {
+        color:%(muted)s; border-color:%(border)s; }
+    QToolTip { background:%(surface)s; color:%(text)s;
+        border:1px solid %(border)s; padding:5px; }
     """ % values
     return style

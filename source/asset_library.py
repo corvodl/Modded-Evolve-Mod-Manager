@@ -8,7 +8,7 @@ signature matches either the original or custom stage public RSA key.
 No automatic eviction: imports are retained until the user removes them.
 """
 from __future__ import annotations
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import hashlib
 import json
 import os
@@ -40,8 +40,8 @@ MAX_ENTRIES = 250_000
 MAX_ENTRY_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 100 * 1024 * 1024 * 1024
 _lock = threading.RLock()
-_index_cache = None
-_index_fingerprint = None
+_index_cache = OrderedDict()
+MAX_INDEX_ROOTS = 4
 
 
 class ImportCanceled(RuntimeError):
@@ -61,10 +61,67 @@ def _sha_file(path):
 
 
 def _invalidate():
-    global _index_cache, _index_fingerprint
     with _lock:
-        _index_cache = None
-        _index_fingerprint = None
+        _index_cache.clear()
+
+
+def _archive_identifier(folder):
+    """Keep the original 20-char library ID in readable folder names."""
+    match = re.fullmatch(
+        r"(?:[A-Za-z0-9][A-Za-z0-9._-]{0,95}__)?([0-9a-f]{20})",
+        Path(folder).name)
+    return match.group(1) if match else None
+
+
+def _archive_directory_name(name, identifier):
+    """Windows-safe human-readable PAK name with collision-proof stable ID."""
+    if not re.fullmatch(r"[0-9a-f]{20}", str(identifier)):
+        raise ValueError("Invalid library archive identifier.")
+    basename = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name)).strip(" ._")[:96]
+    if not basename:
+        basename = "Imported_PAK"
+    return basename + "__" + identifier
+
+
+def _folder_for_identifier(identifier, root):
+    """Resolve a stable identifier across legacy and readable layouts."""
+    if not re.fullmatch(r"[0-9a-f]{20}", str(identifier)):
+        raise ValueError("Invalid library archive identifier.")
+    legacy = root / identifier
+    if legacy.is_dir() and not legacy.is_symlink():
+        return legacy
+    for folder in _manifest_dirs(root):
+        if _archive_identifier(folder) == identifier:
+            return folder
+    return legacy
+
+
+def migrate_readable_archive_folders(root=None):
+    """Rename legacy hash folders safely, without re-extracting any PAK bytes.
+
+    Intended for app startup before model editor paths/indexes are loaded.
+    Import IDs remain stable; collisions and inaccessible folders are skipped.
+    """
+    home = _home(root)
+    changed = []
+    with _lock:
+        for folder in _manifest_dirs(home):
+            if folder.name != _archive_identifier(folder):
+                continue
+            try:
+                manifest = _load_manifest(folder)
+                dest = home / _archive_directory_name(
+                    manifest.get("name", ""), folder.name)
+                if dest.exists() or folder.is_symlink():
+                    continue
+                os.rename(folder, dest)
+                changed.append((folder, dest))
+            except (OSError, ValueError, KeyError, TypeError):
+                # Windows may have a file open; keep the original folder safe.
+                continue
+        if changed:
+            _invalidate()
+    return tuple(changed)
 
 
 def _manifest_dirs(root):
@@ -73,7 +130,7 @@ def _manifest_dirs(root):
     result = []
     for child in root.iterdir():
         if (child.is_dir() and not child.is_symlink()
-                and re.fullmatch("[0-9a-f]{20}", child.name)
+                and _archive_identifier(child) is not None
                 and (child / MANIFEST).is_file()
                 and not (child / MANIFEST).is_symlink()):
             result.append(child)
@@ -100,7 +157,7 @@ def imported_archives(root=None):
         except (OSError, ValueError, KeyError):
             continue
         result.append({
-            "id": folder.name,
+            "id": _archive_identifier(folder),
             "name": str(data.get("name", folder.name)),
             "source": str(data.get("source", "")),
             "source_sha256": str(data.get("source_sha256", "")),
@@ -111,15 +168,24 @@ def imported_archives(root=None):
     return tuple(result)
 
 
-def required_archive_status(root=None):
+def required_archive_status(root=None, *, build_id=None):
     """Report six shared + three animation PAK coverage, not arbitrary PAK count.
 
     Only complete imported manifests with readable extracted files count.
     Missing archives and per-PAK skipped files are visible to the user.
     """
     root = _home(root)
+    allowed = None
+    if build_id is not None:
+        from build_collections import catalog
+        builds = catalog(root)["builds"]
+        if build_id == "all" or build_id not in builds:
+            raise ValueError("An explicit build context is required.")
+        allowed = set(builds[build_id]["members"])
     found = {}
     for folder in _manifest_dirs(root):
+        if allowed is not None and _archive_identifier(folder) not in allowed:
+            continue
         try:
             manifest = _load_manifest(folder)
             name = str(manifest.get("name", "")).casefold()
@@ -196,17 +262,22 @@ def reference_status(virtual, root=None):
                          extracted_index(root).get(key, ())}))
 
 
-def extracted_index(root=None):
+def extracted_index(root=None, *, archive_ids=None):
     """Read-only catalog of extracted loose files; never decrypts at lookup."""
-    global _index_cache, _index_fingerprint
     home = _home(root)
     folders = _manifest_dirs(home)
+    scope = None if archive_ids is None else frozenset(archive_ids)
+    if scope is not None:
+        folders = [folder for folder in folders if _archive_identifier(folder) in scope]
     stamp = tuple((folder.name, (folder / MANIFEST).stat().st_mtime_ns)
                   for folder in folders)
-    cache_key = (str(home), stamp)
+    slot = (str(home), scope)
+    cache_key = (slot, stamp)
     with _lock:
-        if _index_fingerprint == cache_key and _index_cache is not None:
-            return {key: list(records) for key, records in _index_cache.items()}
+        cached = _index_cache.get(slot)
+        if cached is not None and cached[0] == cache_key:
+            _index_cache.move_to_end(slot)
+            return {key: list(records) for key, records in cached[1].items()}
     from evolve_pak_workspace import normalized_name
     index = defaultdict(list)
     for folder in folders:
@@ -225,15 +296,17 @@ def extracted_index(root=None):
                 index[virtual.casefold()].append({
                     "archive": manifest["name"], "workspace": None,
                     "relative": virtual, "file": source_path,
-                    "_asset_library": folder.name,
+                    "_asset_library": _archive_identifier(folder),
                 })
         except (OSError, ValueError, KeyError, TypeError):
             # Partial/damaged imports cannot silently provide assets.
             continue
     result = dict(index)
     with _lock:
-        _index_fingerprint = cache_key
-        _index_cache = result
+        _index_cache[slot] = (cache_key, result)
+        _index_cache.move_to_end(slot)
+        while len(_index_cache) > MAX_INDEX_ROOTS:
+            _index_cache.popitem(last=False)
     return {key: list(records) for key, records in result.items()}
 
 
@@ -279,7 +352,7 @@ def _verify_pak(path, keys):
 
 
 def import_pak(source, *, stage=None, root=None, extra_keys=(),
-               progress=None, cancelled=None):
+               progress=None, cancelled=None, build_id=None, relative_archive_path=None):
     """Extract entire verified PAK as loose references into AssetLibrary.
 
     This does not create a modding workspace or require repacking. A unique
@@ -289,6 +362,12 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
     from evolve_pak_workspace import normalized_name
     from evolve_gameplay_editor import decrypt_entry, decode_cryxml
     root = _home(root)
+    def finish(result):
+        if build_id is not None:
+            from build_collections import assign_archive
+            assign_archive(build_id, result["id"], root=root,
+                           relative_path=relative_archive_path)
+        return result
     supplied = Path(source).expanduser()
     if supplied.is_symlink():
         raise ValueError("Linked PAK sources are not accepted.")
@@ -311,13 +390,27 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
                 if all((prior / "files" / entry["path"]).is_file()
                        and (prior / "files" / entry["path"]).stat().st_size
                        == entry["bytes"] for entry in prior_manifest["entries"]):
-                    return {"status": "already-imported", "id": prior.name,
-                            "name": source.name, "entries": len(prior_manifest["entries"])}
+                    return finish({"status": "already-imported", "id": _archive_identifier(prior),
+                            "name": source.name, "entries": len(prior_manifest["entries"])})
         except (OSError, ValueError, KeyError, TypeError):
             continue
     sha = _sha_file(source)
     slug = hashlib.sha256((source.name.casefold() + "|" + sha).encode()).hexdigest()[:20]
-    target = root / slug
+    if build_id is not None and relative_archive_path:
+        from build_collections import catalog
+        from historical_zip import is_ordinary_zip
+        relative = normalized_name(relative_archive_path.replace("\\", "/"))
+        old = catalog(root)["builds"][build_id]["members"].get(slug)
+        if old and old["relative_path"] != relative and is_ordinary_zip(source):
+            # Identical historical PAKs can occur at multiple level paths.
+            # Keep both locations without overwriting an existing membership.
+            slug = hashlib.sha256((source.name.casefold() + "|" + sha +
+                                   "|" + relative).encode()).hexdigest()[:20]
+    # Preserve a previously imported legacy hash folder until explicitly
+    # migrated; all new imports use the readable PAK name.
+    legacy = root / slug
+    target = (legacy if legacy.exists() else
+              root / _archive_directory_name(source.name, slug))
     if target.is_dir() and (target / MANIFEST).is_file():
         manifest = _load_manifest(target)
         if manifest.get("source_sha256") == sha:
@@ -325,16 +418,26 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
             if all((base / entry["path"]).is_file() and
                    (base / entry["path"]).stat().st_size == entry["bytes"]
                    for entry in manifest["entries"]):
-                return {"status": "already-imported", "id": slug,
-                        "name": source.name, "entries": len(manifest["entries"])}
+                return finish({"status": "already-imported", "id": slug,
+                        "name": source.name, "entries": len(manifest["entries"])})
             raise ValueError("Cached extraction has missing or damaged files. "
                              "Remove this archive in Asset Library and re-import it.")
     if target.exists():
         raise ValueError("An incomplete/conflicting library import exists: " + slug)
     if len(_manifest_dirs(root)) >= MAX_ARCHIVES:
         raise ValueError("Too many imported PAKs in the library.")
-    # Verify cryptographic signatures before creating extracted content.
-    info, key, signed_name = _verify_pak(source, _keys(stage, extra_keys))
+    from historical_zip import HistoricalZipFile, is_ordinary_zip
+    plain_zip = is_ordinary_zip(source)
+    if plain_zip:
+        from legacy_pak_workspace import inspect_archive
+        inventory = inspect_archive(source, allow_empty=True)
+        info = {"entries": {e["archive_name"]: {
+            "original_size": e["size"], "method": e["method"], "extra_length": 0
+        } for e in inventory["entries"]}}
+        key, signed_name = None, source.name
+    else:
+        # Signed CryPAKs still require their original cryptographic verification.
+        info, key, signed_name = _verify_pak(source, _keys(stage, extra_keys))
     if len(info["entries"]) > MAX_ENTRIES:
         raise ValueError("Archive has too many entries.")
     estimated = sum(max(0, entry.get("original_size", 0))
@@ -348,8 +451,10 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
     if work.exists():
         raise FileExistsError("Import already in progress for " + source.name)
     records, skipped, written = [], [], 0
+    archive = None
     work.mkdir(parents=True)
     try:
+        archive = HistoricalZipFile(source) if plain_zip else None
         base = work / "files"
         seen = set()
         count = len(info["entries"])
@@ -362,12 +467,14 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
                 raise ValueError("Duplicate case-insensitive PAK entry: " + virtual)
             seen.add(token)
             length = int(meta.get("original_size", -1))
-            if (meta.get("method") not in (13, 14) or
+            if (meta.get("method") not in ((0, 8) if plain_zip else (13, 14)) or
                     meta.get("extra_length") != 0 or length < 0 or
                     length > MAX_ENTRY_BYTES):
+                if plain_zip:
+                    raise ValueError("Unsupported historical entry size/method: " + virtual)
                 skipped.append(virtual + ": unsupported size/method")
                 continue
-            data = decrypt_entry(source, info, name)
+            data = archive.read(name) if plain_zip else decrypt_entry(source, info, name)
             converted = False
             if data.startswith(b"CryXmlB\x00"):
                 element = decode_cryxml(data)
@@ -386,7 +493,10 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
             if progress and (position == 1 or position % 50 == 0 or position == count):
                 progress(source.name, position, count)
         if not records:
-            raise ValueError("No supported PAK entries could be extracted.")
+            if plain_zip:
+                skipped.append("Empty historical ZIP archive; no content to preview.")
+            else:
+                raise ValueError("No supported PAK entries could be extracted.")
         if _sha_file(source) != sha:
             raise RuntimeError("PAK changed during extraction; import discarded.")
         manifest = {
@@ -394,18 +504,23 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
             "signed_name": signed_name, "source": str(source),
             "source_sha256": sha, "source_size": stat.st_size,
             "source_mtime_ns": stat.st_mtime_ns,
-            "public_key_sha256": _sha_file(key),
+            "public_key_sha256": _sha_file(key) if key is not None else None,
+            "archive_format": "ordinary-zip" if plain_zip else "signed-crypak",
+            "verification": "crc32" if plain_zip else "rsa-pss",
             "imported_at": int(time.time()), "extracted_bytes": written,
             "warnings": skipped, "entries": records,
         }
         (work / MANIFEST).write_text(json.dumps(manifest, indent=2), "utf-8")
         os.replace(work, target)
         _invalidate()
-        return {"status": "imported", "id": slug, "name": source.name,
-                "entries": len(records), "bytes": written, "skipped": len(skipped)}
+        return finish({"status": "imported", "id": slug, "name": source.name,
+                "entries": len(records), "bytes": written, "skipped": len(skipped)})
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
         raise
+    finally:
+        if archive is not None:
+            archive.close()
 
 
 def installed_defaults(game):
@@ -453,7 +568,12 @@ def remove_archive(identifier, root=None):
     home = _home(root)
     if not re.fullmatch("[0-9a-f]{20}", str(identifier)):
         raise ValueError("Invalid library archive identifier.")
-    folder = home / identifier
+    from build_collections import catalog
+    memberships = [name for name, build in catalog(home)["builds"].items()
+                   if name != "unassigned" and identifier in build["members"]]
+    if memberships:
+        raise ValueError("Archive belongs to a registered build; remove memberships first.")
+    folder = _folder_for_identifier(identifier, home)
     if folder.is_symlink() or not folder.is_dir() or not (folder / MANIFEST).is_file():
         raise ValueError("Selected library archive no longer exists.")
     # Reject unexpected links before cleanup.

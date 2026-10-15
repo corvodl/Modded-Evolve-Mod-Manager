@@ -4,6 +4,164 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.48', (
+        'Improve validated historical CryTek rig exports with body-local bind poses and multipart assemblies.',
+        'Group and select matching map PAKs in the Asset Library and open verified map families.',
+        'Preserve multi-selection and display larger, unclipped sidebar navigation icons.',
+    )),
+    ('1.1.18-beta.47', (
+        'Preview Xbox 360 DXT1 and CTX1 textures from split high/low DDS archives.',
+        'Export validated historical CryTek character armatures and weights to Blender.',
+        'Attempt historical DBA conversion with rig checks and clear unsupported-motion diagnostics.',
+    )),
+    ('1.1.18-beta.46', (
+        'Resolve historical character textures from their cooked DDS files and streaming archives.',
+        'Report missing visible textures and unsupported Legacy rigs accurately.',
+        'Console texture layouts, CTX1 normals and Legacy skeletal animation still need decoder support.',
+    )),
+    ('1.1.18-beta.45', (
+        'Preview compatible 2012 CryTek .chr character geometry, CDFs and material subsets.',
+        'Review cross-build assets and dependencies with detached, hash-verified transfer candidates.',
+        'Keep Asset Library originals read-only and Stage 2 deployment isolated for verification.',
+    )),
+    ('1.1.18-beta.44', (
+        'Browse 2012 Evolve PAKs and their contents in the default Asset Library.',
+        'Fix historical ZIP path separators without weakening corruption checks.',
+        'Older model formats may still be unsupported by the 3D preview.',
+    )),
+    ('1.1.18-beta.43', (
+        'Fix sidebar icon outlines so all eight Flaticon glyphs are centered and fully visible.',
+        'Normalize vector icon geometry and correct high-DPI Qt drawing on compact Windows sidebars.',
+    )),
+    ('1.1.18-beta.42', (
+        'Replace unclear sidebar glyphs with recognisable Flaticon Regular Rounded icons.',
+        'Route verified ordinary ZIP PAKs to separate legacy editing projects instead of signed-import errors.',
+        'Fix explorer file icons, duplicate symbols, filename clipping and selection colors.',
+    )),
+    ('1.1.18-beta.41', (
+        'Open and edit 2012 Evolve ZIP PAKs in isolated projects with verified unsigned rebuilds.',
+        'Inspect legacy DDS streams and export compatible textures without touching Stage 2 files.',
+        'Make editing commands contextual and move advanced actions into File, View and Tools menus.',
+    )),
+    ('1.1.18-beta.40', (
+        'Replace sidebar symbols with matching Flaticon Uicons across all eight sections.',
+        'Improve sidebar icon size, alignment and visibility on Windows displays.',
+        'Include icon attribution in Credits while keeping navigation icons available offline.',
+    )),
+    ('1.1.18-beta.39', (
+        'Add consistent icons across file explorers, texture, model and GFX controls.',
+        'Show the official FFDec download link when selecting a GFX movie without a configured renderer.',
+        'Keep FFDec and Java external to the app, installer and portable ZIP.',
+    )),
+    ('1.1.18-beta.38', (
+        'Preview and edit Scaleform GFX movies with frame/sprite rendering and PNG export.',
+        'Replace GFX images, shapes, text and scripts with FFDec-backed rebuild and external authoring.',
+        'Apply validated GFX edits to Modding projects with hash checks, undo and automatic backups.',
+    )),
+    ('1.1.18-beta.37', (
+        'Repair startup when loading existing mod projects from earlier beta installations.',
+        'Keep navigation menu icons fully visible at Windows display scaling.',
+        'Preserve normals and tangents when exporting separate Blender CDF armatures.',
+    )),
+    ('1.1.18-beta.36', (
+        'Decode streamed CryEngine DDS normal maps at the highest available resolution.',
+        'Discover normal maps through materials and the Asset Library for GPU model previews.',
+        'Export diffuse, normal and auxiliary textures in textures/ with Blender-compatible GLB normal mapping.',
+    )),
+    ('1.1.18-beta.35', (
+        'Import PAKs from a selected source directory and browse Asset Library archives by build.',
+        'Select and export multiple assets; create editable projects from verified Stage 2 PAKs and supported maps.',
+        'Put projects and modified files first in Modding, with refreshed navigation and Updates-first Settings.',
+    )),
+    ('1.1.18-beta.34', (
+        'Improve Level Editor scene assembly, terrain preview, and resource loading.',
+        'Organize assets by build and plan reference-only transfers to Stage 2.',
+    )),
+    ('1.1.18-beta.33', (
+        'Improve model texture filtering and expose decoded DDS dimensions.',
+        'Rebuild original character materials during Blender export.',
+        'Include texture PNGs and resolution manifests in a Textures folder.',
+    )),
+    ('1.1.18-beta.32', (
+        'Prefer matching streamed character textures over low-resolution DDS fallbacks.',
+        'Save exported Blender texture PNGs in a dedicated Textures folder.',
+        'Reload original model textures during export instead of using preview caches.',
+    )),
+    ('1.1.18-beta.31', (
+        'Preview combined level terrain and supported objects as editable Blender scenes.',
+        'Export GLB scenes and optional native Blender projects.',
+        'Report unresolved map geometry and retry deferred assets during export.',
+    )),
+    ('1.1.18-beta.30', (
+        'Preserve higher-resolution DDS textures in character previews and Blender exports.',
+        'Recover verified streamed texture mipmaps across extracted PAKs.',
+        'Increase bounded GLB texture quality without altering original assets.',
+    )),
+    ('1.1.18-beta.29', (
+        'Hide non-rendered character surfaces while preserving rigged exports.',
+        'Restore character material tints and improve glass previews.',
+        "Keep Wasteland Maggie's permanent mask and headgear attached.",
+    )),
+    ('1.1.18-beta.28', (
+        'Discover map PAK dependencies and prepare editable copies for testing.',
+        'Preview supported map terrain and report missing scene assets.',
+        'Export independently rigged Blender character assembly parts.',
+    )),
+    ('1.1.18-beta.27', (
+        'Correct GPU character texture orientation in model previews.',
+        'Switch between extracted map projects in the Level Editor.',
+        'Recognize map-specific source PAKs more reliably.',
+    )),
+    ('1.1.18-beta.26', (
+        'Preserve character texture colors and transparent details in previews and GLB exports.',
+        'Correct Goliath and Behemoth mesh alignment with their skeletons during animation.',
+        'Recognize additive animation clips that require a base motion.',
+    )),
+    ('1.1.18-beta.25', (
+        'Correct character texture UV orientation between software and GPU model previews.',
+        'Keep monster CAF bone controllers synchronized on a shared animation timeline.',
+        'Validate monster and character bind poses before playing incompatible rigs.',
+    )),
+    ('1.1.18-beta.24', (
+        "Keep Lennox's cockpit mesh with the body when switching character equipment.",
+        'Identify exact DDS source PAKs and missing material links for visible character parts.',
+        'Improve texture diagnostics when assets are spread across different game PAKs.',
+    )),
+    ('1.1.18-beta.23', (
+        'Redesign the animation browser with compact controls and a consistent Play action.',
+        'Auto-play verified character-specific third-person DBAs when available, with safer rig compatibility checks.',
+        'Improve dark material previews with studio fill and source-texture brightness diagnostics.',
+    )),
+    ('1.1.18-beta.22', (
+        'Export every verified character CDF assembly as its own Blender-compatible GLB.',
+        'Improve dark character material lighting and add an unlit diffuse inspection mode.',
+        'Keep exported character models, original assets and skipped-assembly reports together.',
+    )),
+    ('1.1.18-beta.21', (
+        'Assemble complete character models with distinct monster stage names and corrected textures.',
+        'Improve Goliath and other character animations with native skin binding and eight-weight support.',
+        'Keep character body attachments and selected textures consistent in previews and GLB exports.',
+    )),
+    ('1.1.18-beta.20', (
+        'Preview supported level meshes in a depth-tested 3D viewport with camera controls and object selection.',
+        'Match model assets to their source maps and edit materials safely in copied level projects.',
+        'Inspect terrain and vegetation metadata while unsupported world geometry remains explicitly unrendered.',
+    )),
+    ('1.1.18-beta.19', (
+        'Choose character textures per material and retain matching textures in supported exports.',
+        'Improve original DBA animation previews and character material mapping.',
+        'Improve Level Editor model references, hierarchy diagnostics and supported static mesh decoding.',
+    )),
+    ('1.1.18-beta.18', (
+        'Export character folders directly with matching assets from imported PAKs.',
+        'Browse CDF-based Full Character models separately from individual meshes.',
+        'Export an assembled character GLB with embedded textures when available.',
+    )),
+    ('1.1.18-beta.17', (
+        'Improve character material and shared-texture mapping across imported PAKs.',
+        'Make Asset Library folders readable in Windows while preserving archive IDs.',
+        'Show in-game character names in file explorers and fix read-only PAK switching.',
+    )),
     ('1.1.18-beta.16', (
         'Show model texture diagnoses in a compact, searchable and collapsible window.',
         'Improve Wraith and Griffin material links across imported texture PAKs.',
@@ -60,9 +218,8 @@ RELEASE_NOTES = (
         'Show indexed blendspace/combination metadata; native graph playback is not yet supported.',
     )),
     ('1.1.18-beta.5', (
-        'Show newly imported CAF animations from the persistent Asset Library.',
+        'Show newly imported CAF animations and refresh library references without reopening the model editor.',
         'Add searchable Game Animations with availability and motion filters.',
-        'Refresh library references without reopening the model editor.',
         'Avoid re-extracting PAK companions already complete in the Asset Library.',
     )),
     ('1.1.18-beta.4', (
@@ -73,8 +230,7 @@ RELEASE_NOTES = (
     ('1.1.18-beta.3', (
         'Simplify the Modding page with File, Edit, View, Tools and Help menus.',
         'Group related PAKs and extract recognized companion archives together.',
-        'Open level archives directly in the Level Editor, including Evolve mission XML levels.',
-        'Display map layer names and group placed entities in the World Outliner.',
+        'Open level and mission XML archives in the Level Editor with map layers and grouped entities in the World Outliner.',
     )),
     ('1.1.18-beta.2', (
         'Add a permanent extracted PAK Asset Library with custom archive imports.',

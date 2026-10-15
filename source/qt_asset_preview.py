@@ -6,6 +6,9 @@ Library references are fully extracted game files, never mod project copies.
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import shutil
+from uuid import uuid4
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -25,6 +28,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
     def __init__(self, manager, archive):
         self.identifier = archive['id']
         self.name = archive['name']
+        self.build_id = archive.get('build_id')
         folder = archive_folder(self.identifier)
         super().__init__(manager, folder, library_archive=archive)
         self.folder = self.workspace
@@ -42,6 +46,112 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         self.status.setText('Asset Library: preview and export only. No editing or importing.')
         self.editor_menus['File'].addAction(
             'Open Asset Library Folder', self.explore)
+        self.editor_menus['File'].addAction('Edit / Add to Mod Project…', self.edit_in_project)
+        self.editor_menus['File'].addAction('Export Selected Files…', self.export_selection)
+        self.editor_menus['File'].addAction('Open Entire Map…', self.edit_entire_map)
+        self.selection_label = QLabel('Use Ctrl/Shift for multi-file selection.')
+        self.centralWidget().layout().insertWidget(1, self.selection_label)
+        self.file_tree.itemSelectionChanged.connect(self._report_selection)
+
+    def selected_virtual_files(self, *, limit=500):
+        """Return deduplicated file identities under selected file/folder nodes."""
+        from evolve_pak_workspace import normalized_name
+        chosen = set()
+        for node in self.file_tree.selectedItems():
+            rel = node.data(0, Qt.UserRole)
+            folder = node.data(0, Qt.UserRole + 1)
+            if isinstance(rel, str) and rel in self.entries:
+                chosen.add(rel)
+            elif isinstance(folder, str):
+                prefix = normalized_name(folder).rstrip('/') + '/'
+                chosen.update(path for path in self.entries if path.startswith(prefix))
+            if len(chosen) > limit:
+                raise ValueError("At most %d files may be selected at once." % limit)
+        if not chosen and self.current in self.entries:
+            chosen.add(self.current)
+        return tuple(sorted(chosen, key=str.casefold))
+
+    def _report_selection(self):
+        try:
+            count = len(self.selected_virtual_files())
+            self.selection_label.setText(
+                "%d selected • Originals read only • Edit / Add to Mod Project makes copies" % count)
+        except ValueError as exc:
+            self.selection_label.setText(str(exc))
+
+    def edit_in_project(self):
+        try:
+            selected = self.selected_virtual_files()
+            if not selected:
+                raise ValueError("Select a file to edit.")
+            self.manager._pending_library_virtual = selected[0]
+            self.manager.create_mod_project_from_asset_library(
+                self.identifier, source_build_id=self.build_id)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Edit project", str(exc))
+
+    def edit_entire_map(self):
+        from pak_dependencies import is_level_pak
+        if not is_level_pak(self.name):
+            QMessageBox.information(self, "Open map",
+                "Choose a supported level PAK for editable map projects.")
+            return
+        self.manager.open_library_map_from_archive(
+            self.identifier, build_id=self.build_id)
+
+    def export_selection(self):
+        from asset_library_preview import _outside_library, export_file
+        from qt_background_exports import begin_file_operation, exports_busy
+        if exports_busy(self):
+            QMessageBox.information(self, "Export busy", "Finish the existing export first.")
+            return
+        try:
+            selected = self.selected_virtual_files()
+            if not selected:
+                raise ValueError("Select one or more files.")
+        except ValueError as exc:
+            QMessageBox.warning(self, "Export", str(exc))
+            return
+        folder = QFileDialog.getExistingDirectory(
+            self, "Export selected original assets", str(Path.home()))
+        if not folder:
+            return
+        try:
+            parent = _outside_library(folder)
+            if not parent.is_dir():
+                raise ValueError("Choose an existing destination folder.")
+            output = parent / ("SelectedAssets-" + self.identifier[:8])
+            if output.exists():
+                raise FileExistsError("Selected assets export folder already exists.")
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Export", str(exc))
+            return
+        archive_id = self.identifier
+
+        def work(progress, cancelled):
+            staging = parent / ("." + output.name + "-" + uuid4().hex + ".tmp")
+            staging.mkdir()
+            try:
+                for number, virtual in enumerate(selected, 1):
+                    if cancelled():
+                        raise InterruptedError("Export cancelled.")
+                    target = staging.joinpath(*virtual.split('/'))
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    export_file(archive_id, virtual, target)
+                    progress("Exporting selected originals", number, len(selected))
+                if cancelled():
+                    raise InterruptedError("Export cancelled.")
+                os.replace(staging, output)
+                return output, len(selected)
+            except BaseException:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
+
+        begin_file_operation(
+            self, "Export selected files", "Copying read-only originals", work,
+            on_success=lambda result: self.status.setText(
+                "Exported %d files to %s" % (result[1], result[0])),
+            on_error=lambda error: QMessageBox.warning(self, "Export", str(error)))
 
     def switch_archive(self, name):
         """Allow the exact same top PAK picker to browse imported archives."""
@@ -59,10 +169,13 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             QMessageBox.warning(self, 'Asset Library', str(error))
             return
         self._model_generation += 1
+        self.gfx_view.cancel_pending()
         self.identifier = archive_id
         self.workspace = Path(candidate).resolve()
         self.folder = self.workspace
         self.name = name
+        self.library_archive = {
+            'id': archive_id, 'name': name, 'build_id': self.build_id}
         self.entries = files
         self.records = {rel: {'path': rel, 'format': 'raw'} for rel in files}
         self.preview_index = None
@@ -121,6 +234,8 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             QMessageBox.warning(self, 'Asset export', str(error))
 
     def export_png(self):
+        if self.mode == 'gfx':
+            return super().export_png()
         if self.mode != 'images' or not self.current:
             return
         stem = Path(self.current).name.split('.dds')[0]
@@ -220,35 +335,64 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         archive_id = self.identifier
         models = tuple(models)
 
+        workspace = self.workspace
+
         def work(progress, cancelled):
+            from character_asset_export import build_cdf_folder_glbs
+            from asset_library_preview import library_model_index
+            import json
             converted, failed = 0, []
+            export_root = root / Path(folder).name
             progress('Preparing Blender export', 0, len(models))
-            for index, rel in enumerate(models, 1):
+            for number, rel in enumerate(models, 1):
                 if cancelled():
                     raise InterruptedError(
                         'Cancelled after %d of %d models.' %
-                        (index - 1, len(models)))
-                progress('Converting ' + rel, index - 1, len(models))
-                destination = root / Path(rel).with_suffix('.glb')
+                        (number - 1, len(models)))
+                progress('Converting ' + rel, number - 1, len(models))
+                local = rel[len(folder.rstrip('/') + '/'):]
+                destination = export_root / Path(local).with_suffix('.glb')
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     export_glb(archive_id, rel, destination)
                     converted += 1
                 except (OSError, ValueError) as error:
-                    failed.append(rel + ': ' + str(error)[:70])
-                progress('Exporting Blender models', index, len(models))
-            return converted, failed
+                    failed.append(rel + ': ' + str(error)[:110])
+                progress('Exporting Blender models', number, len(models))
+            index = library_model_index(archive_id)
+            assemblies, unresolved = build_cdf_folder_glbs(
+                workspace, folder, index,
+                progress=progress, cancelled=cancelled)
+            assembly_dest = export_root
+            if assemblies or unresolved:
+                for rel, (blob, details) in assemblies.items():
+                    if cancelled():
+                        raise InterruptedError('Cancelled during CDF assembly export.')
+                    output = assembly_dest.joinpath(*Path(rel).parts)
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    with output.open('xb') as output_file:
+                        output_file.write(blob)
+                assembly_dest.mkdir(parents=True, exist_ok=True)
+                (assembly_dest / 'CDF_assembly_report.json').write_text(
+                    json.dumps({'generated': [dict(glb=rel, **info)
+                                              for rel, (_, info) in assemblies.items()],
+                                'unsupported': list(unresolved)}, indent=2),
+                    encoding='utf-8')
+            failed.extend(name + ': ' + reason for name, reason in unresolved)
+            return converted, len(assemblies), failed
 
         def finish(result):
-            converted, failed = result
+            converted, assembled, failed = result
             self.status.setText(
-                'Exported %d Blender model(s); %d unsupported | %s' %
-                (converted, len(failed), output))
+                'Exported %d individual meshes and %d complete CDF GLBs; '
+                '%d unsupported | %s' %
+                (converted, assembled, len(failed), output))
             if failed:
                 QMessageBox.information(
                     self, 'Blender export',
-                    'Exported %d models; %d skipped. First issue: %s' %
-                    (converted, len(failed), failed[0]))
+                    '%d individual GLBs, %d CDF assemblies; %d skipped. '
+                    'First issue: %s' %
+                    (converted, assembled, len(failed), failed[0]))
 
         def fail(error):
             self.status.setText('Blender export stopped: ' + error[:180])

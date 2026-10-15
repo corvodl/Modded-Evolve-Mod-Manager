@@ -169,7 +169,7 @@ def _content_fingerprint(path):
     return (path.stat().st_size, result.digest())
 
 
-def _resolve(index, ref, *, preferred_workspace=None):
+def _resolve(index, ref, *, preferred_workspace=None, build_id=None):
     """Resolve a virtual asset without conflating copies with real conflicts.
 
     The model's own workspace has an explicit, verifiable association with
@@ -184,6 +184,10 @@ def _resolve(index, ref, *, preferred_workspace=None):
     preferred = Path(preferred_workspace).resolve() if preferred_workspace is not None else None
     for name in candidates:
         hits = index.get(name.casefold(), [])
+        if build_id is not None:
+            if build_id == 'all':
+                raise ValueError('All Builds is an inventory filter, not a dependency context.')
+            hits = [hit for hit in hits if hit.get('build_id') == build_id]
         if not hits:
             continue
         # Explicit extracted projects take precedence over background shared
@@ -216,44 +220,72 @@ def _resolve(index, ref, *, preferred_workspace=None):
         return unique, 'ambiguous'
     return [], 'missing'
 
-def resolve_material_texture(index, reference, material_relative, *, preferred_workspace=None):
-    """Resolve a CryEngine material map relative to its owning character.
+def resolve_material_texture(index, reference, material_relative, *, preferred_workspace=None, build_id=None):
+    """Resolve the material's real game path before considering global assets.
 
-    Short names such as teleporter_diff.tif are allowed to point at the
-    character's sibling textures/ directory even when the material lives in
-    materials/.  Every candidate is still verified against the exact imported
-    virtual path; a similarly named map belonging to a different character
-    cannot satisfy this resolver.
+    Relative texture filenames are interpreted within their owning character,
+    not resolved against an unrelated global texture with the same basename.
+    Fully qualified virtual paths (including explicitly shared textures) are
+    authoritative and retain collision checks. Never guess a different actor.
     """
-    hits, state = _resolve(index, reference, preferred_workspace=preferred_workspace)
-    if state != 'missing':
-        return hits, state
-    if not isinstance(reference, (str, PurePath)):
+    if isinstance(reference, PurePath):
+        reference = reference.as_posix()
+    if not isinstance(reference, str):
         return [], 'unsafe-path'
-    virtual = (reference.as_posix() if isinstance(reference, PurePath)
-               else reference).strip().replace('\\', '/')
+    virtual = reference.strip().replace('\\', '/')
     if (not virtual or virtual.startswith('/') or ':' in virtual or
             any(part in ('', '.', '..') for part in virtual.split('/'))):
         return [], 'unsafe-path'
-    if virtual.casefold().startswith(
-            ('characters/', 'objects/', 'materials/', 'levels/')):
-        return [], 'missing'
+    rooted = virtual.casefold().startswith(
+        ('characters/', 'objects/', 'materials/', 'textures/', 'levels/', 'libs/'))
+    if rooted and not virtual.casefold().startswith('textures/'):
+        return _resolve(index, virtual, preferred_workspace=preferred_workspace, build_id=build_id)
+
     parent_parts = Path(material_relative).parent.parts
-    minimum = (3 if len(parent_parts) >= 3
-               and parent_parts[0].casefold() == 'characters'
-               and parent_parts[1].casefold() in ('hunters', 'monsters', 'creatures')
-               else 1)
+    character_scope = (len(parent_parts) >= 3
+                       and parent_parts[0].casefold() == 'characters'
+                       and parent_parts[1].casefold() in
+                       ('hunters', 'monsters', 'creatures'))
+    minimum = 3 if character_scope else 1
     for count in range(len(parent_parts), minimum - 1, -1):
         parent = '/'.join(parent_parts[:count])
-        choices = [parent + '/' + virtual]
-        if '/' not in virtual:
-            choices.append(parent + '/textures/' + virtual)
-        for candidate in choices:
-            hits, state = _resolve(
-                index, candidate, preferred_workspace=preferred_workspace)
+        candidates = [parent + '/' + virtual]
+        # A typical material lives inside the character's materials/
+        # directory while its .dds.0 is in its sibling textures/ directory.
+        if virtual.casefold().startswith('textures/'):
+            candidates.append(parent + '/' + virtual)
+        elif '/' not in virtual:
+            candidates.append(parent + '/textures/' + virtual)
+        for candidate in dict.fromkeys(candidates):
+            hits, state = _resolve(index, candidate,
+                                   preferred_workspace=preferred_workspace, build_id=build_id)
             if state != 'missing':
                 return hits, state
-    return [], 'missing'
+    if character_scope:
+        # Many Evolve hunter/monster materials refer to textures cooked into
+        # their category-wide SHARED TS PAK. Use only the correct category's
+        # exact virtual path, never a basename from another playable actor.
+        category = '/'.join(parent_parts[:2])
+        shared = None
+        if virtual.casefold().startswith('shared/'):
+            shared = category + '/' + virtual
+        elif virtual.casefold().startswith('textures/'):
+            shared = category + '/shared/' + virtual
+        elif '/' not in virtual:
+            shared = category + '/shared/textures/' + virtual
+        if shared:
+            hits, state = _resolve(index, shared,
+                                   preferred_workspace=preferred_workspace, build_id=build_id)
+            if state != 'missing':
+                return hits, state
+        # CryEngine materials can also explicitly address a genuine global
+        # virtual textures/ path. It is safe to honor that exact path AFTER
+        # character-local and category-shared candidates have been checked.
+        if virtual.casefold().startswith('textures/'):
+            return _resolve(index, virtual,
+                            preferred_workspace=preferred_workspace, build_id=build_id)
+        return [], 'missing'
+    return _resolve(index, virtual, preferred_workspace=preferred_workspace, build_id=build_id)
 
 
 MAX_DISCOVERY_PROJECTS = 200

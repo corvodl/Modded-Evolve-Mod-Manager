@@ -7,6 +7,7 @@ Saves are confined to the extracted project and retain original backups.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from level_scene_core import build_scene, model_reference
 import math
 import os
 from pathlib import Path
@@ -84,6 +85,8 @@ class LevelProject:
         self._originals = {}
         self._original_attrs = {}
         self.skipped = []
+        self.scene = ()
+        self.scene_diagnostics = ()
         self.known_layers = []
         # Runtime level.pak archives store editor layer declarations in
         # leveldata.xml even when no standalone .lyr files exist.
@@ -129,7 +132,7 @@ class LevelProject:
             data = path.read_bytes()
             try:
                 if data.startswith(b"CryXmlB\x00"):
-                    self.skipped.append(name + ": encrypted CryXMLB must be exported to XML first")
+                    self.skipped.append(name + ": binary CryXmlB is unsupported by the verified decoder")
                     continue
                 # Preserve CryXMLB workspace namespace prefixes and attributes.
                 from evolve_gameplay_editor import parse_cryxml_text
@@ -139,7 +142,7 @@ class LevelProject:
                 continue
             if name.casefold().endswith(".lyr"):
                 nodes = [node for node in root.iter()
-                         if node.tag.split("}")[-1].casefold() == "object"
+                         if node.tag.split("}")[-1].casefold() in ("object", "entity", "brush", "prefab")
                          and ("Pos" in node.attrib or "Name" in node.attrib)]
             else:
                 containers = [el for el in root
@@ -155,16 +158,18 @@ class LevelProject:
             self._originals[name] = data
             for i, node in enumerate(nodes):
                 self._original_attrs[(name, i)] = {
-                    k: node.get(k) for k in ("Pos", "Rotate", "Scale")}
+                    k: node.get(k) for k in ("Pos", "Rotate", "Scale", "Material")}
                 if parse_vec(node.get("Pos")) is None:
                     continue
                 a = node.attrib
                 self.objects.append(PlacedObject(
                     name, i, a.get("Name", a.get("EntityId", a.get("Id", "Unnamed"))),
                     a.get("Type", node.tag.split("}")[-1]),
-                    a.get("Geometry", a.get("EntityClass", a.get("Material", ""))),
+                    model_reference(a) or a.get("EntityClass", a.get("Material", "")),
                     parse_vec(a["Pos"]), parse_vec(a.get("Rotate"), 4),
                     parse_vec(a.get("Scale"))))
+        self.scene, self.scene_diagnostics = build_scene(
+            (name, payload[2]) for name, payload in self.layers.items())
         if not self.layers:
             raise ValueError("No readable object layers in this level.")
         self._scene_indices = {(o.layer,o.index): n
@@ -199,7 +204,7 @@ class LevelProject:
         return PlacedObject(
             layer, index, a.get("Name", a.get("EntityId", a.get("Id", "Unnamed"))),
             a.get("Type", node.tag.split("}")[-1]),
-            a.get("Geometry", a.get("EntityClass", a.get("Material", ""))),
+            model_reference(a) or a.get("EntityClass", a.get("Material", "")),
             parse_vec(a.get("Pos")) or (0, 0, 0),
             parse_vec(a.get("Rotate"), 4), parse_vec(a.get("Scale")))
 
@@ -218,6 +223,38 @@ class LevelProject:
         self.redo_stack.clear()
         node.set(key, updated)
         self._refresh_object(layer,index)
+        self.refresh_scene()
+        return True
+
+    def apply_material(self, layer, index, value):
+        """Set a verified-looking material virtual path on an editable copy.
+
+        Missing/ambiguous materials are diagnosed during preview; this does
+        not silently alter the referenced mesh or unpacked game archive.
+        """
+        from level_scene_core import normalize_reference
+        material = str(value).strip().replace("\\", "/")
+        if material:
+            if len(material) > 190:
+                raise ValueError("Material reference is too long.")
+            normalized = normalize_reference(material)
+            if normalized.endswith(".mtl"):
+                material = material[:-4]
+            elif "." in Path(material).name:
+                raise ValueError("Select a CryEngine .mtl or extensionless material.")
+        node = self._node(layer, index)
+        before = node.get("Material")
+        after = material or None
+        if before == after:
+            return False
+        self.undo_stack.append((layer, index, "Material", before, after))
+        self.redo_stack.clear()
+        if after is None:
+            node.attrib.pop("Material", None)
+        else:
+            node.set("Material", after)
+        self._refresh_object(layer, index)
+        self.refresh_scene()
         return True
 
     def undo(self):
@@ -232,6 +269,7 @@ class LevelProject:
             node.set(key, before)
         self.redo_stack.append(change)
         self._refresh_object(layer,index)
+        self.refresh_scene()
         return True
 
     def redo(self):
@@ -239,15 +277,24 @@ class LevelProject:
             return False
         change = self.redo_stack.pop()
         layer, index, key, before, after = change
-        self._node(layer, index).set(key, after)
+        node = self._node(layer, index)
+        if after is None:
+            node.attrib.pop(key, None)
+        else:
+            node.set(key, after)
         self.undo_stack.append(change)
         self._refresh_object(layer,index)
+        self.refresh_scene()
         return True
 
     def _refresh_object(self, layer, index):
         item=self._scene_indices.get((layer,index))
         if item is not None:
             self.objects[item]=self.get(layer,index)
+
+    def refresh_scene(self):
+        self.scene, self.scene_diagnostics = build_scene(
+            (name, payload[2]) for name, payload in self.layers.items())
 
     def dirty_layers(self):
         dirty = set()
@@ -293,7 +340,7 @@ class LevelProject:
         for (name, i) in self._original_attrs:
             node = self._node(name, i)
             self._original_attrs[(name, i)] = {
-                key: node.get(key) for key in ("Pos", "Rotate", "Scale")}
+                key: node.get(key) for key in ("Pos", "Rotate", "Scale", "Material")}
         self.undo_stack.clear()
         self.redo_stack.clear()
         return tuple(results)

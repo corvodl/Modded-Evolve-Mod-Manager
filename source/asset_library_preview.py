@@ -10,7 +10,8 @@ import os
 import re
 import shutil
 
-from asset_library import LIBRARY_HOME, MANIFEST, _load_manifest, extracted_index
+from asset_library import (LIBRARY_HOME, MANIFEST, _load_manifest,
+                           extracted_index, _folder_for_identifier)
 from evolve_pak_workspace import normalized_name
 
 _ARCHIVE_ID = re.compile(r'^[0-9a-f]{20}$')
@@ -21,7 +22,7 @@ def archive_folder(identifier, root=None):
     if not isinstance(identifier, str) or not _ARCHIVE_ID.fullmatch(identifier):
         raise ValueError('Choose an imported Asset Library PAK.')
     home = Path(root if root is not None else LIBRARY_HOME).resolve()
-    folder = home / identifier
+    folder = _folder_for_identifier(identifier, home)
     if (folder.is_symlink() or not folder.is_dir()
             or not folder.resolve().is_relative_to(home)
             or not (folder / MANIFEST).is_file()):
@@ -29,7 +30,7 @@ def archive_folder(identifier, root=None):
     return folder
 
 
-def archive_entries(identifier, root=None):
+def archive_entries(identifier, root=None, *, paths=None):
     """Safe manifest-listed files only, preserving original case and paths."""
     folder = archive_folder(identifier, root)
     manifest = _load_manifest(folder)
@@ -38,8 +39,11 @@ def archive_entries(identifier, root=None):
     if (files_link.is_symlink() or not files.is_relative_to(folder.resolve())):
         raise ValueError('Imported PAK file root is unsafe.')
     records = {}
+    wanted = None if paths is None else frozenset(normalized_name(p) for p in paths)
     for row in manifest['entries']:
         relative = normalized_name(row['path'])
+        if wanted is not None and relative not in wanted:
+            continue
         candidate = files.joinpath(*relative.split('/'))
         if (candidate.is_symlink() or not candidate.is_file()
                 or not candidate.resolve().is_relative_to(files)
@@ -51,7 +55,7 @@ def archive_entries(identifier, root=None):
 
 def read_asset(identifier, relative, *, root=None, limit=_PREVIEW_LIMIT):
     relative = normalized_name(relative)
-    entries = archive_entries(identifier, root)
+    entries = archive_entries(identifier, root, paths=(relative,))
     path = entries.get(relative)
     if path is None:
         raise FileNotFoundError('This imported asset is missing or has changed.')
@@ -71,7 +75,7 @@ def _outside_library(destination, root=None):
 def export_file(identifier, relative, destination, *, root=None):
     """Copy a single extracted game file unchanged, never update its source."""
     relative = normalized_name(relative)
-    src = archive_entries(identifier, root).get(relative)
+    src = archive_entries(identifier, root, paths=(relative,)).get(relative)
     if src is None:
         raise FileNotFoundError('Imported asset is missing or damaged.')
     dst = _outside_library(destination, root)
@@ -126,47 +130,96 @@ def export_archive_layout(identifier, destination_dir, *, root=None, progress=No
     return output, len(files)
 
 
-def texture_image(identifier, relative, *, root=None):
+def texture_image(identifier, relative, *, root=None, build_id=None):
     """Decode whole or complete streamed DDS from its extracted companions."""
     from material_preview import _decode_texture
     relative = normalized_name(relative)
-    entry = archive_entries(identifier, root).get(relative)
+    entry = archive_entries(identifier, root, paths=(relative,)).get(relative)
     if entry is None:
         raise FileNotFoundError(relative)
     if not (relative.casefold().endswith('.dds')
             or re.search(r'\.dds\.0$', relative, re.I)):
         raise ValueError('Choose a DDS or first .dds.0 streaming fragment.')
-    from asset_library import extracted_index
+    from build_collections import build_index, resolve_archive_build
+    context = resolve_archive_build(identifier, root=root, build_id=build_id)
     return _decode_texture(
-        {'file': entry, 'workspace': None, 'relative': relative},
-        index=extracted_index(root))
+        {'file': entry, 'workspace': None, 'relative': relative, 'build_id': context},
+        index=build_index(context, root=root))
 
 
-def export_png(identifier, relative, destination, *, root=None):
+def export_png(identifier, relative, destination, *, root=None, build_id=None):
     target = _outside_library(destination, root)
     if target.suffix.casefold() != '.png' or not target.parent.is_dir():
         raise ValueError('Export to a PNG in an existing external directory.')
-    image = texture_image(identifier, relative, root=root)
+    image = texture_image(identifier, relative, root=root, build_id=build_id)
     image.save(target, format='PNG')
     return target
 
 
-def library_model_index(identifier, root=None):
+def gfx_movie(identifier, relative, *, root=None):
+    """Inspect a safe, manifest-listed raw GFX asset, not a DDS/bitmap."""
+    from gfx_preview_backend import MAX_SOURCE, inspect_gfx
+    if not relative.casefold().endswith(".gfx"):
+        raise ValueError("Choose a Scaleform .gfx movie.")
+    raw = read_asset(identifier, relative, root=root, limit=MAX_SOURCE)
+    return inspect_gfx(raw)
+
+
+def library_gfx_imports(identifier, relative, *, root=None, build_id=None):
+    """Resolve movie imports only from same library PAK or same registered build.
+
+    Ambiguity remains missing instead of selecting a same-name asset from
+    another build. Unassigned legacy imports remain scoped to their own PAK.
+    """
+    from gfx_preview_backend import inspect_gfx, resolve_imports, MAX_SOURCE
+    from build_collections import build_index, resolve_archive_build
+    original = read_asset(identifier, relative, root=root, limit=MAX_SOURCE)
+    info = inspect_gfx(original)
+    own = archive_entries(identifier, root)
+    context = resolve_archive_build(identifier, root=root, build_id=build_id)
+    scoped = build_index(context, root=root)
+
+    def resolve(virtual):
+        key = virtual.casefold()
+        local = [value for name, value in own.items() if name.casefold() == key]
+        if len(local) == 1:
+            chosen = local[0]
+        else:
+            candidates = scoped.get(key, ())
+            # Do not assume two copies of a font are interchangeable, even
+            # if they have the same filename across two registered builds.
+            if len(candidates) != 1:
+                return None
+            chosen = Path(candidates[0]["file"])
+        if chosen.is_symlink() or not chosen.is_file() or chosen.stat().st_size > MAX_SOURCE:
+            return None
+        return chosen.read_bytes()
+
+    return (*resolve_imports(info, relative, resolve), context)
+
+
+def library_model_index(identifier, root=None, *, build_id=None):
     """Include all imported dependencies while prioritizing the selected PAK."""
     own = archive_entries(identifier, root)
-    index = {name: list(records) for name, records in extracted_index(root).items()}
+    from build_collections import build_index, resolve_archive_build
+    context = resolve_archive_build(identifier, root=root, build_id=build_id)
+    index = build_index(context, root=root)
     root_folder = archive_folder(identifier, root)
+    archive_name = _load_manifest(root_folder)['name']
     for relative, path in own.items():
         key = relative.casefold()
-        record = {'archive': root_folder.name, 'workspace': None,
-                  'file': path, 'relative': relative, '_asset_library': identifier}
+        record = {'archive': archive_name,
+                  'workspace': root_folder,
+                  'file': path, 'relative': relative, '_asset_library': identifier,
+                  'build_id': context}
         records = index.setdefault(key, [])
-        if not any(str(r.get('file')) == str(path) for r in records):
-            records.insert(0, record)
+        # The selected PAK has verified material and texture ownership.
+        records[:] = [r for r in records if str(r.get('file')) != str(path)]
+        records.insert(0, record)
     return index
 
 
-def export_glb(identifier, relative, destination, *, root=None):
+def export_glb(identifier, relative, destination, *, root=None, build_id=None):
     """Blender-ready glTF with safely resolved library diffuse maps and rig."""
     from model_preview import read_preview_mesh
     from model_blender_export import glb_bytes
@@ -175,6 +228,45 @@ def export_glb(identifier, relative, destination, *, root=None):
     from model_rigging import skin_glb, skin_companion_path
     from multi_pak_assets import _resolve
     relative = normalized_name(relative)
+    if relative.casefold().endswith(('.chr', '.cdf')):
+        # A 2012 CA_SKIN body is itself .chr. CDF is the source of the
+        # verified master skeleton; never invent an associated .skin file.
+        from character_assembly import assemble_character
+        from native_character_glb import create_character_glb
+        from model_preview import find_preview_mesh
+        target = _outside_library(destination, root)
+        if target.suffix.casefold() != '.glb' or not target.parent.is_dir():
+            raise ValueError('Export to .glb outside the read-only Asset Library.')
+        files = archive_entries(identifier, root, paths=(relative,))
+        if relative not in files:
+            raise FileNotFoundError('The selected model is not present in this PAK.')
+        context = archive_folder(identifier, root)
+        index = library_model_index(identifier, root, build_id=build_id)
+        character = assemble_character(context, relative, index)
+        if character is not None:
+            payload, details = create_character_glb(
+                context, relative, index, character=character)
+            report = {'textures': details['texture_count'],
+                      'rig': details['rig_status'],
+                      'bone_count': details['bone_count'],
+                      'animation_clips': 0}
+        else:
+            if relative.casefold().endswith('.cdf'):
+                raise ValueError('No supported CDF body binding for rigged export.')
+            mesh = find_preview_mesh(context, relative,
+                                     files[relative].read_bytes(), index=index)
+            # Non-CDF animals also contain real 2012 weighted .chr bones.
+            # Route through the same material and standalone rig validator,
+            # never export a decorative, unweighted skeleton.
+            from model_textured_export import textured_model_from_workspace
+            payload, details = textured_model_from_workspace(
+                mesh, context, relative, index=index)
+            report = {'textures': details.get('texture_count', 0),
+                      'rig': details.get('rig_status', 'No validated rig'),
+                      'bone_count': details.get('bone_count', 0),
+                      'animation_clips': 0}
+        target.write_bytes(payload)
+        return target, report
     if not relative.casefold().endswith(('.skinm', '.chrm', '.cgfm', '.cgam')):
         raise ValueError('Select a supported CryEngine render mesh for GLB export.')
     target = _outside_library(destination, root)
@@ -185,7 +277,7 @@ def export_glb(identifier, relative, destination, *, root=None):
         raise FileNotFoundError('The selected model is not present in this PAK.')
     mesh = read_preview_mesh(files[relative].read_bytes(), relative)
     payload = glb_bytes(mesh)
-    index = library_model_index(identifier, root)
+    index = library_model_index(identifier, root, build_id=build_id)
     report = {'textures': 0, 'rig': 'No compatible compiled skin found'}
     try:
         materials = load_preview_materials(

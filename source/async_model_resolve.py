@@ -18,13 +18,16 @@ from workspace_file_actions import checked_path
 
 def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                   texture_folder=None, animation_index=None, equipment=None,
-                  index=None):
+                  index=None, require_assembly=False):
     path = checked_path(workspace, relative)
     raw = path.read_bytes()
-    try:
-        report = inspect_model(raw).description
-    except ValueError as exc:
-        report = str(exc)
+    if str(relative).casefold().endswith('.cdf'):
+        report = 'Character Definition (CDF) • referenced model assembly'
+    else:
+        try:
+            report = inspect_model(raw).description
+        except ValueError as exc:
+            report = str(exc)
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
     character = None
@@ -36,6 +39,10 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
             equipment=equipment)
     except (ValueError, OSError) as exc:
         assembly_error = str(exc)
+    if require_assembly and character is None:
+        raise ValueError(
+            'Full Character needs a valid CDF with compatible body and '
+            'equipment meshes. ' + (assembly_error or 'No CDF assembly found.'))
     mesh = (character.mesh if character else
             find_preview_mesh(workspace, relative, raw,
                               projects_root=projects_root, stage_root=stage_root,

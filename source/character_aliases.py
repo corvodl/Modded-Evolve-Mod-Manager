@@ -44,3 +44,25 @@ def pretty_folder(segment, parent_path):
             or path in ('hunters', 'monsters')) and key in CHARACTER_ALIASES:
         return CHARACTER_ALIASES[key] + ' (' + segment + ')'
     return segment
+
+
+def character_name_for_internal(internal):
+    """In-game name from a folder or an archive character token."""
+    key = str(internal).casefold()
+    if key.startswith(('merc_', 'mon_')):
+        key = key.split('_', 1)[1]
+    return CHARACTER_ALIASES.get(key)
+
+
+def character_asset_description(virtual_path):
+    """Stable, tooltip-friendly character identification for all file views."""
+    path = str(virtual_path).replace('\\', '/')
+    parts = PurePosixPath(path).parts
+    for idx, part in enumerate(parts):
+        if part.casefold() not in ('hunters', 'monsters') or idx + 1 >= len(parts):
+            continue
+        folder = parts[idx + 1]
+        friendly = character_name_for_internal(folder)
+        if friendly:
+            return 'In-game: ' + friendly + ' | Internal: ' + folder
+    return ''

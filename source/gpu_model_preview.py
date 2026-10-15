@@ -147,7 +147,7 @@ class Win32GPUPreview:
         self.materials = None
         self.texture_ids = []
         self._loaded_materials = None
-        self.texture_limit = 768
+        self.texture_limit = 4096
         self._closed = False
         self._create_context()
 
@@ -248,7 +248,7 @@ class Win32GPUPreview:
         self._loaded_materials = None
 
     def set_quality(self, quality):
-        limit = {'Fast':384, 'Balanced':768, 'Detailed':1024}.get(quality,768)
+        limit = {'Fast':512, 'Balanced':2048, 'Detailed':4096}.get(quality,4096)
         if self.texture_limit != limit:
             self.texture_limit = limit
             self._loaded_materials = None
@@ -270,7 +270,8 @@ class Win32GPUPreview:
                 rgb = image.convert('RGB')
                 from PIL import Image
                 rgb.thumbnail((self.texture_limit,self.texture_limit), resample=Image.Resampling.BILINEAR)
-                pixels = np.ascontiguousarray(rgb, dtype=np.uint8)
+                from gl_texture_upload import gl_upload_pixels
+                pixels = np.frombuffer(gl_upload_pixels(rgb, 'RGB'), dtype=np.uint8)
                 out = ct.c_uint()
                 self._call('glGenTextures',1,ct.byref(out))
                 if out.value == 0:
@@ -326,6 +327,9 @@ class Win32GPUPreview:
             self._call('glColor4f',.75,.83,.95,1)
             fallback=next((x for x in self.texture_ids if x),0)
             for start,count,slot in buf.draws:
+                hidden = getattr(self.materials, 'hidden', ())
+                if slot < len(hidden) and hidden[slot]:
+                    continue
                 tid=self.texture_ids[slot] if slot<len(self.texture_ids) else 0
                 if not tid and len(buf.draws)==1:
                     tid=fallback

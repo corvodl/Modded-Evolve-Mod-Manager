@@ -168,7 +168,7 @@ class AnimatedGLB:
             attributes = primitive['attributes']
             if 'JOINTS_0' not in attributes or 'WEIGHTS_0' not in attributes:
                 raise ValueError('Skinned glTF primitive lacks joint or weight data.')
-            keys = ('POSITION', 'JOINTS_0', 'WEIGHTS_0', 'TEXCOORD_0')
+            keys = ('POSITION', 'JOINTS_0', 'WEIGHTS_0', 'TEXCOORD_0', 'JOINTS_1', 'WEIGHTS_1')
             signature = tuple(attributes.get(key) for key in keys)
             if signature not in vertex_sources:
                 coords = _accessor(doc, self.binary, attributes['POSITION']).astype(np.float64)
@@ -176,6 +176,15 @@ class AnimatedGLB:
                 weights = _accessor(doc, self.binary, attributes['WEIGHTS_0']).astype(np.float64)
                 if joint.shape != (len(coords), 4) or weights.shape != (len(coords), 4):
                     raise ValueError('Malformed joint or weight attribute.')
+                if ('JOINTS_1' in attributes) != ('WEIGHTS_1' in attributes):
+                    raise ValueError('Incomplete secondary skin influences.')
+                if 'JOINTS_1' in attributes:
+                    extra_ids = _accessor(doc, self.binary, attributes['JOINTS_1']).astype(np.int32)
+                    extra_weights = _accessor(doc, self.binary, attributes['WEIGHTS_1']).astype(np.float64)
+                    if extra_ids.shape != (len(coords),4) or extra_weights.shape != (len(coords),4):
+                        raise ValueError('Malformed secondary skin influences.')
+                    joint = np.concatenate((joint, extra_ids), axis=1)
+                    weights = np.concatenate((weights, extra_weights), axis=1)
                 if joint.min() < 0 or joint.max() >= len(self.joints):
                     raise ValueError('GLB skin joint index out of range.')
                 sums = weights.sum(axis=1)
@@ -202,8 +211,9 @@ class AnimatedGLB:
         if not pos_list:
             raise ValueError('Animated GLB has no supported triangle primitives.')
         self.positions=np.vstack(pos_list)
-        self.skin_ids=np.vstack(joint_list)
-        self.weights=np.vstack(weight_list)
+        width = max(j.shape[1] for j in joint_list)
+        self.skin_ids=np.vstack([np.pad(j, ((0,0),(0,width-j.shape[1]))) for j in joint_list])
+        self.weights=np.vstack([np.pad(w, ((0,0),(0,width-w.shape[1]))) for w in weight_list])
         self.faces=np.vstack(face_list)
         self.groups=tuple(groups)
         self.uvs=np.vstack(uv_list)
@@ -257,7 +267,14 @@ class AnimatedGLB:
         embedded = self.doc.get('images', [])
         textures = self.doc.get('textures', [])
         used = []
+        transforms = []; opacities = []; alpha_modes = []; cutoffs = []
         for material in materials[:64]:
+            mode = material.get('alphaMode', 'OPAQUE')
+            alpha_modes.append(mode in ('MASK', 'BLEND'))
+            cutoffs.append(float(material.get('alphaCutoff', .5)) if mode == 'MASK' else 0.)
+            opacities.append(float(material.get('pbrMetallicRoughness', {}).get('baseColorFactor', [1,1,1,1])[3]) if mode != 'OPAQUE' else 1.)
+            transform = material.get('pbrMetallicRoughness', {}).get('baseColorTexture', {}).get('extensions', {}).get('KHR_texture_transform', {})
+            transforms.append((*transform.get('scale', [1., 1.]), *transform.get('offset', [0., 0.]), transform.get('rotation', 0.)))
             index = material.get('pbrMetallicRoughness',{}).get(
                 'baseColorTexture',{}).get('index', -1)
             image = None
@@ -274,13 +291,14 @@ class AnimatedGLB:
                                 with Image.open(BytesIO(self.binary[start:start+length])) as im:
                                     if im.width*im.height<=8_000_000:
                                         im.load()
-                                        image=im.convert('RGB')
+                                        image=im.convert('RGBA' if mode in ('MASK', 'BLEND') else 'RGB')
                             except (OSError,ValueError):
                                 pass
             used.append(image)
         return PreviewMaterials(tuple(used),
             tuple(m.get('name','Material %d'%i) for i,m in enumerate(materials[:64])),
-            'Embedded GLB textures')
+            'Embedded GLB textures', uv_transforms=tuple(transforms), opacity=tuple(opacities),
+            alpha_modes=tuple(alpha_modes), alpha_cutoffs=tuple(cutoffs))
 
     @classmethod
     def from_file(cls,path):
