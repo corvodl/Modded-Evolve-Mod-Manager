@@ -164,6 +164,30 @@ class GfxQtEditorTests(unittest.TestCase):
         widget.trim.setChecked(False)
         self.assertEqual(self.asset.read_bytes(), initial)
 
+    def test_exact_atlas_crop_is_decoded_only_when_selected(self):
+        from PIL import Image
+        from test_gfx_placement_diagnostics import synthetic_atlas
+        viewer = self.win.gfx_view
+        decoded = []
+        def texture_reader(virtual):
+            decoded.append(virtual)
+            return Image.new("RGBA", (32, 32), (40, 200, 80, 255))
+        viewer.open_movie(
+            synthetic_atlas(), "Libs/UI/test.gfx",
+            available_paths=("Libs/UI/test_I9.dds.0",),
+            texture_preview=texture_reader)
+        self.assertEqual(decoded, [])  # Do not eagerly read the atlas.
+        self.assertEqual(viewer.bitmap_select.count(), 1)
+        viewer.tabs.setCurrentIndex(2)
+        self.assertEqual(decoded, ["Libs/UI/test_I9.dds.0"])
+        self.assertFalse(viewer.bitmap_image.pixmap().isNull())
+        self.assertEqual((viewer.bitmap_image.pixmap().width(),
+                          viewer.bitmap_image.pixmap().height()), (16, 18))
+        self.assertIn("Shapes: #10", viewer.bitmap_status.text())
+        self.assertIn("referenced by first static frame",
+                      viewer.bitmap_status.text())
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
     def test_advanced_gfx_commands_fit_under_menus(self):
         dialog = GfxEditorDialog(self.win, self.relative)
         self.addCleanup(dialog.close)

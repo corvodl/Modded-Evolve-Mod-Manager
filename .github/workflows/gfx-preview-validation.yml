@@ -5,6 +5,8 @@ on:
     paths:
       - 'source/gfx_preview_backend.py'
       - 'source/gfx_ui_dependencies.py'
+      - 'source/gfx_placement_diagnostics.py'
+      - 'source/test_gfx_placement_diagnostics.py'
       - 'source/test_gfx_ui_dependencies.py'
       - 'source/gfx_synthetic_fixtures.py'
       - 'source/qt_gfx_preview.py'
@@ -41,7 +43,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -m compileall -q source
-          python -m unittest -v test_gfx_preview test_gfx_ui_dependencies test_qt_unified_explorer test_qt_asset_preview test_gfx_library_scope test_gfx_edit_backend test_qt_gfx_editor
+          python -m unittest -v test_gfx_preview test_gfx_ui_dependencies test_gfx_placement_diagnostics test_qt_unified_explorer test_qt_asset_preview test_gfx_library_scope test_gfx_edit_backend test_qt_gfx_editor
   real-renderer:
     runs-on: windows-2022
     timeout-minutes: 20

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 from qt_navigation_icons import navigation_icon
 from gfx_ui_dependencies import related_ui_textures
+from gfx_placement_diagnostics import inspect_bitmap_placement
 from gfx_preview_backend import (
     inspect_gfx, resolve_imports, ffdec_command, render_gfx, GfxError,
 )
@@ -159,6 +160,7 @@ class GfxPreviewWidget(QWidget):
         self._warnings = ()
         self._texture_loader = None
         self._texture_paths = ()
+        self._bitmap_bindings = ()
         self._info = None
         self._backend = None
         layout = QVBoxLayout(self)
@@ -249,6 +251,29 @@ class GfxPreviewWidget(QWidget):
         tex_layout.addWidget(tex_scroll, 1)
         self.tabs.addTab(textures, "Referenced textures")
         self.tabs.setTabEnabled(1, False)
+
+        bitmap_page = QWidget()
+        bitmap_layout = QVBoxLayout(bitmap_page)
+        self.bitmap_select = QComboBox()
+        self.bitmap_select.setObjectName("gfxBitmapSymbol")
+        self.bitmap_select.setMinimumContentsLength(26)
+        self.bitmap_select.setSizeAdjustPolicy(
+            QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        bitmap_layout.addWidget(self.bitmap_select)
+        self.bitmap_status = QLabel("No Scaleform bitmap mappings inspected.")
+        self.bitmap_status.setObjectName("gfxPlacementStatus")
+        self.bitmap_status.setWordWrap(True)
+        bitmap_layout.addWidget(self.bitmap_status)
+        self.bitmap_image = QLabel("Select a bitmap symbol to inspect its atlas crop.")
+        self.bitmap_image.setAlignment(Qt.AlignCenter)
+        self.bitmap_image.setWordWrap(True)
+        bitmap_scroll = QScrollArea()
+        bitmap_scroll.setWidgetResizable(True)
+        bitmap_scroll.setAlignment(Qt.AlignCenter)
+        bitmap_scroll.setWidget(self.bitmap_image)
+        bitmap_layout.addWidget(bitmap_scroll, 1)
+        self.tabs.addTab(bitmap_page, "Bitmap placement")
+        self.tabs.setTabEnabled(2, False)
         layout.addWidget(self.tabs, 1)
         self.note = QLabel("Static movie preview; original GFX remains unchanged.")
         self.note.setObjectName("gfxPreviewStatus")
@@ -290,6 +315,7 @@ class GfxPreviewWidget(QWidget):
         self.background.currentIndexChanged.connect(self._background_changed)
         self.trim.toggled.connect(self.canvas.set_trim)
         self.texture_select.currentIndexChanged.connect(self._texture_changed)
+        self.bitmap_select.currentIndexChanged.connect(self._bitmap_changed)
         self.tabs.currentChanged.connect(self._texture_tab_changed)
 
     def cancel_pending(self):
@@ -310,6 +336,13 @@ class GfxPreviewWidget(QWidget):
         self._warnings = ()
         self._texture_loader = texture_preview
         self._texture_paths = ()
+        self._bitmap_bindings = ()
+        self.bitmap_select.blockSignals(True)
+        self.bitmap_select.clear()
+        self.bitmap_select.blockSignals(False)
+        self.tabs.setTabEnabled(2, False)
+        self.bitmap_image.clear()
+        self.bitmap_status.setText("No Scaleform bitmap mappings inspected.")
         self.texture_select.blockSignals(True)
         self.texture_select.clear()
         self.texture_select.blockSignals(False)
@@ -337,6 +370,30 @@ class GfxPreviewWidget(QWidget):
                     f"{len(self._texture_paths)} matching images; selected DDS is "
                     "decoded on demand. UI_Data preloads do not imply "
                     "the image is visible in this GFX frame.")
+            try:
+                report = inspect_bitmap_placement(data, relative, available_paths)
+                self._bitmap_bindings = report.movies
+                self.bitmap_select.blockSignals(True)
+                for binding in report.movies:
+                    self.bitmap_select.addItem(
+                        f"#{binding.bitmap_character}  "
+                        f"{binding.texture.rsplit('/', 1)[-1]}  "
+                        f"rect {binding.atlas_rectangle}",
+                        binding)
+                self.bitmap_select.blockSignals(False)
+                self.bitmap_status.setText(
+                    f"{report.images} compiled images · "
+                    f"{len(report.movies)} atlas bindings · "
+                    f"{sum(bool(x.shape_ids) for x in report.movies)} bitmap-filled shapes · "
+                    f"{sum(x.static_first_frame for x in report.movies)} "
+                    "first-frame shape references. "
+                    + " ".join(report.messages))
+                self.tabs.setTabText(
+                    2, f"Bitmap placement ({len(report.movies)})")
+                self.tabs.setTabEnabled(2, bool(report.movies))
+            except (ValueError, OSError, TypeError) as exc:
+                self.bitmap_status.setText(
+                    "Bitmap placement diagnostics unavailable: " + str(exc)[:240])
             self.symbol.blockSignals(True)
             self.symbol.clear()
             self.symbol.addItem("Main timeline", (0, info.frames))
@@ -372,6 +429,52 @@ class GfxPreviewWidget(QWidget):
     def _texture_tab_changed(self, tab):
         if tab == 1:
             self._texture_changed()
+        elif tab == 2:
+            self._bitmap_changed()
+
+    def _bitmap_changed(self, *_):
+        if self.tabs.currentIndex() != 2:
+            return
+        binding = self.bitmap_select.currentData()
+        if binding is None:
+            return
+        x0, y0, x1, y1 = binding.atlas_rectangle
+        placement = ("referenced by first static frame"
+                     if binding.static_first_frame else
+                     "not placed in first root frame (may be runtime-driven)")
+        shape = (", ".join(f"#{value}" for value in binding.shape_ids)
+                 if binding.shape_ids else "not parsed / nonstandard fill")
+        detail = (
+            f"Bitmap #{binding.bitmap_character} · Atlas image #{binding.atlas_id}"
+            f" · Shapes: {shape} · Atlas rectangle:"
+            f" ({x0}, {y0}) to ({x1}, {y1}) · {placement}. "
+            "This is a verified atlas crop, not an exact on-screen position."
+        )
+        self.bitmap_image.clear()
+        if not binding.file_found:
+            self.bitmap_image.setText("DDS not imported in this build.")
+            self.bitmap_status.setText(detail + " Matching DDS is unavailable.")
+            return
+        if self._texture_loader is None:
+            self.bitmap_image.setText("No read-only texture decoder configured.")
+            self.bitmap_status.setText(detail)
+            return
+        try:
+            image = self._texture_loader(binding.texture)
+            if image is None or x1 > image.width or y1 > image.height:
+                raise ValueError("DDS missing or smaller than the validated atlas crop.")
+            crop = image.crop((x0, y0, x1, y1))
+            crop.thumbnail((960, 640))
+            output = BytesIO()
+            crop.convert("RGBA").save(output, "PNG")
+            preview = QPixmap()
+            if not preview.loadFromData(output.getvalue(), "PNG"):
+                raise ValueError("Failed to preview the cropped bitmap.")
+            self.bitmap_image.setPixmap(preview)
+            self.bitmap_status.setText(detail)
+        except (OSError, ValueError, TypeError) as exc:
+            self.bitmap_image.setText("Cannot decode this atlas crop.")
+            self.bitmap_status.setText(detail + " " + str(exc)[:240])
 
     def _texture_changed(self, *_):
         if self.tabs.currentIndex() != 1 or self._texture_loader is None:
