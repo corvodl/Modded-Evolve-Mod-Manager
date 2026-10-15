@@ -10,6 +10,8 @@ import hashlib
 import json
 import re
 import os
+import shutil
+import time
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
@@ -144,6 +146,34 @@ def _validated_asset_name(manifest):
 
 def update_workspace(app_home: Path) -> Path:
     return Path(app_home).resolve() / UPDATE_WORK_DIR
+
+
+def cleanup_completed_update_work(app_home: Path, *, max_age_seconds=86400) -> None:
+    """Prune old completed transactions, but retain failed-rollback recovery.
+
+    A detached updater may still be running in a young transaction. Only
+    32-hex-named folders older than a full day without rollback are eligible.
+    Other files and all user-owned Data are never inspected or removed.
+    """
+    work = update_workspace(app_home)
+    if not work.is_dir() or work.is_symlink():
+        return
+    now = time.time()
+    try:
+        children = tuple(work.iterdir())
+    except OSError:
+        return
+    for folder in children:
+        if (not re.fullmatch(r'[0-9a-f]{32}', folder.name) or
+                folder.is_symlink() or not folder.is_dir()):
+            continue
+        try:
+            if (now - folder.stat().st_mtime <= max_age_seconds or
+                    (folder / 'rollback').exists()):
+                continue
+            shutil.rmtree(folder)
+        except OSError:
+            pass
 
 
 def installed_commit(app_home: Path) -> str | None:
@@ -354,6 +384,7 @@ def report_startup_ready(app_home: Path) -> None:
     The path must reside in the updater's scratch area, never the game or
     user-owned Data directory. A missing or invalid hint is ignored.
     """
+    cleanup_completed_update_work(app_home)
     hint = os.environ.pop('EVOLVE_MANAGER_UPDATE_ACK', '')
     if not hint:
         return
