@@ -22,7 +22,14 @@ import traceback
 _QT_STARTUP_LOG = None
 if os.name == 'nt' and getattr(sys, 'frozen', False):
     try:
-        _QT_LOG_DIR = Path(sys.executable).resolve().parent / 'Data' / 'Logs'
+        _app_dir = Path(sys.executable).resolve().parent
+        # Packaging smoke tests execute from .build/app-dist/EvolveModManager.
+        # Never write logs into that clean, allowlisted distributable folder.
+        if _app_dir.parent.name.casefold() == 'app-dist':
+            _app_dir = (Path(os.environ.get('LOCALAPPDATA')
+                             or os.environ.get('TEMP') or '.').resolve()
+                        / 'EvolveModManager')
+        _QT_LOG_DIR = _app_dir / 'Data' / 'Logs'
         _QT_LOG_DIR.mkdir(parents=True, exist_ok=True)
         _QT_STARTUP_LOG = open(_QT_LOG_DIR / 'startup.log', 'a',
                                encoding='utf-8', buffering=1)
