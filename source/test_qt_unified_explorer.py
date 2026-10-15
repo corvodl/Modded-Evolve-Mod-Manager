@@ -205,15 +205,17 @@ class UnifiedExplorerTests(unittest.TestCase):
 
     def test_typing_search_coalesces_rebuilds(self):
         editor = self.editor
-        with patch.object(editor, 'populate') as populate:
-            editor.search.setText('c')
-            editor.search.setText('ch')
-            editor.search.setText('character')
-            self.assertTrue(editor._search_timer.isActive())
-            populate.assert_not_called()
-            editor._search_timer.stop()
-            editor._search_timer.timeout.emit()
-            populate.assert_called_once_with()
+        old_count = editor.explorer_count.text()
+        editor.search.setText('c')
+        editor.search.setText('ch')
+        editor.search.setText('character')
+        self.assertTrue(editor._search_timer.isActive())
+        self.assertEqual(editor.explorer_count.text(), old_count)
+        editor._search_timer.stop()
+        # Qt retains the slot bound when the signal was connected; emitting
+        # the settled timeout verifies the actual populated result.
+        editor._search_timer.timeout.emit()
+        self.assertEqual(editor.explorer_count.text(), '1 files')
 
     def test_search_explorer_and_pak_selection_are_in_explorer(self):
         editor = self.editor
