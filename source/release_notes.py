@@ -12,6 +12,7 @@ RELEASE_NOTES = (
         "Improve main-menu GFX authoring, static UI symbol visibility, and separate featured title, TRY, and BUY edits.",
         "Introduce an experimental read-only UI inspection interface for future verified offline game-side integration.",
         "Keep the release milestone visible in editor footers without patch-revision clutter and preserve safer update handling.",
+        "Retain console-free Windows startup and defer expensive inventory scans until their workspace opens.",
     )),
     ('1.2.0', (
         "Modernize the Qt interface with contextual tools, cleaner Settings, Flaticon navigation icons, and improved workspace layouts.",
