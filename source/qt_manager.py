@@ -320,6 +320,7 @@ class TaskSignals(QObject):
     update_checked = Signal(object, str, bool)
     update_staged = Signal(object, object, str)
     progress = Signal(str, int, int)
+    map_open_ready = Signal(int, object, object, str)
 
 
 class QtManager(QMainWindow):
@@ -398,6 +399,10 @@ class QtManager(QMainWindow):
         self.editors = []
         self.library_previews = []
         self.level_editors = []
+        self._map_open_generation = 0
+        self._map_open_cancel = threading.Event()
+        self._map_open_dialog = None
+        self._map_open_target = None
         self.available_update = None
         self.update_running = False
         self.signals = TaskSignals()
@@ -407,6 +412,7 @@ class QtManager(QMainWindow):
         self.signals.update_checked.connect(self._on_update_checked)
         self.signals.update_staged.connect(self._on_update_staged)
         self.signals.progress.connect(self._update_progress)
+        self.signals.map_open_ready.connect(self._finish_level_editor_open)
         self.update_progress_dialog = None
         self._success = None
         self._drawer_open = False
@@ -3520,7 +3526,6 @@ class QtManager(QMainWindow):
             if self.busy:
                 raise RuntimeError('Wait for the current extraction or build to finish.')
             from level_editor_core import LevelProject
-            from qt_level_editor import UnrealStyleLevelEditor
             from pak_dependencies import is_level_pak
             folder = Path(workspace) if workspace is not None else None
             selected = self._selected_rel() if workspace is None else ''
@@ -3554,7 +3559,65 @@ class QtManager(QMainWindow):
                     editor.raise_()
                     editor.activateWindow()
                     return
-            editor = UnrealStyleLevelEditor(self, folder)
+            if (self._map_open_dialog is not None and
+                    folder == self._map_open_target):
+                self._map_open_dialog.raise_()
+                return
+            # Parse LevelProject on a CPU worker BEFORE creating Qt widgets.
+            # The nonmodal shell responds to cancel and does not block Home.
+            self._map_open_cancel.set()
+            if self._map_open_dialog is not None:
+                self._map_open_dialog.close()
+            self._map_open_generation += 1
+            token = self._map_open_generation
+            cancel = threading.Event()
+            self._map_open_cancel = cancel
+            self._map_open_target = folder
+            dialog = QProgressDialog(
+                'Parsing verified level project in background…',
+                'Cancel', 0, 0, self)
+            dialog.setWindowTitle('Opening Level Editor')
+            dialog.setWindowModality(Qt.NonModal)
+            dialog.setAutoClose(False)
+            dialog.setAutoReset(False)
+            dialog.canceled.connect(cancel.set)
+            self._map_open_dialog = dialog
+            dialog.show()
+
+            def job():
+                from performance_trace import span
+                try:
+                    with span('map', 'first_project_parse', generation=token):
+                        prepared = LevelProject(folder)
+                    error = ''
+                except (OSError, ValueError) as exc:
+                    prepared, error = None, str(exc)[:250]
+                if not cancel.is_set():
+                    try:
+                        self.signals.map_open_ready.emit(token, folder, prepared, error)
+                    except RuntimeError:
+                        pass  # Manager destroyed while background parse ended.
+
+            threading.Thread(target=job, daemon=True,
+                             name='Evolve-Initial-Level-Parse').start()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def _finish_level_editor_open(self, token, folder, prepared, error):
+        """Install only the current, fully parsed map on Qt's owning thread."""
+        if token != self._map_open_generation or self._map_open_cancel.is_set():
+            return
+        self._map_open_target = None
+        dialog, self._map_open_dialog = self._map_open_dialog, None
+        if dialog is not None:
+            dialog.hide()
+            dialog.deleteLater()
+        if error:
+            self.failure(ValueError(error))
+            return
+        from qt_level_editor import UnrealStyleLevelEditor
+        try:
+            editor = UnrealStyleLevelEditor(self, folder, prepared=prepared)
             editor.setAttribute(Qt.WA_DeleteOnClose, False)
             self.level_editors.append(editor)
             editor.show()
@@ -4360,6 +4423,11 @@ class QtManager(QMainWindow):
                       'Wait until an active library preview or export completes before closing.')
             event.ignore()
             return
+        self._map_open_cancel.set()
+        if self._map_open_dialog is not None:
+            self._map_open_dialog.hide()
+            self._map_open_dialog.deleteLater()
+            self._map_open_dialog = None
         try:
             self.persist()
         except OSError:
