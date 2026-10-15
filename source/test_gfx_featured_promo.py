@@ -57,7 +57,7 @@ class FeaturedPromoTests(unittest.TestCase):
     def test_input_guard_and_duplicate_injection(self):
         with self.assertRaisesRegex(GfxError, "72 printable"):
             patch_featured_actionscript(self.SCRIPT, "custom", "title", "\n")
-        with self.assertRaisesRegex(GfxError, "title only"):
+        with self.assertRaisesRegex(GfxError, "featured title"):
             patch_featured_actionscript(self.SCRIPT, "custom", "all", "GOLIATH")
         with self.assertRaisesRegex(GfxError, "valid for"):
             patch_featured_actionscript(self.SCRIPT, "hide", "title", "text")
