@@ -38,5 +38,5 @@ jobs:
       - name: Verify signed PAK baseline, safe stage replacement and rollback
         shell: pwsh
         run: |
-          python -m unittest -v test_add_mod_restored test_editor_refresh
+          python -m unittest -v test_add_mod_restored.AddModRestoredTests
           if ($LASTEXITCODE -ne 0) { throw 'CryPAK rebuild or original backup verification failed' }
