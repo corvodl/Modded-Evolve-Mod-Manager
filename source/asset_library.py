@@ -262,17 +262,21 @@ def reference_status(virtual, root=None):
                          extracted_index(root).get(key, ())}))
 
 
-def extracted_index(root=None):
+def extracted_index(root=None, *, archive_ids=None):
     """Read-only catalog of extracted loose files; never decrypts at lookup."""
     home = _home(root)
     folders = _manifest_dirs(home)
+    scope = None if archive_ids is None else frozenset(archive_ids)
+    if scope is not None:
+        folders = [folder for folder in folders if _archive_identifier(folder) in scope]
     stamp = tuple((folder.name, (folder / MANIFEST).stat().st_mtime_ns)
                   for folder in folders)
-    cache_key = (str(home), stamp)
+    slot = (str(home), scope)
+    cache_key = (slot, stamp)
     with _lock:
-        cached = _index_cache.get(str(home))
+        cached = _index_cache.get(slot)
         if cached is not None and cached[0] == cache_key:
-            _index_cache.move_to_end(str(home))
+            _index_cache.move_to_end(slot)
             return {key: list(records) for key, records in cached[1].items()}
     from evolve_pak_workspace import normalized_name
     index = defaultdict(list)
@@ -299,8 +303,8 @@ def extracted_index(root=None):
             continue
     result = dict(index)
     with _lock:
-        _index_cache[str(home)] = (cache_key, result)
-        _index_cache.move_to_end(str(home))
+        _index_cache[slot] = (cache_key, result)
+        _index_cache.move_to_end(slot)
         while len(_index_cache) > MAX_INDEX_ROOTS:
             _index_cache.popitem(last=False)
     return {key: list(records) for key, records in result.items()}

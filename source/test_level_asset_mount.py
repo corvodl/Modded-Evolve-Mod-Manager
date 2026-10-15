@@ -29,7 +29,7 @@ class ScopedMountTests(unittest.TestCase):
             workspace=root/"test_workspace"
             (workspace/"files").mkdir(parents=True)
             lib=root/"library"
-            a,b=(lib/"tutorial__aaaa",lib/"forest__bbbb")
+            a,b=(lib/("tutorial__" + "a" * 20), lib/("forest__" + "b" * 20))
             for p in (a,b):
                 (p/"files"/"brush").mkdir(parents=True)
                 (p/"files"/"brush"/"designer_100.cgf").write_bytes(p.name.encode())
@@ -39,6 +39,7 @@ class ScopedMountTests(unittest.TestCase):
                     "workspace": None,
                     "archive": "level.pak",
                     "relative": "brush/designer_100.cgf",
+                    "_asset_library": folder.name.split("__")[-1],
                 }
             index={"brush/designer_100.cgf":[record(a),record(b)]}
             manifests={
