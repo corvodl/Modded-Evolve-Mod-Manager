@@ -15,12 +15,14 @@ from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QPushButton, QScrollArea, QFileDialog, QMessageBox, QTabWidget,
-    QCheckBox,
+    QCheckBox, QTreeWidget, QTreeWidgetItem,
 )
 from qt_navigation_icons import navigation_icon
 from gfx_ui_dependencies import related_ui_textures
 from gfx_placement_diagnostics import inspect_bitmap_placement
 from gfx_root_layer_preview import root_layers, likely_main_menu_dialog
+from gfx_dependency_diagnostics import dependency_report
+from gfx_video_preview import video_streams
 from gfx_preview_backend import (
     inspect_gfx, resolve_imports, ffdec_command, render_gfx, GfxError,
 )
@@ -126,7 +128,8 @@ class _RenderTask(QThread):
 
     def __init__(self, token, data, virtual, *, frame, symbol, scale, imports,
                  context, backend, texture_loader=None, available_paths=(),
-                 root_layer_mode="all", root_layer_depth=None):
+                 root_layer_mode="all", root_layer_depth=None,
+                  show_video_placeholders=False):
         super().__init__()
         self.token, self.data, self.virtual = token, data, virtual
         self.frame, self.symbol, self.scale = frame, symbol, scale
@@ -135,6 +138,7 @@ class _RenderTask(QThread):
         self.available_paths = available_paths
         self.root_layer_mode = root_layer_mode
         self.root_layer_depth = root_layer_depth
+        self.show_video_placeholders = show_video_placeholders
         self._cancel = Event()
 
     def cancel(self):
@@ -152,7 +156,8 @@ class _RenderTask(QThread):
                 available_paths=self.available_paths,
                 render_diagnostics=diagnostics,
                 root_layer_mode=self.root_layer_mode,
-                root_layer_depth=self.root_layer_depth)
+                root_layer_depth=self.root_layer_depth,
+                show_video_placeholders=self.show_video_placeholders)
             self.result.emit(self.token, (png, tuple(diagnostics)), None)
         except Exception as exc:
             self.result.emit(self.token, None, str(exc))
@@ -177,6 +182,7 @@ class GfxPreviewWidget(QWidget):
         self._bitmap_bindings = ()
         self._root_layers = ()
         self._detected_dialog_depth = None
+        self._video_streams = ()
         self._info = None
         self._backend = None
         layout = QVBoxLayout(self)
@@ -240,6 +246,14 @@ class GfxPreviewWidget(QWidget):
         self.external_images.setChecked(True)
         self.external_images.setEnabled(False)
         canvas_controls.addWidget(self.external_images)
+        self.video_visible = QCheckBox("Show video placeholders")
+        self.video_visible.setObjectName("gfxShowVideoPlaceholders")
+        self.video_visible.setToolTip(
+            "Native game video cannot play in FFDec. With this off, black-X "
+            "video placements are hidden ONLY in the rendered PNG.")
+        self.video_visible.setChecked(False)
+        self.video_visible.setEnabled(False)
+        canvas_controls.addWidget(self.video_visible)
         canvas_controls.addStretch(1)
         layout.addLayout(canvas_controls)
         layer_controls = QHBoxLayout()
@@ -321,6 +335,23 @@ class GfxPreviewWidget(QWidget):
         bitmap_layout.addWidget(bitmap_scroll, 1)
         self.tabs.addTab(bitmap_page, "Bitmap placement")
         self.tabs.setTabEnabled(2, False)
+        diagnostics_page = QWidget()
+        diagnostics_layout = QVBoxLayout(diagnostics_page)
+        diagnostics_layout.addWidget(QLabel(
+            "Verified same-build asset references. Missing or ambiguous items "
+            "are not substituted from unrelated PAKs. ActionScript is not executed."))
+        self.dependency_tree = QTreeWidget()
+        self.dependency_tree.setObjectName("gfxDependencyDiagnostics")
+        self.dependency_tree.setColumnCount(4)
+        self.dependency_tree.setHeaderLabels(
+            ("Type", "Requested resource", "Actual source / origin", "Status"))
+        self.dependency_tree.setRootIsDecorated(False)
+        self.dependency_tree.setAlternatingRowColors(True)
+        self.dependency_tree.setColumnWidth(0, 150)
+        self.dependency_tree.setColumnWidth(1, 280)
+        self.dependency_tree.setColumnWidth(2, 280)
+        diagnostics_layout.addWidget(self.dependency_tree, 1)
+        self.tabs.addTab(diagnostics_page, "Dependencies")
         layout.addWidget(self.tabs, 1)
         self.note = QLabel("Static movie preview; original GFX remains unchanged.")
         self.note.setObjectName("gfxPreviewStatus")
@@ -362,6 +393,7 @@ class GfxPreviewWidget(QWidget):
         self.background.currentIndexChanged.connect(self._background_changed)
         self.trim.toggled.connect(self.canvas.set_trim)
         self.external_images.toggled.connect(self._changed)
+        self.video_visible.toggled.connect(self._changed)
         self.root_mode.currentIndexChanged.connect(self._root_changed)
         self.root_layer.currentIndexChanged.connect(self._root_changed)
         self.texture_select.currentIndexChanged.connect(self._texture_changed)
@@ -390,6 +422,12 @@ class GfxPreviewWidget(QWidget):
         self._texture_paths = ()
         self._root_layers = ()
         self._detected_dialog_depth = None
+        self._video_streams = ()
+        self.video_visible.blockSignals(True)
+        self.video_visible.setChecked(False)
+        self.video_visible.setEnabled(False)
+        self.video_visible.blockSignals(False)
+        self.dependency_tree.clear()
         self.root_mode.blockSignals(True)
         self.root_mode.setCurrentIndex(0)
         self.root_mode.blockSignals(False)
@@ -418,6 +456,8 @@ class GfxPreviewWidget(QWidget):
                 info, relative, resolve or (lambda _name: None))
             self._info, self._raw = info, data
             self._imports, self._warnings = resolved, warnings
+            self._video_streams = video_streams(data)
+            self.video_visible.setEnabled(bool(self._video_streams))
             self.external_images.setEnabled(bool(
                 texture_preview and 1008 in info.extension_tags
                 and 1009 in info.extension_tags))
@@ -459,6 +499,15 @@ class GfxPreviewWidget(QWidget):
             except (ValueError, OSError, TypeError) as exc:
                 self.bitmap_status.setText(
                     "Bitmap placement diagnostics unavailable: " + str(exc)[:240])
+            report = dependency_report(
+                data, relative, resolved_imports=resolved,
+                imported_issues=warnings, texture_paths=self._texture_paths,
+                bitmap_bindings=self._bitmap_bindings,
+                available_paths=available_paths)
+            for item in report:
+                QTreeWidgetItem(self.dependency_tree,
+                                (item.kind, item.name, item.origin, item.status))
+            self.tabs.setTabText(3, f"Dependencies ({len(report)})")
             self.symbol.blockSignals(True)
             self.symbol.clear()
             self.symbol.addItem("Main timeline", (0, info.frames))
@@ -499,7 +548,8 @@ class GfxPreviewWidget(QWidget):
                 f"{info.frames} root frames · "
                 f"{sum(n > 0 for _, n in info.sprites)} playable sprites · "
                 f"{sum(n == 0 for _, n in info.sprites)} nonvisual definitions · "
-                f"{len(info.images)} embedded image symbols")
+                f"{len(info.images)} embedded image symbols · "
+            f"{len(self._video_streams)} native video streams")
             self._start_render()
         except (ValueError, OSError) as exc:
             self._info = None
@@ -671,7 +721,8 @@ class GfxPreviewWidget(QWidget):
             texture_loader=(self._texture_loader if self.external_images.isChecked()
                             and self.external_images.isEnabled() else None),
             available_paths=self._available_paths,
-            root_layer_mode=layer_mode, root_layer_depth=layer_depth)
+            root_layer_mode=layer_mode, root_layer_depth=layer_depth,
+            show_video_placeholders=self.video_visible.isChecked())
         self._jobs.append(worker)
         worker.result.connect(self._finished)
         worker.finished.connect(lambda job=worker: self._done(job))
