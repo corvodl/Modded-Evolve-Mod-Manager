@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, Signal, Qt
 from qt_ui_components import DisclosurePanel, WorkspaceHeader
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QHeaderView, QFileDialog, QMessageBox,
     QAbstractItemView, QProgressBar, QComboBox, QInputDialog)
 
@@ -262,34 +262,45 @@ class AssetLibraryDialog(QDialog):
         # and transfer actions live in a compact disclosure panel.
         self.advanced_tools = DisclosurePanel(
             'Advanced library and build operations', expanded=False)
+        for secondary in (self.relocate_button, self.detach_button,
+                          self.compare_button):
+            build_row.removeWidget(secondary)
+            self.advanced_tools.addWidget(secondary)
         for secondary in (self.key_button, self.all_button):
             controls.removeWidget(secondary)
             self.advanced_tools.addWidget(secondary)
         project_controls.removeWidget(close)
         project_controls.removeWidget(self.cancel_button)
         lay.addLayout(controls)
-        self.advanced_tools.addLayout(project_controls)
-        transfer_controls = QHBoxLayout()
+        project_grid = QGridLayout()
+        project_grid.setSpacing(6)
+        for idx, button in enumerate((
+            self.verify_button, self.project_button, self.map_button,
+            self.transfer_button, self.remove_button)):
+            project_controls.removeWidget(button)
+            project_grid.addWidget(button, idx // 2, idx % 2)
+        self.advanced_tools.addLayout(project_grid)
+        transfer_controls = QGridLayout()
+        transfer_controls.setSpacing(6)
         self.legacy_map_button = QPushButton("Prepare Legacy Map Review…")
         self.legacy_map_button.setToolTip(
             "Export a verified, map-scoped research bundle for a registered "
             "Legacy or early build. Does not mount, convert or deploy maps.")
         self.legacy_map_button.clicked.connect(self.prepare_legacy_map)
-        transfer_controls.addWidget(self.legacy_map_button)
+        transfer_controls.addWidget(self.legacy_map_button, 0, 0)
         self.model_transfer_button = QPushButton("Review Compatible Legacy Model…")
         self.model_transfer_button.setToolTip(
             "Optionally replace ONE matching model in an existing signed Stage 2 "
             "editing project after strict source/target hash and chunk checks.")
         self.model_transfer_button.clicked.connect(self.review_legacy_model)
-        transfer_controls.addWidget(self.model_transfer_button)
+        transfer_controls.addWidget(self.model_transfer_button, 0, 1)
         self.bulk_transfer_button = QPushButton("Export Legacy Build → Stage 2…")
         self.bulk_transfer_button.setToolTip(
             "Use ALL imported PAKs or one selected archive in a registered "
             "Legacy build to prepare a Stage 2-targeted review package. "
             "Never writes to the game or signs a PAK.")
         self.bulk_transfer_button.clicked.connect(self.export_legacy_build)
-        transfer_controls.addWidget(self.bulk_transfer_button)
-        transfer_controls.addStretch(1)
+        transfer_controls.addWidget(self.bulk_transfer_button, 1, 0, 1, 2)
         self.advanced_tools.addLayout(transfer_controls)
         lay.addWidget(self.advanced_tools)
         footer = QHBoxLayout()
