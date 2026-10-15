@@ -119,5 +119,11 @@ def windows_crash_history(*, runner=None, limit=12):
         module = next((x.text for x in nodes
                        if x.get("Name") in ("ModuleName", "FaultingModule") and x.text),
                       "Unknown")
-        rows.append(f"{when} UTC | Event {event_id} | Fault module: {redact_support_text(module)}")
+        exception = next((x.text for x in nodes
+                          if x.get("Name") in ("ExceptionCode", "FaultingExceptionCode")
+                          and x.text), "")
+        code = (" | Exception: " + exception if
+                re.fullmatch(r"(?:0x)?[0-9a-fA-F]{8,16}", exception or "") else "")
+        rows.append(f"{when} UTC | Event {event_id} | Fault module: "
+                    f"{redact_support_text(module)}{code}")
     return tuple(rows)
