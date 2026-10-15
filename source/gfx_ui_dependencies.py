@@ -51,7 +51,13 @@ def related_ui_textures(movie, available_paths, resolver, *, imports=(), movie_b
 
     def add(path, origin):
         key = str(path).casefold()
-        if key in entries and key not in result and len(result) < _MAX_TEXTURES:
+        if key not in entries:
+            return
+        if key not in result and len(result) < _MAX_TEXTURES:
+            result[key] = (entries[key], origin)
+        elif key in result and origin == "GFX resource reference":
+            # A literal compiled-movie reference is stronger evidence
+            # than matching an _I<hex> companion filename alone.
             result[key] = (entries[key], origin)
 
     # Texture symbol IDs come from compiled GFX resources; don't match
