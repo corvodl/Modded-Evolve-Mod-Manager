@@ -91,10 +91,16 @@ def firewall_snapshot(game_root):
         return ("Not configured", str(exc))
 
 
-def change_offline_rule(game_root, enable):
-    """Mutate only EvolveModManager-Offline-*; never alter arbitrary rules."""
+def change_offline_rule(game_root, enable, *, swap_root=None):
+    """Mutate only EvolveModManager-Offline-*; refuse unsafe unblocking."""
     if game_running():
         raise RuntimeError("Close Evolve and its launcher before changing an offline firewall rule.")
+    if not enable and swap_root is not None:
+        swap = state_status(Path(swap_root))
+        if swap.phase in ("swapped", "swapping", "restoring", "interrupted", "unsafe"):
+            raise RuntimeError(
+                "The swap journal is not safely restored. Restore original game "
+                "files before removing offline firewall protection.")
     return set_offline(game_root, bool(enable))
 
 
