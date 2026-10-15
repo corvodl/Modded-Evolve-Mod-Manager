@@ -5,6 +5,7 @@ It never accesses installed PAKs or writes extracted workspace files.
 """
 from __future__ import annotations
 import math
+import time
 import sys
 import json
 from pathlib import Path
@@ -161,6 +162,14 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.specular_textures = []
         self._pending_texture_uploads = []
         self._gpu_upload_total_ms = 0.0
+        self._frame_started_at = time.perf_counter()
+        self._geometry_frame_seen = False
+        self._first_texture_frame_seen = False
+        self._full_texture_frame_seen = False
+        self._drawn_with_textures = False
+        self._frame_drawn_with_full_quality = False
+        self._textures_final_requested = materials is not None
+        self.frameSwapped.connect(self._frame_presented)
         self.translucent_slots = set()
         self._batch_sort_cache = None
         self.enhanced_materials = True
@@ -184,7 +193,31 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.projection_mode = 'Orthographic'
         self.specular_intensity = 0.35
 
+    def _reset_frame_timeline(self):
+        self._frame_started_at = time.perf_counter()
+        self._geometry_frame_seen = False
+        self._first_texture_frame_seen = False
+        self._full_texture_frame_seen = False
+        self._drawn_with_textures = False
+        self._frame_drawn_with_full_quality = False
+
+    def _frame_presented(self):
+        """Visible-frame milestones; not a claim of completed GPU timing."""
+        from performance_trace import record
+        elapsed = (time.perf_counter() - self._frame_started_at) * 1000
+        if not self._geometry_frame_seen:
+            self._geometry_frame_seen = True
+            record('model', 'first_geometry_frame', elapsed_ms=elapsed)
+        if self._drawn_with_textures and not self._first_texture_frame_seen:
+            self._first_texture_frame_seen = True
+            record('model', 'first_texture_frame', elapsed_ms=elapsed)
+        if (self._frame_drawn_with_full_quality and
+                not self._full_texture_frame_seen):
+            self._full_texture_frame_seen = True
+            record('model', 'final_quality_frame', elapsed_ms=elapsed)
+
     def set_mesh(self, mesh, materials=None, prepared_geometry=None):
+        self._reset_frame_timeline()
         geometry = (prepared_geometry if prepared_geometry is not None
                     else prepare_geometry(mesh, shading=self.shading))
         # Replacing an existing model must also upload the NEW diffuse maps.
@@ -280,6 +313,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.update()
 
     def set_materials(self, materials):
+        self._full_texture_frame_seen = False
+        self._frame_drawn_with_full_quality = False
         if self.isValid():
             self.makeCurrent()
             try:
@@ -319,6 +354,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         self._batch_sort_cache = None
         self._gpu_upload_total_ms = 0.0
         self.gpu_upload_ms = None
+        self._textures_final_requested = self.materials is not None
+        self._frame_drawn_with_full_quality = False
         groups = (
             ('textures', getattr(self.materials, 'textures', ()) if self.materials else ()),
             ('normal_textures', getattr(self.materials, 'normal_maps', ()) if self.materials else ()),
@@ -400,9 +437,11 @@ class QtGLModelCanvas(QOpenGLWidget):
         record('model', 'gl_texture_submitted', submitted=uploaded,
                remaining=len(self._pending_texture_uploads),
                elapsed_ms=elapsed)
-        if self._pending_texture_uploads:
+        # Upload takes place after drawing the current frame; even the final
+        # upload needs one *more* paint before the user can see the texture.
+        if uploaded:
             self.update()
-        else:
+        if not self._pending_texture_uploads:
             record('model', 'full_quality_textures_ready',
                    elapsed_ms=self._gpu_upload_total_ms)
         return uploaded
@@ -488,6 +527,11 @@ class QtGLModelCanvas(QOpenGLWidget):
             glBlendFunc, glDepthMask, GL_LIGHT0, GL_DIFFUSE, GL_LIGHTING,
             GL_TEXTURE0, GL_BLEND, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glClearColor(*background)
+        # Capture state *before* uploading textures at the end of paintGL.
+        # frameSwapped reports what was really drawn, not new driver handles.
+        self._drawn_with_textures = any(self.textures)
+        self._frame_drawn_with_full_quality = (
+            self._textures_final_requested and not self._pending_texture_uploads)
         strength=self.light_strength
         glLightfv(GL_LIGHT0,GL_DIFFUSE,
                   [min(1.0,0.83*strength),min(1.0,0.85*strength),
