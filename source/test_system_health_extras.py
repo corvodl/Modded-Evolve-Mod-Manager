@@ -75,7 +75,7 @@ class ReportPrivacyTests(unittest.TestCase):
             crashes=("2026-10-15 Fault: Evolve.exe",))
         self.assertIn("Support Report", report)
         self.assertIn("Firewall: Offline", report)
-        self.assertNotIn("private", report)
+        self.assertNotIn("C:\\Users\\private", report)
         self.assertNotIn("key.txt", report)
         self.assertIn("Recent crashes", report)
         self.assertIn("Review private details", report)
