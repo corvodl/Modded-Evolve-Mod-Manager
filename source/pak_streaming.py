@@ -110,10 +110,18 @@ def stream_signed_entry(pak, info, entryname, destination, *, cancelled=None,
             block_offset = 0
             while remaining:
                 check_cancel()
-                ciphertext = source.read(min(chunk_size, remaining))
-                if not ciphertext:
-                    raise EOFError('Incomplete encrypted entry data')
-                remaining -= len(ciphertext)
+                requested = min(chunk_size, remaining)
+                parts = []
+                received = 0
+                while received < requested:
+                    check_cancel()
+                    part = source.read(requested - received)
+                    if not part:
+                        raise EOFError('Incomplete encrypted entry data')
+                    parts.append(part)
+                    received += len(part)
+                ciphertext = b''.join(parts)
+                remaining -= requested
                 blocks = (len(ciphertext) + 15) // 16
                 counters = b''.join(
                     ((iv + block_offset + i) & _MASK128).to_bytes(16, 'little')
