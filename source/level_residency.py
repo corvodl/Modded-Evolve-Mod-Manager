@@ -3,6 +3,7 @@ from collections import OrderedDict
 from dataclasses import replace
 import hashlib
 import sys
+import weakref
 
 
 def retained_resources(assets, seen=None):
@@ -39,6 +40,23 @@ class SceneResidency:
         self.budget = budget
         self.assets = OrderedDict()
         self.failures = {}
+        # Weak identities retain no decoded images beyond the CPU budget.
+        # Fingerprints of already resident immutable decodes are reused.
+        self._image_fingerprints = {}
+
+    def _image_digest(self, image, *, refresh=False):
+        key = id(image)
+        previous = self._image_fingerprints.get(key)
+        if (not refresh and previous is not None and
+                previous[0]() is image):
+            return previous[1]
+        signature = (image.mode, image.size,
+                     hashlib.sha256(image.tobytes()).digest())
+        try:
+            self._image_fingerprints[key] = (weakref.ref(image), signature)
+        except TypeError:
+            pass
+        return signature
 
     def load(self, keys, cancel, progress=None):
         """Worker-only update. Missing residency never removes logical objects.
@@ -52,8 +70,18 @@ class SceneResidency:
         selected = OrderedDict()
         geometry = {}
         images = {}
+        # Prune weak identities to avoid retaining stale digest metadata.
+        self._image_fingerprints = {
+            key: entry for key, entry in self._image_fingerprints.items()
+            if entry[0]() is not None
+        }
         for value in self.assets.values():
             geometry[value.model_file] = (value.mesh,value.geometry)
+            if value.materials:
+                for field in ('textures', 'normal_maps', 'specular_maps'):
+                    for image in getattr(value.materials, field, ()):
+                        if image is not None:
+                            images.setdefault(self._image_digest(image), image)
         used, retained = 0, set()
         for position,key in enumerate(wanted):
             if cancel.is_set():
@@ -64,7 +92,8 @@ class SceneResidency:
                 continue
             try:
                 asset = self.assets.pop(key, None)
-                if asset is None:
+                fresh_decode = asset is None
+                if fresh_decode:
                     asset = self.decode(self.catalog[key], geometry)
                 if asset.materials:
                     fields = {}
@@ -72,7 +101,7 @@ class SceneResidency:
                         values = []
                         for im in getattr(asset.materials,field,()):
                             if im is not None:
-                                digest = (im.mode,im.size,hashlib.sha256(im.tobytes()).digest())
+                                digest = self._image_digest(im, refresh=fresh_decode)
                                 im = images.setdefault(digest,im)
                             values.append(im)
                         fields[field] = tuple(values)
