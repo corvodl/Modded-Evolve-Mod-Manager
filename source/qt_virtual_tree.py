@@ -32,11 +32,13 @@ class TreeNode:
 class VirtualTreeModel(QAbstractItemModel):
     """Tree with stable logical identities and batched fetchMore pagination."""
 
-    def __init__(self, parent=None, *, labels=('Name', 'Type'), batch=256):
+    def __init__(self, parent=None, *, labels=('Name', 'Type'),
+                 batch=256, size_provider=None):
         super().__init__(parent)
         self.root = TreeNode('')
         self.labels = tuple(labels)
         self.batch = max(16, int(batch))
+        self.size_provider = size_provider
         self.reset_root(TreeNode(''))
 
     def reset_root(self, root):
@@ -83,6 +85,9 @@ class VirtualTreeModel(QAbstractItemModel):
             if index.column() == 0:
                 return node.label
             if index.column() == 1:
+                if (not node.size and isinstance(node.value, str) and
+                        self.size_provider is not None):
+                    node.size = self.size_provider(node.value)
                 return node.size or node.kind
             return node.tooltip or node.kind
         if role == Qt.UserRole:
