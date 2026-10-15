@@ -25,7 +25,7 @@ if (!(Test-Path (Join-Path $bundle 'libgcrypt-20.dll')) -or
 }
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $source 'NOTICE.txt') -Destination $destination -Force
-Copy-Item -LiteralPath (Join-Path $source 'Licenses/*') -Destination $destination -Force -Recurse
+Copy-Item -Path (Join-Path $source 'Licenses/*') -Destination $destination -Force -Recurse
 foreach ($relative in $required) {
     $inBundle = if ($relative -eq 'NOTICE.txt') {
         Join-Path $destination 'NOTICE.txt'
