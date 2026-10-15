@@ -21,3 +21,13 @@ def app_version(path=None):
     except OSError:
         pass
     return 'Development build'
+
+
+def footer_version(path=None):
+    """Show only the release milestone in the persistent status bar.
+
+    Patch revisions remain part of app_version(), the installed revision
+    marker, GitHub update comparisons and release asset filenames. A beta
+    suffix (for example -beta.50) is part of the version and stays visible.
+    """
+    return app_version(path).split(' · Patch ', 1)[0]
