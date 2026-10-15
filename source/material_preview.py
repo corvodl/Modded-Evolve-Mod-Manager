@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from io import BytesIO
 from pathlib import Path
+import math
 from collections import OrderedDict
 import hashlib
 import re
@@ -61,6 +62,10 @@ class PreviewMaterials:
     map_uv_transforms: tuple = ()  # (role, per-material UV-transform tuples)
     uv_motions: tuple = ()  # per-material supported constant (du,dv,drotate) motions
     map_uv_motions: tuple = ()  # (role, per-material motions)
+    environment_maps: tuple = ()  # six-face PIL tuples, or None per material
+    reflection_strengths: tuple = ()
+    glass_materials: tuple = ()
+    refraction_indices: tuple = ()  # explicit source IOR only
 
     @property
     def count(self):
@@ -516,7 +521,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             decoded = Image.merge('RGB', (decoded.getchannel(component),) * 3)
         return decoded
 
-    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; details=[]; detail_normals=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
+    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; details=[]; detail_normals=[]; environments=[]; reflections=[]; glasses=[]; iors=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; motions = []; sources = []; references = []; hidden = []
     role_transforms = {role: [] for role in ('normal','specular','gloss','detail','detail_normal')}
     role_motions = {role: [] for role in role_transforms}
@@ -570,6 +575,57 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         opacities.append(opacity)
         shader = item.get('Shader', '').casefold()
         hidden.append(shader == 'nodraw')
+        glasses.append('glass' in shader or 'refract' in shader)
+        ior = item.get('IOR') or item.get('RefractionIndex') or ''
+        try:
+            ior = float(ior) if ior else None
+            if ior is not None and not 1.0 <= ior <= 3.0:
+                raise ValueError('out-of-range IOR')
+        except ValueError:
+            issues.append(name + ': invalid explicit glass refraction index')
+            ior = None
+        iors.append(ior)
+        reflection_node = next((tex for tex in item.findall('./Textures/Texture')
+                                if (tex.get('Map') or tex.get('map') or '').casefold()
+                                in ('environment','cubemap','reflection')), None)
+        environment = None
+        if reflection_node is not None:
+            env_ref = reflection_node.get('File') or reflection_node.get('file')
+            if env_ref:
+                try:
+                    from cubemap_material import decode_cubemap_dds, assemble_cubemap_stream
+                    found = find_texture(env_ref)
+                    if found is not None:
+                        source = Path(found['file'])
+                        if source.is_symlink() or source.stat().st_size > MAX_MATERIAL_DDS_BYTES:
+                            raise ValueError('Unsafe or oversized cubemap source')
+                        raw_cube = source.read_bytes()
+                        if str(found['relative']).casefold().endswith('.dds.0'):
+                            stem = str(found['relative'])[:-2]
+                            companions = {}
+                            for number in range(1,32):
+                                match = _find_unique(index, stem+'.'+str(number))
+                                if match is None:
+                                    break
+                                child = Path(match['file'])
+                                if child.is_symlink() or child.stat().st_size > MAX_MATERIAL_DDS_BYTES:
+                                    raise ValueError('Unsafe cubemap stream part')
+                                companions[number] = child.read_bytes()
+                            if companions:
+                                raw_cube = assemble_cubemap_stream(raw_cube, companions)
+                        environment = decode_cubemap_dds(raw_cube)
+                except (ValueError,OSError) as error:
+                    issues.append(name + ': cubemap unavailable: ' + str(error))
+        environments.append(environment)
+        try:
+            intensity = float(item.get('ReflectionStrength','1'))
+            if not math.isfinite(intensity):
+                raise ValueError('non-finite intensity')
+            intensity = max(0.,min(1.,intensity))
+        except ValueError:
+            issues.append(name + ': invalid reflection strength')
+            intensity = 1.
+        reflections.append(intensity if environment else 0.)
         # CryEngine diffuse DDS alpha is frequently a mask or auxiliary data,
         # not an alpha-blend instruction. Do NOT hide opaque armor/body meshes.
         try:
@@ -656,7 +712,11 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                             detail_maps=tuple(details), detail_normal_maps=tuple(detail_normals),
                             map_uv_transforms=tuple((role,tuple(matrices)) for role,matrices in role_transforms.items()),
                             uv_motions=tuple(motions),
-                            map_uv_motions=tuple((role,tuple(mats)) for role,mats in role_motions.items()))
+                            map_uv_motions=tuple((role,tuple(mats)) for role,mats in role_motions.items()),
+                            environment_maps=tuple(environments),
+                            reflection_strengths=tuple(reflections),
+                            glass_materials=tuple(glasses),
+                            refraction_indices=tuple(iors))
 
 
 

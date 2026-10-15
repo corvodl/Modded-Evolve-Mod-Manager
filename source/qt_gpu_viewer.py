@@ -163,6 +163,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.gloss_textures = []
         self.detail_textures = []
         self.detail_normal_textures = []
+        self.environment_textures = []
         self._pending_texture_uploads = []
         self._gpu_upload_total_ms = 0.0
         self._frame_started_at = time.perf_counter()
@@ -356,7 +357,7 @@ class QtGLModelCanvas(QOpenGLWidget):
 
     def _release_textures(self):
         from OpenGL.GL import glDeleteTextures
-        for name in ('textures','normal_textures','specular_textures','gloss_textures','detail_textures','detail_normal_textures'):
+        for name in ('textures','normal_textures','specular_textures','gloss_textures','detail_textures','detail_normal_textures','environment_textures'):
             handles = getattr(self,name,[])
             if handles:
                 try:
@@ -384,6 +385,7 @@ class QtGLModelCanvas(QOpenGLWidget):
             ('gloss_textures', getattr(self.materials, 'gloss_maps', ()) if self.materials else ()),
             ('detail_textures', getattr(self.materials, 'detail_maps', ()) if self.materials else ()),
             ('detail_normal_textures', getattr(self.materials, 'detail_normal_maps', ()) if self.materials else ()),
+            ('environment_textures', getattr(self.materials, 'environment_maps', ()) if self.materials else ()),
         )
         for target, images in groups:
             setattr(self, target, [0] * len(images))
@@ -405,6 +407,7 @@ class QtGLModelCanvas(QOpenGLWidget):
             GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR,
             GL_LINEAR_MIPMAP_LINEAR, GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T,
             GL_REPEAT, GL_UNPACK_ALIGNMENT, glGenerateMipmap,
+            GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_POSITIVE_X,
         )
         if not self._pending_texture_uploads:
             return 0
@@ -413,6 +416,26 @@ class QtGLModelCanvas(QOpenGLWidget):
         uploaded = 0
         while self._pending_texture_uploads and uploaded < max_uploads:
             target, index, im = self._pending_texture_uploads.pop(0)
+            if target == 'environment_textures':
+                if len(im) != 6:
+                    raise ValueError('Cubemap must have exactly six decoded faces.')
+                texid = int(glGenTextures(1))
+                glBindTexture(GL_TEXTURE_CUBE_MAP, texid)
+                for face, image in enumerate(im):
+                    if image is None or image.width != image.height:
+                        raise ValueError('Invalid cubemap face dimensions.')
+                    from gl_texture_upload import gl_upload_pixels
+                    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0,
+                                 GL_RGB, image.width, image.height, 0, GL_RGB,
+                                 GL_UNSIGNED_BYTE, gl_upload_pixels(image, 'RGB'))
+                for parameter in (GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER):
+                    glTexParameteri(GL_TEXTURE_CUBE_MAP, parameter, GL_LINEAR)
+                for parameter in (GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T):
+                    glTexParameteri(GL_TEXTURE_CUBE_MAP, parameter, GL_REPEAT)
+                getattr(self, target)[index] = texid
+                glBindTexture(GL_TEXTURE_CUBE_MAP, 0)
+                uploaded += 1
+                continue
             rgba = 'A' in im.getbands()
             if (target == 'textures' and rgba and self.materials and
                     index < len(getattr(self.materials, 'alpha_modes', ())) and
@@ -670,8 +693,18 @@ class QtGLModelCanvas(QOpenGLWidget):
                         handle = group[slot] if use_uv and slot<len(group) else 0
                         glActiveTexture(GL_TEXTURE0+unit)
                         glBindTexture(GL_TEXTURE_2D,handle)
+                    glActiveTexture(GL_TEXTURE0+6)
+                    from OpenGL.GL import GL_TEXTURE_CUBE_MAP
+                    cubemap = (self.environment_textures[slot]
+                               if use_uv and slot < len(self.environment_textures) else 0)
+                    glBindTexture(GL_TEXTURE_CUBE_MAP,cubemap)
                     glActiveTexture(GL_TEXTURE0)
-                    shader.bind(opacity=alpha,gloss=self.specular_intensity, alpha_cutoff=cutoff or .02,
+                    strengths = getattr(self.materials,'reflection_strengths',())
+                    glasses = getattr(self.materials,'glass_materials',())
+                    shader.bind(environment=bool(cubemap),
+                                reflection_strength=strengths[slot] if slot<len(strengths) else 0.,
+                                glass=bool(glasses[slot]) if slot<len(glasses) else False,
+                                opacity=alpha,gloss=self.specular_intensity, alpha_cutoff=cutoff or .02,
                                 illumination=strength,diffuse=bool(tex),
                                 normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
                                 specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
@@ -711,6 +744,9 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glEnable(GL_LIGHTING)
             if shader:
                 shader.unbind()
+                from OpenGL.GL import GL_TEXTURE_CUBE_MAP
+                glActiveTexture(GL_TEXTURE0+6)
+                glBindTexture(GL_TEXTURE_CUBE_MAP,0)
                 for unit in (5,4,3,2,1,0):
                     glActiveTexture(GL_TEXTURE0+unit)
                     glBindTexture(GL_TEXTURE_2D,0)

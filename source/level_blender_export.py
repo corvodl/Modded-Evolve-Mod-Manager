@@ -62,6 +62,9 @@ class SceneAssembler:
         if key in self.mesh_ids:
             return self.mesh_ids[key]
         doc, data=_unpack_glb(source)
+        for extension in doc.get('extensionsUsed', ()):
+            if extension not in self.doc.setdefault('extensionsUsed', []):
+                self.doc['extensionsUsed'].append(extension)
         if len(doc.get("meshes",()))!=1:
             raise ValueError("Expected one decoded mesh resource.")
         if len(self.binary)+len(data)>MAX_GLTF_BINARY:

@@ -203,6 +203,49 @@ def embed_diffuse_textures(blob, materials):
                         'uvTransform': list(transform)})
             # Specular maps remain named optional resources; CryEngine
             # specular tint cannot safely be guessed as glTF metalness.
+        # Preserve six environment faces as separately editable named PNGs.
+        # glTF core does not attach cubemaps to PBR materials directly.
+        environments = getattr(materials, 'environment_maps', ())
+        faces = environments[slot] if 0 <= slot < len(environments) else None
+        if faces:
+            env_names = []
+            from cubemap_material import FACES
+            for face_name, face in zip(FACES, faces):
+                if len(images) >= MAX_TEXTURES:
+                    raise ValueError('Exceeded cubemap export safety limit.')
+                with BytesIO() as output:
+                    face.convert('RGB').save(output, 'PNG')
+                    payload=output.getvalue()
+                if len(payload) > MAX_IMAGE_BYTES:
+                    raise ValueError('Cubemap face PNG exceeds export safety limit.')
+                binary.extend(bytes(-len(binary)%4))
+                view={'buffer':0,'byteOffset':len(binary),'byteLength':len(payload)}
+                binary.extend(payload)
+                doc['bufferViews'].append(view)
+                name='Environment %s slot %d' % (face_name,slot)
+                images.append({'bufferView':len(doc['bufferViews'])-1,
+                               'mimeType':'image/png','name':name})
+                env_names.append(name)
+            material.setdefault('extras', {})['cryEngineEnvironmentFaces'] = env_names
+        glasses = getattr(materials, 'glass_materials', ())
+        if 0 <= slot < len(glasses) and glasses[slot]:
+            opacity = (materials.opacity[slot]
+                       if slot < len(getattr(materials,'opacity',())) else 1.)
+            transmission = max(0.,min(1.,1.-opacity))
+            if transmission > 0.:
+                material.setdefault('extensions', {})['KHR_materials_transmission'] = {
+                    'transmissionFactor': transmission}
+                used=doc.setdefault('extensionsUsed',[])
+                if 'KHR_materials_transmission' not in used:
+                    used.append('KHR_materials_transmission')
+            indices = getattr(materials, 'refraction_indices', ())
+            ior = indices[slot] if slot < len(indices) else None
+            if ior is not None:
+                material.setdefault('extensions', {})['KHR_materials_ior'] = {
+                    'ior': float(ior)}
+                used=doc.setdefault('extensionsUsed',[])
+                if 'KHR_materials_ior' not in used:
+                    used.append('KHR_materials_ior')
     if not images:
         doc.pop('images', None)
         doc.pop('textures', None)

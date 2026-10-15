@@ -30,6 +30,7 @@ uniform sampler2D specular_map;
 uniform sampler2D gloss_map;
 uniform sampler2D detail_map;
 uniform sampler2D detail_normal_map;
+uniform samplerCube environment_map;
 uniform mat3 normal_uv;
 uniform mat3 specular_uv;
 uniform mat3 gloss_uv;
@@ -41,6 +42,9 @@ uniform int has_specular;
 uniform int has_gloss;
 uniform int has_detail;
 uniform int has_detail_normal;
+uniform int has_environment;
+uniform float reflection_strength;
+uniform int is_glass;
 uniform float opacity;
 uniform float alpha_cutoff;
 uniform int use_alpha_texture;
@@ -130,6 +134,14 @@ void main() {
                               + fill*(0.34+0.30*bounce),0.0,2.5);
     vec3 litLinear = albedoLinear*diffuseLight
                    + vec3(specular*specular_intensity*gloss*illumination);
+    if (has_environment == 1) {
+        vec3 viewNormal = normalize(n);
+        vec3 direction = reflect(-view,viewNormal);
+        float fresnel = pow(1.0-clamp(dot(viewNormal,view),0.0,1.0),5.0);
+        vec3 reflected = pow(textureCube(environment_map,direction).rgb,vec3(2.2));
+        litLinear += reflected*reflection_strength*
+                     mix(0.08, 0.85, fresnel)*(is_glass == 1 ? 1.2 : 1.0);
+    }
     vec3 lit = pow(clamp(litLinear,0.0,1.0),vec3(1.0/2.2));
     gl_FragColor = vec4(lit,alpha);
 }
@@ -145,22 +157,25 @@ class Renderer3:
             shaders.compileShader(FRAGMENT,GL_FRAGMENT_SHADER))
         glUseProgram(self.program)
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
-            'diffuse_map','normal_map','specular_map','gloss_map','detail_map','detail_normal_map',
+            'diffuse_map','normal_map','specular_map','gloss_map','detail_map','detail_normal_map','environment_map',
             'normal_uv','specular_uv','gloss_uv','detail_uv','detail_normal_uv',
-            'has_diffuse','has_normal','has_specular','has_gloss','has_detail','has_detail_normal','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
+            'has_diffuse','has_normal','has_specular','has_gloss','has_detail','has_detail_normal',
+            'has_environment','reflection_strength','is_glass','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
         for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2),('gloss_map',3),
-                          ('detail_map',4),('detail_normal_map',5)):
+                          ('detail_map',4),('detail_normal_map',5),('environment_map',6)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
              gloss_texture=False, detail=False, detail_normal=False, uv_matrices=None,
+             environment=False, reflection_strength=0., glass=False,
              alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f, glUniformMatrix3fv, GL_FALSE
         glUseProgram(self.program)
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
                            ('has_specular',specular), ('has_gloss',gloss_texture),
                            ('has_detail',detail), ('has_detail_normal',detail_normal),
+                           ('has_environment',environment), ('is_glass',glass),
                            ('use_alpha_texture',alpha_texture),
                            ('unlit_diffuse',unlit)):
             glUniform1i(self.uniforms[name],int(bool(value)))
@@ -169,7 +184,7 @@ class Renderer3:
         for role in ('normal','specular','gloss','detail','detail_normal'):
             glUniformMatrix3fv(self.uniforms[role + '_uv'],1,GL_FALSE,
                                gl_matrix3(matrices.get(role,IDENTITY)))
-        for name,value in (('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),
+        for name,value in (('reflection_strength',reflection_strength),('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),
                            ('illumination',illumination), ('studio_fill',fill)):
             glUniform1f(self.uniforms[name],float(value))
 
