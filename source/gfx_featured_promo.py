@@ -6,6 +6,7 @@ featured title at runtime; editing a static text tag alone would not suffice.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import re
 import tempfile
@@ -15,7 +16,7 @@ from gfx_edit_backend import (
 )
 from gfx_preview_backend import GfxError
 
-MODES = frozenset(("hide", "remove", "custom"))
+MODES = frozenset(("hide", "remove", "custom", "layout"))
 TARGETS = frozenset(("title", "all"))
 _MARKER = "__evolveFeaturedPromoPreset"
 _FUNCTION = re.compile(
@@ -66,9 +67,42 @@ def _skip_block(source: str, brace: int) -> int:
     raise GfxError("Cannot determine the end of setFeatured in exported ActionScript.")
 
 
-def _preset_code(mode: str, target: str, custom: str) -> str:
+def _preset_code(mode: str, target: str, custom: str, layout=None) -> str:
+    if mode == "layout":
+        if target not in ("title", "try", "buy") or custom:
+            raise GfxError("Layout overrides support one featured title, TRY or BUY control.")
+        if not isinstance(layout, (tuple, list)) or len(layout) != 6:
+            raise GfxError("Layout properties must contain X/Y, scale, rotation and visibility.")
+        x, y, sx, sy, angle, visible = layout
+        if (not isinstance(visible, bool) or
+                not all(isinstance(n, (float, int)) and math.isfinite(n)
+                        for n in (x, y, sx, sy, angle)) or
+                not (-100000 <= x <= 100000 and -100000 <= y <= 100000 and
+                     .01 <= sx <= 20 and .01 <= sy <= 20 and
+                     -360 <= angle <= 360)):
+            raise GfxError("Featured layout values exceed the supported bounds.")
+        # These values are absolute overrides. Game callbacks may still
+        # replace them later; we do not pretend to know their runtime state.
+        names = {"title": ("mcFeatureTitle",),
+                 "try": ("mcFeatureTry", "mcFeatureButtonTry"),
+                 "buy": ("mcFeatureBuy", "mcFeatureButtonBuy")}[target]
+        lines = [f"    var {_MARKER} = true;"]
+        for name in names:
+            lines += [
+                f"    if (_root.{name} != undefined) {{",
+                f"        _root.{name}._x = {x:.4f};",
+                f"        _root.{name}._y = {y:.4f};",
+                f"        _root.{name}._xscale = {sx * 100:.4f};",
+                f"        _root.{name}._yscale = {sy * 100:.4f};",
+                f"        _root.{name}._rotation = {angle:.4f};",
+                f"        _root.{name}._visible = {'true' if visible else 'false'};",
+                "    }",
+            ]
+        return "\n".join(lines) + "\n"
+    if layout is not None:
+        raise GfxError("Layout properties require the Layout override mode.")
     if mode not in MODES or target not in TARGETS:
-        raise GfxError("Choose Hide, Remove, or Custom text and a supported target.")
+        raise GfxError("Choose Hide, Remove, Custom text, or Layout override.")
     if mode == "custom":
         if target != "title":
             raise GfxError("Custom text applies only to the featured title.")
@@ -117,13 +151,13 @@ def _preset_code(mode: str, target: str, custom: str) -> str:
 
 
 def patch_featured_actionscript(source: str, mode: str, target: str = "all",
-                                custom: str = "") -> str:
+                                custom: str = "", layout=None) -> str:
     """Patch one identified setFeatured function without guessing UI strings."""
     if not isinstance(source, str) or len(source) > MAX_XML:
         raise GfxError("Invalid or oversized exported ActionScript.")
     if _MARKER in source:
         raise GfxError("A featured promo preset is already in this script. Undo first.")
-    injection = _preset_code(mode, target, custom)
+    injection = _preset_code(mode, target, custom, layout)
     hits = list(_FUNCTION.finditer(source))
     if len(hits) != 1:
         raise GfxError("Expected one setFeatured function in exported ActionScript.")
@@ -138,10 +172,10 @@ def patch_featured_actionscript(source: str, mode: str, target: str = "all",
 
 
 def stage_featured_promo(workspace, session, mode: str, *,
-                         target: str = "all", custom: str = "",
+                         target: str = "all", custom: str = "", layout=None,
                          configured=None, cancelled=None):
     """Stage a guarded AS2 preset; project and installed game stay unchanged."""
-    _preset_code(mode, target, custom)
+    _preset_code(mode, target, custom, layout)
     snapshot = read_gfx_session(workspace, session)
     if snapshot.relative.casefold() != "libs/ui/main_menu.gfx":
         raise GfxError("Featured promotion controls support Libs/UI/main_menu.gfx only.")
@@ -178,7 +212,7 @@ def stage_featured_promo(workspace, session, mode: str, *,
                 "Could not uniquely identify the menu's setFeatured script. "
                 "Use the full FFDec editor; no GFX edits have been staged.")
         file, original = candidates[0]
-        updated = patch_featured_actionscript(original, mode, target, custom)
+        updated = patch_featured_actionscript(original, mode, target, custom, layout)
         file.write_text(updated, encoding="utf-8")
         before = root / "before.gfx"
         before.write_bytes(data)
