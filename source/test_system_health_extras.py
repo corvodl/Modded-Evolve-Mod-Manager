@@ -73,7 +73,7 @@ class ReportPrivacyTests(unittest.TestCase):
             client_version="0.1.54", game_version="3.6",
             checks={"firewall": ("Offline", "C:\\Users\\private\\key.txt secret")},
             crashes=("2026-10-15 Fault: Evolve.exe",))
-        self.assertIn("Discord", report if "Discord" in report else "Evolve Stage 2")
+        self.assertIn("Support Report", report)
         self.assertIn("Firewall: Offline", report)
         self.assertNotIn("private", report)
         self.assertNotIn("key.txt", report)
