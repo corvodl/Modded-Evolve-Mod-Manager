@@ -17,7 +17,7 @@ from gfx_edit_backend import (
 from gfx_preview_backend import GfxError
 
 MODES = frozenset(("hide", "remove", "custom", "layout"))
-TARGETS = frozenset(("title", "all"))
+TARGETS = frozenset(("title", "try", "buy", "all"))
 _MARKER = "__evolveFeaturedPromoPreset"
 _FUNCTION = re.compile(
     r"\bfunction\s+setFeatured\s*\([^)]*\)\s*\{|"
@@ -25,6 +25,8 @@ _FUNCTION = re.compile(
 )
 _TARGET_NAMES = {
     "title": ("mcFeatureTitle",),
+    "try": ("mcFeatureTry", "mcFeatureButtonTry"),
+    "buy": ("mcFeatureBuy", "mcFeatureButtonBuy"),
     "all": (
         "mcFeatureTitle", "mcFeatureBuy", "mcFeatureTry", "mcFeatureBg",
         "mcFeatureFocus", "mcFeatureButtonBuy", "mcFeatureButtonTry",
