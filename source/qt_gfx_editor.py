@@ -27,6 +27,7 @@ from qt_navigation_icons import navigation_icon, action_icon
 from gfx_featured_promo import stage_featured_promo
 from qt_gfx_layout_editor import GfxLayoutDialog
 from qt_gfx_live_inspector import LiveUiInspector
+from qt_ui_components import DisclosurePanel, configure_splitter
 
 
 class GfxEditorDialog(QDialog):
@@ -78,7 +79,7 @@ class GfxEditorDialog(QDialog):
         self.viewer.tabs.addTab(self.live_ui, "Live UI (experimental)")
         # Reuse the authoring panel within the ordinary file editor. The canvas
         # gets most of the width; edit controls scroll in a compact inspector.
-        self.editor_split = QSplitter(Qt.Horizontal, self)
+        self.editor_split = configure_splitter(QSplitter(Qt.Horizontal, self))
         self.editor_split.setObjectName("gfxAuthoringSplitter")
         self.editor_split.addWidget(self.viewer)
         self.inspector_scroll = QScrollArea(self)
@@ -86,7 +87,7 @@ class GfxEditorDialog(QDialog):
         self.inspector_scroll.setWidgetResizable(True)
         self.inspector_content = QWidget()
         self.inspector_layout = QVBoxLayout(self.inspector_content)
-        self.inspector_layout.setContentsMargins(7, 7, 7, 7)
+        self.inspector_layout.setContentsMargins(8, 8, 8, 8)
         self.inspector_layout.setSpacing(8)
         self.inspector_scroll.setWidget(self.inspector_content)
         self.editor_split.addWidget(self.inspector_scroll)
@@ -97,12 +98,13 @@ class GfxEditorDialog(QDialog):
 
         tools = QGroupBox("Editing and rebuild")
         layout = QVBoxLayout(tools)
-        row = QHBoxLayout()
+        row = QVBoxLayout()
         self.category = QComboBox()
         self.category.setObjectName("gfxEditCategory")
         self.category.currentIndexChanged.connect(self._category_changed)
-        row.addWidget(QLabel("Native resource:"))
+        row.addWidget(QLabel("Resource category"))
         row.addWidget(self.category)
+        row.addWidget(QLabel("Selected resource"))
         self.resource = QComboBox()
         self.resource.setObjectName("gfxEditResource")
         row.addWidget(self.resource, 1)
@@ -194,7 +196,7 @@ class GfxEditorDialog(QDialog):
             self.promo_group = QGroupBox("Featured promotional UI (experimental)")
             self.promo_group.setObjectName("gfxFeaturedPromoControls")
             promo_layout = QVBoxLayout(self.promo_group)
-            promo_row = QHBoxLayout()
+            promo_row = QVBoxLayout()
             self.promo_mode = QComboBox()
             self.promo_mode.setObjectName("gfxFeaturedPromoMode")
             self.promo_mode.addItem("Hide", "hide")
@@ -228,7 +230,10 @@ class GfxEditorDialog(QDialog):
             self.promo_target.currentIndexChanged.connect(self._promo_options_changed)
             self.promo_text.textChanged.connect(self._promo_options_changed)
             self._promo_options_changed()
-            self.inspector_layout.addWidget(self.promo_group)
+            self.promo_disclosure = DisclosurePanel(
+                'Featured UI overrides (experimental)', expanded=False)
+            self.promo_disclosure.addWidget(self.promo_group)
+            self.inspector_layout.addWidget(self.promo_disclosure)
             self.tools_menu.addAction(
                 "Featured promotional UI…", self._focus_featured_promo)
 
@@ -261,6 +266,7 @@ class GfxEditorDialog(QDialog):
 
     def _focus_featured_promo(self):
         if self.promo_group is not None:
+            self.promo_disclosure.toggle.setChecked(True)
             self.promo_mode.setFocus()
 
     def _promo_options_changed(self, *_):
