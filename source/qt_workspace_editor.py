@@ -174,6 +174,10 @@ class QtWorkspaceEditor(QMainWindow):
         self.model_gpu = None
         self.model_panel = None
         self._sidebar_visibility = {'files': True, 'images': True, 'models': False}
+        # Widths are always (preview, explorer), regardless of which side
+        # the explorer occupies. Keep the last visible sizes when hidden.
+        self._file_explorer_side = 'Right'
+        self._last_visible_split_sizes = (940, 310)
         self._gfx_editor_panel = None
         self.model_fallback = None
         self.model_cpu = None
@@ -387,6 +391,9 @@ class QtWorkspaceEditor(QMainWindow):
         self.editor_split.setStretchFactor(1, 2)
         self.editor_split.setSizes([940, 310])
         main.addWidget(self.editor_split, 1)
+        self.set_file_explorer_side(
+            getattr(manager, 'file_explorer_side',
+                    manager.settings.get('file_explorer_side', 'Right')))
         self.status = QLabel(
             'Asset Library: preview and export only; editing and importing are disabled.'
             if self.read_only_library else
@@ -613,14 +620,56 @@ class QtWorkspaceEditor(QMainWindow):
             self._file_explorer_action.setChecked(showing)
             self._file_explorer_action.blockSignals(False)
 
+    def _logical_split_sizes(self):
+        """Return (preview, explorer) widths independently of panel order."""
+        sizes = self.editor_split.sizes()
+        if self._file_explorer_side == 'Left':
+            return sizes[1], sizes[0]
+        return sizes[0], sizes[1]
+
+    def _set_logical_split_sizes(self, preview, explorer):
+        widths = ((explorer, preview) if self._file_explorer_side == 'Left'
+                  else (preview, explorer))
+        self.editor_split.setSizes(list(widths))
+        if preview > 0 and explorer > 0:
+            self._last_visible_split_sizes = (preview, explorer)
+
+    def set_file_explorer_side(self, side):
+        """Reposition the explorer live without changing its visible width."""
+        if side not in ('Left', 'Right'):
+            side = 'Right'
+        if self._file_explorer_side == side:
+            return
+        preview, explorer = self._logical_split_sizes()
+        if preview <= 0 or explorer <= 0:
+            preview, explorer = self._last_visible_split_sizes
+        self.editor_split.insertWidget(
+            0 if side == 'Left' else 1, self.explorer)
+        self._file_explorer_side = side
+        if side == 'Left':
+            self.editor_split.setStretchFactor(0, 2)
+            self.editor_split.setStretchFactor(1, 5)
+        else:
+            self.editor_split.setStretchFactor(0, 5)
+            self.editor_split.setStretchFactor(1, 2)
+        if self._explorer_visible:
+            self._set_logical_split_sizes(preview, explorer)
+        else:
+            self._last_visible_split_sizes = (preview, explorer)
+
     def toggle_file_explorer(self, visible):
-        self._explorer_visible = bool(visible)
-        self.explorer.setVisible(bool(visible))
+        visible = bool(visible)
+        if self._explorer_visible and not visible:
+            preview, explorer = self._logical_split_sizes()
+            if preview > 0 and explorer > 0:
+                self._last_visible_split_sizes = (preview, explorer)
+        self._explorer_visible = visible
+        self.explorer.setVisible(visible)
         if visible:
-            sizes = self.editor_split.sizes()
-            # Preserve the user's divider when reopening the explorer.
-            self.editor_split.setSizes([sizes[0] if sizes[0] > 0 else 940,
-                                        sizes[1] if sizes[1] > 0 else 310])
+            preview, explorer = self._logical_split_sizes()
+            if preview <= 0 or explorer <= 0:
+                preview, explorer = self._last_visible_split_sizes
+            self._set_logical_split_sizes(preview, explorer)
         self._sync_file_explorer_button()
 
     def set_workspace_layout(self, name):
@@ -630,12 +679,16 @@ class QtWorkspaceEditor(QMainWindow):
             raise ValueError('Unknown layout preset.')
         explorer_width, viewport_width = options[name]
         self.toggle_file_explorer(True)
-        self.editor_split.setSizes([viewport_width * 120, explorer_width * 120])
+        self._set_logical_split_sizes(viewport_width * 120,
+                                      explorer_width * 120)
 
     def save_workspace_layout(self):
+        preview, explorer = self._logical_split_sizes()
+        if preview <= 0 or explorer <= 0:
+            preview, explorer = self._last_visible_split_sizes
         self.manager.settings['editor_workspace_layout'] = {
             'tab': self.tabs.currentIndex(),
-            'sizes': {section: split.sizes() for section, split in self.splitters.items()},
+            'sizes': {section: [preview, explorer] for section in self.TABS},
         }
         try:
             self.manager.persist()
@@ -655,8 +708,8 @@ class QtWorkspaceEditor(QMainWindow):
             pair = sizes.get('models') or sizes.get('files')
             if (isinstance(pair, list) and len(pair) == 2 and
                     all(isinstance(n, int) and n > 0 for n in pair)):
-                # Saved layout widths are viewer-left / explorer-right.
-                self.editor_split.setSizes(pair)
+                # Saved sizes are always (preview, explorer), not screen order.
+                self._set_logical_split_sizes(*pair)
 
     def _capture_playback_preferences(self):
         if self.current and self.mode=='models' and self.model_panel is not None:
@@ -680,8 +733,11 @@ class QtWorkspaceEditor(QMainWindow):
         if self.model_gpu is not None:
             camera={'rotation':list(self.model_gpu.rotation),
                     'pan':list(self.model_gpu.pan),'zoom':self.model_gpu.zoom}
+        preview, explorer = self._logical_split_sizes()
+        if preview <= 0 or explorer <= 0:
+            preview, explorer = self._last_visible_split_sizes
         data={'tab':self.tabs.currentIndex(),'selected':selected,
-              'sizes':{key:split.sizes() for key,split in self.splitters.items()},
+              'sizes':{key:[preview, explorer] for key in self.TABS},
               'camera':camera}
         sessions=self.manager.settings.get('editor_project_sessions',{})
         if not isinstance(sessions,dict):
@@ -705,7 +761,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         for name,pair in session.get('sizes',{}).items():
             if name in self.splitters:
-                self.splitters[name].setSizes(pair)
+                self._set_logical_split_sizes(*pair)
         self._restored_camera=session.get('camera',{})
         selected = session.get('selected', {})
         tab = session.get('tab', 0)
