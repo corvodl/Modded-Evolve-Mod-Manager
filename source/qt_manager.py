@@ -359,6 +359,7 @@ class QtManager(QMainWindow):
         self.stage_path = self.settings.get('stage', str(DATA_HOME/'Setup'/'staged'))
         self.swap_path = self.settings.get('swap', str(DATA_HOME/'Setup'/'swap'))
         self.projects_path = self.settings.get('projects', str(DATA_HOME/'Projects'))
+        self.game_storage_root = self.settings.get('game_storage_root', str(DATA_HOME/'GameSets'))
         self.current_workspace = self.settings.get('current_workspace', '')
         self.output_pak = self.settings.get('output_pak', '')
         self.batch_root = self.settings.get('batch_root', '')
@@ -751,6 +752,8 @@ class QtManager(QMainWindow):
         else:
             self._last_public_page = index
         self.stack.setCurrentIndex(index)
+        if SECTIONS[index] == 'Settings' and not self.game_storage_panel._scanned:
+            self.game_storage_panel.refresh()
         if SECTIONS[index] == 'Asset Library':
             self.refresh_library_table()
         elif SECTIONS[index] == 'Modding' and self._startup_inventory_pending:
@@ -1770,21 +1773,20 @@ class QtManager(QMainWindow):
         general_row.addWidget(self.motion_checkbox)
         general_row.addWidget(_button('Create Desktop Shortcut', self.create_shortcut))
 
-        _settings_heading(lay, 'GAME & FILES',
-                          'Connected installation, signing stage, projects, and workspace paths.')
-        folders, inside = _card('FOLDERS',
-                                 'Folders are stored in Data/Settings and are preserved during updates.')
+        _settings_heading(lay, 'GAME STORAGE',
+                          'One location for new setups, with storage breakdown and advanced paths.')
+        folders, inside = _card('GAME STORAGE',
+                                'Review disk usage without moving active signing or recovery files.')
         lay.addWidget(folders)
         self.fields = {}
-        for label, name in (('Signing stage', 'stage'), ('Launch/swap folder', 'swap'), ('Projects', 'projects')):
-            line = QHBoxLayout()
-            line.addWidget(_label(label))
+        for name in ('stage', 'swap', 'projects'):
             inp = QLineEdit()
             inp.setText(getattr(self, name + '_path'))
+            inp.setObjectName('advanced' + name.title() + 'Path')
             self.fields[name] = inp
-            line.addWidget(inp, 1)
-            line.addWidget(_button('Browse…', lambda k=name: self.browse_folder(k)))
-            inside.addLayout(line)
+        from qt_game_storage import GameStorageSettings
+        self.game_storage_panel = GameStorageSettings(self, self.fields, folders)
+        inside.addWidget(self.game_storage_panel)
         btns = QWidget()
         btns.setLayout(_row(_button('Set Up Manager', self.initial_setup, primary=True),
                              _button('Check Setup', self.check_setup),
@@ -2585,6 +2587,7 @@ class QtManager(QMainWindow):
             'stage': self.stage_path,
             'swap': self.swap_path,
             'projects': self.projects_path,
+            'game_storage_root': self.game_storage_root,
             'current_workspace': self.current_workspace,
             'output_pak': self.output_pak,
             'archive_label': self.archive_label,
@@ -2601,6 +2604,15 @@ class QtManager(QMainWindow):
         save_settings(self.settings)
 
     def save_settings(self):
+        from game_storage import validate_storage_root
+        try:
+            selected = validate_storage_root(
+                self.game_storage_panel.root_input.text().strip(),
+                game=self.game_root or self._find_game_root())
+        except (OSError, ValueError) as exc:
+            self.failure(exc)
+            return
+        self.game_storage_root = str(selected)
         self.stage_path = self.fields['stage'].text().strip()
         self.swap_path = self.fields['swap'].text().strip()
         self.projects_path = self.fields['projects'].text().strip()
@@ -2610,7 +2622,9 @@ class QtManager(QMainWindow):
             self.persist()
             self.refresh_archives()
             self.refresh_swap_status()
-            self.info('Saved', 'Manager folder settings saved.')
+            self.info('Saved', 'Manager folder settings saved. '
+                      'Changing Mod Data Location affects new setups only; '
+                      'active signing and swap folders have not been moved.')
         except Exception as exc:
             self.failure(exc)
 
@@ -4227,7 +4241,16 @@ class QtManager(QMainWindow):
                                'Choose setup storage mode. The live launch still protects original game files.')
             if storage is None:
                 return
-            dest = DATA_HOME/'GameSets'/('Setup_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
+            from game_storage import validate_storage_root, reusable_setup
+            root = validate_storage_root(self.game_storage_root, game=game)
+            # Reusing a known-good signed setup avoids generating another
+            # full set of large PAKs. We only reuse a safe exact match.
+            if reusable_setup(self.stage_path, self.swap_path, game, launcher):
+                self.info('Existing setup reused',
+                          'Signing PAKs and launcher recovery are already configured '
+                          'for this game and client. No new PAK copies were created.')
+                return
+            dest = root/('Setup_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
             if not self.confirm('Confirm setup',
                 f'Close game and launcher. Verify PAKs and prepare a private signed set in:\n{dest}\n\nContinue?'):
                 return
@@ -4251,6 +4274,8 @@ class QtManager(QMainWindow):
         self.swap_path = result['swap']
         self.fields['stage'].setText(self.stage_path)
         self.fields['swap'].setText(self.swap_path)
+        self.game_storage_panel.active_label.setText(
+            'Active setup: ' + str(Path(self.stage_path).parent))
         self.persist()
         self.refresh_archives()
         self.info('Setup finished', 'Your local mod signing setup is ready.')
@@ -4264,10 +4289,9 @@ class QtManager(QMainWindow):
             game = QFileDialog.getExistingDirectory(self,'Select updated installed EvolveGame')
             if not game:
                 return
-            folder = QFileDialog.getExistingDirectory(self,'Choose new setup storage folder',
-                                                       str(DATA_HOME/'GameSets'))
-            if not folder:
-                return
+            from game_storage import validate_storage_root
+            folder = validate_storage_root(
+                self.game_storage_root, game=game)
             keep = self.confirm_storage('Keep original snapshots?',
                                         'Choose whether the refreshed setup stores original PAK snapshots.')
             if keep is None:
@@ -4316,6 +4340,8 @@ class QtManager(QMainWindow):
         self.projects_path = settings.get('projects',self.projects_path)
         for key in ('stage','swap','projects'):
             self.fields[key].setText(getattr(self,key+'_path'))
+        self.game_storage_panel.active_label.setText(
+            'Active setup: ' + str(Path(self.stage_path).parent))
         self.refresh_archives()
         self.refresh_swap_status()
         self.info('Bundle ready', 'Configured your existing exported complete setup.')
