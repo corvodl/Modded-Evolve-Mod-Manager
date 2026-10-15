@@ -143,3 +143,55 @@ def isolate_root_depth(data: bytes, *, mode: str = "all",
     result = bytes(movie)
     inspect_gfx(result)
     return result
+
+
+def likely_main_menu_dialog(data: bytes, virtual: str) -> RootLayer | None:
+    """Recognize the *specific* large Stage 2 dialog-style root container.
+
+    The supplied main_menu.gfx has root depth 74 -> sprite 270, whose
+    first frame places large shape 265 at depth 3 and also contains a
+    scrollbar, button and text. The rectangle matches the red overlay
+    shown in the user's beta.50 screenshot. This is evidence of a dialog
+    layer, not proof that the game normally displays it on startup.
+
+    Other movies/builds are left in 'All layers' mode by default.
+    """
+    if virtual.replace("\\", "/").casefold() != "libs/ui/main_menu.gfx":
+        return None
+    info = inspect_gfx(data)
+    if (info.width, info.height, info.frames) != (1920, 1080, 1):
+        return None
+    candidate = next((x for x in root_layers(data)
+                      if x.depth == 74 and x.character == 270), None)
+    if candidate is None:
+        return None
+    _, records = _records(_raw(data))
+    large_shape = False
+    dialog_children = set()
+    for code, payload, _prefix in records:
+        if code == 2 and len(payload) > 4:
+            if struct.unpack_from("<H", payload)[0] != 265:
+                continue
+            from gfx_layout_backend import _rect
+            try:
+                bounds, _ = _rect(payload, 2)
+            except GfxError:
+                return None
+            large_shape = (
+                abs(bounds[0] - 292.15) < 3 and
+                abs(bounds[1] - 1630.15) < 3 and
+                abs(bounds[2] - 25.55) < 3 and
+                abs(bounds[3] - 1030.55) < 3
+            )
+        elif code == 39 and len(payload) > 4:
+            if struct.unpack_from("<H", payload)[0] != 270:
+                continue
+            from gfx_placement_diagnostics import _tag_list
+            for child_code, child in _tag_list(payload, 4):
+                if child_code in (4, 26, 70):
+                    result = _target(child_code, child)
+                    if result and result[1] is not None:
+                        dialog_children.add(result[1])
+    if not large_shape or not {265, 205, 221, 192}.issubset(dialog_children):
+        return None
+    return candidate
