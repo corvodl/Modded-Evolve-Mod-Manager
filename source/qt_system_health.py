@@ -210,7 +210,7 @@ class SystemHealthPanel(QWidget):
                              "modified game files without offline protection."):
             return
         self._submit("firewall", lambda: (
-            change_offline_rule(game, enabled),
+            change_offline_rule(game, enabled, swap_root=swap_root),
             "Manager-owned rule updated.")[1])
 
     def _dumps(self, enabled):
