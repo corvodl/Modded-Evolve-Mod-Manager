@@ -8,6 +8,11 @@ echo Building the portable Evolve Mod Manager...
 echo Build computer needs Python 3.11 x64. The finished app includes Python.
 call source\Setup-Environment.cmd
 if errorlevel 1 goto failed
+rem Production GitHub builds include approved native Twofish with LGPL notices.
+if /i "%EVOLVE_REQUIRE_NATIVE_TWOFISH%"=="1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "source\\Prepare-Native-Twofish.ps1" -Require
+  if errorlevel 1 goto failed
+)
 rem Pin and bundle the independent GPLv2 converter and its complete source.
 powershell -NoProfile -ExecutionPolicy Bypass -File "source\Prepare-Cryengine-Converter.ps1"
 if errorlevel 1 goto failed
