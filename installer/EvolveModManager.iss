@@ -40,6 +40,7 @@ Source: "..\.build\app-dist\EvolveModManager\EvolveModManager.exe"; DestDir: "{a
 Source: "..\.build\app-dist\EvolveModManager\EvolveModWorker.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\.build\app-dist\EvolveModManager\BUILD_COMMIT.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\.build\app-dist\EvolveModManager\BUILD_CHANNEL.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\.build\app-dist\EvolveModManager\BUILD_REVISION.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\.build\app-dist\EvolveModManager\START-HERE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\.build\app-dist\EvolveModManager\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pak,private_key.pem,*.customkey-*,ffdec*,*.jar,java.exe,javaw.exe,javac.exe,jvm.dll,jre\\*,jdk\\*,temurin\\*,openjdk\\*"
 Source: "..\.build\app-dist\EvolveModManager\Docs\*"; DestDir: "{app}\Docs"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pak,private_key.pem,*.customkey-*,ffdec*,*.jar,java.exe,javaw.exe,javac.exe,jvm.dll,jre\\*,jdk\\*,temurin\\*,openjdk\\*"
