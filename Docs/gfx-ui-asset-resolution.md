@@ -62,3 +62,33 @@ extension tags and external DDS storage, which FFDec may not rasterize
 in the actual GFX frame. Accurate placement/compositing requires
 decoding and validating those extension records against matching
 compiled GFX and DDS sample bytes, not guessing symbol positions.
+
+## Placement accuracy versus alpha transparency
+
+A correct bitmap **path** does not establish where a texture is drawn.
+For deterministic static placement the loader would need to validate:
+
+1. Each Scaleform external-image definition (including extension tag 1009)
+   as an image character ID with the exact cooked DDS asset and dimensions.
+2. The GFX display-list placements, depth, affine transforms, clipping
+   masks, color/alpha transforms, frame and nested sprite references.
+3. Multiple instances of the same symbol, including overlays and order.
+4. A frame render against a known in-game capture for the same UI state.
+
+Only then should the editor mark static placement as **verified**.
+`UI/TexturePreload.xml` is not a placement instruction. ActionScript
+callbacks or game-driven menu state cannot be guaranteed by static
+rendering alone, so this PR does not guess composite positions.
+
+The GFX frame canvas defaults to a high-contrast **transparency
+checkerboard** (FFDec is already invoked with `-ignorebackground`).
+The **Canvas** selector offers dark, light and white diagnostic
+backgrounds. **Zoom to visible content** trims genuine PNG alpha
+margins for preview only; it is disabled by default to preserve
+the movie's frame-coordinate context. Export keeps the original
+transparent RGBA frame, not a screenshot or trimmed composite.
+
+If an FFDec render is fully opaque, the preview explicitly says that
+the canvas background cannot make baked-in white GFX artwork
+transparent. Automatic white-color keying would destroy legitimate
+white pixels and is deliberately not enabled.
