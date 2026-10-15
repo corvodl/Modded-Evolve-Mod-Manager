@@ -206,6 +206,8 @@ class UnifiedExplorerTests(unittest.TestCase):
     def test_typing_search_coalesces_rebuilds(self):
         editor = self.editor
         with patch.object(editor, 'populate') as populate:
+            # Qt captures slots when connected; attach the spy explicitly.
+            editor._search_timer.timeout.connect(populate)
             editor.search.setText('c')
             editor.search.setText('ch')
             editor.search.setText('character')
