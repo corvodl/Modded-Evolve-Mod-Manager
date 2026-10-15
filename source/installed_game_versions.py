@@ -64,7 +64,12 @@ def client_executable(swap_dir):
         if not config.is_file() or config.stat().st_size > 16384:
             return None
         data = json.loads(config.read_text(encoding="utf-8"))
-        candidate = Path(data.get("launcher", ""))
+        if not isinstance(data, dict):
+            return None
+        configured = data.get("launcher")
+        if not isinstance(configured, str) or not configured:
+            return None
+        candidate = Path(configured)
         if (candidate.suffix.casefold() != ".exe"
                 or candidate.name.casefold() == "evolve.exe"
                 or not candidate.is_file()):
