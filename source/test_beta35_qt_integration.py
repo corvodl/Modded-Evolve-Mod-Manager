@@ -68,6 +68,9 @@ class Beta35QtIntegrationTests(unittest.TestCase):
             with patch("project_catalog.project_rows",
                        side_effect=ValueError("old project cannot be indexed")):
                 restored = QtManager()
+                # Inventory validation is lazy now: entering Modding, not
+                # first paint, performs the expensive legacy-project scan.
+                restored.open_page(SECTIONS.index("Modding"))
             try:
                 self.app.processEvents()
                 self.assertTrue(hasattr(restored, "status"))
@@ -96,6 +99,7 @@ class Beta35QtIntegrationTests(unittest.TestCase):
                  patch("asset_intelligence.validate_project",
                        return_value=(("asset.mtl",), ("old project needs review",))):
                 restored = QtManager()
+                restored.open_page(SECTIONS.index("Modding"))
             try:
                 self.app.processEvents()
                 self.assertEqual(restored.project_table.rowCount(), 1)
