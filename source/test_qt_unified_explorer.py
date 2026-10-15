@@ -88,7 +88,10 @@ class UnifiedExplorerTests(unittest.TestCase):
             self.assertFalse(item.icon(0).isNull())
             self.assertIn(name, item.toolTip(0))
         self.assertNotIn("#0000ff", tree.styleSheet().lower())
-        self.assertIn("#772b3d", tree.styleSheet().lower())
+        # Qt-wide semantic selection coloring replaces per-window red QSS.
+        self.assertNotIn("#772b3d", tree.styleSheet().lower())
+        self.assertIs(self.editor.editor_split.widget(0), self.editor.explorer)
+        self.assertIs(self.editor.editor_split.widget(1), self.editor.tabs)
 
     def test_click_selects_correct_editor_without_visible_tabs(self):
         editor = self.editor
