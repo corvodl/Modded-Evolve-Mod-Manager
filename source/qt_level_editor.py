@@ -418,7 +418,14 @@ class UnrealStyleLevelEditor(QMainWindow):
         outliner,outlay=self._panel("WORLD OUTLINER")
         self.filter=QLineEdit()
         self.filter.setPlaceholderText("Search objects and layers…")
-        self.filter.textChanged.connect(self._populate_outliner)
+        # Large maps can have 25,000 placement rows; typing must not
+        # reconstruct the outliner on every keystroke.
+        self._outliner_search_timer = QTimer(self)
+        self._outliner_search_timer.setSingleShot(True)
+        self._outliner_search_timer.setInterval(200)
+        self._outliner_search_timer.timeout.connect(self._populate_outliner)
+        self.filter.textChanged.connect(
+            lambda _text: self._outliner_search_timer.start())
         outlay.addWidget(self.filter)
         self.outliner=QTreeWidget()
         self.outliner.setHeaderLabels(("Label","Type"))
@@ -880,6 +887,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.viewport.update()
 
     def _populate_outliner(self):
+        self._outliner_search_timer.stop()
         self.outliner.blockSignals(True)
         self.outliner.clear()
         needle=self.filter.text().casefold()
