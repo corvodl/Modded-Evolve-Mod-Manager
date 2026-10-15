@@ -62,7 +62,9 @@ from qt_theme_116 import PALETTES, ROLES, palette, qt_palette_style
 from studio_polish_117 import theme_preset, validate_theme_preset, read_theme_file
 from pak_browser import archive_description, describe_archive, matching_archives, format_size, import_target
 from universal_stage import allowed_paks
-from launch_integration import state_status, launcher_commands, restore_command, package_status, add_missing_scripts
+from launch_integration import (state_status, launcher_commands, restore_command,
+                                package_status, add_missing_scripts,
+                                unmodded_launch_target)
 from orphaned_swap_recovery import plan_recovery
 from injector_guard import inspect_injector
 from multi_pak_assets import load_collection
@@ -149,6 +151,7 @@ ACTION_HINTS = {
     'Import Modified PAK': 'Stage an externally modified, compatible PAK after validation.',
     'Undo Staged Mod': 'Restore an earlier staged PAK from a dated project backup; not the installed live game.',
     'Play With Mods': 'Begin offline mod testing. Already-prepared files launch faster. Restore originals after your session.',
+    'Play Without Mods': 'Restore any active mod swap first, verify original PAKs and injector, then launch the configured client without swapping modded files. Does not delete staged mods.',
     'Restore Game Files': 'Safely return original game PAKs and injector from lightweight rename backups; retain mod files for reuse.',
     'Status Details': 'Show counts and recovery details from the real swap journal.',
     'Set Up Launcher': 'Install missing trusted launcher helper scripts without overwriting existing journal or scripts.',
@@ -1624,6 +1627,8 @@ class QtManager(QMainWindow):
         box.setLayout(_row(
             _action_with_info('Play With Mods', self.launch,
                               ACTION_HINTS['Play With Mods'], primary=True),
+            _action_with_info('Play Without Mods', self.play_without_mods,
+                              ACTION_HINTS['Play Without Mods']),
             _action_with_info('Restore Game Files', self.restore,
                               ACTION_HINTS['Restore Game Files'])))
         panel.addWidget(box)
@@ -3805,6 +3810,75 @@ class QtManager(QMainWindow):
                 set_offline(self._developer_game(), not self._developer_allow_online)
                 self.run_steps(commands,'Play with Mods',self.refresh_swap_status,
                                cwd=Path(self.swap_path))
+        except Exception as exc:
+            self.failure(exc)
+
+    def _launch_unmodded_client(self):
+        """Launch only after a fresh journal, backup and injector check.
+
+        The configured normal launcher is started directly, without Frida,
+        controlled_swap.py, or touching prepared/staged mod packages.
+        """
+        game, client = unmodded_launch_target(
+            Path(self.swap_path), self.game_root or self._find_game_root())
+        from orphaned_swap_recovery import ensure_game_closed
+        ensure_game_closed()
+        # An earlier modded session may have left our firewall rule enabled.
+        # For normal play, failure to remove it is an error, not a success.
+        set_offline(game, False)
+        subprocess.Popen([str(client)], cwd=str(client.parent))
+        self.status.setText('Started the normal client without installing mods.')
+        self._log('Play Without Mods: started configured client with originals intact.')
+        self.refresh_swap_status()
+
+    def play_without_mods(self):
+        """Restore an active mod swap before launching the normal client."""
+        try:
+            if self.busy:
+                raise RuntimeError('Wait for the current manager task to finish.')
+            # The raw journal distinguishes a swap requiring normal restoration
+            # from an orphaned backup that needs the dedicated recovery script.
+            st = state_status(Path(self.swap_path))
+            game = (Path(st.game) if st.game and Path(st.game).is_dir()
+                    else self.game_root or self._find_game_root())
+            if game is None:
+                raise RuntimeError('Complete Set Up Manager to locate EvolveGame.')
+            from orphaned_swap_recovery import plan_recovery
+            pending = plan_recovery(game)
+            if st.phase in ('swapped', 'interrupted'):
+                if not pending:
+                    raise RuntimeError('Swap journal reports installed mods, but '
+                                       'original backups are missing. Inspect '
+                                       'Restore Game Files before launching.')
+                if not self.confirm('Restore originals and play without mods?',
+                    'Close Evolve and the client. Restore the original PAKs '
+                    'and injector, then start the normal client without '
+                    'installing staged mods?'):
+                    return
+                self.run_steps(
+                    [('Restoring originals for unmodded play',
+                      restore_command(Path(self.swap_path)))],
+                    'Play Without Mods — restoring originals',
+                    self._launch_unmodded_client, cwd=Path(self.swap_path))
+                return
+            if st.phase not in ('missing', 'prepared', 'restored'):
+                raise RuntimeError('Swap state requires inspection. Use Restore '
+                                   'Game Files before launching without mods.')
+            if pending:
+                if not self.confirm('Recover originals and play without mods?',
+                    f'Found {len(pending)} orphaned original backups. Close '
+                    'Evolve and the client. Recover the originals, preserving '
+                    'modded copies, then start the normal client?'):
+                    return
+                command = [sys.executable, '-u',
+                           str(ROOT/'orphaned_swap_recovery.py'),
+                           '--game', str(game), '--manifest-dir',
+                           str(DATA_HOME/'RecoveryLogs'), '--apply']
+                self.run_steps([('Recovering originals for unmodded play', command)],
+                               'Play Without Mods — recovering originals',
+                               self._launch_unmodded_client)
+                return
+            self._launch_unmodded_client()
         except Exception as exc:
             self.failure(exc)
 
