@@ -505,6 +505,9 @@ class QtMigrationTests(unittest.TestCase):
             'Game/characters_monsters_goliath_ts.pak':'Game/characters_monsters_goliath_ts.pak',
         }):
             self.win.refresh_archives()
+        # Archive inventory remains lazy until the legacy inspector is
+        # actually requested; refresh its rows explicitly in this test.
+        self.win.refresh_table()
         self.assertEqual(self.win.table.rowCount(),2)
         self.win.search.setText('Goliath Models')
         self.application.processEvents()
