@@ -101,6 +101,12 @@ def prepare_scene(project, cancel, progress=None, *, game=None, stage=None, cach
     details["material_catalog_truncated"] = len(material_names) > 20000
     assets, issues, models = {}, Counter(), {}
     details["terrain"] = None
+    # Make the complete placement scene available to the GUI before
+    # optional terrain/atlas decoding or material residency. Qt publishes
+    # generation-checked results and keeps this a pending scene, not a
+    # fully textured one. Never change source/export fidelity.
+    if partial and not cancel.is_set():
+        partial({}, dict(issues), dict(details, pending=True))
     height_source = "levels/" + str(project.level_name) + "/leveldata/heightmap.dat"
     source_record, terrain_state = resolve_scoped(
         index, height_source, project.workspace)
@@ -167,8 +173,6 @@ def prepare_scene(project, cancel, progress=None, *, game=None, stage=None, cach
         return RenderAsset(mesh, geometry, materials, 0, cache_key, (lower,upper))
     from level_residency import SceneResidency
     # Export decodes original resources independently, one at a time below.
-    if partial:
-        partial({}, dict(issues), dict(details, pending=True))
     from level_residency import retained_bytes
     terrain_cost = retained_bytes(details.get('terrain_chunks', ()))
     atlas = details.get('terrain_atlas')
