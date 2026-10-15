@@ -311,6 +311,7 @@ class NavigationButton(QPushButton):
 
 
 class TaskSignals(QObject):
+    inventory_ready = Signal(object, object, str)
     completed = Signal(str, int)
     output = Signal(str)
     update_checked = Signal(object, str, bool)
@@ -395,6 +396,7 @@ class QtManager(QMainWindow):
         self.update_running = False
         self.signals = TaskSignals()
         self.signals.completed.connect(self._task_finished)
+        self.signals.inventory_ready.connect(self._initial_modding_inventory_ready)
         self.signals.output.connect(self._log)
         self.signals.update_checked.connect(self._on_update_checked)
         self.signals.update_staged.connect(self._on_update_staged)
@@ -719,9 +721,8 @@ class QtManager(QMainWindow):
         if SECTIONS[index] == 'Asset Library':
             self.refresh_library_table()
         elif SECTIONS[index] == 'Modding' and self._startup_inventory_pending:
-            self.refresh_project_list()
-            self.refresh_archives()
             self._startup_inventory_pending = False
+            self._load_initial_modding_inventory()
         self._highlight_page(index)
         self.page_location.setText('  /  ' + SECTIONS[index])
         if index == SECTIONS.index('Home'):
@@ -1378,6 +1379,7 @@ class QtManager(QMainWindow):
         actions.addWidget(self.search, 1)
         self.file_filter = QComboBox()
         self.file_filter.addItems(('All files', 'PAK archives', 'Game files'))
+        self.file_filter.setCurrentText('PAK archives')
         self.file_filter.currentTextChanged.connect(self.refresh_table)
         actions.addWidget(self.file_filter)
         actions.addWidget(_button('Refresh', self.refresh_archives))
@@ -1428,18 +1430,58 @@ class QtManager(QMainWindow):
     def toggle_advanced_archive_tools(self):
         expanded = not self.legacy_archive_panel.isVisible()
         self.legacy_archive_panel.setVisible(expanded)
+        if expanded:
+            self.refresh_table()
         self.legacy_archive_toggle.setText(
             'Hide Advanced Archive Tools' if expanded else 'Show Advanced Archive Tools')
 
-    def refresh_project_list(self):
+    def _load_initial_modding_inventory(self):
+        """Load expensive PAK/project filesystem inventory without blocking Qt."""
+        self.archive_count.setText('Scanning staged PAKs in background…')
+        self.status.setText('Loading Modding inventory in background…')
+        stage, projects = self.stage_path, self.projects_path
+
+        def worker():
+            failures = []
+            try:
+                from project_catalog import project_rows
+                projects_result = tuple(project_rows(projects, stage))
+            except (OSError, ValueError, KeyError) as exc:
+                projects_result = ()
+                failures.append('Projects: ' + str(exc)[:160])
+            try:
+                archives_result = tuple(sorted(
+                    allowed_paks(Path(stage)).values(), key=str.casefold))
+            except (OSError, ValueError) as exc:
+                archives_result = ()
+                failures.append('Archives: ' + str(exc)[:160])
+            self.signals.inventory_ready.emit(
+                projects_result, archives_result, '; '.join(failures))
+
+        threading.Thread(target=worker, daemon=True,
+                         name='ModdingInventory').start()
+
+    def _initial_modding_inventory_ready(self, projects, archives, failure):
+        """Apply results on Qt's main thread; never manipulate Qt in worker."""
+        self.refresh_project_list(rows=projects, skip_changes=True)
+        self.refresh_archives(records=archives, warm=False)
+        self.archive_count.setText(f'{len(archives)} staged PAKs ready')
+        if failure:
+            self._log('Modding inventory: ' + failure)
+        self.status.setText(
+            'Modding inventory loaded.' if not failure else
+            'Modding inventory partly unavailable — see Activity.')
+
+    def refresh_project_list(self, rows=None, *, skip_changes=False):
         if not hasattr(self, 'project_table'):
             return
-        from project_catalog import project_rows
-        try:
-            rows = project_rows(self.projects_path, self.stage_path)
-        except (OSError, ValueError, KeyError) as exc:
-            self._log('Project list: ' + str(exc)[:240])
-            rows = ()
+        if rows is None:
+            from project_catalog import project_rows
+            try:
+                rows = project_rows(self.projects_path, self.stage_path)
+            except (OSError, ValueError, KeyError) as exc:
+                self._log('Project list: ' + str(exc)[:240])
+                rows = ()
         current = self.current_workspace
         self._project_rows = {record['workspace']: record for record in rows}
         table = self.project_table
@@ -1459,7 +1501,13 @@ class QtManager(QMainWindow):
             if table.item(i, 0).data(Qt.UserRole) == current:
                 table.selectRow(i)
                 break
-        self.refresh_project_changes()
+        if skip_changes:
+            # Diff/asset validation can be just as expensive as discovery.
+            # It runs only if the user selects an actual workspace row.
+            self.project_changes_table.setRowCount(0)
+            self._sync_project_quick_actions()
+        else:
+            self.refresh_project_changes()
 
     def _sync_project_quick_actions(self):
         buttons = getattr(self, 'project_quick', {})
@@ -2902,16 +2950,22 @@ class QtManager(QMainWindow):
                 except (AttributeError, RuntimeError, OSError, ValueError):
                     continue
 
-    def refresh_archives(self):
-        try:
-            self.archive_entries = sorted(
-                allowed_paks(Path(self.stage_path)).values(), key=str.casefold)
-        except (OSError, ValueError) as exc:
-            self.archive_entries = []
-            self._log('Archive scan: ' + str(exc))
-        self.refresh_table()
-        self._warm_shared_assets()
-        self._warm_asset_library()
+    def refresh_archives(self, records=None, *, warm=True):
+        if records is None:
+            try:
+                records = sorted(
+                    allowed_paks(Path(self.stage_path)).values(), key=str.casefold)
+            except (OSError, ValueError) as exc:
+                records = ()
+                self._log('Archive scan: ' + str(exc))
+        self.archive_entries = list(records)
+        # Building thousands of rows or walking loose files is unnecessary
+        # until the specialist archive inspector is opened.
+        if self.legacy_archive_panel.isVisible():
+            self.refresh_table()
+        if warm:
+            self._warm_shared_assets()
+            self._warm_asset_library()
 
     def refresh_table(self):
         if not hasattr(self, 'table'):
