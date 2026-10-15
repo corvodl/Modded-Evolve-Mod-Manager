@@ -31,9 +31,17 @@ class _HealthJob(QRunnable):
     def run(self):
         try:
             value = self.callback()
-            self.signals.done.emit(self.kind, value, "")
+            error = ""
         except Exception as exc:
-            self.signals.done.emit(self.kind, None, f"{type(exc).__name__}: {exc}")
+            value, error = None, f"{type(exc).__name__}: {exc}"
+        # Closing the manager while an optional diagnostic is running can
+        # destroy its receiver. Never emit against a deleted Qt wrapper.
+        from shiboken6 import isValid
+        try:
+            if isValid(self.signals):
+                self.signals.done.emit(self.kind, value, error)
+        except RuntimeError:
+            pass
 
 
 class SystemHealthPanel(QWidget):
