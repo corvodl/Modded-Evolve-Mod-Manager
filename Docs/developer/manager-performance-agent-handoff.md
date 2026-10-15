@@ -324,3 +324,43 @@ Recommended sequence:
 6. Consider persistent GPU buffers/instancing and compressed DDS upload only if remaining measurements justify them.
 
 For each change, deliver the concrete cause, before/after spans under identical conditions, maximum memory/queue behavior, correctness tests, cancellation behavior and packaging requirements. Describe remaining unknowns explicitly. The desired outcome is a manager that becomes useful sooner, completes real work faster and remains correct under large assets—not simply one with more background threads.
+
+## 9. Implementation progress and repeatable benchmark commands (October 15, 2026)
+
+This appendix records work delivered on PR #76 after the original report's inspected commit. The report's acceptance criteria in sections 4–8 remain authoritative; an implementation claim does not substitute for evidence from the required representative benchmarks.
+
+### Implemented code paths
+
+- Model file-tree and map outliner search changes are debounced at 200 ms. Full tree virtualization and incremental row insertion are **not implemented**.
+- Model preparation now checks a cancellation signal at CPU-stage boundaries and rejects obsolete cache publication. Deep decoder-level cooperative cancellation and geometry-first CPU staged publication remain open.
+- The GPU model preview displays verified geometry before completing all diffuse, normal and specular texture uploads. Each paint submits at most one original-dimension texture (with mipmaps where available). Real Windows GL measurements, GPU completion timing and upload byte budgets are still required.
+- Initial Map Editor opening now uses a worker to parse placements and a cancellable nonmodal loading shell; the widget receives the already prepared project. Project construction from direct standalone editor callers still supports the old synchronous fallback.
+- Map texture streaming preserves GPU uploads for unchanged live image objects and the independent terrain atlas; CPU residency reuses immutable decoded-image fingerprints where identity remains stable.
+- Map residency now uses a scene spatial grid to find nearby placement material variants, with retention margin for previously loaded resources. Validate view-frustum coverage and camera motion against representative maps; do not assume this synthetic index is equivalent to full frustum-culling or camera path benchmarks.
+- Signed method 13/14 Asset Library imports use bounded CTR/DEFLATE streaming, validate signed entry sizes and CRC, retain final source SHA-256 checks and atomic manifest publication, reuse worker-owned source handles/cipher schedules and poll cancellation per chunk. Original method-13/14 semantics and ZIP import remain separate. Native Windows bulk Twofish block encryption and clean-machine dependency packaging remain **open**.
+- `performance_trace.py` records opt-in, monotonic, path-free stage spans to `DATA_HOME/Diagnostics/performance-spans.jsonl` when `EVOLVE_PERF_TRACE=1`. Startup import/first-swap/GPU completion telemetry needs further work.
+
+### Reproduce initial measurements
+
+From the `source/` directory in an environment containing the program's supported Python/Qt/decryption dependencies:
+
+```powershell
+python performance_benchmarks.py spatial --repeats 5
+python performance_benchmarks.py crypto --repeats 5 --bytes 1048576
+python performance_benchmarks.py map --workspace "<extracted-level-workspace>" --repeats 5
+python performance_benchmarks.py model --workspace "<extracted-model-workspace>" --relative "Game/characters/example.skinm" --repeats 5
+$env:EVOLVE_PERF_TRACE = "1"
+python qt_manager.py
+```
+
+These emit median/min/max and per-run times. **They do not themselves benchmark real OpenGL first geometry/final texture frames.** Retain locally the machine/OS/GPU/driver, game build, package version, cache condition (fresh import, derived-cache-cold, warm repeat, source edited), representative workload, memory and cancellation findings. Never share private source paths, user account identifiers, game keys or entire source PAKs in an issue log.
+
+### Remaining release gates
+
+- CI passes on the **exact release candidate SHA**, including native Windows Qt, GFX, map/Blender, signed PAK, materials, updater, installer and portable packaging. Any earlier green job against a superseded SHA is not sufficient.
+- Ship and validate a maintained license-compatible native bulk Twofish backend on a clean Windows installation, with differential randomized real-cipher and counter-offset tests. Present code reuses schedules and vectorizes XOR but does **not** have this backend.
+- Replace large item-based Qt trees/outliners with virtualized/lazy models while preserving exact virtual path selection, 25,000-object full-text search and cancellation of stale UI jobs. Debounce alone is not completion.
+- Validate dependency-fingerprinted cache invalidation for split DDS and material fragments, build isolation, externally modified source files, 30-second-plus warm reopening, and correct memory accounting. Current cache TTL remains bounded at 30 seconds.
+- Profile/rework remaining background warmup priorities and deep model/terrain partial publications, input/read/inflate/write stage budgets, spatial/frustum selection and GPU buffer submissions. Confirm final 2K/4K material quality and rigging are unchanged.
+- Record at least five representative before/after samples and the actual packaged Windows GPU first-geometry, first-texture and final-quality frame milestones, plus cancellation latency and peak memory. Measure a map, complete character and large signed PAK on real assets.
+- Change stable version and publish **v1.2.2 only after the above gates have succeeded**, as requested. Do not publish just because a document or synthetic CI tests exist. Keep PR #76 draft until then.
