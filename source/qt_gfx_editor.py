@@ -12,6 +12,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QFileDialog, QMessageBox, QGroupBox, QWidget, QMenuBar,
+    QLineEdit,
 )
 from gfx_preview_backend import inspect_gfx, GfxError, resolve_imports, export_gfx_png
 from gfx_edit_backend import (
@@ -22,6 +23,7 @@ from gfx_edit_backend import (
 )
 from qt_gfx_preview import GfxPreviewWidget
 from qt_navigation_icons import navigation_icon, action_icon
+from gfx_featured_promo import stage_featured_promo
 
 
 class GfxEditorDialog(QDialog):
@@ -147,6 +149,52 @@ class GfxEditorDialog(QDialog):
         self.tools_menu.aboutToShow.connect(self._sync_command_menus)
         outer.addWidget(tools)
 
+        # Retail main_menu.gfx receives its featured offer from a game
+        # callback. Only expose guarded script edits for this exact movie;
+        # changing a static title resource would not change dynamic text.
+        self.promo_group = None
+        if relative.casefold() == "libs/ui/main_menu.gfx":
+            self.promo_group = QGroupBox("Featured promotional UI (experimental)")
+            self.promo_group.setObjectName("gfxFeaturedPromoControls")
+            promo_layout = QVBoxLayout(self.promo_group)
+            promo_row = QHBoxLayout()
+            self.promo_mode = QComboBox()
+            self.promo_mode.setObjectName("gfxFeaturedPromoMode")
+            self.promo_mode.addItem("Hide", "hide")
+            self.promo_mode.addItem("Remove / disable", "remove")
+            self.promo_mode.addItem("Custom title text", "custom")
+            promo_row.addWidget(self.promo_mode)
+            self.promo_target = QComboBox()
+            self.promo_target.setObjectName("gfxFeaturedPromoTarget")
+            self.promo_target.addItem("Entire promotion", "all")
+            self.promo_target.addItem("Title only", "title")
+            promo_row.addWidget(self.promo_target)
+            self.promo_text = QLineEdit()
+            self.promo_text.setObjectName("gfxFeaturedPromoText")
+            self.promo_text.setMaxLength(72)
+            self.promo_text.setPlaceholderText("Replacement featured title")
+            promo_row.addWidget(self.promo_text, 2)
+            self.promo_stage = QPushButton("Stage promo edit")
+            self.promo_stage.setObjectName("gfxFeaturedPromoStage")
+            self.promo_stage.clicked.connect(self._stage_featured_promo)
+            promo_row.addWidget(self.promo_stage)
+            promo_layout.addLayout(promo_row)
+            self.promo_note = QLabel(
+                "Rebuilds the main menu's setFeatured ActionScript in a private "
+                "session. Hide changes visibility; Remove additionally attempts "
+                "to disable/remove runtime clips (static clips are hidden). "
+                "Game callbacks or localization may override these changes. "
+                "Test offline before publishing.")
+            self.promo_note.setWordWrap(True)
+            promo_layout.addWidget(self.promo_note)
+            self.promo_mode.currentIndexChanged.connect(self._promo_options_changed)
+            self.promo_target.currentIndexChanged.connect(self._promo_options_changed)
+            self.promo_text.textChanged.connect(self._promo_options_changed)
+            self._promo_options_changed()
+            outer.addWidget(self.promo_group)
+            self.tools_menu.addAction(
+                "Featured promotional UI…", self._focus_featured_promo)
+
         footer = QHBoxLayout()
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -161,6 +209,29 @@ class GfxEditorDialog(QDialog):
         footer.addWidget(cancel)
         outer.addLayout(footer)
         self._reload_preview()
+
+    def _focus_featured_promo(self):
+        if self.promo_group is not None:
+            self.promo_mode.setFocus()
+
+    def _promo_options_changed(self, *_):
+        if self.promo_group is None:
+            return
+        custom = self.promo_mode.currentData() == "custom"
+        self.promo_target.setEnabled(not custom)
+        self.promo_text.setEnabled(custom)
+        self.promo_stage.setEnabled(
+            not custom or bool(self.promo_text.text().strip()))
+
+    def _stage_featured_promo(self):
+        if self.promo_group is None:
+            return
+        mode = self.promo_mode.currentData()
+        target = "title" if mode == "custom" else self.promo_target.currentData()
+        text = self.promo_text.text() if mode == "custom" else ""
+        self._run("featured promotion", lambda: stage_featured_promo(
+            self.owner.workspace, self.snapshot.session, mode,
+            target=target, custom=text, configured=self._backend))
 
     def _sync_command_menus(self):
         for action in self.edit_menu.actions():

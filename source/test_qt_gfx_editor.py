@@ -77,6 +77,36 @@ class GfxQtEditorTests(unittest.TestCase):
         self.assertEqual(backups[0].read_bytes(), self.original)
         self.assertFalse((self.project / "GfxEditSessions").is_symlink())
 
+    def test_featured_promo_options_are_guarded_and_not_game_changes(self):
+        dialog = GfxEditorDialog(self.win, self.relative)
+        self.addCleanup(dialog.close)
+        self.assertIsNotNone(dialog.promo_group)
+        self.assertEqual(dialog.promo_mode.count(), 3)
+        self.assertEqual(dialog.promo_target.currentData(), "all")
+        self.assertFalse(dialog.promo_text.isEnabled())
+
+        dialog.promo_mode.setCurrentIndex(2)
+        self.assertEqual(dialog.promo_mode.currentData(), "custom")
+        self.assertFalse(dialog.promo_target.isEnabled())
+        self.assertTrue(dialog.promo_text.isEnabled())
+        self.assertFalse(dialog.promo_stage.isEnabled())
+        dialog.promo_text.setText("GOLIATH")
+        self.assertTrue(dialog.promo_stage.isEnabled())
+
+        # This fixture has no featured runtime scripts. A click must fail
+        # visibly rather than saving an unrelated static text resource.
+        with patch("qt_gfx_editor.QMessageBox.warning") as warning:
+            dialog.promo_stage.click()
+        self.assertTrue(warning.called)
+        self.assertFalse(dialog.apply.isEnabled())
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
+        dialog.promo_mode.setCurrentIndex(1)
+        self.assertEqual(dialog.promo_mode.currentData(), "remove")
+        self.assertTrue(dialog.promo_target.isEnabled())
+        self.assertFalse(dialog.promo_text.isEnabled())
+        self.assertTrue(dialog.promo_stage.isEnabled())
+
     def test_advanced_gfx_commands_fit_under_menus(self):
         dialog = GfxEditorDialog(self.win, self.relative)
         self.addCleanup(dialog.close)

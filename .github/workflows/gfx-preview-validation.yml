@@ -11,6 +11,8 @@ on:
       - 'source/asset_library_preview.py'
       - 'source/test_gfx_preview.py'
       - 'source/gfx_edit_backend.py'
+      - 'source/gfx_featured_promo.py'
+      - 'source/test_gfx_featured_promo.py'
       - 'source/qt_gfx_editor.py'
       - 'source/test_gfx_edit_backend.py'
       - 'source/test_qt_gfx_editor.py'
@@ -39,7 +41,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -m compileall -q source
-          python -m unittest -v test_gfx_preview test_qt_unified_explorer test_qt_asset_preview test_gfx_library_scope test_gfx_edit_backend test_qt_gfx_editor
+          python -m unittest -v test_gfx_preview test_qt_unified_explorer test_qt_asset_preview test_gfx_library_scope test_gfx_edit_backend test_gfx_featured_promo test_qt_gfx_editor
   real-renderer:
     runs-on: windows-2022
     timeout-minutes: 20
