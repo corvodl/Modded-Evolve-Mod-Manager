@@ -50,6 +50,8 @@ def directory_size(folder):
         return 0
     if path.is_symlink():
         raise ValueError("Refusing a linked storage path.")
+    if path.is_file():
+        return path.stat().st_size
     total, count = 0, 0
     for parent, dirs, files in os.walk(path, followlinks=False):
         dirs[:] = [name for name in dirs if not (Path(parent) / name).is_symlink()]
@@ -130,6 +132,15 @@ def measure_storage(data_home, storage_root, stage, swap, projects):
                     is_within(item, used) or is_within(used, item)
                     for used in measured):
                 buckets["Other"] += directory_size(item)
+    # Include other manager-owned Data directories without charging any
+    # measured setup/project/library subtree twice.
+    if data.is_dir():
+        for item in data.iterdir():
+            if item in measured or any(
+                    is_within(item, used) or is_within(used, item)
+                    for used in measured):
+                continue
+            buckets["Other"] += directory_size(item)
     return {"bytes": buckets, "old_setups": tuple(setups),
             "total": sum(buckets.values()), "active": str(active or "")}
 
