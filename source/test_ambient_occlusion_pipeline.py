@@ -81,14 +81,16 @@ class AmbientOcclusionTests(unittest.TestCase):
             xml=('<Material><Textures>'
                  '<Texture Map="Diffuse" File="'+PREFIX+'body_d.tif"/>'
                  '<Texture Map="Specular" AOChannel="A" File="'
-                 +PREFIX+'body_s.tif"/>'
-                 '</Textures></Material>')
+                 +PREFIX+'body_s.tif"><TexMod TileU="7" TileV="2"/>'
+                 '</Texture></Textures></Material>')
             materials=material_fixture(temp,xml,[
                 ('body_d','RGB',(100,120,160)),
                 ('body_s','RGBA',(24,50,100,201))])
             self.assertEqual(materials.ao_maps[0].getpixel((0,0)),
                              (201,201,201))
             self.assertEqual(materials.ao_strengths[0],1.)
+            self.assertEqual(transform_for(materials,0,'ao')[:2],(7.,2.))
+            self.assertEqual(transform_for(materials,0,'diffuse'),IDENTITY)
             exported,_=embed_diffuse_textures(glb_bytes(triangle()),materials)
             doc,binary=_unpack_glb(exported)
             info=doc['materials'][0]['occlusionTexture']
