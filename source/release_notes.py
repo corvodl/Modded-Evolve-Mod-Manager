@@ -16,6 +16,7 @@ RELEASE_NOTES = (
         "Inspect historical CryTek PAKs and compatible assets separately without promising playable cross-version conversions.",
         "Improve offline project workflows, asset provenance, recovery, and update safety while preserving personal game and mod data.",
         "Support versioned patch revisions and consolidate installation, update work, and logs under one manager folder.",
+        "Patch 1: embed GFX editing in File Editor, diagnose same-build UI dependencies, hide static video placeholders, and improve startup without a console window.",
     )),
     ('1.1.17.1', (
         'Add a Windows installer with optional Desktop and Start Menu shortcuts.',
