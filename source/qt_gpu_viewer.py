@@ -195,6 +195,23 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.visible_material_slot = None
         self.projection_mode = 'Orthographic'
         self.specular_intensity = 0.35
+        self._uv_motion_started = time.monotonic()
+        self._uv_motion_timer = QTimer(self)
+        self._uv_motion_timer.setInterval(50)
+        self._uv_motion_timer.timeout.connect(self.update)
+        self._refresh_uv_motion()
+
+    def _refresh_uv_motion(self):
+        self._uv_motion_started = time.monotonic()
+        groups = (getattr(self.materials, 'uv_motions', ()),)
+        groups += tuple(values for _, values in
+                        getattr(self.materials, 'map_uv_motions', ()))
+        animated = any(any(any(rate for rate in motion) for motion in group)
+                       for group in groups)
+        if animated:
+            self._uv_motion_timer.start()
+        else:
+            self._uv_motion_timer.stop()
 
     def _reset_frame_timeline(self):
         self._frame_started_at = time.perf_counter()
@@ -325,6 +342,7 @@ class QtGLModelCanvas(QOpenGLWidget):
             finally:
                 self.doneCurrent()
         self.materials = materials
+        self._refresh_uv_motion()
         self._queue_texture_uploads()
         self.update()
 
@@ -639,9 +657,10 @@ class QtGLModelCanvas(QOpenGLWidget):
                     glDepthMask(True)
                 from texture_transform import transform_for, gl_matrix
                 from OpenGL.GL import glLoadMatrixf, GL_TEXTURE
+                seconds = time.monotonic() - self._uv_motion_started
                 glActiveTexture(GL_TEXTURE0)
                 glMatrixMode(GL_TEXTURE)
-                glLoadMatrixf(gl_matrix(transform_for(self.materials, slot)))
+                glLoadMatrixf(gl_matrix(transform_for(self.materials, slot, seconds=seconds)))
                 glMatrixMode(GL_MODELVIEW)
                 tex = self.textures[slot] if use_uv and slot < len(self.textures) else 0
                 if shader:
@@ -659,7 +678,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 gloss_texture=slot<len(self.gloss_textures) and bool(self.gloss_textures[slot]),
                                 detail=slot<len(self.detail_textures) and bool(self.detail_textures[slot]),
                                 detail_normal=slot<len(self.detail_normal_textures) and bool(self.detail_normal_textures[slot]),
-                                uv_matrices={role: transform_for(self.materials,slot,role)
+                                uv_matrices={role: transform_for(self.materials,slot,role,seconds)
                                              for role in ('normal','specular','gloss','detail','detail_normal')},
                                 alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
                                 unlit=self.unlit_diffuse,fill=self.studio_fill)

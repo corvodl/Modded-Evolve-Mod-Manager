@@ -24,15 +24,54 @@ def parse_transform(texture):
     return (su, sv, ou, ov, angle), dynamic
 
 
-def transform_for(materials, slot, role='diffuse'):
-    """Read a *map-specific* TexMod; never blindly reuse diffuse UV tiling."""
+def parse_motion(texture):
+    """Read *named* constant-pan/rotation TexMod motion, seconds-based.
+
+    Only textual Constant/Pan modes are supported. Numeric engine enum values,
+    jitter, stretch and unknown oscillators are intentionally not guessed.
+    Rates use their literal XML values; rotation rate is degrees/second.
+    """
+    node = texture.find('TexMod') if texture is not None else None
+    if node is None:
+        return (0.,0.,0.)
+    motion = []
+    for axis in ('U','V'):
+        mode = (node.get('TexMod_' + axis + 'OscillatorType') or '').casefold()
+        if mode not in ('constant','pan','scroll'):
+            motion.append(0.)
+            continue
+        value = float(node.get('TexMod_' + axis + 'OscillatorRate','0'))
+        if not math.isfinite(value) or abs(value)>10000:
+            raise ValueError('Invalid animated texture rate for ' + axis)
+        motion.append(value)
+    mode = (node.get('TexMod_RotateType') or '').casefold()
+    rate = (float(node.get('TexMod_RotateRate','0'))
+            if mode in ('constant','pan','scroll') else 0.)
+    if not math.isfinite(rate) or abs(rate)>10000:
+        raise ValueError('Invalid animated rotation rate.')
+    return (motion[0],motion[1],rate)
+
+
+def transform_for(materials, slot, role='diffuse', seconds=0.):
+    """Read independent TexMod plus supported named constant motion."""
     if role != 'diffuse':
         pairs = getattr(materials, 'map_uv_transforms', ())
-        for name, values in pairs:
-            if name == role:
-                return values[slot] if 0 <= slot < len(values) else IDENTITY
-    values = getattr(materials, 'uv_transforms', ())
-    return values[slot] if 0 <= slot < len(values) else IDENTITY
+        values = next((v for name,v in pairs if name == role),())
+        base = values[slot] if 0 <= slot < len(values) else IDENTITY
+        motions = next((v for name,v in getattr(materials, 'map_uv_motions', ())
+                        if name == role),())
+    else:
+        values = getattr(materials, 'uv_transforms', ())
+        base = values[slot] if 0 <= slot < len(values) else IDENTITY
+        motions = getattr(materials, 'uv_motions', ())
+    if seconds and 0 <= slot < len(motions):
+        from math import radians
+        du, dv, degrees = motions[slot]
+        if any((du,dv,degrees)):
+            su,sv,ou,ov,angle=base
+            return (su,sv,(ou+du*seconds)%1.,(ov+dv*seconds)%1.,
+                    (angle+radians(degrees*seconds))%(2*math.pi))
+    return base
 
 
 def gl_matrix3(transform):

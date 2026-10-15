@@ -59,6 +59,8 @@ class PreviewMaterials:
     detail_maps: tuple = ()  # Optional, separately mapped detail-color layer.
     detail_normal_maps: tuple = ()  # Optional, separately mapped detail normal.
     map_uv_transforms: tuple = ()  # (role, per-material UV-transform tuples)
+    uv_motions: tuple = ()  # per-material supported constant (du,dv,drotate) motions
+    map_uv_motions: tuple = ()  # (role, per-material motions)
 
     @property
     def count(self):
@@ -515,13 +517,14 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         return decoded
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; details=[]; detail_normals=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
-    transforms = []; sources = []; references = []; hidden = []
+    transforms = []; motions = []; sources = []; references = []; hidden = []
     role_transforms = {role: [] for role in ('normal','specular','gloss','detail','detail_normal')}
+    role_motions = {role: [] for role in role_transforms}
     for item in subs:
         checkpoint()
         name = item.get('Name') or 'unnamed'
         names.append(name)
-        from texture_transform import parse_transform, IDENTITY
+        from texture_transform import parse_transform, parse_motion, IDENTITY
         diffuse_node = next((t for t in item.findall('./Textures/Texture')
                              if t.get('Map', '').casefold() == 'diffuse'), None)
         try:
@@ -532,6 +535,11 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             transform = IDENTITY
             issues.append(name + ': ' + str(error))
         transforms.append(transform)
+        try:
+            motions.append(parse_motion(diffuse_node))
+        except ValueError as error:
+            motions.append((0.,0.,0.))
+            issues.append(name + ': ' + str(error))
         role_keys = {
             'normal': ('bumpmap','normal','normalmap'),
             'specular': ('specular','specularcolor'),
@@ -550,6 +558,11 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 slot_transform = IDENTITY
                 issues.append(name + ': ' + str(error))
             role_transforms[role].append(slot_transform)
+            try:
+                role_motions[role].append(parse_motion(texture_node))
+            except ValueError as error:
+                role_motions[role].append((0.,0.,0.))
+                issues.append(name + ': ' + str(error))
         try:
             opacity = max(0.,min(1.,float(item.get('Opacity','1'))))
         except ValueError:
@@ -641,7 +654,9 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
                             tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden), gloss_maps=tuple(glosses),
                             detail_maps=tuple(details), detail_normal_maps=tuple(detail_normals),
-                            map_uv_transforms=tuple((role,tuple(matrices)) for role,matrices in role_transforms.items()))
+                            map_uv_transforms=tuple((role,tuple(matrices)) for role,matrices in role_transforms.items()),
+                            uv_motions=tuple(motions),
+                            map_uv_motions=tuple((role,tuple(mats)) for role,mats in role_motions.items()))
 
 
 
