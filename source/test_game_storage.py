@@ -106,9 +106,11 @@ class GameStorageTests(unittest.TestCase):
         self.assertEqual(game_file.read_bytes(), b"original")
 
     def test_reuse_exact_game_launcher_and_clean_swap_only(self):
-        (self.stage / "stage_status.json").write_text('{"status":"ready"}')
+        (self.stage / "stage_status.json").write_text(
+            '{"status":"fully-staged-offline","count":1}')
         (self.stage / "mykeys").mkdir()
         (self.stage / "mykeys" / "private_key.pem").write_bytes(b"key")
+        (self.stage / "mykeys" / "public_key.bin").write_bytes(b"key")
         launcher = Path(self.temp.name) / "Launcher.exe"
         launcher.write_bytes(b"EXE")
         (self.swap / "launcher_config.json").write_text(json.dumps({
