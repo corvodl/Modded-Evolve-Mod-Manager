@@ -102,6 +102,68 @@ class GfxQtEditorTests(unittest.TestCase):
         self.assertEqual(len(loads), 1)
         self.assertFalse(widget.texture_image.pixmap().isNull())
 
+    def test_gfx_canvas_transparency_backgrounds_and_content_zoom(self):
+        from io import BytesIO
+        from PIL import Image
+        from qt_gfx_preview import _Canvas
+        canvas = _Canvas()
+        self.addCleanup(canvas.close)
+        self.assertEqual(canvas._background, "transparent")
+        self.assertFalse(canvas._trim)  # Original placement remains the default.
+
+        image = Image.new("RGBA", (80, 60), (255, 255, 255, 0))
+        for y in range(10, 16):
+            for x in range(42, 50):
+                image.putpixel((x, y), (255, 255, 255, 255))
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        data = buffer.getvalue()
+        canvas.set_png(data)
+        self.assertEqual((canvas._pixmap.width(), canvas._pixmap.height()), (80, 60))
+        self.assertFalse(canvas._fully_opaque)
+        self.assertEqual((canvas._visible_rect.x(), canvas._visible_rect.y(),
+                          canvas._visible_rect.width(), canvas._visible_rect.height()),
+                         (42, 10, 8, 6))
+
+        canvas.set_trim(True)
+        self.assertEqual((canvas._pixmap.width(), canvas._pixmap.height()), (8, 6))
+        canvas.set_background("dark")
+        self.assertEqual(canvas._background, "dark")
+        canvas.set_background("light")
+        canvas.set_background("white")
+        canvas.set_background("transparent")
+        with self.assertRaises(ValueError):
+            canvas.set_background("invalid")
+        canvas.set_trim(False)
+        self.assertEqual((canvas._pixmap.width(), canvas._pixmap.height()), (80, 60))
+
+        # An actually opaque white fill cannot be made transparent by a
+        # viewer background setting. Do not erase legitimate white artwork.
+        buffer = BytesIO()
+        Image.new("RGBA", (40, 32), (255, 255, 255, 255)).save(
+            buffer, format="PNG")
+        canvas.set_png(buffer.getvalue())
+        self.assertTrue(canvas._fully_opaque)
+        self.assertEqual((canvas._pixmap.width(), canvas._pixmap.height()), (40, 32))
+
+    def test_gfx_background_controls_do_not_change_movie_or_export(self):
+        widget = self.win.gfx_view
+        self.assertEqual(widget.background.currentData(), "transparent")
+        self.assertFalse(widget.trim.isChecked())
+        self.assertEqual(widget.canvas._background, "transparent")
+        initial = self.asset.read_bytes()
+        widget.background.setCurrentIndex(1)
+        self.assertEqual(widget.canvas._background, "dark")
+        widget.background.setCurrentIndex(2)
+        self.assertEqual(widget.canvas._background, "light")
+        widget.background.setCurrentIndex(3)
+        self.assertEqual(widget.canvas._background, "white")
+        widget.background.setCurrentIndex(0)
+        widget.trim.setChecked(True)
+        self.assertTrue(widget.canvas._trim)
+        widget.trim.setChecked(False)
+        self.assertEqual(self.asset.read_bytes(), initial)
+
     def test_advanced_gfx_commands_fit_under_menus(self):
         dialog = GfxEditorDialog(self.win, self.relative)
         self.addCleanup(dialog.close)
