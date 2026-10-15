@@ -9,8 +9,10 @@ from unittest.mock import patch
 from PIL import Image
 from gfx_preview_backend import GfxError, render_gfx
 from gfx_layout_backend import _raw, _records, _encode
-from gfx_root_layer_preview import root_layers, isolate_root_depth
-from gfx_synthetic_fixtures import synthetic_gfx
+from gfx_root_layer_preview import (root_layers, isolate_root_depth,
+                                    likely_main_menu_dialog)
+from gfx_synthetic_fixtures import (synthetic_gfx, _tag, _rect,
+                                    _uint, _signed, _bitpack)
 
 
 def two_root_layers(*, compressed=False):
@@ -26,7 +28,42 @@ def two_root_layers(*, compressed=False):
     return _encode(raw, records)
 
 
+def synthetic_dialog_main_menu(*, recognized=True):
+    """Fake dialog hierarchy with IDs/bounds from analysis, not game assets."""
+    edges = [292.15, 1630.15, 25.55, 1030.55]
+    if not recognized:
+        edges[1] = 1500
+    coords = [round(value * 20) for value in edges]
+    bits = max(abs(v).bit_length() + 2 for v in coords)
+    bounds = _bitpack(_uint(bits, 5) +
+                      sum((_signed(v, bits) for v in coords), []))
+    background = _tag(2, struct.pack("<H", 265) + bounds + b"\x00\x00\x00")
+    nested = b""
+    for depth, character in ((3, 265), (22, 205), (4, 221), (33, 192)):
+        nested += _tag(26, b"\x06" + struct.pack("<HH", depth, character)
+                       + b"\x00")
+    nested += _tag(1) + _tag(0)
+    sprite = _tag(39, struct.pack("<HH", 270, 1) + nested)
+    place_root = _tag(26, b"\x06" + struct.pack("<HH", 74, 270) + b"\x00")
+    content = background + sprite + place_root + _tag(1) + _tag(0)
+    body = _rect(1920, 1080) + struct.pack("<HH", 24 << 8, 1) + content
+    return b"GFX\x0f" + struct.pack("<I", 8 + len(body)) + body
+
+
 class RootLayerIsolationTests(unittest.TestCase):
+    def test_recognized_main_menu_dialog_is_not_assumed_in_other_movies(self):
+        movie = synthetic_dialog_main_menu()
+        found = likely_main_menu_dialog(movie, "Libs/UI/main_menu.gfx")
+        self.assertIsNotNone(found)
+        self.assertEqual((found.depth, found.character), (74, 270))
+        self.assertIsNone(likely_main_menu_dialog(movie, "Libs/UI/options.gfx"))
+        self.assertIsNone(likely_main_menu_dialog(
+            synthetic_dialog_main_menu(recognized=False),
+            "Libs/UI/main_menu.gfx"))
+        filtered = isolate_root_depth(movie, mode="hide", depth=found.depth)
+        self.assertFalse(root_layers(filtered))
+        self.assertEqual(root_layers(movie)[0].character, 270)
+
     def test_root_layers_and_unmodified_movie(self):
         original = two_root_layers()
         before = bytes(original)
