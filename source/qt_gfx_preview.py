@@ -8,11 +8,14 @@ from __future__ import annotations
 from threading import Event
 from io import BytesIO
 
+from PIL import Image
+
 from PySide6.QtCore import QSize, Qt, QRect, QThread, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QPushButton, QScrollArea, QFileDialog, QMessageBox, QTabWidget,
+    QCheckBox,
 )
 from qt_navigation_icons import navigation_icon
 from gfx_ui_dependencies import related_ui_textures
@@ -25,6 +28,10 @@ class _Canvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pixmap = QPixmap()
+        self._original = QPixmap()
+        self._visible_rect = QRect()
+        self._background = "transparent"
+        self._trim = True
         self._zoom = 1.0
         self._fit = True
         self.setMinimumSize(160, 120)
@@ -33,8 +40,41 @@ class _Canvas(QWidget):
         picture = QPixmap()
         if not picture.loadFromData(content, "PNG"):
             raise ValueError("FFDec returned a PNG Qt cannot display.")
-        self._pixmap = picture
+        # Alpha bounding boxes are computed from FFDec's actual PNG, never
+        # from opaque white/black guesses. Cropping affects the viewer only.
+        bounds = None
+        if picture.width() * picture.height() <= 16_000_000:
+            with Image.open(BytesIO(content)) as image:
+                if "A" in image.getbands():
+                    bounds = image.getchannel("A").getbbox()
+        self._original = picture
+        self._visible_rect = (QRect(bounds[0], bounds[1],
+                                   bounds[2] - bounds[0], bounds[3] - bounds[1])
+                              if bounds else QRect())
+        self._refresh_pixmap()
+
+    def clear_png(self):
+        self._original = QPixmap()
+        self._pixmap = QPixmap()
+        self._visible_rect = QRect()
         self.update()
+
+    def _refresh_pixmap(self):
+        if self._trim and not self._visible_rect.isNull():
+            self._pixmap = self._original.copy(self._visible_rect)
+        else:
+            self._pixmap = self._original
+        self.update()
+
+    def set_background(self, mode):
+        if mode not in ("transparent", "dark", "light", "white"):
+            raise ValueError("Unsupported GFX canvas background.")
+        self._background = mode
+        self.update()
+
+    def set_trim(self, enabled):
+        self._trim = bool(enabled)
+        self._refresh_pixmap()
 
     def set_view(self, zoom=1.0, fit=True):
         self._zoom, self._fit = zoom, fit
@@ -42,12 +82,22 @@ class _Canvas(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#dedee2"))
-        box = 16
-        for y in range(0, self.height(), box):
-            for x in range(0, self.width(), box):
-                if (x // box + y // box) % 2 == 0:
-                    painter.fillRect(x, y, box, box, QColor("#a9a9b0"))
+        colors = {
+            "dark": "#20232b",
+            "light": "#e1e5ed",
+            "white": "#ffffff",
+        }
+        if self._background == "transparent":
+            # Deliberately use a darker checkerboard: an opaque white fill
+            # baked into the artwork must be distinguishable from alpha.
+            painter.fillRect(self.rect(), QColor("#4e5662"))
+            box = 16
+            for y in range(0, self.height(), box):
+                for x in range(0, self.width(), box):
+                    if (x // box + y // box) % 2 == 0:
+                        painter.fillRect(x, y, box, box, QColor("#343b46"))
+        else:
+            painter.fillRect(self.rect(), QColor(colors[self._background]))
         if not self._pixmap.isNull():
             if self._fit:
                 size = self._pixmap.size()
@@ -134,6 +184,29 @@ class GfxPreviewWidget(QWidget):
         self.zoom.setCurrentIndex(1)
         controls.addWidget(self.zoom)
         layout.addLayout(controls)
+        canvas_controls = QHBoxLayout()
+        canvas_controls.addWidget(QLabel("Canvas:"))
+        self.background = QComboBox()
+        self.background.setObjectName("gfxCanvasBackground")
+        for label, mode in (
+            ("Transparent checkerboard", "transparent"),
+            ("Dark", "dark"),
+            ("Light", "light"),
+            ("White", "white"),
+        ):
+            self.background.addItem(label, mode)
+        self.background.setToolTip(
+            "Preview background only. White artwork drawn in the movie stays opaque.")
+        canvas_controls.addWidget(self.background)
+        self.trim = QCheckBox("Fit visible content")
+        self.trim.setObjectName("gfxTrimTransparentMargins")
+        self.trim.setToolTip(
+            "Trim transparent PNG margins only in the viewer; exported PNG "
+            "keeps the original full frame. Opaque white is never discarded.")
+        self.trim.setChecked(True)
+        canvas_controls.addWidget(self.trim)
+        canvas_controls.addStretch(1)
+        layout.addLayout(canvas_controls)
         self.details = QLabel("Select a .gfx movie")
         self.details.setObjectName("gfxMovieInfo")
         self.details.setWordWrap(True)
@@ -206,6 +279,8 @@ class GfxPreviewWidget(QWidget):
         self.scale.currentIndexChanged.connect(self._changed)
         self.fit.toggled.connect(self._zoom_changed)
         self.zoom.currentIndexChanged.connect(self._zoom_changed)
+        self.background.currentIndexChanged.connect(self._background_changed)
+        self.trim.toggled.connect(self.canvas.set_trim)
         self.texture_select.currentIndexChanged.connect(self._texture_changed)
         self.tabs.currentChanged.connect(self._texture_tab_changed)
 
@@ -233,8 +308,7 @@ class GfxPreviewWidget(QWidget):
         self.tabs.setTabEnabled(1, False)
         self.texture_image.clear()
         self.texture_status.setText("No matching same-build UI textures found.")
-        self.canvas._pixmap = QPixmap()
-        self.canvas.update()
+        self.canvas.clear_png()
         try:
             info = inspect_gfx(data)
             resolved, warnings = resolve_imports(
@@ -379,6 +453,9 @@ class GfxPreviewWidget(QWidget):
         if worker in self._jobs:
             self._jobs.remove(worker)
         worker.deleteLater()
+
+    def _background_changed(self, *_):
+        self.canvas.set_background(self.background.currentData() or "transparent")
 
     def _zoom_changed(self, *_):
         self.canvas.set_view(self.zoom.currentData() or 1.0, self.fit.isChecked())
