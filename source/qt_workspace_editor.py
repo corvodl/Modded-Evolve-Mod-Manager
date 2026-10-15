@@ -19,7 +19,7 @@ import time
 from threading import Event
 
 from PIL import Image
-from PySide6.QtCore import Qt, QUrl, QTimer, QSize, QModelIndex
+from PySide6.QtCore import Qt, QUrl, QTimer, QSize, QModelIndex, Signal
 from PySide6.QtGui import QPixmap, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -136,6 +136,7 @@ class QtLooseFileEditor(QMainWindow):
 
 
 class QtWorkspaceEditor(QMainWindow):
+    modelGeometryReady = Signal(int, object)
     TABS = ('files', 'images', 'models', 'gfx', 'media')
 
     def __init__(self, manager, workspace, archive_map=None, *, library_archive=None):
@@ -202,6 +203,7 @@ class QtWorkspaceEditor(QMainWindow):
         self._model_signals = None
         self._model_generation = 0
         self._model_cancel = Event()
+        self.modelGeometryReady.connect(self._model_geometry_ready)
         self._model_prepared = False
         self._prepared_geometry = None
         self._prepared_animation = None
@@ -1712,6 +1714,13 @@ class QtWorkspaceEditor(QMainWindow):
         token = self._model_generation
         cancel = self._model_cancel
 
+        def geometry_stage(payload):
+            if not cancel.is_set():
+                try:
+                    self.modelGeometryReady.emit(token, payload)
+                except RuntimeError:
+                    pass  # Editor disposed while the background job completed.
+
         def resolve(_unused):
             if cancel.is_set():
                 raise InterruptedError('Obsolete model preparation cancelled')
@@ -1736,7 +1745,8 @@ class QtWorkspaceEditor(QMainWindow):
                 projects_root=projects, stage_root=stage,
                 texture_folder=tex, animation_index=ani,
                 equipment=equipment, index=active_index,
-                require_assembly=require_assembly, cancel=cancel.is_set)
+                require_assembly=require_assembly, cancel=cancel.is_set,
+                geometry_ready=geometry_stage)
             return (data, cache_hit, load_ms), None
 
         # Tests and headless software previews retain deterministic synchronous
@@ -1757,6 +1767,42 @@ class QtWorkspaceEditor(QMainWindow):
             self._model_signals.completed.connect(self._model_ready)
         self._model_pool.start(
             _NativeConversion(resolve, None, token, self._model_signals))
+
+    def _model_geometry_ready(self, token, payload):
+        """First useful GL frame: verified geometry only, no DDS downgrade."""
+        if (token != self._model_generation or self.mode != 'models' or
+                self._model_prepared or not self.current or
+                os.environ.get('QT_QPA_PLATFORM', '').lower() in
+                ('offscreen', 'minimal')):
+            return
+        try:
+            from qt_gpu_viewer import QtGPUModelPanel
+            view = self.views['models']
+            mesh = payload['mesh']
+            geometry = payload['geometry']
+            if self.model_panel is None:
+                self.model_panel = QtGPUModelPanel(
+                    view, mesh, None, compact=True,
+                    prepared_geometry=geometry)
+                self.model_panel.setObjectName('primaryGpuModelViewer')
+                view.addWidget(self.model_panel)
+                self.model_gpu = self.model_panel.canvas
+                self.model_gpu.setObjectName('defaultGpuModelPreview')
+            else:
+                self.model_panel.set_static_mesh(
+                    mesh, None, prepared_geometry=geometry)
+            view.setCurrentWidget(self.model_panel)
+            self.status.setText(
+                self.current + ' | Verified geometry ready; '
+                'resolving materials and animations…')
+            from performance_trace import record
+            record('model', 'geometry_ui_installed',
+                   elapsed_ms=(time.perf_counter()-self._model_started_at)*1000
+                   if self._model_started_at else None)
+        except (ValueError, OSError, RuntimeError, ImportError):
+            # Never substitute a fake/low-quality mesh on GUI stage failure.
+            # Final model-ready path retains its existing software fallback.
+            pass
 
     def _model_ready(self, token, result, error):
         if token != self._model_generation or self.mode != 'models':
