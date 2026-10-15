@@ -3580,7 +3580,13 @@ class QtManager(QMainWindow):
             dialog.setWindowModality(Qt.NonModal)
             dialog.setAutoClose(False)
             dialog.setAutoReset(False)
-            dialog.canceled.connect(cancel.set)
+            def cancel_open():
+                cancel.set()
+                if token == self._map_open_generation:
+                    self._map_open_dialog = None
+                    self._map_open_target = None
+                dialog.deleteLater()
+            dialog.canceled.connect(cancel_open)
             self._map_open_dialog = dialog
             dialog.show()
 
