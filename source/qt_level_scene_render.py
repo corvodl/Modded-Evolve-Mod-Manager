@@ -239,6 +239,8 @@ class LevelGLViewport(QOpenGLWidget):
         self._placement_index = None
         self._placement_scene = None
         self._upload_remaining = 0
+        self._upload_bytes_remaining = 0
+        self._upload_bytes_frame = 0
         self._terrain_uvs = {}
         self._terrain_texture = 0
         self._cancel = Event()
@@ -485,10 +487,17 @@ class LevelGLViewport(QOpenGLWidget):
         if not self.show_terrain_tiles or self.terrain_atlas is None:
             return 0
         if not self._terrain_texture and self._upload_remaining > 0:
+            required_bytes = self.terrain_atlas.width * self.terrain_atlas.height * 4
+            if (required_bytes > self._upload_bytes_remaining and
+                    self._upload_bytes_frame > 0):
+                self.update()
+                return 0
             from OpenGL.GL import (glGenTextures,glBindTexture,glTexParameteri,glTexImage2D,
                 GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER,GL_LINEAR,
                 GL_RGBA,GL_UNSIGNED_BYTE,GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE)
             self._upload_remaining -= 1
+            self._upload_bytes_remaining -= required_bytes
+            self._upload_bytes_frame += required_bytes
             image = self.terrain_atlas.convert('RGBA')
             self._terrain_texture = int(glGenTextures(1))
             glBindTexture(GL_TEXTURE_2D,self._terrain_texture)
@@ -568,10 +577,17 @@ class LevelGLViewport(QOpenGLWidget):
         if self._upload_remaining <= 0 or time.monotonic() >= self._upload_deadline:
             self.update()
             return 0
-        self._upload_remaining -= 1
         rgba = image.convert("RGBA")
         if rgba.width > 2048 or rgba.height > 2048:
             rgba.thumbnail((2048,2048))
+        required_bytes = rgba.width * rgba.height * 4
+        if (required_bytes > self._upload_bytes_remaining and
+                self._upload_bytes_frame > 0):
+            self.update()
+            return 0
+        self._upload_remaining -= 1
+        self._upload_bytes_remaining -= required_bytes
+        self._upload_bytes_frame += required_bytes
         ident = int(glGenTextures(1))
         glBindTexture(GL_TEXTURE_2D,ident)
         glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR)
@@ -623,6 +639,8 @@ class LevelGLViewport(QOpenGLWidget):
         # The real source HeightmapData is drawn in authored world coordinates.
         # No flat proxy, inferred terrain texture, or generated collision.
         self._upload_remaining = 2
+        self._upload_bytes_remaining = 8 * 1024 * 1024
+        self._upload_bytes_frame = 0
         self._upload_deadline = time.monotonic()+.004
         for terrain in self.terrain_chunks:
             glDisable(GL_TEXTURE_2D)
@@ -709,6 +727,15 @@ class LevelGLViewport(QOpenGLWidget):
                 self._selection_bounds(asset.bounds)
             glPopMatrix()
         self._visible=tuple(visible)
+        if self._upload_bytes_frame:
+            # Even a single 4K driver upload can exceed a 4ms CPU deadline.
+            # Report the observed overrun; do not silently reduce source
+            # resolution or drop the final required material.
+            record('map', 'texture_upload_frame',
+                   submitted_bytes=self._upload_bytes_frame,
+                   exceeded_byte_budget=self._upload_bytes_remaining < 0,
+                   deadline_overrun_ms=max(
+                       0., (time.monotonic()-self._upload_deadline)*1000))
         from level_progress import LoadProgress
         required = {id(im) for item in visible
                     for im in (self.assets[_asset_key(item)].materials.textures
