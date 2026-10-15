@@ -457,10 +457,13 @@ class QtGLModelCanvas(QOpenGLWidget):
         def safe_device(value):
             return (value.decode('ascii', 'replace') if isinstance(value, bytes)
                     else str(value or 'unknown'))
-        record('gpu', 'context_initialized',
-               gpu_vendor=safe_device(glGetString(GL_VENDOR)),
-               gpu_renderer=safe_device(glGetString(GL_RENDERER)),
-               gpu_version=safe_device(glGetString(GL_VERSION)))
+        try:
+            record('gpu', 'context_initialized',
+                   gpu_vendor=safe_device(glGetString(GL_VENDOR)),
+                   gpu_renderer=safe_device(glGetString(GL_RENDERER)),
+                   gpu_version=safe_device(glGetString(GL_VERSION)))
+        except (RuntimeError, ValueError, TypeError):
+            pass  # Optional diagnostic cannot block a supported GL context.
         glClearColor(0.092, 0.09, 0.115, 1.0)
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_NORMALIZE)
