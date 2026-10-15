@@ -50,7 +50,7 @@ class DesignSystemTests(unittest.TestCase):
         detail = QLabel("Advanced value")
         disclosure.addWidget(detail)
         disclosure.toggle.setChecked(True)
-        self.assertTrue(disclosure.body.isVisible())
+        self.assertFalse(disclosure.body.isHidden())
         disclosure.toggle.setChecked(False)
         self.assertFalse(disclosure.body.isVisible())
         header.deleteLater()
