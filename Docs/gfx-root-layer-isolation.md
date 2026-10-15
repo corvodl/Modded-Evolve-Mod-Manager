@@ -3,8 +3,19 @@
 The static FFDec preview of the supplied `Libs/UI/main_menu.gfx` in
 beta.50 displayed the Evolve logo alongside an opaque red region.
 That alone is **not evidence that every DDS failed**: the file has 11
-first-frame root placements, and UI popups or other vector elements may
-cover the static menu. No root depth has yet been verified as a popup.
+first-frame root placements. Binary inspection identifies a strong
+dialog-like match: **root depth 74 → sprite #270 → shape #265**.
+The shape's bounds **(292.15, 25.55)–(1630.15, 1030.55)** closely match
+the red rectangle. Sprite #270 also contains a `ScrollBarSkinned`
+instance, a button and two label instances. This is strong structural
+evidence that the red region is a dialog-like root overlay, though it
+does **not** prove when Evolve's game runtime normally opens that dialog.
+
+For this exact validated 1920×1080 main-menu structure, the preview
+**defaults to hiding depth 74**, and clearly identifies the filtered
+layer. Select **All layers** to restore the full original FFDec view.
+Unknown game builds, other GFX files and sprite preview modes do not
+receive this automatic filter.
 
 ## New controls
 
@@ -19,9 +30,10 @@ adds **Root layers**:
 
 Select a displayed first-frame root depth/character ID to compare
 before and after. The dropdown shows export labels if available.
-For the supplied main_menu.gfx sample the root first frame contains
-11 depths, including exported labels `txt_timer`, `engagement_prompt`,
-and `txt_label`. These names are not proof that any one is the red panel.
+The sample main-menu root frame contains 11 depths, including
+`txt_timer`, `engagement_prompt`, and `txt_label`. Root depth 74
+has been associated with the large dialog-like shape by examining
+the actual compiled child symbol structure, not just its red color.
 
 The filters operate on the root timeline only. Nested sprites, masks,
 scripts, DDS sources, bitmap character definitions and FFDec imports
