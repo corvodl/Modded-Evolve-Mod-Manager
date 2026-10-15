@@ -50,6 +50,16 @@ class SystemHealthCoreTests(unittest.TestCase):
                 h.change_offline_rule("C:/FakeGame", True)
             change.assert_not_called()
 
+    def test_cannot_remove_offline_rule_with_live_or_unsafe_swaps(self):
+        from launch_integration import SwapStatus
+        with patch.object(h, "game_running", return_value=False), \
+                patch.object(h, "state_status", return_value=SwapStatus(
+                    "swapped", "Original files have been swapped")), \
+                patch.object(h, "set_offline") as modify:
+            with self.assertRaisesRegex(RuntimeError, "Restore original"):
+                h.change_offline_rule("game", False, swap_root="/swap")
+            modify.assert_not_called()
+
     def test_only_manager_owned_firewall_api_is_used(self):
         with patch.object(h, "game_running", return_value=False), \
                 patch.object(h, "set_offline", return_value=True) as change:
