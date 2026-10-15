@@ -20,7 +20,7 @@ from performance_trace import span
 def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                   texture_folder=None, animation_index=None, equipment=None,
                   index=None, require_assembly=False, cancel=None,
-                  geometry_ready=None):
+                  geometry_ready=None, stage_ready=None):
     def checkpoint():
         if cancel is not None and cancel():
             raise InterruptedError('Obsolete model preparation cancelled')
@@ -76,6 +76,8 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                         'character': character, 'index': index,
                         'report': report})
     checkpoint()
+    if stage_ready is not None:
+        stage_ready('materials')
     materials = character.materials if character else None
     issue = ''
     if materials is None:
@@ -91,6 +93,8 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
         except (ValueError, OSError) as exc:
             issue = str(exc)
     checkpoint()
+    if stage_ready is not None:
+        stage_ready('animations')
     skeleton = character.skeleton if character else relative
     with span('model', 'animation_discovery'):
         references, idle, config = discover_animations(
