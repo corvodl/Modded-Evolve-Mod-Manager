@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from injector_guard import require_clean_injector
 
 ROOT = Path(__file__).resolve().parent
 SUPPORT = ROOT / 'launcher_support'
@@ -95,6 +96,14 @@ def launcher_commands(swap_dir: Path, stage_dir: Path, phase: str):
         raise FileNotFoundError('Custom signing stage is missing. Check Settings.')
     if (stage / 'REFRESHED-TO.json').exists():
         raise RuntimeError('This stage was superseded by Refresh Original PAKs. Select the new stage and swap folders from its refresh report.')
+    # A stale original injector backup signals an interrupted custom-key swap.
+    # Fail closed, even if the swap journal is missing or says restored.
+    if phase in ('missing', 'restored', 'prepared'):
+        journal = swap / STATE_FILE
+        if journal.is_file():
+            state = json.loads(journal.read_text(encoding='utf-8'))
+            if state.get('game'):
+                require_clean_injector(Path(state['game']))
     commands = []
     if phase in ('missing','restored'):
         cmd = [sys.executable, '-u', str(swap / 'controlled_swap.py'), 'prepare',
