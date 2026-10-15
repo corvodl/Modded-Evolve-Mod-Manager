@@ -166,7 +166,7 @@ def storage_snapshot(data_home, projects_root, stage_root, swap_root):
 
 
 def environment_snapshot(game_root):
-    game = _root(game_root)
+    root = _root(game_root)
     if os.name != "nt":
         return ("Unavailable", f"Windows-only checks. Current platform: {platform.system()}.")
     system = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32"
@@ -175,17 +175,25 @@ def environment_snapshot(game_root):
               "xinput1_3.dll")
     missing = [file for file in needed if not (system / file).is_file()]
     try:
-        target_executable(game_root)
+        exe = target_executable(game_root)
         game_state = "Evolve.exe found"
+        access = "Readable" if os.access(exe, os.R_OK) else "Not readable"
+        writable = "Writable" if os.access(exe.parent, os.W_OK) else "Not writable"
+        game_permissions = f"Game folder: {access}; {writable} (access advisory)"
     except (ValueError, OSError):
         game_state = "Game executable missing"
-    lines = [game_state, "Windows: " + platform.platform(),
+        game_permissions = "Game folder permissions: unknown"
+    runtimes = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "dotnet" / "shared" / "Microsoft.NETCore.App"
+    dotnet8 = runtimes.is_dir() and any(p.is_dir() and p.name.startswith("8.")
+                                        for p in runtimes.iterdir())
+    lines = [game_state, game_permissions, "Windows: " + platform.platform(),
+             ".NET 8 runtime: " + ("Detected" if dotnet8 else "Not detected in Program Files"),
              "Windows runtime DLLs: " +
              (", ".join(missing) + " not found in System32" if missing else
               "listed components found in System32"),
              "DirectX components are presence checks, not a full runtime validation.",
-             "Firewall: see the separate manager-owned rule check."]
-    return ("Attention needed" if missing or game_state != "Evolve.exe found"
+             "Offline firewall protection: see the separate manager-owned rule check."]
+    return ("Attention needed" if missing or not dotnet8 or game_state != "Evolve.exe found"
             else "Ready", "\n".join(lines))
 
 
