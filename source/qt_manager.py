@@ -3962,7 +3962,7 @@ class QtManager(QMainWindow):
             self.signals.progress.emit(stage,int(current),int(total))
         def work():
             try:
-                staged = download_and_prepare(candidate,progress=progress)
+                staged = download_and_prepare(candidate,progress=progress,app_home=APP_HOME)
                 self.signals.update_staged.emit(candidate,staged,'')
             except Exception as exc:
                 self.signals.update_staged.emit(candidate,None,str(exc))
