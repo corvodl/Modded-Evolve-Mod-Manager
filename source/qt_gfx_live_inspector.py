@@ -78,7 +78,8 @@ class LiveUiInspector(QWidget):
         self.pids.currentIndexChanged.connect(self._invalidate)
         self.port.valueChanged.connect(self._invalidate)
         self.token.textChanged.connect(self._invalidate)
-        self.refresh_pids()
+        # PID enumeration is opt-in; do not block opening the GFX editor.
+        self.status.setText("Click Refresh to discover a running offline Evolve.exe.")
 
     def refresh_pids(self):
         prior = self.pids.currentData()
