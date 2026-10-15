@@ -482,8 +482,8 @@ class QtManager(QMainWindow):
         self.drawer = _widget(QFrame, self.stage_holder, name='drawer')
         self.drawer.setFixedWidth(194)
         navlay = QVBoxLayout(self.drawer)
-        navlay.setContentsMargins(10, 15, 10, 15)
-        navlay.setSpacing(6)
+        navlay.setContentsMargins(10, 7, 10, 7)
+        navlay.setSpacing(3)
         navlay.addWidget(_label('WORKSPACE', muted=True))
         self.nav_buttons = []
         for index, title in enumerate(SECTIONS):
