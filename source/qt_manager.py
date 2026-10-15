@@ -563,6 +563,10 @@ class QtManager(QMainWindow):
         self.navigation_shortcut.setShortcut('Ctrl+B')
         self.navigation_shortcut.triggered.connect(lambda: self.toggle_menu())
         self.addAction(self.navigation_shortcut)
+        self.command_palette_action = QAction('Quick Commands', self)
+        self.command_palette_action.setShortcut('Ctrl+K')
+        self.command_palette_action.triggered.connect(self.open_command_palette)
+        self.addAction(self.command_palette_action)
         self.menu_animation = QPropertyAnimation(self.drawer, b'geometry', self)
         self.menu_animation.setDuration(205)
         self.menu_animation.setEasingCurve(QEasingCurve.OutCubic)
@@ -1307,6 +1311,8 @@ class QtManager(QMainWindow):
                     act = menu.addAction(title)
                     act.triggered.connect(lambda _checked=False, cb=callback: cb())
         menu_commands('File', (
+            ('Install Mod…', self.open_easy_mod_installer),
+            ('Installed Mods / Profiles…', self.open_mod_profiles),
             ('Unpack PAK + known dependencies', self.extract),
             ('Unpack selected PAKs + dependencies', self.extract_batch),
             ('Import External PAK…', self.browse_external_pak),
@@ -1334,6 +1340,8 @@ class QtManager(QMainWindow):
             ('Show original PAK location', lambda: self.reveal_pak(original=True)),
         ))
         menu_commands('Tools', (
+            ('Undo Applied Mods…', self.undo_mod_profile),
+            ('Quick Commands  Ctrl+K', self.open_command_palette),
             ('Mod Profiles…', self.open_mod_profiles),
             ('Asset Library / Add PAKs…', self.open_asset_library),
             ('Export Model Folder…', self.export_model_folder),
@@ -1390,6 +1398,8 @@ class QtManager(QMainWindow):
         project_actions = QHBoxLayout()
         self.project_quick = {}
         for title, handler in (
+            ('Install Mod…', self.open_easy_mod_installer),
+            ('Installed Mods…', self.open_mod_profiles),
             ('Refresh Projects', self.refresh_project_list),
             ('Continue Editing', self.open_active_project),
             ('Review Changes', self.diff),
@@ -1398,7 +1408,8 @@ class QtManager(QMainWindow):
         ):
             button = _button(title, handler)
             self.project_quick[title] = button
-            if title in ('Continue Editing', 'Build Mod'):
+            if title in ('Install Mod…', 'Installed Mods…',
+                         'Continue Editing', 'Build Mod'):
                 project_actions.addWidget(button)
             else:
                 button.setParent(page)
@@ -2608,6 +2619,44 @@ class QtManager(QMainWindow):
         if selected:
             self.fields[key].setText(selected)
             self.save_settings()
+
+    def open_easy_mod_installer(self):
+        """One user-initiated drag-drop mod review; no automatic staging."""
+        try:
+            if self.busy:
+                raise RuntimeError('Wait for current operation to finish first.')
+            from qt_easy_mod_installer import EasyModInstaller
+            dialog = EasyModInstaller(self, DATA_HOME / 'Profiles')
+            dialog.exec()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def undo_mod_profile(self):
+        """Restore profile-managed staging via its saved transaction journals."""
+        try:
+            from mod_profiles import ModProfiles
+            store = ModProfiles(DATA_HOME / 'Profiles')
+            status = store.status()
+            if status['in_progress'] or status['pending']:
+                raise RuntimeError(
+                    'A prior profile transaction is interrupted. '
+                    'Open Installed Mods and resolve recovery before undoing.')
+            if not status['profile_id'] and not status['entry_count']:
+                self.info('Mod Profiles', 'No applied mod profile needs undoing.')
+                return
+            if not self.confirm('Undo applied mod profile?',
+                    'Restore the previous staged PAK versions from the '
+                    'profile rollback journal? Installed game files will '
+                    'not be modified. Close the game and client first.'):
+                return
+            self.apply_mod_profile(None)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def open_command_palette(self):
+        from qt_quick_commands import QuickCommandPalette
+        dialog = QuickCommandPalette(self)
+        dialog.exec()
 
     def open_mod_profiles(self):
         """Open the profile library without changing the installed game."""
