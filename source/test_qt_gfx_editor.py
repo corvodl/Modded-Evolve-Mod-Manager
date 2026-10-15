@@ -222,10 +222,17 @@ class GfxQtEditorTests(unittest.TestCase):
 
         dialog.promo_mode.setCurrentIndex(2)
         self.assertEqual(dialog.promo_mode.currentData(), "custom")
-        self.assertFalse(dialog.promo_target.isEnabled())
+        self.assertTrue(dialog.promo_target.isEnabled())
+        self.assertEqual(dialog.promo_target.currentData(), "title")
+        self.assertEqual(dialog.promo_target.count(), 4)
+        dialog.promo_target.setCurrentIndex(2)
+        self.assertIn("TRY", dialog.promo_text.placeholderText())
         self.assertTrue(dialog.promo_text.isEnabled())
         self.assertFalse(dialog.promo_stage.isEnabled())
-        dialog.promo_text.setText("GOLIATH")
+        dialog.promo_text.setText("PLAY")
+        self.assertTrue(dialog.promo_stage.isEnabled())
+        dialog.promo_target.setCurrentIndex(3)
+        self.assertIn("BUY", dialog.promo_text.placeholderText())
         self.assertTrue(dialog.promo_stage.isEnabled())
 
         # This fixture has no featured runtime scripts. A click must fail
