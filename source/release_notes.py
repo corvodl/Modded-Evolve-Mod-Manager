@@ -4,6 +4,60 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.48', (
+        'Improve validated historical CryTek rig exports with body-local bind poses and multipart assemblies.',
+        'Group and select matching map PAKs in the Asset Library and open verified map families.',
+        'Preserve multi-selection and display larger, unclipped sidebar navigation icons.',
+    )),
+    ('1.1.18-beta.47', (
+        'Preview Xbox 360 DXT1 and CTX1 textures from split high/low DDS archives.',
+        'Export validated historical CryTek character armatures and weights to Blender.',
+        'Attempt historical DBA conversion with rig checks and clear unsupported-motion diagnostics.',
+    )),
+    ('1.1.18-beta.46', (
+        'Resolve historical character textures from their cooked DDS files and streaming archives.',
+        'Report missing visible textures and unsupported Legacy rigs accurately.',
+        'Console texture layouts, CTX1 normals and Legacy skeletal animation still need decoder support.',
+    )),
+    ('1.1.18-beta.45', (
+        'Preview compatible 2012 CryTek .chr character geometry, CDFs and material subsets.',
+        'Review cross-build assets and dependencies with detached, hash-verified transfer candidates.',
+        'Keep Asset Library originals read-only and Stage 2 deployment isolated for verification.',
+    )),
+    ('1.1.18-beta.44', (
+        'Browse 2012 Evolve PAKs and their contents in the default Asset Library.',
+        'Fix historical ZIP path separators without weakening corruption checks.',
+        'Older model formats may still be unsupported by the 3D preview.',
+    )),
+    ('1.1.18-beta.43', (
+        'Fix sidebar icon outlines so all eight Flaticon glyphs are centered and fully visible.',
+        'Normalize vector icon geometry and correct high-DPI Qt drawing on compact Windows sidebars.',
+    )),
+    ('1.1.18-beta.42', (
+        'Replace unclear sidebar glyphs with recognisable Flaticon Regular Rounded icons.',
+        'Route verified ordinary ZIP PAKs to separate legacy editing projects instead of signed-import errors.',
+        'Fix explorer file icons, duplicate symbols, filename clipping and selection colors.',
+    )),
+    ('1.1.18-beta.41', (
+        'Open and edit 2012 Evolve ZIP PAKs in isolated projects with verified unsigned rebuilds.',
+        'Inspect legacy DDS streams and export compatible textures without touching Stage 2 files.',
+        'Make editing commands contextual and move advanced actions into File, View and Tools menus.',
+    )),
+    ('1.1.18-beta.40', (
+        'Replace sidebar symbols with matching Flaticon Uicons across all eight sections.',
+        'Improve sidebar icon size, alignment and visibility on Windows displays.',
+        'Include icon attribution in Credits while keeping navigation icons available offline.',
+    )),
+    ('1.1.18-beta.39', (
+        'Add consistent icons across file explorers, texture, model and GFX controls.',
+        'Show the official FFDec download link when selecting a GFX movie without a configured renderer.',
+        'Keep FFDec and Java external to the app, installer and portable ZIP.',
+    )),
+    ('1.1.18-beta.38', (
+        'Preview and edit Scaleform GFX movies with frame/sprite rendering and PNG export.',
+        'Replace GFX images, shapes, text and scripts with FFDec-backed rebuild and external authoring.',
+        'Apply validated GFX edits to Modding projects with hash checks, undo and automatic backups.',
+    )),
     ('1.1.18-beta.37', (
         'Repair startup when loading existing mod projects from earlier beta installations.',
         'Keep navigation menu icons fully visible at Windows display scaling.',

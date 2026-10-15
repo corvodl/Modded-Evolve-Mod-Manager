@@ -18,18 +18,20 @@ import tempfile
 import time
 
 from PIL import Image
-from PySide6.QtCore import Qt, QUrl, QTimer
+from PySide6.QtCore import Qt, QUrl, QTimer, QSize
 from PySide6.QtGui import QPixmap, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
-    QDockWidget, QTreeWidgetItemIterator, QFrame, QAbstractItemView,
+    QDockWidget, QTreeWidgetItemIterator, QFrame, QAbstractItemView, QHeaderView, QStyle,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
 from dds_png_import import encode_png_as_dds, compression_for_dds
 from model_asset import is_model, inspect_model, export_model, replace_model
+from qt_gfx_preview import GfxPreviewWidget
+from gfx_preview_backend import MAX_SOURCE as MAX_GFX_SOURCE, export_gfx_png
 from model_preview import find_preview_mesh, render_mesh
 from qt_cpu_model_viewer import QtCPUModelCanvas
 from model_blender_export import glb_bytes, convert_folder
@@ -45,6 +47,7 @@ from loose_file_editor import save_loose_text
 from loose_game_files import TEXT_EXTENSIONS, copy_to_project
 from evolve_pak_workspace import normalized_name
 from version_info import app_version
+from qt_navigation_icons import navigation_icon, action_icon
 from studio_polish_117 import (prepare_model_cached, clear_model_cache,
     model_cache_stats, export_preflight, project_session_key,
     sanitized_project_session)
@@ -128,7 +131,7 @@ class QtLooseFileEditor(QMainWindow):
 
 
 class QtWorkspaceEditor(QMainWindow):
-    TABS = ('files', 'images', 'models')
+    TABS = ('files', 'images', 'models', 'gfx')
 
     def __init__(self, manager, workspace, archive_map=None, *, library_archive=None):
         super().__init__(manager)
@@ -220,7 +223,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.current_file_label = QLabel('Select a file from File Explorer')
         self.current_file_label.setObjectName('currentWorkspaceAsset')
         top.addWidget(self.current_file_label, 1)
-        self.sidebar_button = QPushButton('☰ Hide File Explorer')
+        self.sidebar_button = QPushButton('Hide File Explorer')
+        self.sidebar_button.setIcon(navigation_icon('folder', size=18))
         self.sidebar_button.setObjectName('fileExplorerToggle')
         self.sidebar_button.setCheckable(True)
         self.sidebar_button.setChecked(True)
@@ -238,7 +242,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.tabs.setStyleSheet('QTabWidget::pane { border: 0; }')
         self.trees, self.views, self.actions = {}, {}, {}
         self.splitters = {section: self.editor_split for section in self.TABS}
-        for section, label in zip(self.TABS, ('Text', 'Textures', '3D Model')):
+        for section, label in zip(self.TABS, ('Text', 'Textures', '3D Model', 'Scaleform GFX')):
             tab = QWidget()
             box = QVBoxLayout(tab)
             box.setContentsMargins(0, 0, 0, 0)
@@ -255,8 +259,18 @@ class QtWorkspaceEditor(QMainWindow):
                      ('Import PNG', self.import_png))
                 )
                 for text, callback in actions:
-                    widgets[text] = self._button(text, callback)
-                    bar.addWidget(widgets[text])
+                    button = self._button(text, callback)
+                    widgets[text] = button
+                    button.setParent(tab)
+                    button.setToolTip(text + ' (also in File, Edit or Textures menu)')
+                    button.setIconSize(QSize(15, 15))
+                    if text in ('Save', 'Find Text', 'Export PNG'):
+                        # Context-only quick actions; advanced operations are
+                        # in the already-existing menu bar rather than a row
+                        # of 7 text+icon buttons that clips small editors.
+                        bar.addWidget(button)
+                    else:
+                        button.hide()
                 bar.addStretch(1)
                 box.addLayout(bar)
             if section == 'files':
@@ -267,6 +281,9 @@ class QtWorkspaceEditor(QMainWindow):
                 view = QLabel('Choose a DDS texture in File Explorer.')
                 view.setAlignment(Qt.AlignCenter)
                 view.setWordWrap(True)
+            elif section == 'gfx':
+                view = GfxPreviewWidget(self)
+                self.gfx_view = view
             else:
                 view = QStackedWidget()
                 self.model_fallback = QLabel(
@@ -278,7 +295,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_cpu.setObjectName('cpuModelPreview')
                 view.addWidget(self.model_cpu)
             box.addWidget(view, 1)
-            self.tabs.addTab(tab, label)
+            self.tabs.addTab(tab, navigation_icon({'files':'text','images':'texture','models':'model','gfx':'gfx'}[section]), label)
             self.views[section] = view
             self.actions[section] = widgets
         self.editor_split.addWidget(self.tabs)
@@ -294,7 +311,7 @@ class QtWorkspaceEditor(QMainWindow):
         explorer_box.setContentsMargins(8, 8, 8, 8)
         explorer_box.setSpacing(7)
         explorer_head = QHBoxLayout()
-        title = QLabel('▤  FILE EXPLORER')
+        title = QLabel('FILE EXPLORER')
         title.setObjectName('fileExplorerHeading')
         explorer_head.addWidget(title, 1)
         self.explorer_count = QLabel('')
@@ -318,15 +335,21 @@ class QtWorkspaceEditor(QMainWindow):
         self.search = QLineEdit()
         self.search.setObjectName('fileExplorerSearch')
         self.search.setPlaceholderText('Search files and folders…')
+        self.search.addAction(navigation_icon('search', size=18), QLineEdit.LeadingPosition)
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self.populate)
         explorer_box.addWidget(self.search)
         explorer_controls = QHBoxLayout()
-        self.favorites_only = QPushButton('★ Favorites')
+        self.favorites_only = QPushButton('Favorites')
+        self.favorites_only.setIcon(navigation_icon('favorite', size=16))
+        self.favorites_only.setIconSize(QSize(16, 16))
         self.favorites_only.setCheckable(True)
         self.favorites_only.toggled.connect(self.populate)
         explorer_controls.addWidget(self.favorites_only)
-        explorer_controls.addWidget(self._button('Open Folder', self.explore))
+        open_folder_button = self._button('Open Folder', self.explore)
+        open_folder_button.setIcon(self.style().standardIcon(QStyle.SP_DirOpenIcon))
+        open_folder_button.setIconSize(QSize(16, 16))
+        explorer_controls.addWidget(open_folder_button)
         explorer_controls.addStretch()
         explorer_box.addLayout(explorer_controls)
 
@@ -335,9 +358,18 @@ class QtWorkspaceEditor(QMainWindow):
         self.file_tree.setColumnCount(2)
         self.file_tree.setHeaderLabels(('File / Folder', 'Size'))
         self.file_tree.setSortingEnabled(True)
-        self.file_tree.setColumnWidth(0, 260)
-        self.file_tree.setColumnWidth(1, 75)
-        self.file_tree.setAlternatingRowColors(True)
+        header = self.file_tree.header()
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(72)
+        header.setSectionResizeMode(0, QHeaderView.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        self.file_tree.setColumnWidth(0, 425)
+        self.file_tree.setColumnWidth(1, 94)
+        self.file_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.file_tree.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.file_tree.setTextElideMode(Qt.ElideMiddle)
+        self.file_tree.setAlternatingRowColors(False)
+        self.file_tree.setStyleSheet('QTreeWidget#unifiedAssetExplorerTree::item:selected { background:#772b3d; color:#fff; } QTreeWidget#unifiedAssetExplorerTree::item { padding:4px 2px; }')
         if self.read_only_library:
             self.file_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.file_tree.itemSelectionChanged.connect(self.load_selection)
@@ -360,7 +392,9 @@ class QtWorkspaceEditor(QMainWindow):
         bottom = QHBoxLayout()
         bottom.addWidget(self.status, 1)
         self.dependency_button=QPushButton('Dependencies…')
+        self.dependency_button.setIcon(navigation_icon('layers', size=18))
         self.dependency_button.setEnabled(False)
+        self.dependency_button.hide()
         menu=QMenu(self.dependency_button)
         menu.addAction('Asset Dependency Graph',self.open_dependency_graph)
         menu.addAction('Find Missing Textures',self.open_texture_resolver)
@@ -380,6 +414,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.find_shortcut.activated.connect(self.find_text)
         self.populate()
         self._sync_file_explorer_button()
+        self.views['files'].textChanged.connect(self._sync_editor_context_actions)
+        self._sync_editor_context_actions()
         self.recovery_timer=QTimer(self)
         self.recovery_timer.setInterval(30000)
         self.recovery_timer.timeout.connect(self._autosave_recovery)
@@ -392,7 +428,9 @@ class QtWorkspaceEditor(QMainWindow):
     def _enforce_library_read_only_ui(self):
         """Same editor/viewer, with no reachable editing or import commands."""
         permitted = {
-            'File': {'Open File Folder', 'Export Native Model…',
+            'File': {'Open File Folder', 'Export Rendered GFX PNG…',
+                     'Export Texture as PNG…',
+                     'Export Native Model…',
                      'Export for Blender (.glb)…',
                      'Export Animated Character (.glb)…',
                      'Export Model Folder…'},
@@ -431,6 +469,33 @@ class QtWorkspaceEditor(QMainWindow):
                 button.setEnabled(False)
         self.save_shortcut.setEnabled(False)
         self.views['files'].setReadOnly(True)
+        self._sync_editor_context_actions()
+
+    def _sync_editor_context_actions(self):
+        """Keep only relevant lightweight buttons visible for current asset."""
+        if not hasattr(self, 'actions'):
+            return
+        mode = getattr(self, 'mode', None)
+        has_asset = bool(getattr(self, 'current', None))
+        editable = bool(has_asset and mode == 'files'
+                        and not self.read_only_library)
+        for section, name in (('files', 'Save'), ('files', 'Find Text'),
+                              ('images', 'Export PNG')):
+            button = self.actions.get(section, {}).get(name)
+            if button is None:
+                continue
+            relevant = (has_asset and mode == section and
+                        (name != 'Save' or editable))
+            available = bool(relevant and (name != 'Save' or self._dirty()))
+            button.setVisible(available)
+            button.setEnabled(available)
+        for item in self.editor_menus.get('Textures', ()).actions():
+            if item.text() in ('Import Replacement DDS…', 'Import Replacement PNG…'):
+                item.setEnabled(has_asset and mode == 'images'
+                                and not self.read_only_library)
+        for item in self.editor_menus.get('File', ()).actions():
+            if item.text() == 'Export Texture as PNG…':
+                item.setEnabled(has_asset and mode == 'images')
 
     def _build_editor_menus(self):
         """Blender-style discoverable menu bar; no oversized model-action rows."""
@@ -448,6 +513,9 @@ class QtWorkspaceEditor(QMainWindow):
             return act
 
         action('File', 'Open File Folder', self.explore)
+        action('File', 'Export Rendered GFX PNG…', self.export_png)
+        action('File', 'Export Texture as PNG…', self.export_png)
+        action('File', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('File', 'Export Native Model…', self.export_model)
         action('File', 'Export for Blender (.glb)…', self.export_blender_model)
         action('File', 'Export Blender Project (.blend)…', lambda: self.export_blender_model(native=True))
@@ -457,12 +525,18 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Batch Asset Export…', self.open_asset_search)
         action('File', 'Project History & Undo…', self.open_project_history)
         action('Edit', 'Save Text', self.save)
+        self._context_menu_actions = {
+            'Save Text': menus['Edit'].actions()[-1],
+            'Export Texture as PNG…': next(a for a in menus['File'].actions()
+                if a.text() == 'Export Texture as PNG…'),
+        }
         action('Edit', 'Find Text', self.find_text)
         action('Edit', 'Visual Gameplay Values…', self.open_gameplay_editor)
         action('Edit', 'Gameplay Presets…', self.open_gameplay_presets)
         action('Edit', 'Global Search & Replace…', self.open_global_search)
         action('Edit', 'Material Properties 2.0…', self.open_material_properties)
         action('Edit', 'Import / Replace File…', self.import_raw)
+        action('Edit', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('Edit', 'Restore Original', self.restore_original)
         self.equipment_menu = menus['Model'].addMenu('Equipped Skin')
         self.equipment_menu.setEnabled(False)
@@ -473,6 +547,8 @@ class QtWorkspaceEditor(QMainWindow):
         action('Model', 'Asset Dependency Graph…', self.open_dependency_graph)
         action('Model', 'Reset Camera', lambda: self._with_model_panel(
             lambda p: p.reset_view()))
+        action('Textures', 'Import Replacement DDS…', self.import_dds)
+        action('Textures', 'Import Replacement PNG…', self.import_png)
         action('Textures', 'Diagnose Texture Links…', self.find_model_textures)
         action('Textures', 'Texture Preview Status…', self.texture_diagnostics)
         action('Textures', 'Resolve Missing Textures…', self.open_texture_resolver)
@@ -527,7 +603,7 @@ class QtWorkspaceEditor(QMainWindow):
         showing = self._explorer_visible
         self.sidebar_button.blockSignals(True)
         self.sidebar_button.setChecked(showing)
-        self.sidebar_button.setText('☰ Hide File Explorer' if showing else '☰ Show File Explorer')
+        self.sidebar_button.setText('Hide File Explorer' if showing else 'Show File Explorer')
         self.sidebar_button.blockSignals(False)
         if hasattr(self, '_file_explorer_action'):
             self._file_explorer_action.blockSignals(True)
@@ -959,6 +1035,12 @@ class QtWorkspaceEditor(QMainWindow):
         return entries
 
     def _category(self, rel):
+        # In the read-only Asset Library, a CDF is a visual character
+        # assembly entry. Editable mod projects retain the XML text editor.
+        if self.read_only_library and rel.casefold().endswith('.cdf'):
+            return 'models'
+        if rel.casefold().endswith('.gfx'):
+            return 'gfx'
         if is_dds(rel) or is_split_dds(rel):
             return 'images'
         if is_model(rel):
@@ -1020,6 +1102,7 @@ class QtWorkspaceEditor(QMainWindow):
                         # Store the original virtual directory independent of
                         # friendly display aliases (e.g. Gorgon/mon_lurker).
                         folder.setData(0, Qt.UserRole + 1, key)
+                        folder.setIcon(0, self.style().standardIcon(QStyle.SP_DirIcon))
                         description = character_asset_description(key)
                         folder.setToolTip(0, key + (
                             '\\n' + description if description else ''))
@@ -1030,7 +1113,7 @@ class QtWorkspaceEditor(QMainWindow):
                         folders[key] = folder
                     parent = folders[key]
                 key = str(self.workspace) + '|' + rel
-                symbol = '★ ' if key in self.favorites else ''
+                symbol = ''  # No duplicate text glyph over a file icon.
                 path = self.workspace / 'files' / rel
                 try:
                     stat = path.stat()
@@ -1042,6 +1125,7 @@ class QtWorkspaceEditor(QMainWindow):
                 category = self._category(rel)
                 item = QTreeWidgetItem([symbol + parts[-1], size])
                 item.setData(0, Qt.UserRole, rel)
+                item.setIcon(0, self.style().standardIcon(QStyle.SP_FileIcon))
                 from character_aliases import character_asset_description
                 char_description = character_asset_description(rel)
                 item.setToolTip(0, category.title() + ' • ' + rel +
@@ -1055,7 +1139,7 @@ class QtWorkspaceEditor(QMainWindow):
                     continue
                 group = family_by_parent.get(rel)
                 if group is not None:
-                    item.setText(0, symbol + group.title)
+                    item.setText(0, group.title)
                     item.setToolTip(0, 'Open complete game character; expand for individual LODs, skins and dependencies.\\n'
                                        + rel + ('\\n' + char_description if char_description else ''))
                     item.setText(1, str(len(group.members)) + ' assets')
@@ -1076,9 +1160,10 @@ class QtWorkspaceEditor(QMainWindow):
                 parent = folders.get('/'.join(primary.split('/')[:-1]))
                 if parent is None:
                     continue
-                item = QTreeWidgetItem(['◆ ' + full.label, 'CDF assembly'])
+                item = QTreeWidgetItem([full.label, 'CDF assembly'])
                 item.setData(0, Qt.UserRole, primary)
                 item.setData(0, Qt.UserRole + 2, 'full-character')
+                item.setIcon(0, navigation_icon('layers', size=16))
                 item.setToolTip(0,
                     'Full character assembled from ' + full.definition +
                     '\\nThe CDF selects the body and compatible equipment. ' +
@@ -1132,6 +1217,11 @@ class QtWorkspaceEditor(QMainWindow):
             return
         try:
             chosen = self.selected()
+            if self._category(chosen) == 'gfx':
+                from qt_ffdec_prompt import ffdec_is_ready, show_ffdec_requirement
+                if not ffdec_is_ready(self.manager) and not getattr(self, '_gfx_requirement_notified', False):
+                    self._gfx_requirement_notified = True
+                    show_ffdec_requirement(self)
             item = self.file_tree.currentItem()
             full_character = bool(
                 item and item.data(0, Qt.UserRole + 2) == 'full-character')
@@ -1166,10 +1256,14 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.texture_message = 'No texture lookup has run'
         self.mode = self._category(rel)
+        self._sync_editor_context_actions()
         self.dependency_button.setEnabled(self.mode=='models')
+        self.dependency_button.setVisible(self.mode == 'models')
         if self.mode != 'models':
             self.dependency_button.setText('Dependencies…')
         self._model_generation += 1
+        if self.mode != 'gfx':
+            self.gfx_view.cancel_pending()
         path = checked_path(self.workspace, rel)
         if self.read_only_library:
             from asset_library_preview import archive_entries
@@ -1179,8 +1273,25 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode == 'models':
             self._load_model_background(rel)
             return
+        if self.mode == 'gfx' and path.stat().st_size > MAX_GFX_SOURCE:
+            self.gfx_view.cancel_pending()
+            self.status.setText('GFX movie exceeds safe 12 MiB preview limit. Raw export is still available.')
+            return
         self.raw = path.read_bytes()
-        if self.mode == 'files':
+        if self.mode == 'gfx':
+            context = (
+                'asset-library:' + str(self.library_archive.get('build_id'))
+                if self.read_only_library else
+                'project:' + str(self.workspace.resolve()))
+            self.gfx_view.open_movie(
+                self.raw, rel, resolve=self._gfx_dependency,
+                context=context,
+                backend=self.manager.settings.get('gfx_ffdec_path'),
+                available_paths=self._gfx_available_paths(),
+                texture_preview=self._gfx_texture_image)
+            self.status.setText(
+                'Static Scaleform GFX preview — game ActionScript callbacks are not simulated.')
+        elif self.mode == 'files':
             control = self.views['files']
             control.setReadOnly(True)
             if path.stat().st_size > MAX_TEXT:
@@ -1202,6 +1313,7 @@ class QtWorkspaceEditor(QMainWindow):
                 rel + (' | Asset Library — read-only preview'
                        if self.read_only_library else ' | project copy only'))
             self._load_recovery()
+            self._sync_editor_context_actions()
         elif self.mode == 'images':
             if is_split_dds(rel):
                 try:
@@ -1218,6 +1330,77 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(rel + ' | ' + info.description +
                                 ' | largest mip only' +
                                 (' | streaming fragments' if self.stream else ''))
+
+    def _gfx_scoped_index(self):
+        """Cache only the selected game build's verified imported archives."""
+        if not self.read_only_library:
+            return {}
+        from build_collections import resolve_archive_build, build_index
+        identifier = self.library_archive['id']
+        context = resolve_archive_build(
+            identifier, build_id=self.library_archive.get('build_id'))
+        key = (identifier, context)
+        if getattr(self, '_gfx_index_key', None) != key:
+            self._gfx_index_cache = build_index(context)
+            self._gfx_index_key = key
+        return self._gfx_index_cache
+
+    def _gfx_available_paths(self):
+        if self.read_only_library:
+            return tuple(self._gfx_scoped_index())
+        return tuple(self.records)
+
+    def _gfx_texture_image(self, virtual):
+        """Decode a selected UI DDS with stream siblings from the same build."""
+        from evolve_pak_workspace import normalized_name
+        from material_preview import _decode_texture
+        relative = normalized_name(virtual)
+        if not relative.casefold().endswith(('.dds', '.dds.0')):
+            raise ValueError('Only manifest-listed DDS textures may be previewed.')
+        if self.read_only_library:
+            index = self._gfx_scoped_index()
+            hits = index.get(relative.casefold(), ())
+            own = [r for r in hits if r.get('_asset_library') == self.library_archive['id']]
+            matching = own if own else hits
+            if len(matching) != 1:
+                raise ValueError('DDS is missing or ambiguous in the selected game build.')
+            record = dict(matching[0])
+            record['workspace'] = None
+            return _decode_texture(record, index=index, max_dimension=2048)
+        local = [item for item in self.records if item.casefold() == relative.casefold()]
+        if len(local) != 1:
+            raise ValueError('DDS is not available in this editable project.')
+        item = checked_path(self.workspace, local[0])
+        return _decode_texture(
+            {'file': item, 'workspace': self.workspace, 'relative': local[0]},
+            max_dimension=2048)
+
+    def _gfx_dependency(self, virtual):
+        """Resolve GFX/SWF and UI_Data XML only from this project or build."""
+        from gfx_preview_backend import MAX_SOURCE
+        from evolve_pak_workspace import normalized_name
+        name = normalized_name(virtual).casefold()
+        if self.read_only_library:
+            # Reuse the scoped, validated index instead of rereading and
+            # checking every file in the enormous UI_Assets manifest for
+            # each GFX import or UI_Data XML reference.
+            hits = self._gfx_scoped_index().get(name, ())
+            local = [r for r in hits
+                     if r.get('_asset_library') == self.library_archive['id']]
+            choices = local if local else hits
+            if len(choices) != 1:
+                return None  # Cross-PAK/build ambiguity must not be guessed.
+            file = Path(choices[0]['file'])
+            if file.is_symlink() or not file.is_file() or file.stat().st_size > MAX_SOURCE:
+                return None
+            return file.read_bytes()
+        matching = [item for item in self.records if item.casefold() == name]
+        if len(matching) != 1:
+            return None
+        source = checked_path(self.workspace, matching[0])
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > MAX_SOURCE:
+            return None
+        return source.read_bytes()
 
     def refresh_model_asset_references(self):
         """Rebuild references after any newly completed Asset Library imports."""
@@ -1451,6 +1634,16 @@ class QtWorkspaceEditor(QMainWindow):
             source_loose = self.loose_animation_index
 
             def build_native_clip(ref, *, base_ref=None):
+                # A changed/closed model invalidates the native generation.
+                # Poll only plain Python state, never call QWidget methods
+                # from the background converter thread.
+                panel = self.model_panel
+                generation = getattr(panel, '_native_generation', None)
+                def cancelled():
+                    return (self.model_panel is not panel or
+                            getattr(panel, '_native_generation', None) != generation)
+                if cancelled():
+                    raise ValueError('Historical model animation cancelled.')
                 # QThreadPool worker: use the exact model skeleton for both
                 # clips. Layered aim poses must never run alone.
                 from animation_on_demand import resolve_caf_for_play
@@ -1476,7 +1669,8 @@ class QtWorkspaceEditor(QMainWindow):
                     projects_root=source_projects, stage_root=source_stage,
                     clips=(base_selected, selected) if base_selected is not None else None,
                     clip=selected if base_selected is None else None,
-                    allow_layered=base_selected is not None)
+                    allow_layered=base_selected is not None,
+                    cancelled=cancelled)
                 if base_selected is not None:
                     details['_layered_pair'] = (base_selected.name, selected.name)
                 from model_animation import AnimatedGLB
@@ -1490,7 +1684,11 @@ class QtWorkspaceEditor(QMainWindow):
             self.model_panel.set_native_catalog(
                 refs, idle, config, loader=build_native_clip,
                 refresh_library=self.refresh_model_asset_references,
-                character=anim_model)
+                character=anim_model,
+                historical_character=bool(
+                    self.character_preview is not None and
+                    any(virtual.casefold().endswith('.chr') and skin is None
+                        for virtual, _, skin, _ in self.character_preview.rig_parts)))
             if self.read_only_library:
                 # Same native animation timeline; don't offer loaders that
                 # import external clips in the reference-only browser.
@@ -1575,6 +1773,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.character_skin_choice = None
         self.current, self.loaded_text, self.raw = None, '', b''
+        self.gfx_view.cancel_pending()
         if not self.read_only_library:
             self.manager.current_workspace = str(target)
             self.manager.archive_label = name
@@ -1602,6 +1801,7 @@ class QtWorkspaceEditor(QMainWindow):
                 return
         self._capture_playback_preferences()
         self._model_generation += 1
+        self.gfx_view.cancel_pending()
         self.current, self.mode = None, None
 
     def save(self):
@@ -1691,6 +1891,32 @@ class QtWorkspaceEditor(QMainWindow):
             self.load(rel)
         except Exception as exc:
             QMessageBox.critical(self, 'File edit rejected', str(exc))
+
+    def edit_gfx(self):
+        """Start a private FFDec authoring session; never mutate Library."""
+        if self.read_only_library:
+            QMessageBox.information(
+                self, 'Read-only Asset Library',
+                'Choose Edit / Add to Mod Project to make a separate editable '
+                'project. Original Asset Library PAKs cannot be edited.')
+            return
+        if self.mode != 'gfx' or not self.current:
+            QMessageBox.information(
+                self, 'Select a GFX movie',
+                'Open an extracted .gfx asset before choosing the editor.')
+            return
+        try:
+            from qt_ffdec_prompt import ffdec_is_ready, show_ffdec_requirement
+            if not ffdec_is_ready(self.manager):
+                show_ffdec_requirement(self)
+                return
+            if self.manager.busy:
+                raise RuntimeError('Finish the current manager operation first.')
+            from qt_gfx_editor import GfxEditorDialog
+            dialog = GfxEditorDialog(self, self.current)
+            dialog.exec()
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, 'GFX editor', str(exc))
 
     def import_raw(self):
         def replace(rel):
@@ -1793,6 +2019,9 @@ class QtWorkspaceEditor(QMainWindow):
             menu.addAction('Visual Gameplay Values…', self.open_gameplay_editor)
         if section=='images':
             menu.addAction('Advanced Texture Adjustments…', self.open_texture_editor)
+        if section=='gfx':
+            menu.addAction(navigation_icon('gfx', size=18), 'Edit full Scaleform GFX…', self.edit_gfx)
+            menu.addAction(navigation_icon('export', size=18), 'Export rendered PNG…', self.export_png)
         menu.addAction('Reveal Extracted File in Explorer', self.explore)
         menu.addAction('Open Extracted File in External App', self.open_extracted_external)
         menu.addAction('Copy Extracted Absolute Path', self.copy_extracted_path)
@@ -1801,6 +2030,24 @@ class QtWorkspaceEditor(QMainWindow):
         menu.exec(tree.mapToGlobal(position))
 
     def export_png(self):
+        if self.mode == 'gfx' and self.current:
+            try:
+                payload = self.gfx_view.selected_png()
+                name = (Path(self.current).stem + '-'
+                        + str(self.gfx_view.symbol.currentData()[0]) + '-frame'
+                        + str(self.gfx_view.frame.value()) + '.png')
+                output, _ = QFileDialog.getSaveFileName(
+                    self, 'Export rendered Scaleform frame/sprite as PNG', name,
+                    'PNG (*.png)')
+                if output:
+                    if self.read_only_library:
+                        from asset_library_preview import _outside_library
+                        output = str(_outside_library(output))
+                    target = export_gfx_png(payload, output)
+                    self.status.setText('Exported rendered GFX PNG: ' + str(target))
+            except (ValueError, OSError) as exc:
+                QMessageBox.warning(self, 'GFX PNG export', str(exc))
+            return
         if self.mode != 'images' or not self.current:
             return
         path, _ = QFileDialog.getSaveFileName(self,'Export as PNG',
@@ -2511,6 +2758,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         self._save_project_session()
         self._model_generation += 1
+        self.gfx_view.cancel_pending()
         if self.model_panel is not None and not self.model_panel.close():
             event.ignore()
             return

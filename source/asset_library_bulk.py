@@ -151,6 +151,8 @@ def stage_source_for_import(import_id, stage, game=None, *, library_root=None, b
     if folder.is_symlink() or not (folder / "asset-library.json").is_file():
         raise ValueError("The selected library archive no longer exists.")
     manifest = _load_manifest(folder)
+    if manifest.get("archive_format") == "ordinary-zip":
+        raise ValueError("Historical ZIP references cannot target a signed Stage 2 project.")
     stage = Path(stage).resolve(strict=True)
     permitted = allowed_paks(stage)
     source = Path(manifest["source"]).resolve(strict=True)

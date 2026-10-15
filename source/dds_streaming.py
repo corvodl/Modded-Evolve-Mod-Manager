@@ -17,7 +17,7 @@ from dds_texture import parse_dds, preview_dds, validate_replacement
 
 PART = re.compile(r'(?i)^(.*\.dds)\.(\d+)$')
 MAX_PARTS = 20
-BLOCK_BYTES = {b'DXT1': 8, b'ATI1': 8, b'BC4U': 8,
+BLOCK_BYTES = {b'DXT1': 8, b'ATI1': 8, b'BC4U': 8, b'CTX1': 8,
                b'DXT3': 16, b'DXT5': 16, b'ATI2': 16, b'BC5U': 16, b'BC5S': 16}
 DXGI_BLOCK_BYTES = {71: 8, 72: 8, 74: 16, 75: 16, 77: 16, 78: 16,
                     80: 8, 81: 8, 83: 16, 84: 16, 95: 16, 96: 16, 98: 16, 99: 16}

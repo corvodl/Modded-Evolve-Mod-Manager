@@ -566,63 +566,135 @@ class AssetLibraryDialog(QDialog):
             QMessageBox.warning(self, "Collection import", str(exc))
 
     def prepare_stage2_transfer(self):
+        """Guided reference-only planning; no game archives are written."""
         selected = self._selected_record()
         source_id = self.build_filter.currentData()
         if selected is None or source_id in (None, "all", "unassigned"):
             QMessageBox.information(self, "Choose a source",
-                "Select a registered source build and an archive in that build.")
+                "Select a registered historical build and a source archive.")
             return
         builds = catalog()["builds"]
-        targets = [(bid, item["label"]) for bid, item in builds.items()
-                   if item["family"] == "stage2" and bid != source_id]
+        if builds[source_id]["family"] == "stage2":
+            QMessageBox.information(self, "Historical source required",
+                "Select an early or Legacy source build, not the Stage 2 target.")
+            return
+        targets = [(bid, entry["label"]) for bid, entry in builds.items()
+                   if entry["family"] == "stage2" and bid != source_id]
         if not targets:
             QMessageBox.information(self, "Register target",
                 "Register a separate Stage 2 build before preparing a transfer.")
             return
-        choices = [label + " [" + bid[:8] + "]" for bid, label in targets]
+        labels = [label + " [" + bid[:8] + "]" for bid, label in targets]
         choice, ok = QInputDialog.getItem(
-            self, "Target Stage 2 build", "Target snapshot:", choices, 0, False)
+            self, "Target Stage 2 build", "Target snapshot:", labels, 0, False)
         if not ok:
             return
-        target_id = targets[choices.index(choice)][0]
-        virtual, ok = QInputDialog.getText(
-            self, "Reference to transfer", "Exact virtual asset path from selected archive:")
-        if not ok or not virtual.strip():
-            return
+        target_id = targets[labels.index(choice)][0]
         from asset_library_preview import archive_entries
-        entries = archive_entries(selected["id"])
-        if virtual.casefold() not in {name.casefold() for name in entries}:
-            QMessageBox.warning(self, "Unknown asset",
-                                "The selected archive does not contain this exact asset path.")
+        from evolve_pak_workspace import normalized_name
+        choices = {name.casefold(): name for name in archive_entries(selected["id"])}
+        example = next(iter(choices.values()), "")
+        pasted, ok = QInputDialog.getMultiLineText(
+            self, "Select Legacy assets",
+            "Enter one or more exact source paths from this PAK (one per line).\n"
+            "Dependencies are reviewed automatically. Originals stay read-only.",
+            example)
+        if not ok or not pasted.strip():
+            return
+        try:
+            requested = []
+            for line in pasted.splitlines():
+                if line.strip():
+                    path = normalized_name(line.strip())
+                    if path.casefold() not in choices:
+                        raise ValueError("Path not found in this source PAK: " + path)
+                    requested.append(choices[path.casefold()])
+            if len(requested) > 256 or not requested:
+                raise ValueError("Select between 1 and 256 source asset paths.")
+            requested = list(dict.fromkeys(requested))
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid selection", str(exc)[:900])
             return
         target_project = QFileDialog.getExistingDirectory(
-            self, "Select existing Stage 2 target project for manifest")
+            self, "Select existing Stage 2 target project for review context")
         if not target_project:
             return
         baseline, ok = QInputDialog.getText(
-            self, "Target baseline SHA-256",
-            "Expected verified target baseline SHA-256 (64 hexadecimal characters):")
-        if not ok or not baseline.strip():
+            self, "Expected target baseline",
+            "Expected target baseline SHA-256 (64 hex digits; not yet verified):")
+        if not ok:
             return
         destination, _ = QFileDialog.getSaveFileName(
-            self, "Save review-only transfer manifest", str(Path.home() / "stage2-transfer-plan.json"),
-            "JSON files (*.json)")
+            self, "Save new transfer review manifest",
+            str(Path.home() / "stage2-transfer-plan.json"), "JSON files (*.json)")
         if not destination:
             return
         try:
-            output = Path(destination).resolve()
-            if output.exists() or output.is_relative_to(Path(target_project).resolve()) or (
-                    output.is_relative_to(Path(LIBRARY_HOME).resolve())):
-                raise ValueError("Select a new output outside target projects and Asset Library.")
-            plan = prepare_transfer(source_id, target_id, [virtual], 
-                                    target_baseline_sha256=baseline.strip(),
-                                    target_project=target_project)
-            output.write_text(json.dumps(plan, indent=2), encoding="utf-8")
-            QMessageBox.information(self, "Transfer plan created",
-                "Saved review-only manifest. No source or target archives changed. "
-                "This does not verify compatibility or the target baseline.")
+            output = Path(destination).absolute()
+            verified_output = output.resolve(strict=False)
+            if (output.exists() or output.is_symlink()
+                    or any(part.is_symlink() for part in output.parents)
+                    or verified_output.is_relative_to(Path(target_project).resolve())
+                    or verified_output.is_relative_to(Path(LIBRARY_HOME).resolve())):
+                raise ValueError("Choose a new external manifest outside projects and the Asset Library.")
+            plan = prepare_transfer(
+                source_id, target_id, requested,
+                target_baseline_sha256=baseline.strip() or None,
+                target_project=target_project)
+            diagnostics = plan["dependency_diagnostics"]
+            counts = {}
+            for item in plan["mappings"]:
+                counts[item["action"]] = counts.get(item["action"], 0) + 1
+            description = (
+                "%d virtual assets examined, including discovered references.\n"
+                "Add review: %d | Replace review: %d | Reuse: %d\n"
+                "Missing source: %d | Conflicts: %d\n"
+                "Dependency diagnostics: %d incomplete / %d missing / %d ambiguous\n\n"
+                "All statuses are reference-only. No archive has been signed, "
+                "installed, or tested in Stage 2. Save this review manifest?"
+            ) % (
+                len(plan["mappings"]), counts.get("review-add", 0),
+                counts.get("review-replace", 0), counts.get("reuse-candidate", 0),
+                counts.get("missing-source", 0), counts.get("conflict", 0),
+                len(diagnostics["incomplete"]), len(diagnostics["missing"]),
+                len(diagnostics["conflicts"]))
+            if QMessageBox.question(
+                self, "Review transfer dependencies", description,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            with output.open("x", encoding="utf-8") as handle:
+                json.dump(plan, handle, indent=2)
+            if counts.get("missing-source", 0) or counts.get("conflict", 0):
+                QMessageBox.warning(self, "Review saved — unresolved dependencies",
+                    "The manifest is saved, but missing or conflicting source assets "
+                    "block candidate export. Import and review those dependencies first.")
+                return
+            export = QMessageBox.question(
+                self, "Export detached candidate files?",
+                "Save a separate bundle of verified source file copies for review?\n"
+                "This is NOT a signed PAK or importable Stage 2 mod, and does "
+                "not modify either original game or library.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if export != QMessageBox.Yes:
+                return
+            directory = QFileDialog.getExistingDirectory(
+                self, "Choose external parent directory for candidate bundle")
+            if not directory:
+                return
+            from uuid import uuid4
+            from transfer_candidates import export_candidate
+            name = "stage2-review-" + uuid4().hex[:12]
+            destination = Path(directory) / name
+            # Large candidates must be copied off the GUI thread.
+            if self.controller._start(
+                "transfer-candidate",
+                lambda: export_candidate(plan, destination,
+                    cancelled=self.controller._cancel.is_set)):
+                self.status.setText(
+                    "Exporting verified copies into " + str(destination) +
+                    ". Manifest is read-only; no Stage 2 package was built.")
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Transfer planning", str(exc))
+            QMessageBox.warning(self, "Transfer planning", str(exc)[:1200])
 
     def _historical_target(self, *, require_archive=True):
         """Require explicit build identities; never use the All Builds index."""
@@ -814,6 +886,7 @@ class AssetLibraryDialog(QDialog):
         except (OSError, ValueError, RuntimeError, KeyError) as exc:
             QMessageBox.warning(self, "Legacy model review", str(exc))
 
+
     def create_mod_project(self):
         record = self._selected_record()
         if record is None:
@@ -845,10 +918,11 @@ class AssetLibraryDialog(QDialog):
         record = self._selected_record()
         if record is None:
             return
-        from pak_dependencies import is_level_pak
-        if not is_level_pak(record['name']):
+        from library_map_actions import library_map_identity
+        if not library_map_identity(record):
             QMessageBox.information(self, "Open map",
-                "Select a supported level PAK. Unverified historical maps remain reference-only.")
+                "Select a PAK whose original source belongs to a map folder. "
+                "Unverified historical maps remain reference-only.")
             return
         self.accept()
         self.parent().open_library_map_from_archive(
@@ -897,12 +971,36 @@ class AssetLibraryDialog(QDialog):
                 "Map research files and transfer-review.json were exported to:\n" +
                 result.get("bundle_output", "") +
                 "\n\nThis is NOT a compiled or deployable Stage 2 map.")
+        elif action == "transfer-candidate":
+            QMessageBox.information(
+                self, "Review bundle created",
+                "Verified reference copies saved to:\n" + str(result)
+                + "\n\nNot a signed Stage 2 package or tested game mod.")
         elif isinstance(result, list):
+            legacy = [item for item in result if item.get("status") == "legacy-project"]
             failures = [item for item in result if item.get("status") == "error"]
+            if legacy:
+                names = ", ".join(item["name"] for item in legacy[:5])
+                message = (
+                    f"{len(legacy)} ordinary ZIP PAK(s) were indexed as independent "
+                    "legacy editing projects, not Stage 2 signed references.\n\n"
+                    f"{names}\n\nNo game files were modified. "
+                    "Open a project from Modding → File → Open Legacy PAK Project."
+                )
+                choice = QMessageBox.question(
+                    self, "Historical PAKs ready to edit",
+                    message + "\n\nOpen the first legacy project now?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                if choice == QMessageBox.Yes:
+                    self.accept()
+                    self.parent()._show_legacy_pak_editor(legacy[0]["folder"])
             if failures:
-                QMessageBox.warning(self, "Some PAKs were not imported",
-                                    "\n".join(item["name"] + ": " + item["error"]
-                                              for item in failures[:8])[:1500])
+                summary = "\n".join(item["name"] + ": " + item["error"]
+                                    for item in failures[:8])
+                QMessageBox.warning(
+                    self, f"{len(failures)} PAK(s) could not be imported",
+                    summary[:1500] + ("\n…additional failures omitted"
+                                     if len(failures) > 8 else ""))
         elif isinstance(result, dict) and result.get("corrupt", []) + result.get("missing", []):
             QMessageBox.warning(self, "Asset Library integrity",
                 "%d damaged and %d missing files. Remove and re-import "

@@ -36,7 +36,7 @@ if os.name == 'nt' and getattr(sys, 'frozen', False):
         sys.stderr = sys.stderr or open(os.devnull, 'w')
 
 
-from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl, QSize
+from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl, QSize, QItemSelectionModel
 from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices, QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout,
@@ -274,8 +274,8 @@ class NavigationButton(QPushButton):
     """
 
     def icon_bounds(self):
-        side = min(20, max(0, self.height() - 12))
-        return QRect(12, (self.height() - side) // 2, side, side)
+        side = min(30, max(0, self.height() - 12), max(0, self.width() - 90))
+        return QRect(10, (self.height() - side) // 2, side, side)
 
     def paintEvent(self, event):
         option = QStyleOptionButton()
@@ -285,11 +285,11 @@ class NavigationButton(QPushButton):
         painter = QPainter(self)
         self.style().drawControl(QStyle.CE_PushButton, option, painter, self)
         bounds = self.icon_bounds()
-        x = 12
+        x = 10
         if not self.icon().isNull():
             mode = QIcon.Normal if self.isEnabled() else QIcon.Disabled
             self.icon().paint(painter, bounds, Qt.AlignCenter, mode)
-            x = bounds.right() + 10
+            x = bounds.right() + 9
         label = QRect(x, 0, max(0, self.width() - x - 8), self.height())
         painter.setFont(self.font())
         painter.setPen(QColor('#ffffff' if self.objectName() == 'navActive'
@@ -441,9 +441,13 @@ class QtManager(QMainWindow):
             btn.setAccessibleName(title)
             btn.setToolTip(title)
             btn.setIcon(navigation_icon(
-                title, palette(self.appearance_mode, self.appearance_overrides)['text']))
-            btn.setIconSize(QSize(20, 20))
-            btn.setMinimumHeight(40)
+                title, palette(self.appearance_mode, self.appearance_overrides)['text'], 32))
+            btn.setIconSize(QSize(30, 30))
+            # The drawer has 194px width and 10px side margins. Set the
+            # initial widget geometry explicitly: hidden drawer children may
+            # still have Qt's default 100x30 size before first layout on
+            # Windows/offscreen, which clips the 30px icon to 18px.
+            btn.setFixedSize(174, 48)
             btn.setFocusPolicy(Qt.StrongFocus)
             btn.setObjectName('navActive' if index == 0 else 'nav')
             navlay.addWidget(btn)
@@ -566,6 +570,9 @@ class QtManager(QMainWindow):
         self._position_drawer()
         self._drawer_open = open_it
         self.drawer.show()
+        # Lay out children immediately, even if the geometry animation has
+        # only just started; icon painting must never use stale initial sizes.
+        self.drawer.layout().activate()
         self.drawer.raise_()
         self.menu_button.setText('✕  Close' if open_it else '☰  Menu')
         self.menu_animation.stop()
@@ -579,6 +586,18 @@ class QtManager(QMainWindow):
     def _after_drawer_animation(self):
         if not self._drawer_open:
             self.drawer.hide()
+            return
+        # A child of an initially hidden animated drawer can retain its
+        # default 30px geometry on Windows even with a fixed 48px size hint.
+        # Re-layout after the final animation geometry has been applied and
+        # explicitly resize each visible button. setFixedSize() alone does
+        # not correct stale native child geometry in this situation.
+        layout = self.drawer.layout()
+        layout.invalidate()
+        layout.activate()
+        for button in self.nav_buttons:
+            button.resize(174, 48)
+        self.drawer.update()
 
     def open_page(self, index):
         if not 0 <= index < self.stack.count():
@@ -688,6 +707,8 @@ class QtManager(QMainWindow):
         bar.setNativeMenuBar(False)
         file_menu = bar.addMenu('File')
         file_menu.addAction('Import PAKs / Manage Library…', self.open_asset_library)
+        file_menu.addAction('Edit Legacy Evolve (2012) PAK…', self.open_legacy_pak)
+        file_menu.addAction('Open Legacy PAK Project…', self.open_legacy_project)
         file_menu.addAction('Preview Selected PAK…', self.preview_library_archive)
         file_menu.addAction('Edit / Add to Mod Project…', self.edit_selected_library_archive)
         file_menu.addAction('Open Map in Level Editor…', self.edit_selected_library_map)
@@ -736,7 +757,7 @@ class QtManager(QMainWindow):
         self.asset_table.setHorizontalHeaderLabels(
             ('Dependency Group', 'Folder', 'Description', 'File', 'Extracted Files', 'Size'))
         self.asset_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.asset_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.asset_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.asset_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.asset_table.setAlternatingRowColors(True)
         self.asset_table.setSortingEnabled(True)
@@ -753,10 +774,15 @@ class QtManager(QMainWindow):
         self.asset_table.setColumnWidth(1, 150)
         self.asset_table.itemDoubleClicked.connect(
             lambda _item: self.preview_library_archive())
+        self.asset_table.itemSelectionChanged.connect(self._sync_library_quick_actions)
         layout.addWidget(self.asset_table, 1)
         self.asset_count = _label('No imported PAKs', muted=True)
         layout.addWidget(self.asset_count)
+        # Keep actions discoverable in File/Tools, but only show quick actions
+        # for a selected archive. The old six-button row clipped at 880 px.
         actions = QHBoxLayout()
+        actions.setSpacing(8)
+        self.asset_quick = {}
         for title, callback, primary in (
             ('Import / Manage PAKs…', self.open_asset_library, False),
             ('Preview Files', self.preview_library_archive, False),
@@ -765,8 +791,19 @@ class QtManager(QMainWindow):
             ('Export PAK Layout…', self.export_selected_library_archive, False),
             ('Open Asset Library Folder', self.open_library_folder, False),
         ):
-            actions.addWidget(_button(title, callback, primary=primary), 1)
+            button = _button(title, callback, primary=primary)
+            button.setToolTip(title + ' (also available from the menu bar)')
+            self.asset_quick[title] = button
+            if title in ('Preview Files', 'Edit / Add to Mod Project', 'Open Map'):
+                actions.addWidget(button)
+            else:
+                # Preserve action objects for migration compatibility, but the
+                # corresponding commands live under File rather than a huge row.
+                button.setParent(page)
+                button.hide()
+        actions.addStretch(1)
         layout.addLayout(actions)
+        self._sync_library_quick_actions()
         self.stack.addWidget(page)
         self.pages['asset_library'] = page
 
@@ -786,7 +823,8 @@ class QtManager(QMainWindow):
             return
         from asset_library import imported_archives
         from pak_dependencies import group_title
-        selected = self._selected_library_id()
+        selected_ids = self._selected_library_ids()
+        focused_id = self._selected_library_id()
         archives = imported_archives()
         from build_collections import catalog
         builds = catalog()['builds']
@@ -824,7 +862,10 @@ class QtManager(QMainWindow):
         table.setRowCount(0)
         for entry in visible:
             name = entry['name']
-            group = group_title(name)
+            from library_map_actions import library_map_identity
+            map_id = library_map_identity(entry)
+            group = ('Level • ' + map_id.replace('_', ' ').title()
+                     if map_id else group_title(name))
             folder = str(Path(entry['source']).parent)
             if len(folder) > 75:
                 folder = '…' + folder[-72:]
@@ -851,16 +892,43 @@ class QtManager(QMainWindow):
                 table.setItem(row, col, cell)
         table.setSortingEnabled(True)
         table.sortItems(0, Qt.AscendingOrder)
-        if selected:
+        if selected_ids:
+            # Refreshes can occur while shared PAK imports finish. Preserve
+            # visible multi-selection by archive ID even after sorting or
+            # filtering; selectRow() would collapse Shift/Ctrl selections.
+            model = table.selectionModel()
             for row in range(table.rowCount()):
                 cell = table.item(row, 0)
-                if cell and cell.data(Qt.UserRole) == selected:
-                    table.selectRow(row)
-                    break
+                if cell and cell.data(Qt.UserRole) in selected_ids:
+                    index = table.model().index(row, 0)
+                    model.select(index, QItemSelectionModel.Select |
+                                        QItemSelectionModel.Rows)
+                    if cell.data(Qt.UserRole) == focused_id:
+                        model.setCurrentIndex(index, QItemSelectionModel.NoUpdate)
         self.asset_count.setText(
             '%d of %d imported PAKs • %.1f GiB extracted • read-only previews' %
             (len(visible), len(archives),
              sum(a['bytes'] for a in archives) / (1024 ** 3)))
+        self._sync_library_quick_actions()
+
+    def _sync_library_quick_actions(self):
+        """Only offer asset actions applicable to the selected library PAK."""
+        buttons = getattr(self, 'asset_quick', {})
+        if not buttons:
+            return
+        identifiers = self._selected_library_ids()
+        records = [getattr(self, '_library_rows', {}).get(identifier)
+                   for identifier in identifiers]
+        has_pak = bool(records) and all(record is not None for record in records)
+        from library_map_actions import library_map_identity
+        # The UI must also recognize level.pak/terraintexture.pak when their
+        # original source is Game/levels/Tutorial, not only levels_X.pak.
+        is_map = bool(has_pak and all(library_map_identity(r) for r in records))
+        for label in ('Preview Files', 'Edit / Add to Mod Project', 'Open Map'):
+            button = buttons[label]
+            relevant = bool(is_map if label == 'Open Map' else has_pak)
+            button.setVisible(relevant)
+            button.setEnabled(relevant)
 
     def _library_build_context(self):
         if hasattr(self, 'asset_view_tabs') and self.asset_view_tabs.currentIndex() == 1:
@@ -878,17 +946,24 @@ class QtManager(QMainWindow):
             record['id'], source_build_id=build_id, open_level=open_level)
 
     def edit_selected_library_map(self):
-        record = self._selected_library_record()
-        if record is None:
+        identifiers = self._selected_library_ids()
+        if not identifiers:
+            self.info('Open Map', 'Select one or more imported map PAKs.')
             return
-        from pak_dependencies import is_level_pak
-        if not is_level_pak(record['name']):
-            self.info('Open Map', 'Select a supported level PAK in Asset Library.')
+        from library_map_actions import validated_map_selection
+        records = [getattr(self, '_library_rows', {}).get(identifier)
+                   for identifier in identifiers]
+        try:
+            primary, _ = validated_map_selection(records)
+        except ValueError as exc:
+            self.info('Open Map', str(exc))
             return
         self.open_library_map_from_archive(
-            record['id'], build_id=self._library_build_context())
+            primary['id'], build_id=self._library_build_context(),
+            selected_ids=identifiers)
 
-    def open_library_map_from_archive(self, identifier, *, build_id=None):
+    def open_library_map_from_archive(self, identifier, *, build_id=None,
+                                      selected_ids=None):
         """Extract map family as separate editable Stage 2 target workspaces."""
         try:
             if self.busy or self.asset_library_controller.busy:
@@ -896,30 +971,39 @@ class QtManager(QMainWindow):
             from asset_library import imported_archives
             from asset_library_bulk import stage_source_for_import
             from build_collections import catalog, resolve_archive_build
-            from level_asset_mount import level_from_source
-            from pak_dependencies import is_level_pak
+            from library_map_actions import (library_map_identity,
+                                             validated_map_selection)
             records = {item['id']: item for item in imported_archives()}
-            selected = records.get(identifier)
-            if not selected or not is_level_pak(selected['name']):
-                raise ValueError('Select a supported imported level PAK.')
+            requested = tuple(dict.fromkeys(selected_ids or (identifier,)))
+            if identifier not in requested:
+                raise ValueError('The primary map PAK must be selected.')
+            if any(archive_id not in records for archive_id in requested):
+                raise ValueError('One selected map PAK is no longer imported.')
+            primary, map_id = validated_map_selection(
+                [records[archive_id] for archive_id in requested])
+            if primary['id'] != identifier:
+                raise ValueError('Selected primary map PAK changed; select it again.')
+            selected = records[identifier]
             if not build_id or build_id == 'all':
                 build_id = resolve_archive_build(identifier)
             builds = catalog()['builds']
             if build_id not in builds or builds[build_id]['family'] != 'stage2':
                 raise ValueError(
-                    'Select a registered Stage 2 build. Historical maps remain '
-                    'reference-only until a verified target mapping is prepared.')
-            if identifier not in builds[build_id]['members']:
-                raise ValueError('Selected map archive does not belong to this build.')
-            map_id = (level_from_source(selected['source']) or
-                      level_from_source(selected['name']))
-            if not map_id:
-                raise ValueError('Map identity could not be established from source paths.')
+                    'Assign the selected map archives to one registered Stage 2 '
+                    'snapshot in Asset Library > By Build first. Historical '
+                    'maps remain reference-only until a verified target exists.')
+            if any(archive_id not in builds[build_id]['members']
+                   for archive_id in requested):
+                raise ValueError(
+                    'Selected level PAKs must all belong to the same registered '
+                    'Stage 2 build. Use By Build to select that snapshot first.')
             same_map = [
                 item for item in records.values()
                 if item['id'] in builds[build_id]['members']
-                and (level_from_source(item['source']) or
-                     level_from_source(item['name'])) == map_id]
+                and library_map_identity(item) == map_id]
+            if any(archive_id not in {item['id'] for item in same_map}
+                   for archive_id in requested):
+                raise ValueError('Selected PAKs do not form one verified map family.')
             if not 1 <= len(same_map) <= 30:
                 raise ValueError('Map family exceeds the 30-PAK bounded extraction limit.')
             game = self.game_root or self._find_game_root()
@@ -943,13 +1027,33 @@ class QtManager(QMainWindow):
         except (OSError, ValueError, RuntimeError) as exc:
             self.failure(exc)
 
-    def _selected_library_id(self):
+    def _selected_library_ids(self):
+        """Stable archive IDs from selected rows, including Shift/Ctrl ranges.
+
+        Sorting and filtered table positions are not archive identifiers.
+        Keep the single-row helpers for preview/project operations.
+        """
         table = getattr(self, 'asset_table', None)
-        if table is None:
+        if table is None or table.selectionModel() is None:
+            return ()
+        values = []
+        for index in table.selectionModel().selectedRows(0):
+            cell = table.item(index.row(), 0)
+            if cell is not None:
+                identifier = cell.data(Qt.UserRole)
+                if identifier is not None and identifier not in values:
+                    values.append(identifier)
+        return tuple(values)
+
+    def _selected_library_id(self):
+        identifiers = self._selected_library_ids()
+        if not identifiers:
             return None
+        table = self.asset_table
         row = table.currentRow()
         cell = table.item(row, 0) if row >= 0 else None
-        return cell.data(Qt.UserRole) if cell else None
+        current = cell.data(Qt.UserRole) if cell is not None else None
+        return current if current in identifiers else identifiers[0]
 
     def _selected_library_record(self):
         identifier = self._selected_library_id()
@@ -1049,8 +1153,11 @@ class QtManager(QMainWindow):
             ('Unpack PAK + known dependencies', self.extract),
             ('Unpack selected PAKs + dependencies', self.extract_batch),
             ('Import External PAK…', self.browse_external_pak),
+            ('Edit Legacy Evolve (2012) PAK…', self.open_legacy_pak),
+            ('Open Legacy PAK Project…', self.open_legacy_project),
             (None, None),
             ('Projects…', self.open_project_dashboard),
+            ('Refresh Project List', self.refresh_project_list),
             ('Open Unpacked Files', self.open_unpacked),
         ))
         menu_commands('Edit', (
@@ -1110,7 +1217,10 @@ class QtManager(QMainWindow):
         self.project_changes_table.itemDoubleClicked.connect(
             lambda _: self.open_modified_project_file())
         root.addWidget(self.project_changes_table, 1)
+        # Only the selected project's frequent actions belong on the page.
+        # Refresh/review/library remain in File/Edit/Tools and sidebar.
         project_actions = QHBoxLayout()
+        self.project_quick = {}
         for title, handler in (
             ('Refresh Projects', self.refresh_project_list),
             ('Continue Editing', self.open_active_project),
@@ -1118,8 +1228,16 @@ class QtManager(QMainWindow):
             ('Build Mod', self.build),
             ('Asset Library', lambda: self.open_page(SECTIONS.index('Asset Library'))),
         ):
-            project_actions.addWidget(_button(title, handler), 1)
+            button = _button(title, handler)
+            self.project_quick[title] = button
+            if title in ('Continue Editing', 'Build Mod'):
+                project_actions.addWidget(button)
+            else:
+                button.setParent(page)
+                button.hide()
+        project_actions.addStretch(1)
         root.addLayout(project_actions)
+        self._sync_project_quick_actions()
         self.legacy_archive_toggle = _button(
             'Show Advanced Archive Tools', self.toggle_advanced_archive_tools)
         root.addWidget(self.legacy_archive_toggle)
@@ -1217,6 +1335,16 @@ class QtManager(QMainWindow):
                 break
         self.refresh_project_changes()
 
+    def _sync_project_quick_actions(self):
+        buttons = getattr(self, 'project_quick', {})
+        if not buttons:
+            return
+        record = self.selected_project_context()
+        ready = bool(record and record['status'] not in ('missing', 'unavailable'))
+        for title in ('Continue Editing', 'Build Mod'):
+            buttons[title].setVisible(ready)
+            buttons[title].setEnabled(ready)
+
     def selected_project_context(self):
         if not hasattr(self, 'project_table'):
             return None
@@ -1280,6 +1408,7 @@ class QtManager(QMainWindow):
             except (OSError, ValueError, KeyError) as exc:
                 self._log('Project changes: ' + str(exc)[:200])
         table.setSortingEnabled(True)
+        self._sync_project_quick_actions()
 
     def open_modified_project_file(self):
         current = self.project_changes_table.item(
@@ -1691,7 +1820,12 @@ class QtManager(QMainWindow):
         self.setStyleSheet(style)
         icon_color = palette(self.appearance_mode, self.appearance_overrides)['text']
         for index, button in enumerate(getattr(self, 'nav_buttons', ())):
-            button.setIcon(navigation_icon(SECTIONS[index], icon_color))
+            button.setIcon(navigation_icon(SECTIONS[index], icon_color, 32))
+            # Qt's stylesheet re-polish can reset a button's pre-style
+            # 48px height to its 30px size hint on Windows. Restore the
+            # fixed geometry *after* applying the global stylesheet so
+            # all 30px navigation icons stay unclipped.
+            button.setFixedSize(174, 48)
         for editor in getattr(self, 'editors', []):
             if editor is not None:
                 editor.setStyleSheet(style)
@@ -1789,6 +1923,12 @@ class QtManager(QMainWindow):
         panel.addWidget(_button(
             'https://modded-evolve.com/',
             lambda: webbrowser.open('https://modded-evolve.com/')))
+        attribution, attribution_panel = _card(
+            'Interface icons', 'Uicons by Flaticon — Solid Rounded set.')
+        attribution_panel.addWidget(_button(
+            'Uicons by Flaticon  ↗',
+            lambda: webbrowser.open('https://www.flaticon.com/uicons')))
+        lay.addWidget(attribution)
         lay.addWidget(_label(self.t('credits_install_note'), muted=True))
         lay.addStretch()
         self.stack.addWidget(scroll)
@@ -2335,6 +2475,62 @@ class QtManager(QMainWindow):
         except (ValueError, KeyError, TypeError, OSError):
             pass
 
+    def _show_legacy_pak_editor(self, folder):
+        """Keep historical ZIP PAK projects separate from signed Stage 2 mods."""
+        from qt_legacy_pak_editor import LegacyPAKEditor
+        folder = Path(folder).resolve(strict=True)
+        for editor in tuple(self.editors):
+            if isinstance(editor, LegacyPAKEditor) and editor.project['folder'] == folder:
+                if editor.isVisible():
+                    editor.raise_()
+                    editor.activateWindow()
+                    return editor
+        editor = LegacyPAKEditor(self, folder)
+        editor.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.editors.append(editor)
+        editor.show()
+        editor.raise_()
+        return editor
+
+    def open_legacy_pak(self):
+        """Open unsigned ZIP-compatible 2012 PAK without game setup or injection."""
+        source, _ = QFileDialog.getOpenFileName(
+            self, 'Open Historical Evolve (2012) PAK',
+            str(Path.home()), 'Legacy PAK (*.pak);;All files (*)')
+        if not source:
+            return
+        try:
+            from legacy_pak_workspace import create_project
+            import hashlib
+            path = Path(source).resolve(strict=True)
+            folder = Path(self.projects_path).resolve() / 'Legacy_PAK_Projects'
+            folder.mkdir(parents=True, exist_ok=True)
+            safe = ''.join(ch if ch.isalnum() or ch in '-_' else '_'
+                           for ch in path.stem)[:48] or 'Archive'
+            label = hashlib.sha256(str(path).casefold().encode()).hexdigest()[:9]
+            root = folder / (safe + '_' + label)
+            if root.exists():
+                from legacy_pak_workspace import load_project
+                manifest = load_project(root)
+                if manifest['source_path'] != path:
+                    raise ValueError('Existing legacy project refers to a different PAK.')
+            else:
+                create_project(path, root)
+            self._show_legacy_pak_editor(root)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def open_legacy_project(self):
+        directory = QFileDialog.getExistingDirectory(
+            self, 'Open Existing Legacy PAK Project',
+            str(Path(self.projects_path).resolve() / 'Legacy_PAK_Projects'))
+        if not directory:
+            return
+        try:
+            self._show_legacy_pak_editor(directory)
+        except (OSError, ValueError, KeyError) as exc:
+            self.failure(exc)
+
     def open_asset_library(self):
         from qt_asset_library import AssetLibraryDialog
         dialog = AssetLibraryDialog(
@@ -2496,8 +2692,12 @@ class QtManager(QMainWindow):
             return
         if isinstance(result, list):
             failed = [row for row in result if row.get('status') == 'error']
-            self._log('Asset Library: %d imported or already present, %d failures' %
-                      (len(result) - len(failed), len(failed)))
+            historical = [row for row in result
+                          if row.get('status') == 'legacy-project']
+            verified = len(result) - len(failed) - len(historical)
+            self._log('Asset Library: %d signed archive imports, %d legacy ZIP '
+                      'projects kept separate, %d failures' %
+                      (verified, len(historical), len(failed)))
             if failed:
                 self._log('First failed PAK: ' + failed[0]['name'] +
                           ': ' + failed[0]['error'][:180])
@@ -2512,7 +2712,7 @@ class QtManager(QMainWindow):
         # interrupt a playing animation or dirty text buffer.
         for editor in tuple(self.editors):
             try:
-                if (editor.isVisible() and editor.mode == 'models'
+                if (editor.isVisible() and getattr(editor, 'mode', None) == 'models'
                         and editor.current and not
                         (editor.model_panel and editor.model_panel.anim_playing)):
                     # An imported shared PAK previously left this editor

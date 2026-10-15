@@ -20,37 +20,16 @@ from PySide6.QtWidgets import (
 from gpu_model_preview import prepare_geometry, GPUUnavailable
 
 
+from qt_navigation_icons import navigation_icon
+
+
 def _viewport_tool_icon(kind):
-    """Draw toolbar icons without an emoji font or SVG runtime dependency."""
-    canvas = QPixmap(18, 18)
-    canvas.fill(Qt.transparent)
-    painter = QPainter(canvas)
-    painter.setRenderHint(QPainter.Antialiasing, True)
-    painter.setPen(QPen(QColor("#e9e2e7"), 1.6))
-    painter.setBrush(Qt.NoBrush)
-    if kind == "View":
-        painter.drawEllipse(2, 5, 14, 8)
-        painter.drawEllipse(7, 7, 4, 4)
-    elif kind == "Materials":
-        for x, y in ((3, 3), (10, 3), (3, 10), (10, 10)):
-            painter.drawRect(x, y, 5, 5)
-    elif kind == "Animation":
-        painter.drawRect(2, 3, 14, 12)
-        painter.drawPolygon(QPolygon([QPoint(7, 6), QPoint(7, 12),
-                                       QPoint(12, 9)]))
-    elif kind == "Grid":
-        for v in (4, 9, 14):
-            painter.drawLine(v, 2, v, 16)
-            painter.drawLine(2, v, 16, v)
-    elif kind == "Wire":
-        painter.drawRect(3, 3, 11, 11)
-        painter.drawLine(3, 3, 14, 14)
-        painter.drawLine(14, 3, 3, 14)
-    elif kind == "Solid":
-        painter.setBrush(QColor("#aaa6b6"))
-        painter.drawEllipse(3, 3, 12, 12)
-    painter.end()
-    return QIcon(canvas)
+    """Use the same offline pictograms as explorer and GFX controls."""
+    mapping = {
+        "View": "view", "Materials": "material", "Animation": "animation",
+        "Grid": "grid", "Wire": "wire", "Solid": "solid",
+    }
+    return navigation_icon(mapping.get(kind, kind.casefold()), size=18)
 
 
 class _CompactAnimationList(QListWidget):
@@ -702,9 +681,12 @@ class QtGPUModelPanel(QWidget):
         # A viewport breadcrumb replaces the layout-consuming title row.
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
+        # Icon-only actions fit compact embedded GPU panes without clipping.
+        # Labels remain in Qt accessible names and hover tooltips.
+        toolbar.setSpacing(3)
         mode_label = QLabel('Object Mode')
         mode_label.setToolTip('Read-only CryEngine preview')
-        toolbar.addWidget(mode_label)
+        mode_label.hide()
         self._overlay_buttons = {}
         for section in ('View', 'Materials', 'Animation'):
             button = QToolButton(self)
@@ -712,7 +694,9 @@ class QtGPUModelPanel(QWidget):
             button.setText(section + ' ▾')
             button.setIcon(_viewport_tool_icon(section))
             button.setIconSize(QSize(17, 17))
-            button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            button.setFixedSize(32, 32)
+            button.setAccessibleName(section + ' tools')
             button.setToolTip('Open '+section+' tools over the 3D preview')
             button.setCheckable(True)
             button.clicked.connect(
@@ -727,6 +711,10 @@ class QtGPUModelPanel(QWidget):
         self._grid_toggle.setCheckable(True)
         self._grid_toggle.setChecked(True)
         self._grid_toggle.toggled.connect(lambda state: (setattr(self.canvas,'grid_visible', state),self.canvas.update()))
+        self._grid_toggle.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._grid_toggle.setIconSize(QSize(18, 18))
+        self._grid_toggle.setFixedSize(32, 32)
+        self._grid_toggle.setAccessibleName(self._grid_toggle.text())
         toolbar.addWidget(self._grid_toggle)
         self._shading_group = QButtonGroup(self)
         self._shading_group.setExclusive(True)
@@ -737,6 +725,10 @@ class QtGPUModelPanel(QWidget):
         self._solid_shading.setToolTip('Preview without texture colors')
         self._solid_shading.setCheckable(True)
         self._shading_group.addButton(self._solid_shading)
+        self._solid_shading.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._solid_shading.setIconSize(QSize(18, 18))
+        self._solid_shading.setFixedSize(32, 32)
+        self._solid_shading.setAccessibleName(self._solid_shading.text())
         toolbar.addWidget(self._solid_shading)
         self._material_shading = QToolButton(self)
         self._material_shading.setText('Material')
@@ -746,16 +738,29 @@ class QtGPUModelPanel(QWidget):
         self._material_shading.setCheckable(True)
         self._material_shading.setChecked(True)
         self._shading_group.addButton(self._material_shading)
+        self._material_shading.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._material_shading.setIconSize(QSize(18, 18))
+        self._material_shading.setFixedSize(32, 32)
+        self._material_shading.setAccessibleName(self._material_shading.text())
         toolbar.addWidget(self._material_shading)
         self._wire_toggle = QToolButton(self)
         self._wire_toggle.setText('Wire')
         self._wire_toggle.setIcon(_viewport_tool_icon('Wire'))
         self._wire_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self._wire_toggle.setCheckable(True)
+        self._wire_toggle.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._wire_toggle.setIconSize(QSize(18, 18))
+        self._wire_toggle.setFixedSize(32, 32)
+        self._wire_toggle.setAccessibleName(self._wire_toggle.text())
         toolbar.addWidget(self._wire_toggle)
         self._play_shortcut = QToolButton(self)
-        self._play_shortcut.setText('▶  Play')
+        self._play_shortcut.setText('Play')
         self._play_shortcut.setToolTip('Play / pause current animation')
+        self._play_shortcut.setIcon(navigation_icon('play', size=18))
+        self._play_shortcut.setIconSize(QSize(18, 18))
+        self._play_shortcut.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._play_shortcut.setAccessibleName('Play or pause animation')
+        self._play_shortcut.setFixedSize(32, 32)
         self._play_shortcut.clicked.connect(self.toggle_play)
         layout.addLayout(toolbar)
         self.canvas=QtGLModelCanvas(mesh,materials,self,prepared_geometry=prepared_geometry)
@@ -1292,6 +1297,7 @@ class QtGPUModelPanel(QWidget):
         self.clip_select.currentTextChanged.connect(self.select_clip)
         line.addWidget(self.clip_select, 1)
         self.play_button = QPushButton('Play')
+        self.play_button.setIcon(navigation_icon('play'))
         self.play_button.clicked.connect(self.toggle_play)
         line.addWidget(self.play_button)
         playback_layout.addLayout(line)
@@ -1304,11 +1310,12 @@ class QtGPUModelPanel(QWidget):
         self.native_search.textChanged.connect(self._filter_native_catalog)
         native_header.addWidget(self.native_search, 1)
         self.native_refresh_button = QPushButton('Refresh Library')
+        self.native_refresh_button.setIcon(navigation_icon('refresh'))
         self.native_refresh_button.setObjectName('refreshNativeLibrary')
         self.native_refresh_button.setToolTip(
             'Re-read the current Asset Library and update this model\'s animation references.')
         self.native_refresh_button.clicked.connect(self.refresh_native_catalog)
-        self.native_refresh_button.setText('↻')
+        self.native_refresh_button.setText('')
         self.native_refresh_button.setFixedWidth(35)
         self.native_refresh_button.setToolTip('Refresh animations from the Asset Library')
         search_row=QHBoxLayout()
@@ -1340,6 +1347,12 @@ class QtGPUModelPanel(QWidget):
         self.native_result_count.setStyleSheet('color:#aeb1c1;font-size:11px;')
         self.native_result_count.setWordWrap(True)
         catalog_layout.addWidget(self.native_result_count)
+        self.native_capabilities = QLabel('')
+        self.native_capabilities.setObjectName('historicalNativeCapabilityStatus')
+        self.native_capabilities.setStyleSheet('color:#acb0bd;font-size:10px;')
+        self.native_capabilities.setWordWrap(True)
+        self.native_capabilities.hide()
+        catalog_layout.addWidget(self.native_capabilities)
 
         self.native_clip_select = _CompactAnimationList(self)
         self.native_clip_select.setToolTip(
@@ -1357,7 +1370,18 @@ class QtGPUModelPanel(QWidget):
             'background:#33333d;color:#888995;}')
         self.play_native_button.clicked.connect(self.load_native)
         catalog_layout.addWidget(self.native_clip_select, 1)
-        catalog_layout.addWidget(self.play_native_button)
+        native_controls = QHBoxLayout()
+        native_controls.setSpacing(5)
+        native_controls.addWidget(self.play_native_button, 1)
+        self.cancel_native_button = QPushButton('×')
+        self.cancel_native_button.setObjectName('cancelNativeAnimationDecode')
+        self.cancel_native_button.setFixedWidth(34)
+        self.cancel_native_button.setToolTip(
+            'Cancel current character motion conversion without editing assets.')
+        self.cancel_native_button.setEnabled(False)
+        self.cancel_native_button.clicked.connect(self.cancel_native_conversion)
+        native_controls.addWidget(self.cancel_native_button)
+        catalog_layout.addLayout(native_controls)
         self.native_clip_select.itemDoubleClicked.connect(lambda _item: self.load_native())
         self.layer_row_widget = QWidget(self)
         layer_row = QVBoxLayout(self.layer_row_widget)
@@ -1493,12 +1517,14 @@ class QtGPUModelPanel(QWidget):
         self._native_signals.completed.connect(self._native_ready)
 
     def set_native_catalog(self, references, idle=None, description='',
-                           loader=None, refresh_library=None, character=None):
+                           loader=None, refresh_library=None, character=None,
+                           historical_character=False):
         """Filter a potentially huge native animation catalog on the GUI thread."""
         from character_animation_catalog import (
             native_clip_playability, preferred_third_person_dba)
         self._native_generation += 1
         self._auto_dba_loading = False
+        self.cancel_native_button.setEnabled(False)
         # A new character should never inherit the old character's filter,
         # which could conceal the exact 3P DBA and prevent default playback.
         identity = str(character or description).casefold()
@@ -1515,6 +1541,17 @@ class QtGPUModelPanel(QWidget):
         self._catalog_character = identity
         self._native_loader = loader
         self._native_references = tuple(references)
+        self._historical_character = bool(historical_character)
+        if historical_character:
+            found = any(ref.kind == 'dba' and ref.available for ref in references)
+            self.native_capabilities.setText(
+                '2012 CryTek • Mesh: available • Rig: not yet validated • '
+                'DBA: ' + ('found' if found else 'not indexed') +
+                ' • Clips: not decoded • Playback: not verified • '
+                'Rigged export: requires validation')
+            self.native_capabilities.show()
+        else:
+            self.native_capabilities.hide()
         # The selected row from another character must not carry over:
         # the numeric catalog index may now name a completely different clip.
         self.native_clip_select.blockSignals(True)
@@ -1703,6 +1740,15 @@ class QtGPUModelPanel(QWidget):
                 detail + '\nGame path: ' + ref.virtual_path +
                 '\nAsset Library path: ' + source)
 
+    def cancel_native_conversion(self):
+        # The background converter polls this generation and terminates its
+        # child process. Old QThreadPool results are ignored by token.
+        self._native_generation += 1
+        self._auto_dba_loading = False
+        self.cancel_native_button.setEnabled(False)
+        self.play_native_button.setEnabled(True)
+        self.native_info.setText('Motion decoding cancelled. Source assets were not changed.')
+
     def load_native(self):
         from character_animation_catalog import native_clip_playability
         i = self.native_clip_select.currentData()
@@ -1733,6 +1779,7 @@ class QtGPUModelPanel(QWidget):
             self.play_native_button.setEnabled(False)
             self.native_info.setText(
                 'Decoding base + additive/aimpose CAF on one verified skeleton…')
+            self.cancel_native_button.setEnabled(True)
             self._native_pool.start(_NativeConversion(
                 lambda unused: self._native_loader(ref, base_ref=base),
                 ref, token, self._native_signals))
@@ -1748,16 +1795,23 @@ class QtGPUModelPanel(QWidget):
              'Locating and extracting exact CAF from verified game PAK…'
              if state != 'candidate' else 'Decoding standalone CAF and rigged model…'))
         self.play_native_button.setEnabled(False)
+        self.cancel_native_button.setEnabled(True)
         job = _NativeConversion(self._native_loader, ref, token, self._native_signals)
         self._native_pool.start(job)
 
     def _native_ready(self, token, result, error):
         if token != self._native_generation:
             return
+        self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
         was_default_dba = self._auto_dba_loading
         self._auto_dba_loading = False
         if error:
+            if getattr(self, '_historical_character', False):
+                self.native_capabilities.setText(
+                    '2012 CryTek • Mesh: available • Rig/clip: not verified • '
+                    'DBA: indexed only • Playback/export: needs validated rig; '
+                    'see diagnostic below')
             self.native_info.setText('Native animation unavailable: ' + error[:230])
             return
         payload, details = result
@@ -1784,6 +1838,11 @@ class QtGPUModelPanel(QWidget):
         except (ValueError, OSError) as exc:
             self.native_info.setText('Animation playback rejected: ' + str(exc)[:230])
             return
+        if getattr(self, '_historical_character', False):
+            self.native_capabilities.setText(
+                '2012 CryTek • Mesh: available • Rig: validated • '
+                'DBA: found • Clips: decoded and verified • '
+                'Playback: available • Rigged export: available')
         resolved = details.get('_resolved_caf_reference')
         if resolved is not None:
             from character_animation_catalog import native_clip_playability

@@ -10,7 +10,10 @@ from dataclasses import dataclass
 from functools import cached_property
 from io import BytesIO
 from pathlib import Path
+from collections import OrderedDict
+import hashlib
 import re
+import threading
 from xml.etree import ElementTree as ET
 
 from PIL import Image
@@ -22,6 +25,14 @@ from multi_pak_assets import related_asset_index, _resolve, load_workspace, norm
 MAX_MATERIAL_BYTES = 5 * 1024 * 1024
 MAX_TEXTURE_BYTES = 64 * 1024 * 1024
 MAX_PREVIEW_TEX_DIM = 4096  # original DDS resolution where bounded by pixel budget
+_texture_pixels = OrderedDict()
+_texture_lock = threading.RLock()
+MAX_CACHED_TEXTURE_BYTES = 128 * 1024 * 1024
+
+
+def clear_texture_cache():
+    with _texture_lock:
+        _texture_pixels.clear()
 
 
 @dataclass(frozen=True)
@@ -174,7 +185,29 @@ def _external_lookup(folder, ref):
     return None
 
 
-def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM, normal_map=False):
+def _historical_2012_character(index, workspace, relative):
+    """Gate Xenos transforms on an actual CryTek 0x745 model in this build."""
+    import struct
+    from pathlib import PurePosixPath
+    name = str(relative).replace('\\', '/')
+    if name.casefold().endswith('.cdf'):
+        name = str(PurePosixPath(name).with_suffix('.chr'))
+    if not name.casefold().endswith('.chr'):
+        return False
+    hits, status = _resolve(index, name, preferred_workspace=workspace)
+    if status != 'found':
+        return False
+    candidate = Path(hits[0]['file'])
+    if not candidate.is_file() or candidate.is_symlink():
+        return False
+    with candidate.open('rb') as handle:
+        header = handle.read(16)
+    return (len(header) == 16 and header[:8] == b'CryTek\0\0'
+            and struct.unpack_from('<I', header, 12)[0] == 0x745)
+
+
+def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM,
+                    normal_map=False, historical_2012=False):
     path = item['file']
     if path.stat().st_size > MAX_TEXTURE_BYTES:
         raise ValueError('Texture fragment exceeds the 64 MiB preview limit.')
@@ -250,13 +283,31 @@ def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM, norm
                 raw = first[:info.data_offset] + b''.join(reversed(pieces)) + first[info.data_offset:]
     else:
         raw = path.read_bytes()
+    return _decode_texture_pixels(raw, relative, max_dimension=max_dimension,
+                                  normal_map=normal_map, historical_2012=historical_2012)
+
+
+def _decode_texture_pixels(raw, relative, *, max_dimension=MAX_PREVIEW_TEX_DIM,
+                           normal_map=False, historical_2012=False):
+    # Key the assembled bytes, not a filename: edited files, stream fragments,
+    # builds and preview/export quality must never reuse stale pixels.
+    key = (hashlib.sha256(raw).digest(), relative if normal_map else None,
+           max_dimension, normal_map, historical_2012)
+    with _texture_lock:
+        cached = _texture_pixels.get(key)
+        if cached is not None:
+            _texture_pixels.move_to_end(key)
+            return cached.copy()
     info = parse_dds(raw)
     if len(raw) > MAX_TEXTURE_BYTES or info.width * info.height > 16_777_216:
         raise ValueError('DDS texture exceeds preview size limits.')
     # CryEngine normal maps can be BC5 XY or DXT5nm alpha/green, not
     # directly usable tangent-space RGB. The same normalized pixels feed the
     # Qt shader and GLB exporter; never rescale a lower mip as a substitute.
-    if normal_map:
+    from xbox360_dds import is_2012_console_dds, decode_2012_console_dds
+    if historical_2012 and is_2012_console_dds(raw):
+        tex = decode_2012_console_dds(raw, normal_map=normal_map)
+    elif normal_map:
         from normal_map_utils import decode_normal_dds_image
         tex = decode_normal_dds_image(raw, source_name=relative)
     else:
@@ -273,6 +324,13 @@ def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM, norm
     tex.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
     if alpha is not None:
         tex.putalpha(alpha.resize(tex.size, Image.Resampling.LANCZOS))
+    with _texture_lock:
+        _texture_pixels[key] = tex.copy()
+        _texture_pixels.move_to_end(key)
+        while (len(_texture_pixels) > 128 or
+               sum(im.width * im.height * 4
+                   for im in _texture_pixels.values()) > MAX_CACHED_TEXTURE_BYTES):
+            _texture_pixels.popitem(last=False)
     return tex
 
 
@@ -282,6 +340,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
     decode_max = 4096 if texture_quality == "highest" else 1024
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
+    historical_2012 = _historical_2012_character(
+        index, workspace, model_relative)
     from model_material_resolve import find_model_material
     if material_override:
         from multi_pak_assets import _resolve
@@ -324,73 +384,73 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
     # when exactly one verified matching DDS basename exists across all
     # extracted PAKs. Different files with the same name are never guessed.
     def recover_unique_dds(ref):
-        from multi_pak_assets import _candidates
-        basenames = {Path(item).name.casefold() for item in _candidates(ref)
-                     if item.casefold().endswith(('.dds','.dds.0'))}
-        hits = {}
-        material_parts = str(material['relative']).replace('\\', '/').casefold().split('/')
-        # A missing character texture must NOT be filled from another actor's
-        # equally named DDS (common in monster/hunter skins). Only search the
-        # same character's virtual subtree. Explicit shared references are
-        # resolved by the normal path lookup above.
-        character_prefix = ('/'.join(material_parts[:3]) + '/'
-                            if len(material_parts) >= 3
-                            and material_parts[0] == 'characters'
-                            and material_parts[1] in ('hunters', 'monsters', 'creatures')
-                            else None)
-        for path, records in index.items():
-            if character_prefix and not path.casefold().startswith(character_prefix):
-                continue
-            if Path(path).name.casefold() not in basenames:
-                continue
-            for record in records:
-                # A signed shared archive is indexed lazily, and is not a
-                # loose path until a unique basename was verified.
-                if '_shared_archive' in record:
-                    from shared_pak_cache import materialize_shared_record
-                    record = materialize_shared_record(record)
-                hits[str(Path(record['file']).resolve())] = record
-                if len(hits) > 32:
-                    return None
-        if not hits:
+        """Recover a cooked texture only from the material's own character.
+
+        Historical Evolve materials often start with Objects/characters/.
+        Never search globally for a same-named DDS from a different actor.
+        """
+        from multi_pak_assets import _candidates, _content_fingerprint
+        cooked = [p.casefold() for p in _candidates(ref)
+                  if p.casefold().endswith(('.dds', '.dds.0'))]
+        parts = str(material['relative']).replace('\\', '/').casefold().split('/')
+        if len(parts) >= 4 and parts[:2] == ['objects', 'characters']:
+            # objects/characters/monsters/parasitehost/*.mtl and comparable.
+            scope = '/'.join(parts[:4]) + '/' if parts[2] in (
+                'monsters', 'hunters', 'creatures') and len(parts) >= 5 \
+                else '/'.join(parts[:3]) + '/'
+        elif len(parts) >= 4 and parts[0] == 'characters' and parts[1] in (
+                'monsters', 'hunters', 'creatures'):
+            scope = '/'.join(parts[:3]) + '/'
+        else:
+            # Never borrow a global basename when ownership is unknown.
             return None
-        # A shared TS PAK, custom signed stage and user's imported game PAK
-        # may all contain the SAME DDS at different physical locations.
-        # Deduplicate by bytes, not absolute filenames. Never choose between
-        # different DDS payloads based on an ambiguous basename.
-        if len(hits) > 1:
-            from multi_pak_assets import _content_fingerprint
-            try:
-                if len({_content_fingerprint(hit['file']) for hit in hits.values()}) != 1:
+        for wanted in sorted({Path(x).name for x in cooked},
+                             key=lambda x: (not x.endswith('.dds.0'), x)):
+            hits = {}
+            for virtual, records in index.items():
+                if (not virtual.casefold().startswith(scope)
+                        or Path(virtual).name.casefold() != wanted):
+                    continue
+                for record in records:
+                    if '_shared_archive' in record:
+                        from shared_pak_cache import materialize_shared_record
+                        record = materialize_shared_record(record)
+                    hits[str(Path(record['file']).resolve())] = record
+                    if len(hits) > 32:
+                        return None
+            if not hits:
+                continue
+            if len(hits) > 1:
+                try:
+                    if len({_content_fingerprint(hit['file'])
+                            for hit in hits.values()}) != 1:
+                        return None
+                except OSError:
                     return None
-            except OSError:
-                return None
-        return next(iter(hits.values()))
+            return next(iter(hits.values()))
+        return None
 
     def find_texture(ref):
-        """Try exact game path, then material-relative refs, without guessing."""
-        from multi_pak_assets import resolve_material_texture
-        candidates, state = resolve_material_texture(
-            index, ref, material['relative'],
-            preferred_workspace=material['workspace'])
-        if state == 'ambiguous':
-            raise ValueError(
-                'Different versions of this material texture exist: ' + str(ref))
-        if state == 'unsafe-path':
-            raise ValueError('Unsafe material texture path: ' + str(ref))
-        if state == 'found':
-            chosen = candidates[0]
-            # CryEngine's .dds may be a low-mip fallback while the matching
-            # .dds.0 + .dds.N stream contains the full-resolution source.
-            # Probe only the *same verified virtual asset path*; never guess
-            # by basename or borrow another character's similarly named DDS.
-            relative = str(chosen.get('relative') or '').replace('\\', '/')
-            if relative.casefold().endswith('.dds') and index:
-                streamed = _find_unique(index, relative + '.0',
-                                        preferred_workspace=material['workspace'])
-                if streamed is not None:
-                    return streamed
-            return chosen
+        """Resolve cooked DDS, prioritizing the complete streaming source.
+
+        A material's .tif is a *source reference*, not a DDS image. An
+        extracted TIFF entry cannot supersede a verified cooked .dds/.dds.0.
+        """
+        from multi_pak_assets import resolve_material_texture, _candidates
+        cooked = [name for name in _candidates(ref)
+                  if name.casefold().endswith(('.dds', '.dds.0'))]
+        cooked.sort(key=lambda name: not name.casefold().endswith('.dds.0'))
+        for virtual in dict.fromkeys(cooked):
+            candidates, state = resolve_material_texture(
+                index, virtual, material['relative'],
+                preferred_workspace=material['workspace'])
+            if state == 'ambiguous':
+                raise ValueError(
+                    'Different versions of this material texture exist: ' + str(virtual))
+            if state == 'unsafe-path':
+                raise ValueError('Unsafe material texture path: ' + str(virtual))
+            if state == 'found':
+                return candidates[0]
         hit = _external_lookup(texture_folder, ref)
         return hit if hit is not None else recover_unique_dds(ref)
 
@@ -421,7 +481,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         if hit is None:
             return None
         return _decode_texture(hit, index=index, max_dimension=decode_max,
-                               normal_map=normal)
+                               normal_map=normal, historical_2012=historical_2012)
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; sources = []; references = []; hidden = []
@@ -488,7 +548,9 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 result.append(None)
                 sources.append(None)
                 continue
-            image = _decode_texture(found, index=index, max_dimension=decode_max)
+            image = _decode_texture(
+                found, index=index, max_dimension=decode_max,
+                historical_2012=historical_2012)
             result.append(material_color(image, item.get('Diffuse', '1,1,1')))
             sources.append((
                 str(found.get('relative') or diffuse),
@@ -497,6 +559,17 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             issues.append(name + ': ' + str(error))
             result.append(None)
             sources.append(None)
+    visible_diffuse = tuple(ref for ref, is_hidden in zip(references, hidden)
+                            if ref and not is_hidden)
+    if visible_diffuse and not any(tex is not None for tex, is_hidden in
+                                   zip(result, hidden) if not is_hidden):
+        # Old CryTek MTLs often have several NoDraw skeleton slots preceding
+        # the real body material. They previously suppressed this error and
+        # silently produced a black/untextured GPU preview.
+        detail = '; '.join(issues[:3]) if issues else ', '.join(visible_diffuse[:3])
+        raise ValueError('No diffuse DDS textures found or decoded for visible material slots: ' + detail +
+                         '. Import the owning Legacy texture PAK for this build, '
+                         'then use Textures > Diagnose Texture Links.')
     if not any(x is not None for x in result) and not any(hidden):
         detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +

@@ -50,7 +50,7 @@ def mount_map_index(workspace, map_name, *, library_root=None, cache_root=None, 
     Ambiguous different global files remain ambiguous at the resolver layer.
     """
     from evolve_pak_workspace import load_workspace, normalized_name
-    from asset_library import extracted_index, _home, _manifest_dirs, _load_manifest
+    from asset_library import extracted_index, _home, _manifest_dirs, _load_manifest, _archive_identifier
     base = Path(workspace).resolve(strict=True)
     root = (base / "files").resolve(strict=True)
     selected = str(map_name).casefold()
@@ -63,12 +63,14 @@ def mount_map_index(workspace, map_name, *, library_root=None, cache_root=None, 
         raise ValueError("Imported archive limit exceeded.")
     matching_archives = set()
     sources = {}
+    owners = {}
     for folder in folders:
         try:
             manifest = _load_manifest(folder)
             source = _manifest_source(manifest)
             owner = level_from_source(source)
             sources[str(folder.resolve())] = owner
+            owners[(str(folder.parent), _archive_identifier(folder))] = owner
             if owner == selected:
                 matching_archives.add(str(folder.resolve()))
         except (ValueError, OSError, KeyError, TypeError):
@@ -78,20 +80,23 @@ def mount_map_index(workspace, map_name, *, library_root=None, cache_root=None, 
         indexes = [build_index(build_id, root=library) for library in roots]
     else:
         indexes = [extracted_index(library) for library in roots]
-    for original_index in indexes:
+    for library, original_index in zip(roots, indexes):
       for key, records in original_index.items():
           is_scoped = map_relative_asset(key)
           for entry in records:
               try:
-                  source_dir = str(Path(entry["file"]).resolve().parent)
-                  # Indexed records live under <archive>/files/<virtual>.
-                  archive_dir = Path(entry["file"]).resolve()
-                  relative = str(entry.get("relative", "")).replace("\\", "/")
-                  for _ in PurePosixPath(relative).parts:
-                      archive_dir = archive_dir.parent
-                  archive_dir = archive_dir.parent
-                  mount = str(archive_dir)
-                  owner = sources.get(mount)
+                  identity = (str(library), entry.get("_asset_library"))
+                  if identity[1] is not None and identity in owners:
+                      # Verified library records already identify their archive.
+                      # Resolve ownership once per archive, not twice per asset.
+                      owner = owners[identity]
+                  else:
+                      # Compatibility for callers providing older untagged indexes.
+                      archive_dir = Path(entry["file"]).resolve()
+                      relative = str(entry.get("relative", "")).replace("\\", "/")
+                      for _ in PurePosixPath(relative).parts:
+                          archive_dir = archive_dir.parent
+                      owner = sources.get(str(archive_dir.parent))
                   if is_scoped:
                       if owner == selected:
                           imported[key].append(dict(entry, map_owner=owner))

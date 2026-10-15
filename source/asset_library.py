@@ -262,17 +262,21 @@ def reference_status(virtual, root=None):
                          extracted_index(root).get(key, ())}))
 
 
-def extracted_index(root=None):
+def extracted_index(root=None, *, archive_ids=None):
     """Read-only catalog of extracted loose files; never decrypts at lookup."""
     home = _home(root)
     folders = _manifest_dirs(home)
+    scope = None if archive_ids is None else frozenset(archive_ids)
+    if scope is not None:
+        folders = [folder for folder in folders if _archive_identifier(folder) in scope]
     stamp = tuple((folder.name, (folder / MANIFEST).stat().st_mtime_ns)
                   for folder in folders)
-    cache_key = (str(home), stamp)
+    slot = (str(home), scope)
+    cache_key = (slot, stamp)
     with _lock:
-        cached = _index_cache.get(str(home))
+        cached = _index_cache.get(slot)
         if cached is not None and cached[0] == cache_key:
-            _index_cache.move_to_end(str(home))
+            _index_cache.move_to_end(slot)
             return {key: list(records) for key, records in cached[1].items()}
     from evolve_pak_workspace import normalized_name
     index = defaultdict(list)
@@ -299,8 +303,8 @@ def extracted_index(root=None):
             continue
     result = dict(index)
     with _lock:
-        _index_cache[str(home)] = (cache_key, result)
-        _index_cache.move_to_end(str(home))
+        _index_cache[slot] = (cache_key, result)
+        _index_cache.move_to_end(slot)
         while len(_index_cache) > MAX_INDEX_ROOTS:
             _index_cache.popitem(last=False)
     return {key: list(records) for key, records in result.items()}
@@ -392,6 +396,16 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
             continue
     sha = _sha_file(source)
     slug = hashlib.sha256((source.name.casefold() + "|" + sha).encode()).hexdigest()[:20]
+    if build_id is not None and relative_archive_path:
+        from build_collections import catalog
+        from historical_zip import is_ordinary_zip
+        relative = normalized_name(relative_archive_path.replace("\\", "/"))
+        old = catalog(root)["builds"][build_id]["members"].get(slug)
+        if old and old["relative_path"] != relative and is_ordinary_zip(source):
+            # Identical historical PAKs can occur at multiple level paths.
+            # Keep both locations without overwriting an existing membership.
+            slug = hashlib.sha256((source.name.casefold() + "|" + sha +
+                                   "|" + relative).encode()).hexdigest()[:20]
     # Preserve a previously imported legacy hash folder until explicitly
     # migrated; all new imports use the readable PAK name.
     legacy = root / slug
@@ -412,8 +426,18 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
         raise ValueError("An incomplete/conflicting library import exists: " + slug)
     if len(_manifest_dirs(root)) >= MAX_ARCHIVES:
         raise ValueError("Too many imported PAKs in the library.")
-    # Verify cryptographic signatures before creating extracted content.
-    info, key, signed_name = _verify_pak(source, _keys(stage, extra_keys))
+    from historical_zip import HistoricalZipFile, is_ordinary_zip
+    plain_zip = is_ordinary_zip(source)
+    if plain_zip:
+        from legacy_pak_workspace import inspect_archive
+        inventory = inspect_archive(source, allow_empty=True)
+        info = {"entries": {e["archive_name"]: {
+            "original_size": e["size"], "method": e["method"], "extra_length": 0
+        } for e in inventory["entries"]}}
+        key, signed_name = None, source.name
+    else:
+        # Signed CryPAKs still require their original cryptographic verification.
+        info, key, signed_name = _verify_pak(source, _keys(stage, extra_keys))
     if len(info["entries"]) > MAX_ENTRIES:
         raise ValueError("Archive has too many entries.")
     estimated = sum(max(0, entry.get("original_size", 0))
@@ -427,8 +451,10 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
     if work.exists():
         raise FileExistsError("Import already in progress for " + source.name)
     records, skipped, written = [], [], 0
+    archive = None
     work.mkdir(parents=True)
     try:
+        archive = HistoricalZipFile(source) if plain_zip else None
         base = work / "files"
         seen = set()
         count = len(info["entries"])
@@ -441,12 +467,14 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
                 raise ValueError("Duplicate case-insensitive PAK entry: " + virtual)
             seen.add(token)
             length = int(meta.get("original_size", -1))
-            if (meta.get("method") not in (13, 14) or
+            if (meta.get("method") not in ((0, 8) if plain_zip else (13, 14)) or
                     meta.get("extra_length") != 0 or length < 0 or
                     length > MAX_ENTRY_BYTES):
+                if plain_zip:
+                    raise ValueError("Unsupported historical entry size/method: " + virtual)
                 skipped.append(virtual + ": unsupported size/method")
                 continue
-            data = decrypt_entry(source, info, name)
+            data = archive.read(name) if plain_zip else decrypt_entry(source, info, name)
             converted = False
             if data.startswith(b"CryXmlB\x00"):
                 element = decode_cryxml(data)
@@ -465,7 +493,10 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
             if progress and (position == 1 or position % 50 == 0 or position == count):
                 progress(source.name, position, count)
         if not records:
-            raise ValueError("No supported PAK entries could be extracted.")
+            if plain_zip:
+                skipped.append("Empty historical ZIP archive; no content to preview.")
+            else:
+                raise ValueError("No supported PAK entries could be extracted.")
         if _sha_file(source) != sha:
             raise RuntimeError("PAK changed during extraction; import discarded.")
         manifest = {
@@ -473,7 +504,9 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
             "signed_name": signed_name, "source": str(source),
             "source_sha256": sha, "source_size": stat.st_size,
             "source_mtime_ns": stat.st_mtime_ns,
-            "public_key_sha256": _sha_file(key),
+            "public_key_sha256": _sha_file(key) if key is not None else None,
+            "archive_format": "ordinary-zip" if plain_zip else "signed-crypak",
+            "verification": "crc32" if plain_zip else "rsa-pss",
             "imported_at": int(time.time()), "extracted_bytes": written,
             "warnings": skipped, "entries": records,
         }
@@ -485,6 +518,9 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
         raise
+    finally:
+        if archive is not None:
+            archive.close()
 
 
 def installed_defaults(game):

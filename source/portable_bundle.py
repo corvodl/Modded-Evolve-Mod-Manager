@@ -11,6 +11,7 @@ import uuid
 import zipfile
 from universal_stage import ensure_closed, digest, read_json, save_json, allowed_paks
 from launch_integration import REQUIRED_SCRIPTS
+from release_dependency_policy import check_app_folder
 
 MARKER='portable_bundle.json'
 STAGE='Data/Setup/staged'
@@ -79,6 +80,8 @@ def portable_export(home, stage, swap, projects, output):
         safe_member(member)
         if member.casefold() in seen:raise ValueError('Duplicate export path: '+member)
         seen.add(member.casefold());sources[member]=Path(path)
+    # A shareable complete bundle must not pick up locally installed FFDec or a JRE.
+    check_app_folder(home/'_internal')
     for name in ('EvolveModManager.exe','EvolveModWorker.exe'):add(home/name,name)
     for p,rel in tree(home/'_internal'):add(p,'_internal/'+rel)
     for p,rel in tree(home/'Docs'):add(p,'Docs/'+rel)

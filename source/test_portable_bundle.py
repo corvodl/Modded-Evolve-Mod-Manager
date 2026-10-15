@@ -63,6 +63,12 @@ class PortableTests(unittest.TestCase):
         source=Path(json.loads((home/PROJECTS/'edit'/'.evolve-pak-workspace.json').read_text())['source_pak'])
         self.assertTrue(source.is_relative_to(home/'Data'/'ProjectSources'));self.assertEqual(source.read_bytes(),external.read_bytes())
 
+    def test_complete_bundle_does_not_redistribute_external_ffdec_java(self):
+        (self.home/'_internal'/'ffdec.jar').write_bytes(b'external runtime')
+        with self.assertRaisesRegex(ValueError, 'FFDec or Java'):
+            self.export()
+        self.assertFalse(self.output.exists())
+
     def test_active_swap_does_not_export(self):
         jp=self.new_swap/'controlled_swap_state.json';state=json.loads(jp.read_text());state['phase']='swapped';jp.write_text(json.dumps(state))
         with self.assertRaisesRegex(ValueError,'Restore'):self.export()
