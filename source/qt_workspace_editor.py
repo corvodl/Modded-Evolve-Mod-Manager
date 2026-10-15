@@ -352,7 +352,13 @@ class QtWorkspaceEditor(QMainWindow):
         self.search.setPlaceholderText('Search files and folders…')
         self.search.addAction(navigation_icon('search', size=18), QLineEdit.LeadingPosition)
         self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(self.populate)
+        # Searching a large extracted library can create thousands of Qt
+        # items. Wait for typing to settle instead of rebuilding every key.
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(200)
+        self._search_timer.timeout.connect(self.populate)
+        self.search.textChanged.connect(lambda _text: self._search_timer.start())
         explorer_box.addWidget(self.search)
         explorer_controls = QHBoxLayout()
         self.favorites_only = QPushButton('Favorites')
@@ -1124,6 +1130,7 @@ class QtWorkspaceEditor(QMainWindow):
 
     def populate(self):
         """One searchable PAK tree; entries open the matching viewer on click."""
+        self._search_timer.stop()  # An explicit refresh supersedes pending text.
         started = time.perf_counter()
         needle = self.search.text().casefold()
         tree = self.file_tree
@@ -1884,6 +1891,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.dependency_button.setEnabled(False)
         self.media_view.clear()
         self.workspace, self.records = target, new_records
+        self._search_timer.stop()  # Never install a prior project's search.
         self.favorites_only.setChecked(False)
         self.preview_index = None
         self.character_preview = None
