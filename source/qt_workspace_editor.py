@@ -380,12 +380,12 @@ class QtWorkspaceEditor(QMainWindow):
         explorer_box.addWidget(self.file_tree, 1)
         self.trees = {section: self.file_tree for section in self.TABS}
         self._explorer_visible = True
-        # Explorer lives on the left, like Finder/QtCreator; the main
-        # preview remains the largest and most resizeable work area.
-        self.editor_split.insertWidget(0, self.explorer)
-        self.editor_split.setStretchFactor(0, 2)
-        self.editor_split.setStretchFactor(1, 5)
-        self.editor_split.setSizes([310, 940])
+        # The preview stays on the left and the resizable File Explorer on
+        # the right, restoring the original editor layout.
+        self.editor_split.addWidget(self.explorer)
+        self.editor_split.setStretchFactor(0, 5)
+        self.editor_split.setStretchFactor(1, 2)
+        self.editor_split.setSizes([940, 310])
         main.addWidget(self.editor_split, 1)
         self.status = QLabel(
             'Asset Library: preview and export only; editing and importing are disabled.'
@@ -617,7 +617,10 @@ class QtWorkspaceEditor(QMainWindow):
         self._explorer_visible = bool(visible)
         self.explorer.setVisible(bool(visible))
         if visible:
-            self.editor_split.setSizes([310, 940])
+            sizes = self.editor_split.sizes()
+            # Preserve the user's divider when reopening the explorer.
+            self.editor_split.setSizes([sizes[0] if sizes[0] > 0 else 940,
+                                        sizes[1] if sizes[1] > 0 else 310])
         self._sync_file_explorer_button()
 
     def set_workspace_layout(self, name):
@@ -627,7 +630,7 @@ class QtWorkspaceEditor(QMainWindow):
             raise ValueError('Unknown layout preset.')
         explorer_width, viewport_width = options[name]
         self.toggle_file_explorer(True)
-        self.editor_split.setSizes([explorer_width * 120, viewport_width * 120])
+        self.editor_split.setSizes([viewport_width * 120, explorer_width * 120])
 
     def save_workspace_layout(self):
         self.manager.settings['editor_workspace_layout'] = {
@@ -652,8 +655,8 @@ class QtWorkspaceEditor(QMainWindow):
             pair = sizes.get('models') or sizes.get('files')
             if (isinstance(pair, list) and len(pair) == 2 and
                     all(isinstance(n, int) and n > 0 for n in pair)):
-                # Saved widths used the old viewer-left/explorer-right order.
-                self.editor_split.setSizes(list(reversed(pair)))
+                # Saved layout widths are viewer-left / explorer-right.
+                self.editor_split.setSizes(pair)
 
     def _capture_playback_preferences(self):
         if self.current and self.mode=='models' and self.model_panel is not None:
@@ -1464,11 +1467,6 @@ class QtWorkspaceEditor(QMainWindow):
         stage = self.manager.stage_path
         # Character-specific animation CAFs may live in their own signed PAK,
         # separate from the six shared texture/skeleton packages.
-        try:
-            from shared_pak_cache import start_character_catalog
-            start_character_catalog(stage, rel)
-        except (OSError, ValueError, RuntimeError) as exc:
-            self.status.setText('Character index unavailable: ' + str(exc)[:120])
         tex = self.texture_folder
         ani = self.loose_animation_index
         equipment = self.character_skin_choice
@@ -1476,10 +1474,17 @@ class QtWorkspaceEditor(QMainWindow):
         token = self._model_generation
 
         def resolve(_unused):
-            # Full-game imported libraries can index hundreds of thousands
-            # of paths; keep that scan off the Qt event/UI thread.
+            # Character-specific PAK lookup and large library indexing can
+            # touch thousands of files. Keep them off the Qt event thread.
+            try:
+                from shared_pak_cache import start_character_catalog
+                start_character_catalog(stage, rel)
+            except (OSError, ValueError, RuntimeError):
+                pass  # The asset resolver can still open the selected model.
             active_index = index
-            if library_id is not None:
+            # Retain the existing catalog for additional views of this PAK:
+            # rebuilding it changed id(index), defeating model cache hits.
+            if library_id is not None and active_index is None:
                 from asset_library_preview import library_model_index
                 active_index = library_model_index(library_id)
             data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
@@ -1623,7 +1628,7 @@ class QtWorkspaceEditor(QMainWindow):
             except (ValueError, OSError) as error:
                 self.texture_message = 'Untextured: ' + str(error)
             self.materials = materials
-            self._apply_model_texture_choices()
+            # _model_ready already applied saved texture choices once.
             materials = self.materials
             if self.model_panel is None:
                 self.model_panel = QtGPUModelPanel(view, mesh, materials, compact=True,
