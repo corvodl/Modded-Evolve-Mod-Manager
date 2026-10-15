@@ -449,9 +449,18 @@ class QtGLModelCanvas(QOpenGLWidget):
     def initializeGL(self):
         from OpenGL.GL import (
             glClearColor, glEnable, glShadeModel, glLightfv, glLightModelfv,
+            glGetString, GL_VENDOR, GL_RENDERER, GL_VERSION,
             GL_DEPTH_TEST, GL_NORMALIZE, GL_LIGHT0, GL_LIGHTING, GL_SMOOTH,
             GL_POSITION, GL_AMBIENT, GL_DIFFUSE, GL_LIGHT_MODEL_AMBIENT,
         )
+        from performance_trace import record
+        def safe_device(value):
+            return (value.decode('ascii', 'replace') if isinstance(value, bytes)
+                    else str(value or 'unknown'))
+        record('gpu', 'context_initialized',
+               gpu_vendor=safe_device(glGetString(GL_VENDOR)),
+               gpu_renderer=safe_device(glGetString(GL_RENDERER)),
+               gpu_version=safe_device(glGetString(GL_VERSION)))
         glClearColor(0.092, 0.09, 0.115, 1.0)
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_NORMALIZE)
