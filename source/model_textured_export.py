@@ -7,6 +7,7 @@ being guessed. A skeleton is never fabricated from skin indices.
 from __future__ import annotations
 from io import BytesIO
 import json
+from PIL import Image
 from pathlib import Path
 import struct
 
@@ -138,7 +139,8 @@ def embed_diffuse_textures(blob, materials):
                                  ('specular', getattr(materials, 'specular_maps', ())),
                                  ('gloss', getattr(materials, 'gloss_maps', ())),
                                  ('detail', getattr(materials, 'detail_maps', ())),
-                                 ('detail_normal', getattr(materials, 'detail_normal_maps', ()))):
+                                 ('detail_normal', getattr(materials, 'detail_normal_maps', ())),
+                                 ('ao', getattr(materials, 'ao_maps', ()))):
             if slot < 0 or slot >= len(collection) or collection[slot] is None:
                 continue
             if len(images) >= MAX_TEXTURES:
@@ -148,8 +150,16 @@ def embed_diffuse_textures(blob, materials):
             # channel; CryEngine gloss is inverse smoothness. Do not interpret
             # arbitrary RGB specular maps as gloss.
             from material_gloss import gloss_to_metallic_roughness
-            texture = (gloss_to_metallic_roughness(source)
-                       if role == 'gloss' else source.convert('RGB'))
+            if role == 'gloss':
+                texture = gloss_to_metallic_roughness(source)
+            elif role == 'ao':
+                # glTF occlusion uses only the RED channel as *linear* AO.
+                # Explicit packed AO channels are unpacked by the resolver.
+                source_red = (source.getchannel('R') if 'R' in source.getbands()
+                              else source.convert('L'))
+                texture = Image.merge('RGB',(source_red,source_red,source_red))
+            else:
+                texture = source.convert('RGB')
             with BytesIO() as output:
                 texture.save(output, format='PNG')
                 payload = output.getvalue()
@@ -171,6 +181,21 @@ def embed_diffuse_textures(blob, materials):
                 if transform != IDENTITY:
                     su, sv, ou, ov, angle = transform
                     material['normalTexture']['extensions'] = {
+                        'KHR_texture_transform': {'scale': [su, sv],
+                                                  'offset': [ou, ov], 'rotation': angle}}
+                    extensions = doc.setdefault('extensionsUsed', [])
+                    if 'KHR_texture_transform' not in extensions:
+                        extensions.append('KHR_texture_transform')
+            if role == 'ao':
+                strength = (materials.ao_strengths[slot]
+                            if slot < len(getattr(materials,'ao_strengths',()))
+                            else 1.)
+                material['occlusionTexture'] = {
+                    'index': len(textures)-1, 'strength': strength}
+                transform = transform_for(materials, slot, 'ao')
+                if transform != IDENTITY:
+                    su, sv, ou, ov, angle = transform
+                    material['occlusionTexture']['extensions'] = {
                         'KHR_texture_transform': {'scale': [su, sv],
                                                   'offset': [ou, ov], 'rotation': angle}}
                     extensions = doc.setdefault('extensionsUsed', [])

@@ -30,18 +30,22 @@ uniform sampler2D specular_map;
 uniform sampler2D gloss_map;
 uniform sampler2D detail_map;
 uniform sampler2D detail_normal_map;
+uniform sampler2D ao_map;
 uniform samplerCube environment_map;
 uniform mat3 normal_uv;
 uniform mat3 specular_uv;
 uniform mat3 gloss_uv;
 uniform mat3 detail_uv;
 uniform mat3 detail_normal_uv;
+uniform mat3 ao_uv;
 uniform int has_diffuse;
 uniform int has_normal;
 uniform int has_specular;
 uniform int has_gloss;
 uniform int has_detail;
 uniform int has_detail_normal;
+uniform int has_ao;
+uniform float ao_strength;
 uniform int has_environment;
 uniform float reflection_strength;
 uniform int is_glass;
@@ -76,6 +80,7 @@ void main() {
     vec2 gloss_coord = (gloss_uv * vec3(texcoord,1.0)).xy;
     vec2 detail_coord = (detail_uv * vec3(texcoord,1.0)).xy;
     vec2 detail_normal_coord = (detail_normal_uv * vec3(texcoord,1.0)).xy;
+    vec2 ao_coord = (ao_uv * vec3(texcoord,1.0)).xy;
     vec3 n = normalize(eye_normal);
     if (!gl_FrontFacing) n = -n;
     if (has_normal == 1 || has_detail_normal == 1) {
@@ -130,8 +135,13 @@ void main() {
     float fill = clamp(studio_fill,0.0,1.0);
     vec3 fillDirection = normalize(vec3(-0.65,-0.35,0.70));
     float bounce = max(0.0,dot(n,fillDirection));
-    float diffuseLight = clamp(0.24+diffuse*0.76*illumination
-                              + fill*(0.34+0.30*bounce),0.0,2.5);
+    // Ambient occlusion attenuates indirect ambient/fill only: do not
+    // darken direct diffuse light or invent AO from arbitrary DDS alpha.
+    // AO is linear data; glTF occlusionTexture reads the red channel.
+    float ao = has_ao == 1 ? clamp(texture2D(ao_map,ao_coord).r,0.0,1.0) : 1.0;
+    float ambientOcclusion = mix(1.0,ao,clamp(ao_strength,0.0,1.0));
+    float indirect = (0.24 + fill*(0.34+0.30*bounce)) * ambientOcclusion;
+    float diffuseLight = clamp(indirect+diffuse*0.76*illumination,0.0,2.5);
     vec3 litLinear = albedoLinear*diffuseLight
                    + vec3(specular*specular_intensity*gloss*illumination);
     if (has_environment == 1) {
@@ -157,34 +167,35 @@ class Renderer3:
             shaders.compileShader(FRAGMENT,GL_FRAGMENT_SHADER))
         glUseProgram(self.program)
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
-            'diffuse_map','normal_map','specular_map','gloss_map','detail_map','detail_normal_map','environment_map',
-            'normal_uv','specular_uv','gloss_uv','detail_uv','detail_normal_uv',
+            'diffuse_map','normal_map','specular_map','gloss_map','detail_map','detail_normal_map','environment_map','ao_map',
+            'normal_uv','specular_uv','gloss_uv','detail_uv','detail_normal_uv','ao_uv',
             'has_diffuse','has_normal','has_specular','has_gloss','has_detail','has_detail_normal',
-            'has_environment','reflection_strength','is_glass','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
+            'has_environment','reflection_strength','is_glass','has_ao','ao_strength','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
         for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2),('gloss_map',3),
-                          ('detail_map',4),('detail_normal_map',5),('environment_map',6)):
+                          ('detail_map',4),('detail_normal_map',5),('environment_map',6),('ao_map',7)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
              gloss_texture=False, detail=False, detail_normal=False, uv_matrices=None,
              environment=False, reflection_strength=0., glass=False,
+             ao=False, ao_strength=1.,
              alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f, glUniformMatrix3fv, GL_FALSE
         glUseProgram(self.program)
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
                            ('has_specular',specular), ('has_gloss',gloss_texture),
                            ('has_detail',detail), ('has_detail_normal',detail_normal),
-                           ('has_environment',environment), ('is_glass',glass),
+                           ('has_environment',environment), ('is_glass',glass), ('has_ao',ao),
                            ('use_alpha_texture',alpha_texture),
                            ('unlit_diffuse',unlit)):
             glUniform1i(self.uniforms[name],int(bool(value)))
         from texture_transform import gl_matrix3, IDENTITY
         matrices = uv_matrices or {}
-        for role in ('normal','specular','gloss','detail','detail_normal'):
+        for role in ('normal','specular','gloss','detail','detail_normal','ao'):
             glUniformMatrix3fv(self.uniforms[role + '_uv'],1,GL_FALSE,
                                gl_matrix3(matrices.get(role,IDENTITY)))
-        for name,value in (('reflection_strength',reflection_strength),('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),
+        for name,value in (('ao_strength',ao_strength),('reflection_strength',reflection_strength),('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),
                            ('illumination',illumination), ('studio_fill',fill)):
             glUniform1f(self.uniforms[name],float(value))
 

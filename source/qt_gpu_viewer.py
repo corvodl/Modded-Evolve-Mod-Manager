@@ -165,6 +165,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.gloss_textures = []
         self.detail_textures = []
         self.detail_normal_textures = []
+        self.ao_textures = []
         self.environment_textures = []
         self._pending_texture_uploads = []
         self._gpu_upload_total_ms = 0.0
@@ -359,7 +360,7 @@ class QtGLModelCanvas(QOpenGLWidget):
 
     def _release_textures(self):
         from OpenGL.GL import glDeleteTextures
-        for name in ('textures','normal_textures','specular_textures','gloss_textures','detail_textures','detail_normal_textures','environment_textures'):
+        for name in ('textures','normal_textures','specular_textures','gloss_textures','detail_textures','detail_normal_textures','ao_textures','environment_textures'):
             handles = getattr(self,name,[])
             if handles:
                 try:
@@ -387,6 +388,7 @@ class QtGLModelCanvas(QOpenGLWidget):
             ('gloss_textures', getattr(self.materials, 'gloss_maps', ()) if self.materials else ()),
             ('detail_textures', getattr(self.materials, 'detail_maps', ()) if self.materials else ()),
             ('detail_normal_textures', getattr(self.materials, 'detail_normal_maps', ()) if self.materials else ()),
+            ('ao_textures', getattr(self.materials, 'ao_maps', ()) if self.materials else ()),
             ('environment_textures', getattr(self.materials, 'environment_maps', ()) if self.materials else ()),
         )
         for target, images in groups:
@@ -691,7 +693,8 @@ class QtGLModelCanvas(QOpenGLWidget):
                 if shader:
                     for unit,group in ((0,self.textures),(1,self.normal_textures),
                                        (2,self.specular_textures),(3,self.gloss_textures),
-                                       (4,self.detail_textures),(5,self.detail_normal_textures)):
+                                       (4,self.detail_textures),(5,self.detail_normal_textures),
+                                       (7,self.ao_textures)):
                         handle = group[slot] if use_uv and slot<len(group) else 0
                         glActiveTexture(GL_TEXTURE0+unit)
                         glBindTexture(GL_TEXTURE_2D,handle)
@@ -703,7 +706,10 @@ class QtGLModelCanvas(QOpenGLWidget):
                     glActiveTexture(GL_TEXTURE0)
                     strengths = getattr(self.materials,'reflection_strengths',())
                     glasses = getattr(self.materials,'glass_materials',())
-                    shader.bind(environment=bool(cubemap),
+                    ao_strengths = getattr(self.materials,'ao_strengths',())
+                    shader.bind(ao=slot<len(self.ao_textures) and bool(self.ao_textures[slot]),
+                                ao_strength=ao_strengths[slot] if slot<len(ao_strengths) else 1.,
+                                environment=bool(cubemap),
                                 reflection_strength=strengths[slot] if slot<len(strengths) else 0.,
                                 glass=bool(glasses[slot]) if slot<len(glasses) else False,
                                 opacity=alpha,gloss=self.specular_intensity, alpha_cutoff=cutoff or .02,
@@ -714,7 +720,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 detail=slot<len(self.detail_textures) and bool(self.detail_textures[slot]),
                                 detail_normal=slot<len(self.detail_normal_textures) and bool(self.detail_normal_textures[slot]),
                                 uv_matrices={role: transform_for(self.materials,slot,role,seconds)
-                                             for role in ('normal','specular','gloss','detail','detail_normal')},
+                                             for role in ('normal','specular','gloss','detail','detail_normal','ao')},
                                 alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
                                 unlit=self.unlit_diffuse,fill=self.studio_fill)
                 if tex:
@@ -749,7 +755,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                 from OpenGL.GL import GL_TEXTURE_CUBE_MAP
                 glActiveTexture(GL_TEXTURE0+6)
                 glBindTexture(GL_TEXTURE_CUBE_MAP,0)
-                for unit in (5,4,3,2,1,0):
+                for unit in (7,5,4,3,2,1,0):
                     glActiveTexture(GL_TEXTURE0+unit)
                     glBindTexture(GL_TEXTURE_2D,0)
                 glEnable(GL_LIGHTING)

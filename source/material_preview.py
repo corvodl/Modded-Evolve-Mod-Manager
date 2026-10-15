@@ -66,6 +66,8 @@ class PreviewMaterials:
     reflection_strengths: tuple = ()
     glass_materials: tuple = ()
     refraction_indices: tuple = ()  # explicit source IOR only
+    ao_maps: tuple = ()  # explicit ambient-occlusion map, or verified packed channel
+    ao_strengths: tuple = ()  # per-material AO strength in [0, 1]
 
     @property
     def count(self):
@@ -487,6 +489,14 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                          in ('specular','specularcolor') and
                          child.get('GlossChannel')), None)
             channel = node.get('GlossChannel', '') if node is not None else ''
+        if node is None and 'ao' in names:
+            # An explicitly declared AOChannel on any bound texture is
+            # evidence of packed occlusion; alpha elsewhere is NOT assumed
+            # to be occlusion.
+            node = next((child for child in item.findall('./Textures/Texture')
+                         if child.get('AOChannel') or child.get('OcclusionChannel')), None)
+            if node is not None:
+                channel = node.get('AOChannel') or node.get('OcclusionChannel')
         ref = (node.get('File') or node.get('file')) if node is not None else None
         normal = 'normal' in names or 'detailnormal' in names
         if not ref and normal:
@@ -509,6 +519,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             return None
         hit = find_texture(ref)
         if hit is None:
+            if 'ao' in names:
+                raise ValueError('Explicit AO texture was not resolved: ' + str(ref))
             return None
         decoded = _decode_texture(hit, index=index, max_dimension=decode_max,
                                   normal_map=normal, historical_2012=historical_2012)
@@ -521,9 +533,9 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             decoded = Image.merge('RGB', (decoded.getchannel(component),) * 3)
         return decoded
 
-    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; details=[]; detail_normals=[]; environments=[]; reflections=[]; glasses=[]; iors=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
+    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; details=[]; detail_normals=[]; ao_maps=[]; ao_strengths=[]; environments=[]; reflections=[]; glasses=[]; iors=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; motions = []; sources = []; references = []; hidden = []
-    role_transforms = {role: [] for role in ('normal','specular','gloss','detail','detail_normal')}
+    role_transforms = {role: [] for role in ('normal','specular','gloss','detail','detail_normal','ao')}
     role_motions = {role: [] for role in role_transforms}
     for item in subs:
         checkpoint()
@@ -551,6 +563,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             'gloss': ('gloss','glossiness','smoothness'),
             'detail': ('detail','detaildiffuse','detailmap'),
             'detail_normal': ('detailnormal','detailnormalmap','detailbumpmap'),
+            'ao': ('ao','occlusion','occlusionmap','ambientocclusion','ambientocclusionmap'),
         }
         for role, keys in role_keys.items():
             texture_node = next((n for n in item.findall('./Textures/Texture')
@@ -573,6 +586,16 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         except ValueError:
             opacity = 1.
         opacities.append(opacity)
+        raw_ao_strength = (item.get('AOStrength') or item.get('OcclusionStrength')
+                           or item.get('AmbientOcclusionStrength') or '1')
+        try:
+            ao_strength = float(raw_ao_strength)
+            if not math.isfinite(ao_strength) or not 0. <= ao_strength <= 1.:
+                raise ValueError('AO strength out of [0, 1] range')
+        except ValueError:
+            issues.append(name + ': invalid AO strength, using 1.0')
+            ao_strength = 1.
+        ao_strengths.append(ao_strength)
         shader = item.get('Shader', '').casefold()
         hidden.append(shader == 'nodraw')
         glasses.append('glass' in shader or 'refract' in shader)
@@ -640,7 +663,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                             (speculars,('specular','specularcolor')),
                             (glosses,('gloss','glossiness','smoothness')),
                             (details,('detail','detaildiffuse','detailmap')),
-                            (detail_normals,('detailnormal','detailnormalmap','detailbumpmap'))):
+                            (detail_normals,('detailnormal','detailnormalmap','detailbumpmap')),
+                            (ao_maps,('ao','occlusion','occlusionmap','ambientocclusion','ambientocclusionmap'))):
             try:
                 target.append(optional_map(item,keys))
             except (OSError,ValueError) as error:
@@ -716,7 +740,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                             environment_maps=tuple(environments),
                             reflection_strengths=tuple(reflections),
                             glass_materials=tuple(glasses),
-                            refraction_indices=tuple(iors))
+                            refraction_indices=tuple(iors),
+                            ao_maps=tuple(ao_maps), ao_strengths=tuple(ao_strengths))
 
 
 
