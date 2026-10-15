@@ -27,8 +27,8 @@ class PlacementGrid:
     def _cell(self, point):
         return tuple(floor(v / self.cell_size) for v in point)
 
-    def nearby(self, camera, radius, *, retain=(), margin=1.2):
-        """Nearest squared distance per asset, including hysteresis residents."""
+    def nearby(self, camera, radius, *, eye=None, forward=None, retain=(), margin=1.2):
+        """Nearest squared distance and front-facing flag per material key."""
         center = tuple(float(v) for v in camera)
         radius = max(1., float(radius))
         margin = max(1., float(margin))
@@ -39,19 +39,33 @@ class PlacementGrid:
         high = self._cell(tuple(v + outer for v in center))
         # Keep the loop bounded even if the user zooms out far beyond the
         # map's own bounding extent: visit occupied cells once.
-        candidates = (
-            ((x, y, z), values)
-            for (x, y, z), values in self.cells.items()
-            if (low[0] <= x <= high[0] and low[1] <= y <= high[1]
-                and low[2] <= z <= high[2])
-        )
+        dimensions = tuple(high[i] - low[i] + 1 for i in range(3))
+        cell_volume = dimensions[0] * dimensions[1] * dimensions[2]
+        if cell_volume <= max(64, 4 * len(self.cells)):
+            candidates = (
+                self.cells.get((x, y, z), ())
+                for x in range(low[0], high[0] + 1)
+                for y in range(low[1], high[1] + 1)
+                for z in range(low[2], high[2] + 1)
+            )
+        else:
+            # Huge zoom-out radius: avoid billions of empty cell probes.
+            candidates = (
+                values for cell, values in self.cells.items()
+                if all(low[i] <= cell[i] <= high[i] for i in range(3))
+            )
         distances = {}
-        for _cell, entries in candidates:
+        for entries in candidates:
             for key, point in entries:
                 distance = sum((point[i] - center[i]) ** 2 for i in range(3))
                 threshold = outer_sq if key in resident else radius_sq
-                if distance <= threshold:
-                    current = distances.get(key)
-                    if current is None or distance < current:
-                        distances[key] = distance
+                if distance > threshold:
+                    continue
+                front = (eye is not None and forward is not None and
+                         sum((point[i] - eye[i]) * forward[i]
+                             for i in range(3)) > 0)
+                current = distances.get(key)
+                distances[key] = (
+                    min(distance, current[0]) if current else distance,
+                    bool(front or (current and current[1])))
         return distances
