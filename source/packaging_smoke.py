@@ -44,6 +44,16 @@ assert (BUNDLE/"reference"/"RSAKeyData.bin").is_file()
 assert (BUNDLE/"reference"/"inject.dll").is_file()
 assert (BUNDLE/"reference"/"inject.dll").read_bytes()[0x870:0x8fc] == (BUNDLE/"reference"/"RSAKeyData.bin").read_bytes()
 assert Twofish(bytes(16)).decrypt(Twofish(bytes(16)).encrypt(bytes(16))) == bytes(16)
+# Test actual packaged DLL loading, not only source-tree crypto fallback.
+import os
+from evolve_video_pak_tool_fixed import Twofish as CryTwofish
+cipher = CryTwofish(bytes(16))
+try:
+    assert cipher.encrypt_blocks(bytes(16)).hex() == '9f589f5cf6122c32b6bfec2f2ae8c35a'
+    if os.environ.get('EVOLVE_REQUIRE_NATIVE_TWOFISH') == '1':
+        assert cipher.bulk is not None, 'Native bulk Twofish not loaded in packaged worker'
+finally:
+    cipher.close()
 assert rsa.generate_private_key(public_exponent=65537, key_size=2048).key_size == 2048
 assert Image and ImageTk and dds_texture.parse_dds and dds_png_import.encode_png_as_dds and dds_streaming.inspect_stream and model_asset.inspect_model and model_preview.read_preview_mesh
 assert frida.__version__ and numpy.__version__ and material_preview.render_textured_mesh
