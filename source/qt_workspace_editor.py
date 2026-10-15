@@ -47,8 +47,8 @@ from loose_file_editor import save_loose_text
 from loose_game_files import TEXT_EXTENSIONS, copy_to_project
 from evolve_pak_workspace import normalized_name
 from version_info import app_version, footer_version
-from qt_navigation_icons import navigation_icon
-from qt_ui_components import configure_splitter, action_icon
+from qt_navigation_icons import navigation_icon, action_icon
+from qt_ui_components import configure_splitter
 from studio_polish_117 import (prepare_model_cached, clear_model_cache,
     model_cache_stats, export_preflight, project_session_key,
     sanitized_project_session)
