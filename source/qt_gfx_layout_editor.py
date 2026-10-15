@@ -73,7 +73,8 @@ class GfxLayoutDialog(QDialog):
             "Unbounded sprite instances support numeric edits only. "
             "The runtime featured title/TRY/BUY controls are ActionScript "
             "overrides; their true in-game positions cannot be inferred "
-            "from this static preview.")
+            "from this static preview. Custom labels are experimental and "
+            "can be replaced by game callbacks or localization.")
         help_label.setWordWrap(True)
         root.addWidget(help_label)
 
@@ -132,13 +133,13 @@ class GfxLayoutDialog(QDialog):
         self.promo_action.setObjectName("gfxLayoutRuntimeAction")
         for name, action in (("Move / resize / rotate", "layout"),
                              ("Hide", "hide"), ("Remove / disable", "remove"),
-                             ("Replace title text", "custom")):
+                             ("Replace selected text (experimental)", "custom")):
             self.promo_action.addItem(name, action)
         runtime_layout.addWidget(self.promo_action)
         self.custom = QLineEdit()
-        self.custom.setPlaceholderText("Replacement featured title")
+        self.custom.setPlaceholderText("Type any replacement label")
         self.custom.setObjectName("gfxLayoutCustomTitle")
-        self.custom.setMaxLength(72)
+        self.custom.setMaxLength(160)
         runtime_layout.addWidget(self.custom)
         self.promo_action.currentIndexChanged.connect(self._runtime_options)
         self.custom.textChanged.connect(self._runtime_options)
@@ -207,7 +208,27 @@ class GfxLayoutDialog(QDialog):
                 item = QTreeWidgetItem(dynamic, [label, "runtime"])
                 item.setData(0, Qt.UserRole, ("runtime", target))
                 item.setToolTip(0, "Requires game ActionScript; not a static frame box.")
+        # Exported classes can expose menu sprites created at runtime. They
+        # are not confirmed first-frame placements or editable text fields.
+        placed = {entry.character for entry in self.entries}
+        other = [(cid, name) for cid, name in movie_info.exports
+                 if cid not in placed and
+                 any(token in name.casefold()
+                     for token in ("menu", "button", "btn", "play", "option",
+                                   "settings", "back", "quit", "store", "nav",
+                                   "profile"))]
+        if other:
+            definitions = QTreeWidgetItem(
+                self.tree, ["Other UI symbols (definitions only)", ""])
+            for cid, name in other[:160]:
+                node = QTreeWidgetItem(definitions, [name, f"#{cid}"])
+                node.setData(0, Qt.UserRole, ("definition", cid, name))
+                node.setToolTip(0,
+                    "Exported class/movie definition, not a confirmed first-frame "
+                    "placement. May be created by ActionScript at runtime.")
         self.tree.expandAll()
+        if other:
+            definitions.setExpanded(False)
         self._lock = False
         self._selected(self.tree.currentItem(), None)
         self.canvas.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
@@ -250,7 +271,12 @@ class GfxLayoutDialog(QDialog):
             if entry else
             ("Runtime " + data[1] +
              "\nAbsolute layout values; may be overridden by game callbacks."
-             if is_runtime else "Select a supported layer"))
+             if is_runtime else
+             ("Defined UI symbol " + data[2] +
+              "\\nNot placed in the root first frame. Inspect its movie and "
+              "ActionScript in FFDec to locate editable text."
+              if data and data[0] == "definition"
+              else "Select a supported layer")))
         values = ((entry.x, entry.y, entry.scale_x * 100,
                    entry.scale_y * 100, entry.rotation)
                   if entry else (0, 0, 100, 100, 0))
@@ -270,9 +296,14 @@ class GfxLayoutDialog(QDialog):
         data = current.data(0, Qt.UserRole) if current else None
         runtime = bool(data and data[0] == "runtime")
         action = self.promo_action.currentData()
-        text_active = runtime and action == "custom" and data[1] == "title"
-        self.custom.setVisible(runtime and action == "custom")
+        text_active = runtime and action == "custom"
+        self.custom.setVisible(text_active)
         self.custom.setEnabled(text_active)
+        if runtime:
+            self.custom.setPlaceholderText(
+                {"title": "Replacement featured title",
+                 "try": "Replacement TRY button label",
+                 "buy": "Replacement BUY button label"}[data[1]])
         controls = action == "layout" or not runtime
         for field in (self.x, self.y, self.sx, self.sy, self.angle, self.visible):
             field.setEnabled(controls)
@@ -329,10 +360,6 @@ class GfxLayoutDialog(QDialog):
         elif data[0] == "runtime":
             target = data[1]
             mode = self.promo_action.currentData()
-            if mode == "custom" and target != "title":
-                QMessageBox.warning(self, "Unsupported runtime edit",
-                                    "Custom title text applies only to the title.")
-                return
             kwargs = dict(target=target, configured=self.editor._backend)
             if mode == "layout":
                 kwargs["layout"] = (coords["x"], coords["y"],
