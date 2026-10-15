@@ -69,6 +69,24 @@ class GfxUiDependenciesTests(unittest.TestCase):
         # In-game global preloads are documented context, not a movie image.
         self.assertEqual(result.get("Libs/UI/other_I10.dds.0"), "UI_Data preload")
 
+    def test_movie_embedded_tif_and_dds_paths_resolve_cooked_assets(self):
+        from gfx_synthetic_fixtures import synthetic_gfx
+        paths = self.paths + ("Libs/UI/main_menu_I9.dds.0",
+                              "Libs/UI/FlashAssets/images/News/news_img2.dds")
+        movie = synthetic_gfx(action_message="main_menu_I9.tif")
+        result = dict(related_ui_textures(
+            "Libs/UI/main_menu.gfx", paths, self.lookup, movie_bytes=movie))
+        self.assertEqual(result["Libs/UI/main_menu_I9.dds.0"],
+                         "GFX resource reference")
+        self.assertNotIn("Libs/UI/FlashAssets/images/News/news_img2.dds", result)
+        direct = synthetic_gfx(
+            action_message="Libs/UI/FlashAssets/images/News/news_img2.dds")
+        result2 = dict(related_ui_textures(
+            "Libs/UI/main_menu.gfx", paths, self.lookup, movie_bytes=direct))
+        self.assertEqual(
+            result2["Libs/UI/FlashAssets/images/News/news_img2.dds"],
+            "GFX resource reference")
+
     def test_malformed_ui_data_is_ignored_and_images_never_loaded_eagerly(self):
         calls = []
         def resolver(path):
