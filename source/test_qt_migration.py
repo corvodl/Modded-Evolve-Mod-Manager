@@ -462,6 +462,25 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIn('manual fallback', explanations)
         self.assertFalse(hasattr(self.win, 'skip_live_backup_checkbox'))
 
+    def test_explorer_position_setting_persists_and_updates_open_editors(self):
+        workspace = self.base / 'explorer-position'
+        (workspace / 'files').mkdir(parents=True)
+        (workspace / '.evolve-pak-workspace.json').write_text(
+            json.dumps({'entries': []}), encoding='utf-8')
+        editor = QtWorkspaceEditor(self.win, workspace)
+        self.addCleanup(editor.close)
+        self.win.editors.append(editor)
+        preference = self.win.file_explorer_side_combo
+        self.assertEqual(preference.objectName(), 'fileExplorerPositionSetting')
+        self.assertEqual(preference.currentText(), 'Right')
+        self.assertIs(editor.editor_split.widget(1), editor.explorer)
+        preference.setCurrentText('Left')
+        self.assertEqual(self.win.settings['file_explorer_side'], 'Left')
+        self.assertIs(editor.editor_split.widget(0), editor.explorer)
+        preference.setCurrentText('Right')
+        self.assertEqual(self.win.settings['file_explorer_side'], 'Right')
+        self.assertIs(editor.editor_split.widget(1), editor.explorer)
+
     def test_imported_library_columns_grow_for_full_pak_names(self):
         table = self.win.asset_table
         long_name = 'characters_creatures_reaver_data.pak'
