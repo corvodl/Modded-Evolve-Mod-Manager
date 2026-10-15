@@ -124,11 +124,11 @@ class SystemHealthQtTests(unittest.TestCase):
             self.assertFalse(panel._scanned)
             scan.assert_not_called()
             # Don't start a background worker while testing widget geometry.
-            with patch.object(panel._thread_pool, "start") as start:
+            with patch.object(panel, "_thread_pool") as pool:
                 panel.toggle.click()
                 self.assertTrue(panel.toggle.isChecked())
                 self.assertEqual(len(panel.labels), 5)
-                start.assert_called_once()
+                pool.start.assert_called_once()
             home.close()
 
     def test_result_rows_show_five_independent_checks(self):
