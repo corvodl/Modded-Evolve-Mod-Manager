@@ -92,7 +92,7 @@ def dependency_report(data, virtual, *, resolved_imports=None, imported_issues=(
             rows.append(Dependency("Import warning", str(reason)[:180],
                                    "GFX ImportAssets2", "Not rendered"))
 
-    if info.script:
+    if info.scripts:
         rows.append(Dependency("ActionScript", "Runtime UI",
                                "Embedded Scaleform scripts",
                                "Not executed by static FFDec frame export"))
