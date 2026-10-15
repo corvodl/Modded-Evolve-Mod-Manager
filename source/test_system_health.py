@@ -65,6 +65,30 @@ class SystemHealthCoreTests(unittest.TestCase):
         self.assertIn("not found", snapshot["firewall"][1])
         self.assertEqual(snapshot["storage"][0], "Ready")
 
+    def test_existing_external_wer_settings_are_never_modified(self):
+        from types import SimpleNamespace
+        fake_windows = SimpleNamespace(name="nt")
+        fake_reg = MagicMock()
+        with patch.object(h, "os", fake_windows), \
+                patch.dict(sys.modules, {"winreg": fake_reg}), \
+                patch.object(h, "_wer_read", return_value={"DumpType": (2, 4)}):
+            with self.assertRaisesRegex(RuntimeError, "not manager-owned"):
+                h.configure_dumps("/tmp/evolve-health", True)
+            with self.assertRaisesRegex(RuntimeError, "not manager-owned"):
+                h.configure_dumps("/tmp/evolve-health", False)
+        fake_reg.CreateKeyEx.assert_not_called()
+        fake_reg.DeleteKey.assert_not_called()
+
+    def test_swap_recovery_state_is_reported_as_attention_needed(self):
+        from launch_integration import SwapStatus
+        with TemporaryDirectory() as tmp, \
+                patch.object(h, "state_status", return_value=SwapStatus(
+                    "unsafe", "Original backup mismatch", backups=3)):
+            state, details = h.storage_snapshot(tmp, tmp, tmp, tmp)
+        self.assertEqual(state, "Attention needed")
+        self.assertIn("unsafe", details)
+        self.assertIn("3 original backup(s)", details)
+
     def test_missing_psutil_refuses_firewall_mutation(self):
         with patch.object(h, "psutil", None):
             self.assertTrue(h.game_running())  # fail closed
