@@ -241,6 +241,11 @@ class LevelGLViewport(QOpenGLWidget):
         self._upload_remaining = 0
         self._upload_bytes_remaining = 0
         self._upload_bytes_frame = 0
+        self._map_frame_started_at = time.perf_counter()
+        self._geometry_frame_seen = False
+        self._texture_frame_seen = False
+        self._final_frame_seen = False
+        self.frameSwapped.connect(self._frame_presented)
         self._terrain_uvs = {}
         self._terrain_texture = 0
         self._cancel = Event()
@@ -282,6 +287,31 @@ class LevelGLViewport(QOpenGLWidget):
         self._loader.start()
         self.statusChanged.emit("Preparing map meshes and textures in background…")
 
+    def _frame_presented(self):
+        """Record user-visible scene milestones, not inferred GPU durations."""
+        elapsed = (time.perf_counter() - self._map_frame_started_at) * 1000
+        if not self._geometry_frame_seen and (self._visible or self.terrain_chunks):
+            self._geometry_frame_seen = True
+            record('map', 'first_geometry_frame', elapsed_ms=elapsed,
+                   instances=len(self._visible), terrain_chunks=len(self.terrain_chunks))
+        if not self._texture_frame_seen and (self._textures or self._terrain_texture):
+            self._texture_frame_seen = True
+            record('map', 'first_texture_frame', elapsed_ms=elapsed)
+        if (self._geometry_frame_seen and not self._final_frame_seen and
+                self._residency is not None and not self._preparing and
+                not self._streaming):
+            needed = {
+                id(image) for obj in self._visible
+                for image in (self.assets[_asset_key(obj)].materials.textures
+                              if self.assets[_asset_key(obj)].materials else ())
+                if image is not None
+            }
+            if needed.issubset(self._textures):
+                self._final_frame_seen = True
+                record('map', 'final_quality_frame', elapsed_ms=elapsed,
+                       visible_resources=len(self._visible),
+                       uploaded_textures=len(needed))
+
     def _report_progress(self, token, cancel, args):
         if cancel.is_set():
             return
@@ -321,6 +351,10 @@ class LevelGLViewport(QOpenGLWidget):
         self._last_request = None
         self._placement_index = None
         self._placement_scene = None
+        self._map_frame_started_at = time.perf_counter()
+        self._geometry_frame_seen = False
+        self._texture_frame_seen = False
+        self._final_frame_seen = False
         self.terrain = None
         self.terrain_chunks = ()
         self.terrain_atlas = None
