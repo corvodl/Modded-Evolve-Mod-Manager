@@ -40,6 +40,8 @@ rem Record the exact tested source commit/channel inside the finished portable a
 if not defined GITHUB_SHA set "GITHUB_SHA=0000000000000000000000000000000000000000"
 if not defined GITHUB_REF_NAME set "GITHUB_REF_NAME=local"
 > ".build\app-dist\EvolveModManager\BUILD_COMMIT.txt" echo %GITHUB_SHA%
+if not defined EVOLVE_RELEASE_REVISION set "EVOLVE_RELEASE_REVISION=0"
+> ".build\app-dist\EvolveModManager\BUILD_REVISION.txt" echo %EVOLVE_RELEASE_REVISION%
 if /i "%GITHUB_REF_NAME%"=="main" (
   > ".build\app-dist\EvolveModManager\BUILD_CHANNEL.txt" echo main
 ) else if /i "%GITHUB_REF_NAME%"=="beta" (
