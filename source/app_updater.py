@@ -283,10 +283,12 @@ def _validated_zip_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
 
 
 def download_and_prepare(update: Update, scratch: Path | None = None,
-                         progress: Callable[[str, int, int], None] | None = None) -> Path:
+                         progress: Callable[[str, int, int], None] | None = None,
+                         app_home: Path | None = None) -> Path:
     """Prepare only inside a standalone scratch directory; never modify the install."""
     if scratch is None:
         base = update_workspace(
+            app_home if app_home is not None else
             Path(os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()) /
             'EvolveModManager')
         base.mkdir(parents=True, exist_ok=True)
