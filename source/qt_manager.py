@@ -22,7 +22,7 @@ import traceback
 _QT_STARTUP_LOG = None
 if os.name == 'nt' and getattr(sys, 'frozen', False):
     try:
-        _QT_LOG_DIR = Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or '.') / 'EvolveModManagerQtPreview'
+        _QT_LOG_DIR = Path(sys.executable).resolve().parent / 'Data' / 'Logs'
         _QT_LOG_DIR.mkdir(parents=True, exist_ok=True)
         _QT_STARTUP_LOG = open(_QT_LOG_DIR / 'startup.log', 'a',
                                encoding='utf-8', buffering=1)
@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
 
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
 from app_updater import (discover_latest, download_and_prepare,
-                         launch_apply, installed_commit, report_startup_ready)
+                         launch_apply, installed_commit, installed_revision, report_startup_ready)
 from version_info import app_version
 from qt_theme_116 import PALETTES, ROLES, palette, qt_palette_style
 from studio_polish_117 import theme_preset, validate_theme_preset, read_theme_file
@@ -3916,7 +3916,7 @@ class QtManager(QMainWindow):
             candidate=None
             error=''
             try:
-                candidate=discover_latest(installed_commit(APP_HOME),app_version().lstrip('v'))
+                candidate=discover_latest(installed_commit(APP_HOME),app_version().lstrip('v').split(' · Patch ', 1)[0], installed_revision(APP_HOME))
             except Exception as exc:
                 error=str(exc)
             self.signals.update_checked.emit((candidate,None),error,silent)
