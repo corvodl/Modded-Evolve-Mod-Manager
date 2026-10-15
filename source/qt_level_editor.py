@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from level_editor_core import LevelProject, PlacedObject
 from qt_level_scene_render import LevelGLViewport
+from qt_ui_components import SurfacePanel, configure_splitter
 
 
 class LevelSceneViewport(QWidget):
@@ -240,18 +241,8 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.resize(1510,900)
         self.setMinimumSize(880,540)
         self.setObjectName("evolveLevelEditor")
-        self.setStyleSheet("""
-          QMainWindow#evolveLevelEditor, QWidget { background:#202126; color:#dbdfe5; }
-          QTreeWidget, QLineEdit, QDoubleSpinBox, QComboBox {
-            background:#2b2d32; color:#ebedf0; border:1px solid #43464b; }
-          QTreeWidget::item:selected {background:#b16c35; color:white}
-          QPushButton, QToolButton {padding:6px 10px; background:#31333a;
-            border:1px solid #494a51; border-radius:3px; color:#e6e7ec}
-          QPushButton:hover,QToolButton:hover {background:#55545a}
-          QPushButton:checked,QToolButton:checked {background:#ad7135}
-          QLabel#dockHeading { font-weight:600; color:#eeeeef; }
-          QSplitter::handle { background:#393a41; }
-        """)
+        # Inherit the shared light/dark native Qt palette. Do not pin the
+        # Level Editor to unrelated brown/orange colors or stale local QSS.
         self.selected=None
         self._refreshing=False
         self._map_catalog_generation=0
@@ -375,18 +366,15 @@ class UnrealStyleLevelEditor(QMainWindow):
         toolbar.addWidget(QLabel("   RENDER  •  Source-size depth-tested mesh instances   "))
 
     def _panel(self,title):
-        wrapper=QFrame()
-        lay=QVBoxLayout(wrapper)
-        lay.setContentsMargins(5,5,5,5)
-        lay.setSpacing(4)
-        label=QLabel(title)
-        label.setObjectName("dockHeading")
-        lay.addWidget(label)
-        return wrapper,lay
+        wrapper=SurfacePanel(title)
+        wrapper.setMinimumWidth(0)
+        return wrapper,wrapper.content
 
     def _build_workspace(self):
-        vertical=QSplitter(Qt.Vertical)
-        horizontal=QSplitter(Qt.Horizontal)
+        vertical=configure_splitter(QSplitter(Qt.Vertical))
+        vertical.setObjectName('levelEditorMainSplitter')
+        horizontal=configure_splitter(QSplitter(Qt.Horizontal))
+        horizontal.setObjectName('levelEditorViewportSplitter')
         vertical.addWidget(horizontal)
         self.setCentralWidget(vertical)
 
@@ -425,7 +413,8 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.viewport.materialsReady.connect(self._materials_ready)
         horizontal.addWidget(self.viewport)
 
-        right=QSplitter(Qt.Vertical)
+        right=configure_splitter(QSplitter(Qt.Vertical))
+        right.setObjectName('levelEditorInspectorSplitter')
         outliner,outlay=self._panel("WORLD OUTLINER")
         self.filter=QLineEdit()
         self.filter.setPlaceholderText("Search objects and layers…")
@@ -488,7 +477,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         right.addWidget(details)
         right.setSizes([470,320])
         horizontal.addWidget(right)
-        horizontal.setSizes([188,960,348])
+        horizontal.setSizes([200, 870, 320])
 
         browser,browser_layout=self._panel("CONTENT BROWSER")
         controls=QHBoxLayout()
@@ -505,7 +494,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.content.setAlternatingRowColors(True)
         browser_layout.addWidget(self.content,1)
         vertical.addWidget(browser)
-        vertical.setSizes([680,175])
+        vertical.setSizes([680, 160])
 
     def _scene_status(self, status):
         self.statusBar().showMessage(status, 0)
