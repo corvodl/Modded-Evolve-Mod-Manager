@@ -2,7 +2,7 @@
 
 A real landing page rather than another instruction page. The navigation
 tiles use the *same* page dispatcher as the drawer and icon rail, so the
-Developer tile still requires the access-code gate.
+Developer tools are deliberately absent from Home.
 """
 from __future__ import annotations
 
@@ -18,14 +18,13 @@ from qt_navigation_icons import navigation_icon
 from qt_ui_components import SurfacePanel
 
 NAVIGATION = (
-    ("Modding", "Create & Build", "Open a project, edit assets and sign a PAK."),
+    ("Modding", "Modding", "Open a project, edit assets and sign a PAK."),
     ("Asset Library", "Asset Library", "Browse textures, models, animation and GFX."),
     ("Play & Restore", "Play & Restore", "Prepare an offline test or restore previous files."),
-    ("Instructions", "Getting Started", "First-time setup and safe modding workflow."),
-    ("Settings", "Preferences", "Appearance, paths, updates and maintenance."),
+    ("Instructions", "Instructions", "First-time setup and safe modding workflow."),
+    ("Settings", "Settings", "Appearance, paths, updates and maintenance."),
     ("What's New", "What's New", "Changes included in the latest release."),
-    ("Credits", "About", "Project information and acknowledgments."),
-    ("Developer", "Developer", "Protected test tools; access code required."),
+    ("Credits", "Credits", "Project information and acknowledgments."),
 )
 
 
@@ -63,9 +62,9 @@ class HomeDashboard(QScrollArea):
         hero_actions = QHBoxLayout()
         hero_actions.setSpacing(8)
         for index, (label, page, primary) in enumerate((
-                ("Open Modding", "Modding", True),
-                ("Explore Assets", "Asset Library", False),
-                ("Setup Guide", "Instructions", False))):
+                ("Modding", "Modding", True),
+                ("Asset Library", "Asset Library", False),
+                ("Instructions", "Instructions", False))):
             button = QPushButton(label)
             button.setObjectName("primary" if primary else "homeSecondaryAction")
             button.setIcon(navigation_icon(page, size=19))
@@ -146,6 +145,8 @@ class HomeDashboard(QScrollArea):
         self.status = {}
         for key, title_text, fallback in (
                 ("game", "Game installation", "Not selected"),
+                ("game_version", "Game version", "Not detected"),
+                ("client_version", "Client version", "Not detected"),
                 ("stage", "Signing stage", "Not prepared"),
                 ("project", "Editing project", "None selected"),
                 ("output", "Last signed PAK", "No recent build")):
@@ -168,7 +169,19 @@ class HomeDashboard(QScrollArea):
     def refresh_status(self):
         """Cheap file-existence checks only; no source PAK hashing/scanning."""
         manager = self.manager
-        game = manager.game_root or manager.settings.get("game_root", "")
+        game = (manager.game_root or manager.settings.get("game_root", "")
+                or manager._find_game_root())
+        from installed_game_versions import installed_versions
+        details = installed_versions(game, manager.swap_path)
+        self.status["game_version"].setText(
+            details["game"] or
+            ("Version not reported" if details["game_found"]
+             else "Game executable not found"))
+        self.status["client_version"].setText(
+            (details["client"] or
+             ("Version not reported" if details["client_found"]
+              else "Client executable not configured"))
+            + (" · " + details["client_name"] if details["client_name"] else ""))
         self.status["game"].setText(
             "Configured" if game and Path(game).is_dir()
             else "Not configured — use Settings")
