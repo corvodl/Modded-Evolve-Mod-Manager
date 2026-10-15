@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QPointF, QTimer
+from PySide6.QtCore import Qt, Signal, QPointF, QTimer, QModelIndex
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QAction
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QFrame, QLabel, QVBoxLayout,
@@ -515,6 +515,15 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.content.itemDoubleClicked.connect(self._open_browser_asset)
         self.content.setAlternatingRowColors(True)
         browser_layout.addWidget(self.content,1)
+        self.virtual_content = QTreeView()
+        self.virtual_content.setObjectName('virtualLevelContentBrowser')
+        self._content_model = VirtualTreeModel(self.virtual_content,
+                            labels=('Content', 'Type', 'Location'))
+        self.virtual_content.setModel(self._content_model)
+        self.virtual_content.doubleClicked.connect(self._open_browser_asset)
+        self.virtual_content.hide()
+        browser_layout.addWidget(self.virtual_content,1)
+        self._content_catalog = None
         vertical.addWidget(browser)
         vertical.setSizes([680, 160])
 
@@ -714,6 +723,7 @@ class UnrealStyleLevelEditor(QMainWindow):
                     return False
         self.project=next_project
         self._outliner_catalog = None
+        self._content_catalog = None
         self.selected=None
         self.viewport.active=None
         self.viewport.project=next_project
@@ -992,12 +1002,21 @@ class UnrealStyleLevelEditor(QMainWindow):
         # reflects actual files and folders from the editable level workspace.
         from evolve_pak_workspace import load_workspace, normalized_name
         self.content.clear()
+        root = self.project.workspace
+        if self._content_catalog is None or self._content_catalog[0] != root:
+            catalog = load_workspace(root)
+            filenames = tuple(sorted(
+                (normalized_name(entry['path']) for entry in catalog['entries']),
+                key=str.casefold))
+            self._content_catalog = (root, filenames)
+        filenames = self._content_catalog[1]
+        if len(filenames) > 1500:
+            self._populate_virtual_content(filenames)
+            return
+        self.virtual_content.hide()
+        self.content.show()
         nodes={}
-        catalog=load_workspace(self.project.workspace)
-        filenames=sorted(
-            (normalized_name(entry["path"]) for entry in catalog["entries"]),
-            key=str.casefold)
-        for relative in filenames[:22000]:
+        for relative in filenames:
             parts=relative.split("/")
             parent=None
             for n,name in enumerate(parts[:-1]):
@@ -1028,8 +1047,39 @@ class UnrealStyleLevelEditor(QMainWindow):
             f"{len(self.project.objects):,} objects • "
             f"{sum(bool(x.model) for x in self.project.scene):,} model references")
 
+    def _populate_virtual_content(self, filenames):
+        root = TreeNode('')
+        directories = {}
+        for relative in filenames:
+            parts = relative.split('/')
+            parent = root
+            for part_index, part in enumerate(parts[:-1]):
+                name = '/'.join(parts[:part_index + 1])
+                if name not in directories:
+                    node = TreeNode(part, 'Folder', tooltip=name)
+                    parent.append(node)
+                    directories[name] = node
+                parent = directories[name]
+            extension = Path(relative).suffix.casefold()
+            file_type = ('CryEngine Layer' if extension == '.lyr' else
+                         'CryEngine Map' if extension == '.cry' else
+                         'Texture' if extension in ('.dds', '.tif') else
+                         'Map Metadata' if extension in ('.xml', '.dat', '.lua') else
+                         extension.lstrip('.').upper() or 'File')
+            parent.append(TreeNode(parts[-1], file_type,
+                                   value=relative, tooltip=relative))
+        self._content_model.reset_root(root)
+        self.content.hide()
+        self.virtual_content.show()
+        self.path_label.setText(
+            f'Extracted workspace / {self.project.level_name} • '
+            f'{len(filenames):,} files • {len(self.project.layers)} layers • '
+            f'{len(self.project.objects):,} objects • '
+            f'{sum(bool(x.model) for x in self.project.scene):,} model references')
+
     def _open_browser_asset(self,item,column=0):
-        relative=item.data(0,Qt.UserRole)
+        relative=(item.data(Qt.UserRole) if isinstance(item, QModelIndex)
+                  else item.data(0, Qt.UserRole))
         if isinstance(relative,str) and relative.casefold().endswith(".lyr"):
             self.filter.setText(Path(relative).stem)
             self.statusBar().showMessage(
