@@ -68,3 +68,45 @@ Windows CI must also pass Qt navigation, RSA/PAK verification, profile
 journaling, portable ZIP, installer and worker smoke tests. Real-game
 installation/restoration and UAC behavior require an offline Windows test
 installation before release. PR #82 stays draft until the tests pass.
+
+
+## Game Storage — Settings
+
+The old three always-visible path fields are replaced by one **Mod Data
+Location** picker and a **Storage Breakdown** panel in the same compact
+dark/red style as the rest of the manager. The colored bar is proportional to
+**measured disk usage** and labels show actual GiB/MiB, not mock percentages.
+The five categories are Active setup (red), Old setups (blue), Projects (gold),
+Asset Library (teal) and Other (gray). Storage is scanned off the UI thread
+on entering Settings and on demand; there is no startup disk scan or periodic
+background polling.
+
+**Advanced folder paths** is collapsed by default. It preserves direct access
+to existing signing stage, launch/swap and projects paths for compatibility.
+The primary Mod Data Location setting chooses where NEW setup/refresh output
+will go. Changing it or opening Advanced does NOT move, relink, delete, or
+overwrite the current signed PAKs, swap journal, project backups, or Asset
+Library. Save Settings to preserve the location preference.
+
+**Smart setup reuse** checks the configured client/game identity, signing
+status, complete signed inventory, helper scripts and safe restored/prepared
+swap journal. If the existing installation is a valid match, Set Up Manager
+reuses it without generating new PAK copies; changed identities or uncertain
+recovery states fall back to the original confirmed setup flow.
+
+**Review Storage & Cleanup…** inspects direct children of the chosen
+GameSets root with recognized Setup_/EvolveRefresh_ names and complete
+refresh reports. It measures each setup and disables selection of active
+setups, damaged/incomplete setups, non-restored swap journals, remaining
+recovery backups, or setups referenced by current projects/Mod Profiles.
+Deletion is never automatic; the user chooses eligible rows and explicitly
+confirms permanent removal. The manager rechecks eligibility, game/launcher
+closure, original file recovery and prepared markers immediately before
+each deletion. This removes an **unused old setup folder only**, never the
+installed game directory, current signing stage, or Projects.
+
+Original game snapshots remain optional for FUTURE setups via the existing
+Backups & Recovery preference. Live game swap backups remain mandatory.
+
+Regression tests: test_game_storage.py and test_qt_game_storage.py, included
+in Windows Qt, installer and portable ZIP CI test lists.
