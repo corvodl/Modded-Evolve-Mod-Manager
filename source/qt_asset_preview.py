@@ -169,6 +169,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             QMessageBox.warning(self, 'Asset Library', str(error))
             return
         self._model_generation += 1
+        self.media_view.clear()
         self.gfx_view.cancel_pending()
         self.identifier = archive_id
         self.workspace = Path(candidate).resolve()
@@ -206,6 +207,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
 
     def refresh(self):
         """Refresh only approved library entries; never extract or import."""
+        self.media_view.clear()
         self.entries = archive_entries(self.identifier)
         self.records = {rel: {'path': rel, 'format': 'raw'}
                         for rel in self.entries}

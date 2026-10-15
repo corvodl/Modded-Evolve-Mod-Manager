@@ -2259,7 +2259,7 @@ class QtManager(QMainWindow):
         panel.addWidget(self.dev_memory_panel)
         lay.addWidget(card)
         card, panel = self._developer_fold_card('Account profile / progression',
-            'Inspect readable backups, compare ownership and XP, and export isolated offline copies.')
+            'Discover local client profile details, inspect readable backups, compare ownership and XP, and export isolated offline copies.')
         profile_button = _button('Open Account Profile Inspector…', self._open_account_profile_inspector)
         profile_button.setObjectName('developerProfileInspector')
         panel.addWidget(profile_button)
@@ -2286,8 +2286,10 @@ class QtManager(QMainWindow):
 
     def _open_account_profile_inspector(self):
         from qt_account_profile import AccountProfileInspector
-        dialog = AccountProfileInspector(self)
+        from installed_game_versions import client_executable
+        dialog = AccountProfileInspector(self, client=client_executable(self.swap_path))
         dialog.exec()
+        dialog.deleteLater()
 
     def _developer_memory_write_permission(self):
         from developer_write_policy import require_developer_write

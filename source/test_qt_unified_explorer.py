@@ -63,7 +63,7 @@ class UnifiedExplorerTests(unittest.TestCase):
     def test_single_visible_file_tree_and_hidden_internal_tabs(self):
         editor = self.editor
         self.assertEqual(editor.explorer_count.text(), "3 files")
-        self.assertEqual(editor.tabs.count(), 4)
+        self.assertEqual(editor.tabs.count(), 5)
         self.assertTrue(editor.tabs.tabBar().isHidden())
         self.assertIs(editor.trees["files"], editor.trees["images"])
         self.assertIs(editor.trees["images"], editor.trees["models"])

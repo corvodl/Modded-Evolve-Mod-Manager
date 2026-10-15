@@ -31,6 +31,7 @@ from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
 from dds_png_import import encode_png_as_dds, compression_for_dds
 from model_asset import is_model, inspect_model, export_model, replace_model
 from qt_gfx_preview import GfxPreviewWidget
+from qt_media_preview import MediaPreview, is_media
 from gfx_preview_backend import MAX_SOURCE as MAX_GFX_SOURCE, export_gfx_png
 from model_preview import find_preview_mesh, render_mesh
 from qt_cpu_model_viewer import QtCPUModelCanvas
@@ -132,7 +133,7 @@ class QtLooseFileEditor(QMainWindow):
 
 
 class QtWorkspaceEditor(QMainWindow):
-    TABS = ('files', 'images', 'models', 'gfx')
+    TABS = ('files', 'images', 'models', 'gfx', 'media')
 
     def __init__(self, manager, workspace, archive_map=None, *, library_archive=None):
         super().__init__(manager)
@@ -248,7 +249,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.tabs.setStyleSheet('QTabWidget::pane { border: 0; }')
         self.trees, self.views, self.actions = {}, {}, {}
         self.splitters = {section: self.editor_split for section in self.TABS}
-        for section, label in zip(self.TABS, ('Text', 'Textures', '3D Model', 'Scaleform GFX')):
+        for section, label in zip(self.TABS, ('Text', 'Textures', '3D Model', 'Scaleform GFX', 'Audio / Video')):
             tab = QWidget()
             box = QVBoxLayout(tab)
             box.setContentsMargins(0, 0, 0, 0)
@@ -287,6 +288,9 @@ class QtWorkspaceEditor(QMainWindow):
                 view = QLabel('Choose a DDS texture in File Explorer.')
                 view.setAlignment(Qt.AlignCenter)
                 view.setWordWrap(True)
+            elif section == 'media':
+                self.media_view = MediaPreview(self)
+                view = self.media_view
             elif section == 'gfx':
                 self.gfx_view = GfxPreviewWidget(self)
                 self.gfx_pages = QStackedWidget()
@@ -304,7 +308,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_cpu.setObjectName('cpuModelPreview')
                 view.addWidget(self.model_cpu)
             box.addWidget(view, 1)
-            self.tabs.addTab(tab, navigation_icon({'files':'text','images':'texture','models':'model','gfx':'gfx'}[section]), label)
+            self.tabs.addTab(tab, navigation_icon({'files':'text','images':'texture','models':'model','gfx':'gfx','media':'files'}[section]), label)
             self.views[section] = view
             self.actions[section] = widgets
         self.editor_split.addWidget(self.tabs)
@@ -1098,6 +1102,8 @@ class QtWorkspaceEditor(QMainWindow):
         return entries
 
     def _category(self, rel):
+        if is_media(rel):
+            return 'media'
         # In the read-only Asset Library, a CDF is a visual character
         # assembly entry. Editable mod projects retain the XML text editor.
         if self.read_only_library and rel.casefold().endswith('.cdf'):
@@ -1296,6 +1302,7 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(str(exc))
 
     def load(self, rel, *, full_character=False):
+        self.media_view.clear()
         if self._gfx_editor_panel is not None:
             self._close_gfx_editor()
         if rel not in self.records:
@@ -1337,6 +1344,12 @@ class QtWorkspaceEditor(QMainWindow):
                 raise FileNotFoundError('This imported library asset is missing or changed.')
         if self.mode == 'models':
             self._load_model_background(rel)
+            return
+        if self.mode == 'media':
+            self.raw = b''
+            self.loaded_text = ''
+            self.media_view.open_file(path)
+            self.status.setText(rel + ' | local media preview | raw export available')
             return
         if self.mode == 'gfx' and path.stat().st_size > MAX_GFX_SOURCE:
             self.gfx_view.cancel_pending()
@@ -1863,6 +1876,7 @@ class QtWorkspaceEditor(QMainWindow):
         else:
             new_records = self._read_records(target)
         self.dependency_button.setEnabled(False)
+        self.media_view.clear()
         self.workspace, self.records = target, new_records
         self.favorites_only.setChecked(False)
         self.preview_index = None
@@ -1984,6 +1998,7 @@ class QtWorkspaceEditor(QMainWindow):
             if self.manager.busy:
                 raise RuntimeError('Wait until current manager task finishes.')
             rel = self.selected()
+            self.media_view.clear()
             action(rel)
             self.load(rel)
         except Exception as exc:
@@ -2869,6 +2884,7 @@ class QtWorkspaceEditor(QMainWindow):
             event.ignore()
             return
         self._save_project_session()
+        self.media_view.clear()
         self._model_generation += 1
         self.gfx_view.cancel_pending()
         self._close_gfx_editor()
