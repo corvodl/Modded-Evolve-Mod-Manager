@@ -793,12 +793,15 @@ class QtGLModelCanvas(QOpenGLWidget):
                     hidden=getattr(self.materials,'hidden',()))
             except Exception as error:
                 # Never break the primary viewer on unsupported OpenGL FBOs.
-                self.ssao_error = str(error)[:240]
+                message = str(error)[:240]
                 self.ssao_quality = 'Off'
+                self.ssao_error = message
                 if hasattr(self.parent(), 'ssao_combo'):
-                    self.parent().ssao_combo.setCurrentText('Off')
-                    self.parent().ssao_combo.setToolTip(
-                        'SSAO disabled on this GPU: ' + self.ssao_error)
+                    combo = self.parent().ssao_combo
+                    combo.blockSignals(True)
+                    combo.setCurrentText('Off')
+                    combo.blockSignals(False)
+                    combo.setToolTip('SSAO disabled on this GPU: ' + message)
         # Geometry has been submitted; upload one verified texture for the
         # following frame, leaving the GUI event loop responsive.
         self._upload_textures(max_uploads=1)
