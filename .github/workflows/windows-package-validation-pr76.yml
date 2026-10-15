@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 120
     env:
       EVOLVE_REQUIRE_NATIVE_TWOFISH: '1'
-      QT_QPA_PLATFORM: windows
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,6 +50,8 @@ jobs:
           } finally { Pop-Location }
       - name: Capture actual Windows compiled Qt UI
         shell: pwsh
+        env:
+          QT_QPA_PLATFORM: windows
         run: |
           $exe = (Resolve-Path '.build/app-dist/EvolveModManager/EvolveModManager.exe').Path
           $image = (Join-Path (Get-Location) 'dist/PR76-actual-Windows-window.png')
