@@ -103,9 +103,13 @@ def windows_crash_history(*, runner=None, limit=12):
         raise RuntimeError("Event Viewer returned invalid event XML.") from exc
     rows = []
     ns = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
-    for event in root:
+    for event in root.iter():
         if len(rows) >= limit:
             break
+        # Windows versions can return Event roots directly or wrap them
+        # inside an Events container. Only consider actual Event nodes.
+        if event.tag.rsplit("}", 1)[-1] != "Event":
+            continue
         system = event.find("e:System", ns)
         if system is None:
             continue
