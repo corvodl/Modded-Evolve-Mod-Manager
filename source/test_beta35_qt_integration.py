@@ -73,7 +73,8 @@ class Beta35QtIntegrationTests(unittest.TestCase):
                 # first paint, performs the expensive legacy-project scan.
                 ready = QSignalSpy(restored.signals.inventory_ready)
                 restored.open_page(SECTIONS.index("Modding"))
-                self.assertTrue(ready.wait(5000), 'Background inventory did not finish')
+                self.assertTrue(len(ready) or ready.wait(5000),
+                                'Background inventory did not finish')
                 self.app.processEvents()
             try:
                 self.assertTrue(hasattr(restored, "status"))
@@ -104,7 +105,8 @@ class Beta35QtIntegrationTests(unittest.TestCase):
                 restored = QtManager()
                 ready = QSignalSpy(restored.signals.inventory_ready)
                 restored.open_page(SECTIONS.index("Modding"))
-                self.assertTrue(ready.wait(5000), 'Background inventory did not finish')
+                self.assertTrue(len(ready) or ready.wait(5000),
+                                'Background inventory did not finish')
                 self.app.processEvents()
                 # Changes are intentionally deferred until an explicit row
                 # selection; first paint must not perform an asset diff.
