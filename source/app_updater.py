@@ -27,7 +27,7 @@ REVISION_STAMP = 'BUILD_REVISION.txt'
 UPDATE_WORK_DIR = 'UpdateWork'
 MANIFEST_ASSET = 'update-manifest.json'
 ALLOWED_TOP = frozenset({'EvolveModManager.exe', 'EvolveModWorker.exe', '_internal',
-                         'Docs', 'START-HERE.txt', 'BUILD_COMMIT.txt', 'BUILD_CHANNEL.txt'})
+                         'Docs', 'START-HERE.txt', 'BUILD_COMMIT.txt', 'BUILD_CHANNEL.txt', REVISION_STAMP})
 MAX_ZIP_BYTES = 300 * 1024 * 1024
 MAX_EXPANDED_BYTES = 1_500 * 1024 * 1024
 USER_AGENT = 'EvolveModManager-Updater/2.0'
@@ -286,7 +286,10 @@ def download_and_prepare(update: Update, scratch: Path | None = None,
                          progress: Callable[[str, int, int], None] | None = None) -> Path:
     """Prepare only inside a standalone scratch directory; never modify the install."""
     if scratch is None:
-        base = Path(os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()) / 'EvolveModManagerUpdates'
+        base = update_workspace(
+            Path(os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()) /
+            'EvolveModManager')
+        base.mkdir(parents=True, exist_ok=True)
         scratch = base / uuid.uuid4().hex
     scratch = Path(scratch).resolve()
     scratch.mkdir(parents=True, exist_ok=False)
@@ -328,10 +331,14 @@ def download_and_prepare(update: Update, scratch: Path | None = None,
             raise ValueError('Downloaded build commit differs from the selected release.')
         if (staged/'BUILD_CHANNEL.txt').read_text(encoding='ascii').strip().lower()!=update.channel:
             raise ValueError('Downloaded build channel differs from the selected release.')
+        if installed_revision(staged) != update.revision:
+            raise ValueError('Downloaded revision differs from the selected release.')
         if progress: progress('Ready', 1, 1)
         return staged
     except BaseException:
-        # Retain scratch as evidence for diagnosis, never touch installed data.
+        # A failed download must not leave unnecessary update archives.
+        import shutil
+        shutil.rmtree(scratch, ignore_errors=True)
         raise
 
 
@@ -346,8 +353,7 @@ def report_startup_ready(app_home: Path) -> None:
     if not hint:
         return
     try:
-        scratch = (Path(os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()) /
-                   'EvolveModManagerUpdates').resolve()
+        scratch = update_workspace(app_home)
         path = Path(hint).resolve()
         if (not path.is_relative_to(scratch) or
                 not path.name.startswith('startup-ok-') or path.suffix != '.txt'):
@@ -369,8 +375,9 @@ APPLY_PS1 = r'''param(
   [switch]$Headless
 )
 $ErrorActionPreference = 'Stop'
-$Names = @('EvolveModManager.exe','EvolveModWorker.exe','_internal','Docs','START-HERE.txt','BUILD_COMMIT.txt','BUILD_CHANNEL.txt')
-$Backup = Join-Path $TargetDir ('.update-backup-' + [guid]::NewGuid().ToString('N'))
+$Names = @('EvolveModManager.exe','EvolveModWorker.exe','_internal','Docs','START-HERE.txt','BUILD_COMMIT.txt','BUILD_CHANNEL.txt','BUILD_REVISION.txt')
+$ScratchRoot = Split-Path -Parent (Split-Path -Parent $SourceDir)
+$Backup = Join-Path $ScratchRoot 'rollback'
 $Moved = New-Object System.Collections.Generic.List[string]
 $Installed = New-Object System.Collections.Generic.List[string]
 $script:NewManager = $null
@@ -443,6 +450,7 @@ try {
   }
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_COMMIT.txt') -Raw).Trim() -ne $ExpectedCommit) { throw 'Update commit mismatch.' }
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_CHANNEL.txt') -Raw).Trim().ToLowerInvariant() -ne $ExpectedChannel) { throw 'Update build channel mismatch.' }
+  if (-not (Test-Path -LiteralPath (Join-Path $SourceDir 'BUILD_REVISION.txt'))) { throw 'Update build is missing revision stamp.' }
   Set-UpdateProgress 'Backing up current application...' 5
   $script:UpdateStep = 'creating application backup'
   try {
@@ -513,7 +521,6 @@ try {
   }
   if ((Get-Content -LiteralPath (Join-Path $TargetDir 'BUILD_COMMIT.txt') -Raw).Trim() -ne $ExpectedCommit) { throw 'Installed commit mismatch.' }
   Set-UpdateProgress 'Launching and checking updated manager...' 95
-  $ScratchRoot = Split-Path -Parent (Split-Path -Parent $SourceDir)
   $AckPath = Join-Path $ScratchRoot ('startup-ok-' + [guid]::NewGuid().ToString('N') + '.txt')
   $info = New-Object System.Diagnostics.ProcessStartInfo
   $info.FileName = Join-Path $TargetDir 'EvolveModManager.exe'
@@ -541,7 +548,13 @@ try {
   Set-UpdateProgress 'Update complete; manager reopened.' 100
   Write-Output "UPDATE SUCCESS: $ExpectedCommit"
   try { Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction Stop }
-  catch { Write-Output ("Backup retained (cleanup warning): " + $_.Exception.Message + " at " + $Backup) }
+  catch { Write-Output ("Temporary rollback cleanup warning: " + $_.Exception.Message) }
+  foreach ($path in @((Join-Path $ScratchRoot 'download.zip'), (Join-Path $ScratchRoot 'extracted'))) {
+    if (Test-Path -LiteralPath $path) {
+      try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+      catch { Write-Output ("Update scratch cleanup warning: " + $_.Exception.Message) }
+    }
+  }
 } catch {
   $Failure = $_.Exception.Message
   Write-Output "UPDATE FAILED: $Failure"
@@ -550,7 +563,7 @@ try {
   # Emit only the last lines into this private update.log to help diagnose
   # startup faults that do not display a Windows dialog.
   try {
-    $StartupLog = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'EvolveModManagerQtPreview\startup.log'
+    $StartupLog = Join-Path $TargetDir 'Data\Logs\startup.log'
     if (Test-Path -LiteralPath $StartupLog -PathType Leaf) {
       Write-Output "Manager startup diagnostics: $StartupLog"
       Get-Content -LiteralPath $StartupLog -Tail 40 -ErrorAction Stop | ForEach-Object { Write-Output ("STARTUP: " + $_) }
@@ -598,10 +611,13 @@ try {
   } else {
     Write-Output ('ROLLBACK INCOMPLETE: ' + ($RollbackErrors -join ' | '))
   }
-  Write-Output "Recovery backup location (if present): $Backup"
-  Write-Output "Update log: $PSScriptRoot\update.log"
+  if ($RollbackErrors.Count -eq 0) {
+    try { Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction Stop }
+    catch { Write-Output ("Temporary rollback cleanup warning: " + $_.Exception.Message) }
+  } else { Write-Output "Emergency recovery files (rollback failed): $Backup" }
+  Write-Output "Update log: $TargetDir\Data\Logs\update.log"
   Write-Output 'The detached updater will not show a blocking error dialog. Details are in update.log.'
-  Write-Output 'Do not delete the original Data directory, signing keys, or any recovery backups.'
+  Write-Output 'Original personal Data was not modified by the updater.'
   exit 1
 } finally {
   if ($null -ne $script:ProgressWindow) {
@@ -622,7 +638,8 @@ def launch_apply(update: Update, staged: Path, app_home: Path, manager_pid: int)
     scratch = staged.parent.parent
     script = scratch / 'apply.ps1'
     script.write_text(APPLY_PS1, encoding='utf-8-sig')
-    log = scratch / 'update.log'
+    log = app_home / 'Data' / 'Logs' / 'update.log'
+    log.parent.mkdir(parents=True, exist_ok=True)
     with log.open('wb') as output:
         subprocess.Popen(['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
                           '-File', str(script), '-TargetDir', str(app_home), '-SourceDir', str(staged),
