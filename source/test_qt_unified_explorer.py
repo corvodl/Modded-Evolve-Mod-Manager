@@ -93,6 +93,36 @@ class UnifiedExplorerTests(unittest.TestCase):
         self.assertIs(self.editor.editor_split.widget(0), self.editor.tabs)
         self.assertIs(self.editor.editor_split.widget(1), self.editor.explorer)
 
+    def test_large_inventory_uses_virtual_tree_and_full_catalog_search(self):
+        editor = self.editor
+        for number in range(3500):
+            rel = f'configs/generated_{number:04d}.xml'
+            editor.records[rel] = {'path': rel, 'format': 'text'}
+        editor.populate()
+        self.assertTrue(editor._virtual_active)
+        self.assertTrue(editor.file_tree.isHidden())
+        self.assertEqual(editor.explorer_count.text(), '3503 files')
+        self.assertLessEqual(editor._virtual_model.rowCount(), 256)
+        editor.search.setText('configs/ability.xml')
+        editor.populate()
+        self.assertEqual(editor.explorer_count.text(), '1 files')
+        folder = editor._virtual_model.index(0, 0)
+        self.assertEqual(folder.data(Qt.UserRole + 1), 'configs')
+        child = editor._virtual_model.materialize_row(folder, 0)
+        self.assertEqual(child.data(Qt.UserRole), 'configs/ability.xml')
+        editor.virtual_file_tree.setCurrentIndex(child)
+        self.assertEqual(editor.selected(), 'configs/ability.xml')
+        self.assertEqual(editor.mode, 'files')
+        self.assertEqual(editor.views['files'].toPlainText(),
+                         "<Ability value='1' />")
+        # Data absent from the first 256 fetched rows must remain findable.
+        editor.search.setText('generated_3499')
+        editor.populate()
+        folder = editor._virtual_model.index(0, 0)
+        child = editor._virtual_model.materialize_row(folder, 0)
+        self.assertEqual(child.data(Qt.UserRole),
+                         'configs/generated_3499.xml')
+
     def test_click_selects_correct_editor_without_visible_tabs(self):
         editor = self.editor
         editor.file_tree.setCurrentItem(self._find("configs/ability.xml"))
