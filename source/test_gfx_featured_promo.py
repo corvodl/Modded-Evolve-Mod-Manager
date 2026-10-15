@@ -53,11 +53,40 @@ class FeaturedPromoTests(unittest.TestCase):
         self.assertIn(r'GOLIATH \"MODDED\"', replaced)
         self.assertNotIn("mcFeatureBuy._visible", replaced)
         self.assertIn('var message = "{not a code brace}"', replaced)
+        self.assertIn("__evolveFeaturedPromoPreset_title", replaced)
+        try_text = patch_featured_actionscript(
+            self.SCRIPT, "custom", "try", "PLAY OFFLINE")
+        self.assertIn('mcFeatureTry.txtLabel.text = "PLAY OFFLINE"', try_text)
+        buy_text = patch_featured_actionscript(
+            self.SCRIPT, "custom", "buy", "NEW MENU")
+        self.assertIn('mcFeatureBuy.txtLabel.text = "NEW MENU"', buy_text)
+
+    def test_title_survives_independent_try_and_buy_removal(self):
+        title = patch_featured_actionscript(
+            self.SCRIPT, "custom", "title", "MY FEATURE")
+        no_try = patch_featured_actionscript(title, "remove", "try")
+        final = patch_featured_actionscript(no_try, "remove", "buy")
+        self.assertIn('mcFeatureTitle.text = "MY FEATURE"', final)
+        self.assertEqual(final.count("__evolveFeaturedPromoPreset_title"), 1)
+        self.assertEqual(final.count("__evolveFeaturedPromoPreset_try"), 1)
+        self.assertEqual(final.count("__evolveFeaturedPromoPreset_buy"), 1)
+        self.assertIn("mcFeatureTry.removeMovieClip()", final)
+        self.assertIn("mcFeatureBuy.removeMovieClip()", final)
+        self.assertNotIn("mcFeatureTitle.removeMovieClip()", final)
+        with self.assertRaisesRegex(GfxError, "already staged"):
+            patch_featured_actionscript(final, "hide", "try")
+        with self.assertRaisesRegex(GfxError, "Individual"):
+            patch_featured_actionscript(final, "remove", "all")
+        with self.assertRaisesRegex(GfxError, "older, unscoped"):
+            patch_featured_actionscript(
+                self.SCRIPT.replace("_root.mcFeatureTitle.text",
+                                    "var __evolveFeaturedPromoPreset = true; "
+                                    "_root.mcFeatureTitle.text"), "hide", "try")
 
     def test_input_guard_and_duplicate_injection(self):
-        with self.assertRaisesRegex(GfxError, "72 printable"):
+        with self.assertRaisesRegex(GfxError, "160 printable"):
             patch_featured_actionscript(self.SCRIPT, "custom", "title", "\n")
-        with self.assertRaisesRegex(GfxError, "featured title"):
+        with self.assertRaisesRegex(GfxError, "featured title, TRY or BUY"):
             patch_featured_actionscript(self.SCRIPT, "custom", "all", "GOLIATH")
         with self.assertRaisesRegex(GfxError, "valid for"):
             patch_featured_actionscript(self.SCRIPT, "hide", "title", "text")
