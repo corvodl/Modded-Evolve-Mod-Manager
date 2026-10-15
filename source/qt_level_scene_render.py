@@ -347,8 +347,12 @@ class LevelGLViewport(QOpenGLWidget):
         assets, issues, details = result
         if details.get("streamed"):
             self._streaming = False
-            self._clear_gpu_textures()
-            self.assets = assets or {}
+            # Camera residency churn is not a new scene or GL context.
+            # Retain uploaded pixels which still belong to live assets, and
+            # keep the independent terrain atlas/UV buffers untouched.
+            next_assets = assets or {}
+            self._retain_streamed_textures(next_assets)
+            self.assets = next_assets
             if self._residency:
                 self._issues.update({k[0]+': '+v:1 for k,v in self._residency.failures.items()})
             self.update()
@@ -379,6 +383,37 @@ class LevelGLViewport(QOpenGLWidget):
         self.progressChanged.emit(LoadProgress(self._generation,'scene',count,len(self.scene),
             'Scene available; resources load as the camera moves'))
         self.update()
+
+    def _retain_streamed_textures(self, next_assets):
+        """Drop only evicted image uploads on a camera residency update.
+
+        Texture keys are Python image identities. The previous self.assets
+        stays referenced until this method returns, preventing id() reuse
+        during comparison. Full scene/build changes still invalidate all GL
+        resources through _clear_gpu_textures().
+        """
+        live_images = {
+            id(image)
+            for asset in next_assets.values()
+            for image in (asset.materials.textures
+                          if getattr(asset, 'materials', None) else ())
+            if image is not None
+        }
+        removed = {
+            ident for pixel_id, ident in self._textures.items()
+            if pixel_id not in live_images and ident
+        }
+        if removed and self.isValid():
+            self.makeCurrent()
+            try:
+                from OpenGL.GL import glDeleteTextures
+                glDeleteTextures(list(removed))
+            finally:
+                self.doneCurrent()
+        self._textures = {
+            pixel_id: ident for pixel_id, ident in self._textures.items()
+            if pixel_id in live_images
+        }
 
     def _clear_gpu_textures(self):
         if self.isValid():
