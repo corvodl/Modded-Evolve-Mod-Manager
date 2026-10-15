@@ -321,6 +321,7 @@ class TaskSignals(QObject):
     update_staged = Signal(object, object, str)
     progress = Signal(str, int, int)
     map_open_ready = Signal(int, object, object, str)
+    library_defaults_ready = Signal(str, object)
 
 
 class QtManager(QMainWindow):
@@ -413,6 +414,9 @@ class QtManager(QMainWindow):
         self.signals.update_staged.connect(self._on_update_staged)
         self.signals.progress.connect(self._update_progress)
         self.signals.map_open_ready.connect(self._finish_level_editor_open)
+        self.signals.library_defaults_ready.connect(self._library_defaults_ready)
+        self._default_scan_running = False
+        self._default_scan_key = None
         self.update_progress_dialog = None
         self._success = None
         self._drawer_open = False
@@ -592,9 +596,9 @@ class QtManager(QMainWindow):
         # collections. Modding loads them on first use, not before first paint.
         # Restore status is cheap and remains visible on launch.
         self.refresh_swap_status()
-        # Verify the six Shared asset directories off the GUI thread.
-        QTimer.singleShot(500, self._warm_shared_assets)
-        QTimer.singleShot(1300, self._warm_asset_library)
+        # User-facing tasks outrank automatic shared/library discovery.
+        # The game-directory scan itself runs in a worker, not in Qt timers.
+        QTimer.singleShot(500, self._warm_background_assets_when_idle)
         self._shared_catalog_last_status = ''
         self._shared_catalog_timer = QTimer(self)
         self._shared_catalog_timer.setInterval(1000)
@@ -2863,18 +2867,78 @@ class QtManager(QMainWindow):
             editor.load(virtual)
         editor.raise_()
 
+    def _foreground_assets_active(self):
+        if self.busy or self.asset_library_controller.busy:
+            return True
+        for editor in tuple(self.editors) + tuple(self.library_previews):
+            try:
+                pool = getattr(editor, '_model_pool', None)
+                if (pool is not None and pool.activeThreadCount() > 0) or (
+                        getattr(editor, 'mode', None) == 'models' and
+                        not getattr(editor, '_model_prepared', True)):
+                    return True
+            except RuntimeError:
+                continue
+        for editor in tuple(self.level_editors):
+            try:
+                if editor.viewport._preparing or editor.viewport._streaming:
+                    return True
+            except (AttributeError, RuntimeError):
+                continue
+        return False
+
+    def _warm_background_assets_when_idle(self):
+        if self._foreground_assets_active():
+            QTimer.singleShot(700, self._warm_background_assets_when_idle)
+            return
+        self._warm_shared_assets()
+        self._warm_asset_library()
+
     def _warm_asset_library(self):
-        from asset_library import installed_defaults, imported_archives
+        from asset_library import installed_defaults
         game = self.game_root or self._find_game_root()
         if not game:
             return
         key = str(Path(game).resolve())
+        if (self._auto_library_scanned_game == key or
+                self._default_scan_running or self.asset_library_controller.busy):
+            return
+        self._default_scan_running = True
+        self._default_scan_key = key
+
+        def worker():
+            from performance_trace import span
+            try:
+                with span('startup', 'installed_defaults_scan'):
+                    files = tuple(installed_defaults(game))
+            except (OSError, ValueError):
+                files = ()
+            try:
+                self.signals.library_defaults_ready.emit(key, files)
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=worker, daemon=True,
+                         name='Evolve-Default-PAK-Discovery').start()
+
+    def _library_defaults_ready(self, key, files):
+        if key != self._default_scan_key:
+            return
+        self._default_scan_running = False
+        self._default_scan_key = None
+        if not files or self._auto_library_scanned_game == key:
+            return
+        self._apply_default_library_scan(key, files)
+
+    def _apply_default_library_scan(self, key, files):
         if self._auto_library_scanned_game == key:
             return
-        if self.asset_library_controller.busy:
-            return
-        files = installed_defaults(game)
-        if not files:
+        game = self.game_root or self._find_game_root()
+        if not game or str(Path(game).resolve()) != key:
+            return  # game changed while the worker was scanning
+        if self._foreground_assets_active():
+            QTimer.singleShot(900,
+                lambda: self._apply_default_library_scan(key, files))
             return
         if self.asset_library_controller.import_files(
                 files, self.stage_path, automatic=True):
