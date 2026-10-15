@@ -32,4 +32,4 @@ if os.name == "nt" and (sys.stdout is None or sys.stderr is None):
         sys.stdout = stream
     if sys.stderr is None:
         sys.stderr = stream
-    stream.write("Qt windowed startup initialized.\\n")
+    stream.write("Qt windowed startup initialized.\n")
