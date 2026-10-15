@@ -54,14 +54,14 @@ def _lock():
 def should_restore(names, game_seen, quiet_samples, fresh, elapsed):
     """A fresh launch must first see Evolve, unless launch failed completely.
 
-    In both normal and recovery mode, a never-observed game requires a
-    two-minute grace period. Four quiet checks avoid tasklist transition races.
+    A fresh game launch gets a two-minute grace period if Evolve never appears;
+    recovery mode trusts four consecutive empty checks after manager restart.
     """
     if ACTIVE.intersection(names):
         return False
     if quiet_samples < 4:
         return False
-    return game_seen or elapsed >= 120
+    return game_seen or not fresh or elapsed >= 120
 
 
 def watch(fresh=True, interval=2.0, monotonic=time.monotonic, sleeper=time.sleep):
