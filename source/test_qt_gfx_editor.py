@@ -218,6 +218,69 @@ class GfxQtEditorTests(unittest.TestCase):
         self.assertFalse(dialog.promo_text.isEnabled())
         self.assertTrue(dialog.promo_stage.isEnabled())
 
+    def test_external_dds_frame_toggle_is_default_on_and_reversible(self):
+        from test_gfx_external_bitmap_render import synthetic_compiled_bitmap
+        from PIL import Image
+        viewer = self.win.gfx_view
+        movie = synthetic_compiled_bitmap()
+        source = bytes(movie)
+        viewer.open_movie(
+            movie, "Libs/UI/test.gfx",
+            available_paths=("Libs/UI/test_I9.dds.0",),
+            texture_preview=lambda _path: Image.new("RGBA", (24, 24)))
+        self.assertTrue(viewer.external_images.isEnabled())
+        self.assertTrue(viewer.external_images.isChecked())
+        viewer.external_images.setChecked(False)
+        self.assertFalse(viewer.external_images.isChecked())
+        viewer.external_images.setChecked(True)
+        self.assertEqual(source, movie)
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
+    def test_visual_layout_editing_shows_static_and_runtime_hierarchy(self):
+        from qt_gfx_layout_editor import GfxLayoutDialog
+        dialog = GfxEditorDialog(self.win, self.relative)
+        self.addCleanup(dialog.close)
+        layout = GfxLayoutDialog(dialog)
+        self.addCleanup(layout.close)
+        self.assertEqual(layout.tree.topLevelItemCount(), 2)
+        static = layout.tree.topLevelItem(0)
+        self.assertEqual(static.childCount(), 1)
+        layout.tree.setCurrentItem(static.child(0))
+        self.assertTrue(layout.stage.isEnabled())
+        self.assertIn("root depth 1", layout.identity.text())
+        # Sprite bounds are unknown. Do not draw an invented rectangle.
+        self.assertEqual(layout._items, {})
+        self.assertEqual(dialog.snapshot.edits, 0)
+        self.assertEqual(self.asset.read_bytes(), self.original)
+        layout.tree.setCurrentItem(layout.tree.topLevelItem(1).child(0))
+        self.assertFalse(layout.runtime_group.isHidden())
+        layout.promo_action.setCurrentIndex(3)
+        layout.custom.setText("GOLIATH")
+        self.assertTrue(layout.stage.isEnabled())
+        self.assertFalse(layout.x.isEnabled())
+        # The ordinary FFDec session is not mutated until Stage is pressed.
+        self.assertEqual(dialog.snapshot.edits, 0)
+
+    def test_visual_layout_stage_static_then_undo(self):
+        from qt_gfx_layout_editor import GfxLayoutDialog
+        dialog = GfxEditorDialog(self.win, self.relative)
+        self.addCleanup(dialog.close)
+        layout = GfxLayoutDialog(dialog)
+        self.addCleanup(layout.close)
+        root = layout.tree.topLevelItem(0)
+        layout.tree.setCurrentItem(root.child(0))
+        layout.x.setValue(42)
+        layout.y.setValue(36)
+        layout.stage.click()
+        self.assertTrue(dialog.snapshot.changed)
+        self.assertEqual(self.asset.read_bytes(), self.original)
+        from gfx_layout_backend import static_elements
+        state = static_elements(dialog.snapshot.working_file.read_bytes())
+        self.assertAlmostEqual(state[0].x, 42)
+        dialog.undo_edit()
+        self.assertFalse(dialog.snapshot.changed)
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
     def test_advanced_gfx_commands_fit_under_menus(self):
         dialog = GfxEditorDialog(self.win, self.relative)
         self.addCleanup(dialog.close)

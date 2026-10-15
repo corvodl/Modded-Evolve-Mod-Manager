@@ -24,6 +24,7 @@ from gfx_edit_backend import (
 from qt_gfx_preview import GfxPreviewWidget
 from qt_navigation_icons import navigation_icon, action_icon
 from gfx_featured_promo import stage_featured_promo
+from qt_gfx_layout_editor import GfxLayoutDialog
 
 
 class GfxEditorDialog(QDialog):
@@ -147,6 +148,16 @@ class GfxEditorDialog(QDialog):
         self.tools_menu.addAction("Reload FFDec changes", self.reload_edited)
         self.edit_menu.aboutToShow.connect(self._sync_command_menus)
         self.tools_menu.aboutToShow.connect(self._sync_command_menus)
+        self.layout_button = QPushButton("Visual layout editor…")
+        self.layout_button.setObjectName("gfxOpenVisualLayout")
+        self.layout_button.setIcon(action_icon(self.layout_button.text()))
+        self.layout_button.setToolTip(
+            "Edit verified static GFX placements and guarded featured "
+            "title/TRY/BUY runtime overrides in a private edit session.")
+        self.layout_button.clicked.connect(self.open_layout)
+        layout.addWidget(self.layout_button)
+        self.tools_menu.addAction("Visual layout editor…", self.open_layout)
+        self._layout_dialog = None
         outer.addWidget(tools)
 
         # Retail main_menu.gfx receives its featured offer from a game
@@ -209,6 +220,17 @@ class GfxEditorDialog(QDialog):
         footer.addWidget(cancel)
         outer.addLayout(footer)
         self._reload_preview()
+
+    def open_layout(self):
+        if self._layout_dialog is not None and self._layout_dialog.isVisible():
+            self._layout_dialog.raise_()
+            self._layout_dialog.activateWindow()
+            return
+        try:
+            self._layout_dialog = GfxLayoutDialog(self)
+            self._layout_dialog.show()
+        except Exception as exc:
+            QMessageBox.warning(self, "Cannot open visual GFX editor", str(exc))
 
     def _focus_featured_promo(self):
         if self.promo_group is not None:
@@ -439,5 +461,7 @@ class GfxEditorDialog(QDialog):
             QMessageBox.warning(self, "Could not export rendered GFX", str(exc))
 
     def closeEvent(self, event):
+        if self._layout_dialog is not None:
+            self._layout_dialog.close()
         self.viewer.cancel_pending()
         super().closeEvent(event)
