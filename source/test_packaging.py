@@ -34,7 +34,7 @@ class PackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='swap folder ') as tmp:
             root=Path(tmp)
             (root/'sibling.py').write_text('VALUE=42')
-            (root/'check.py').write_text('from pathlib import Path\nimport sibling,sys\nassert sibling.VALUE==42\nassert Path(__file__).parent==Path(sys.argv[1])\nprint("ok",flush=True)\n')
+            (root/'check.py').write_text('from pathlib import Path\nimport sibling,sys\nassert sibling.VALUE==42\nassert Path(__file__).parent.samefile(Path(sys.argv[1]))\nprint("ok",flush=True)\n')
             result=subprocess.run([sys.executable, str(Path(__file__).with_name('worker_entry.py')), str(root/'check.py'), str(root)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('ok',result.stdout)
