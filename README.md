@@ -8,8 +8,9 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Stable — v1.2.1 (Patch 1)
 
-- **Patch 1:** New Home dashboard with workspace icons, persistent compact navigation rail, and clickable application logo to return Home.
-- **Patch 1:** Rebuild from the exact SHA-256-verified original PAK in retained backups when staging has replaced the source; stop safely when no verified baseline exists.
+- Patch 1: introduce Home as the launch dashboard, with workspace shortcuts, quick setup status and a persistent outlined-icon navigation rail.
+- Patch 1: let the application logo return to Home and preserve the access-code gate for Developer tools.
+- Patch 1: rebuild modified PAK workspaces using an exact SHA-verified retained original, when available, without overwriting edited files or swap journals.
 - Refresh every Qt workspace with a cohesive charcoal interface, muted panels, restrained red accents, and reusable controls.
 - Improve Modding and Asset Library navigation with resizable project lists, contextual actions, and collapsible advanced tools.
 - Modernize File, GFX, GPU Model, and Level editors with clearer inspectors, shared toolbars, and more room for previews.
