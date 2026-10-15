@@ -4,6 +4,11 @@ Keep each version to at most three short bullets. Internal gated tools must
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.1.18-beta.50', (
+        'Render verified external DDS textures within static GFX frames while preserving alpha and placement.',
+        'Edit supported GFX menu layers visually with position, scale, rotation, visibility and undo.',
+        'Add experimental featured-title and TRY/BUY layout and text overrides for offline testing.',
+    )),
     ('1.1.18-beta.49', (
         'Speed up Asset Library lookups, map mounting and texture exports without cross-build substitutions.',
         'Resolve compiled GFX imports and inspect referenced DDS textures, bitmap placement and transparent previews.',
