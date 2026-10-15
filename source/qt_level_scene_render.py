@@ -345,6 +345,7 @@ class LevelGLViewport(QOpenGLWidget):
         self._results = Queue(maxsize=2)
         self.assets = {}
         self.scene = self.project.scene
+        self._visible = ()
         self._residency = None
         self._streaming = False
         self._preparing = True
