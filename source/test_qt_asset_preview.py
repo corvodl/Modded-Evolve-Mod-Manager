@@ -176,6 +176,22 @@ class ReadOnlyAssetPreviewUITests(TestCase):
             self.assertIs(found[lod].parent(), primary)
         self.assertTrue(primary.text(0).casefold().find('model') >= 0)
 
+    @staticmethod
+    def _fake_export_glb(_archive, _rel, target):
+        from types import SimpleNamespace
+        from model_blender_export import glb_bytes
+        from model_textured_export import embed_diffuse_textures
+        from material_preview import PreviewMaterials
+        from PIL import Image
+        mesh=SimpleNamespace(vertices=[(0,0,0),(1,0,0),(0,1,0)],
+                             triangles=[(0,1,2)],uvs=[(0,0),(1,0),(0,1)],
+                             subsets=())
+        materials=PreviewMaterials(
+            (Image.new('RGB',(16,16),(100,120,140)),),('body',),'body.mtl')
+        blob,_=embed_diffuse_textures(glb_bytes(mesh),materials)
+        target.write_bytes(blob)
+        return target, {'textures':1,'animation_clips':0}
+
     def test_export_folder_uses_current_selected_directory(self):
         folder_item = None
         iterator = QTreeWidgetItemIterator(self.window.file_tree)
@@ -204,12 +220,20 @@ class ReadOnlyAssetPreviewUITests(TestCase):
              patch('qt_background_exports.begin_file_operation',
                    side_effect=run_inline), \
              patch('qt_asset_preview.export_glb',
-                   side_effect=lambda archive, rel, target: (target, {})) as exported:
+                   side_effect=self._fake_export_glb) as exported:
             self.window.export_blender_folder()
         choose_destination.assert_called_once()
         self.assertEqual(exported.call_count, 3)
         self.assertEqual(
             {call.args[1] for call in exported.call_args_list}, set(self.models))
+        root=output/'scrap'
+        self.assertEqual(len(list((root/'textures').glob('*.png'))),3)
+        self.assertEqual(len(list((root/'textures').glob('*_texture_manifest.json'))),3)
+        self.assertTrue((root/'animations'/'animation_manifest.json').is_file())
+        animation=json.loads((root/'animations'/'animation_manifest.json').read_text())
+        self.assertEqual(animation['converted_clips'],[])
+        self.assertEqual(animation['raw_sources'],[])
+        self.assertFalse((root/'characters').exists())
 
     def test_export_folder_uses_selected_model_parent_without_source_dialog(self):
         iterator = QTreeWidgetItemIterator(self.window.file_tree)
