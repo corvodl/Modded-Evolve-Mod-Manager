@@ -24,9 +24,22 @@ def parse_transform(texture):
     return (su, sv, ou, ov, angle), dynamic
 
 
-def transform_for(materials, slot):
+def transform_for(materials, slot, role='diffuse'):
+    """Read a *map-specific* TexMod; never blindly reuse diffuse UV tiling."""
+    if role != 'diffuse':
+        pairs = getattr(materials, 'map_uv_transforms', ())
+        for name, values in pairs:
+            if name == role:
+                return values[slot] if 0 <= slot < len(values) else IDENTITY
     values = getattr(materials, 'uv_transforms', ())
     return values[slot] if 0 <= slot < len(values) else IDENTITY
+
+
+def gl_matrix3(transform):
+    """Column-major 3x3 UV matrix for independent GLSL material samplers."""
+    su, sv, ou, ov, angle = transform
+    c, s = math.cos(angle), math.sin(angle)
+    return (c*su, s*su, 0., -s*sv, c*sv, 0., ou, ov, 1.)
 
 
 def transform_uv(u, v, transform):

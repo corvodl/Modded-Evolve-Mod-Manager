@@ -56,6 +56,9 @@ class PreviewMaterials:
 
     hidden: tuple = ()  # Explicit NoDraw slots; never inferred from missing DDS.
     gloss_maps: tuple = ()  # Explicit Gloss/Glossiness/Smoothness slots only.
+    detail_maps: tuple = ()  # Optional, separately mapped detail-color layer.
+    detail_normal_maps: tuple = ()  # Optional, separately mapped detail normal.
+    map_uv_transforms: tuple = ()  # (role, per-material UV-transform tuples)
 
     @property
     def count(self):
@@ -466,10 +469,19 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         return hit if hit is not None else recover_unique_dds(ref)
 
     def optional_map(item, names):
-        ref = next((child.get('File') or child.get('file')
-                    for child in item.findall('./Textures/Texture')
-                    if (child.get('Map') or child.get('map') or '').casefold() in names),None)
-        normal = 'normal' in names
+        node = next((child for child in item.findall('./Textures/Texture')
+                     if (child.get('Map') or child.get('map') or '').casefold() in names), None)
+        channel = node.get('Channel', '') if node is not None else ''
+        # The gloss channel of a *named* specular texture may be packed.
+        # Only an explicit GlossChannel declaration authorizes extracting it.
+        if node is None and 'gloss' in names:
+            node = next((child for child in item.findall('./Textures/Texture')
+                         if (child.get('Map') or child.get('map') or '').casefold()
+                         in ('specular','specularcolor') and
+                         child.get('GlossChannel')), None)
+            channel = node.get('GlossChannel', '') if node is not None else ''
+        ref = (node.get('File') or node.get('file')) if node is not None else None
+        normal = 'normal' in names or 'detailnormal' in names
         if not ref and normal:
             # Some extracted materials omit the normal slot but ship a
             # conventional _ddn source in the same character/Asset Library.
@@ -491,11 +503,20 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         hit = find_texture(ref)
         if hit is None:
             return None
-        return _decode_texture(hit, index=index, max_dimension=decode_max,
-                               normal_map=normal, historical_2012=historical_2012)
+        decoded = _decode_texture(hit, index=index, max_dimension=decode_max,
+                                  normal_map=normal, historical_2012=historical_2012)
+        if channel:
+            component = channel.upper()
+            if component not in ('R', 'G', 'B', 'A'):
+                raise ValueError('Unsupported explicit packed-channel selector: ' + channel)
+            if component not in decoded.getbands():
+                raise ValueError('Declared packed channel is absent from the source DDS: ' + channel)
+            decoded = Image.merge('RGB', (decoded.getchannel(component),) * 3)
+        return decoded
 
-    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
+    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; details=[]; detail_normals=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; sources = []; references = []; hidden = []
+    role_transforms = {role: [] for role in ('normal','specular','gloss','detail','detail_normal')}
     for item in subs:
         checkpoint()
         name = item.get('Name') or 'unnamed'
@@ -511,6 +532,24 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             transform = IDENTITY
             issues.append(name + ': ' + str(error))
         transforms.append(transform)
+        role_keys = {
+            'normal': ('bumpmap','normal','normalmap'),
+            'specular': ('specular','specularcolor'),
+            'gloss': ('gloss','glossiness','smoothness'),
+            'detail': ('detail','detaildiffuse','detailmap'),
+            'detail_normal': ('detailnormal','detailnormalmap','detailbumpmap'),
+        }
+        for role, keys in role_keys.items():
+            texture_node = next((n for n in item.findall('./Textures/Texture')
+                                if (n.get('Map') or n.get('map') or '').casefold() in keys), None)
+            try:
+                slot_transform, animated = parse_transform(texture_node)
+                if animated:
+                    issues.append(name + ': animated ' + role + ' texture modifiers require verification')
+            except ValueError as error:
+                slot_transform = IDENTITY
+                issues.append(name + ': ' + str(error))
+            role_transforms[role].append(slot_transform)
         try:
             opacity = max(0.,min(1.,float(item.get('Opacity','1'))))
         except ValueError:
@@ -525,11 +564,14 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         except ValueError:
             alpha_test = False
         cutoffs.append(float(alpha_test))
-        alpha_modes.append(bool(alpha_test) or opacity < 0.999 or
+        explicitly_packed_opacity = bool(diffuse_node is not None and diffuse_node.get('OpacityChannel'))
+        alpha_modes.append(bool(alpha_test) or opacity < 0.999 or explicitly_packed_opacity or
                            any(word in shader for word in ('glass', 'transparent', 'translucent', 'decal')))
         for target,keys in ((normals,('bumpmap','normal','normalmap')),
                             (speculars,('specular','specularcolor')),
-                            (glosses,('gloss','glossiness','smoothness'))):
+                            (glosses,('gloss','glossiness','smoothness')),
+                            (details,('detail','detaildiffuse','detailmap')),
+                            (detail_normals,('detailnormal','detailnormalmap','detailbumpmap'))):
             try:
                 target.append(optional_map(item,keys))
             except (OSError,ValueError) as error:
@@ -566,6 +608,12 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 found, index=index, max_dimension=decode_max,
                 historical_2012=historical_2012)
             checkpoint()
+            if explicitly_packed_opacity:
+                channel = diffuse_node.get('OpacityChannel').upper()
+                if channel not in ('R','G','B','A') or channel not in image.getbands():
+                    raise ValueError('Explicit diffuse OpacityChannel is absent or unsupported: ' + channel)
+                image = image.convert('RGBA')
+                image.putalpha(image.getchannel(channel))
             result.append(material_color(image, item.get('Diffuse', '1,1,1')))
             sources.append((
                 str(found.get('relative') or diffuse),
@@ -591,7 +639,9 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                          ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
-                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden), gloss_maps=tuple(glosses))
+                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden), gloss_maps=tuple(glosses),
+                            detail_maps=tuple(details), detail_normal_maps=tuple(detail_normals),
+                            map_uv_transforms=tuple((role,tuple(matrices)) for role,matrices in role_transforms.items()))
 
 
 

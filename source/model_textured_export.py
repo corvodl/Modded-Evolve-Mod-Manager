@@ -136,7 +136,9 @@ def embed_diffuse_textures(blob, materials):
             continue
         for role, collection in (('normal', getattr(materials, 'normal_maps', ())),
                                  ('specular', getattr(materials, 'specular_maps', ())),
-                                 ('gloss', getattr(materials, 'gloss_maps', ()))):
+                                 ('gloss', getattr(materials, 'gloss_maps', ())),
+                                 ('detail', getattr(materials, 'detail_maps', ())),
+                                 ('detail_normal', getattr(materials, 'detail_normal_maps', ()))):
             if slot < 0 or slot >= len(collection) or collection[slot] is None:
                 continue
             if len(images) >= MAX_TEXTURES:
@@ -165,7 +167,7 @@ def embed_diffuse_textures(blob, materials):
             textures.append({'source': len(images) - 1})
             if role == 'normal':
                 attach_normal_texture(doc, doc['materials'].index(material), len(textures) - 1)
-                transform = transform_for(materials, slot)
+                transform = transform_for(materials, slot, 'normal')
                 if transform != IDENTITY:
                     su, sv, ou, ov, angle = transform
                     material['normalTexture']['extensions'] = {
@@ -181,7 +183,7 @@ def embed_diffuse_textures(blob, materials):
                 pbr['metallicFactor'] = 0.0
                 pbr['roughnessFactor'] = 1.0
                 pbr['metallicRoughnessTexture'] = {'index': len(textures)-1}
-                transform = transform_for(materials, slot)
+                transform = transform_for(materials, slot, 'gloss')
                 if transform != IDENTITY:
                     su, sv, ou, ov, angle = transform
                     pbr['metallicRoughnessTexture']['extensions'] = {
@@ -190,6 +192,15 @@ def embed_diffuse_textures(blob, materials):
                     extensions = doc.setdefault('extensionsUsed', [])
                     if 'KHR_texture_transform' not in extensions:
                         extensions.append('KHR_texture_transform')
+            if role in ('detail','detail_normal'):
+                # glTF core has no second diffuse or second normal slot.
+                # Retain the independently mapped layer in the GLB and
+                # textures/ folder, with explicit provenance for authoring.
+                transform = transform_for(materials, slot, role)
+                material.setdefault('extras', {}).setdefault(
+                    'cryEngineTextureLayers', []).append({
+                        'role': role, 'imageName': images[-1]['name'],
+                        'uvTransform': list(transform)})
             # Specular maps remain named optional resources; CryEngine
             # specular tint cannot safely be guessed as glTF metalness.
     if not images:

@@ -152,8 +152,8 @@ class Beta36NormalPipelineTests(unittest.TestCase):
 
     def test_gpu_shader_uses_transformed_uv_for_normals(self):
         from renderer_3 import FRAGMENT
-        self.assertIn("texture2D(normal_map,diffuse_coord)", FRAGMENT)
-        self.assertIn("dFdx(diffuse_coord)", FRAGMENT)
+        self.assertIn("texture2D(normal_map,normal_coord)", FRAGMENT)
+        self.assertIn("dFdx(bump_coord)", FRAGMENT)
         self.assertNotIn("texture2D(normal_map,texcoord)", FRAGMENT)
 
 

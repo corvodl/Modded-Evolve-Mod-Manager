@@ -28,10 +28,19 @@ uniform sampler2D diffuse_map;
 uniform sampler2D normal_map;
 uniform sampler2D specular_map;
 uniform sampler2D gloss_map;
+uniform sampler2D detail_map;
+uniform sampler2D detail_normal_map;
+uniform mat3 normal_uv;
+uniform mat3 specular_uv;
+uniform mat3 gloss_uv;
+uniform mat3 detail_uv;
+uniform mat3 detail_normal_uv;
 uniform int has_diffuse;
 uniform int has_normal;
 uniform int has_specular;
 uniform int has_gloss;
+uniform int has_detail;
+uniform int has_detail_normal;
 uniform float opacity;
 uniform float alpha_cutoff;
 uniform int use_alpha_texture;
@@ -58,13 +67,19 @@ void main() {
     }
     // glTF/CryEngine double-sided materials must flip their backface normal.
     // Otherwise visible inside-facing parts of characters shade almost black.
+    vec2 normal_coord = (normal_uv * vec3(texcoord,1.0)).xy;
+    vec2 specular_coord = (specular_uv * vec3(texcoord,1.0)).xy;
+    vec2 gloss_coord = (gloss_uv * vec3(texcoord,1.0)).xy;
+    vec2 detail_coord = (detail_uv * vec3(texcoord,1.0)).xy;
+    vec2 detail_normal_coord = (detail_normal_uv * vec3(texcoord,1.0)).xy;
     vec3 n = normalize(eye_normal);
     if (!gl_FrontFacing) n = -n;
-    if (has_normal == 1) {
+    if (has_normal == 1 || has_detail_normal == 1) {
+        vec2 bump_coord = has_normal == 1 ? normal_coord : detail_normal_coord;
         vec3 p_dx = dFdx(eye_position);
         vec3 p_dy = dFdy(eye_position);
-        vec2 uv_dx = dFdx(diffuse_coord);
-        vec2 uv_dy = dFdy(diffuse_coord);
+        vec2 uv_dx = dFdx(bump_coord);
+        vec2 uv_dy = dFdy(bump_coord);
         vec3 tangent = p_dx * uv_dy.y - p_dy * uv_dx.y;
         vec3 bitangent = p_dy * uv_dx.x - p_dx * uv_dy.x;
         if (dot(tangent,tangent) > 0.000001 &&
@@ -72,7 +87,15 @@ void main() {
             tangent = normalize(tangent - n * dot(n, tangent));
             bitangent = normalize(cross(n,tangent)) *
                         (dot(cross(n,tangent),bitangent) < 0.0 ? -1.0 : 1.0);
-            vec3 mapped = texture2D(normal_map,diffuse_coord).xyz * 2.0 - 1.0;
+            vec3 mapped = has_normal == 1 ?
+                  texture2D(normal_map,normal_coord).xyz * 2.0 - 1.0 :
+                  vec3(0.0,0.0,1.0);
+            if (has_detail_normal == 1) {
+                vec3 fine = texture2D(detail_normal_map,detail_normal_coord).xyz * 2.0 - 1.0;
+                // Conservative additive tangent-space detail; full CryEngine
+                // material layering remains dependent on source shader rules.
+                mapped = normalize(vec3(mapped.xy + fine.xy, mapped.z * fine.z));
+            }
             n = normalize(mat3(tangent,bitangent,n) * mapped);
         }
     }
@@ -82,17 +105,21 @@ void main() {
     // Dedicated CryEngine gloss/smoothness maps define per-pixel
     // highlight sharpness. Unmapped slots retain the legacy exponent.
     float smoothness = has_gloss == 1 ?
-          clamp(dot(texture2D(gloss_map,diffuse_coord).rgb,
+          clamp(dot(texture2D(gloss_map,gloss_coord).rgb,
                     vec3(0.299,0.587,0.114)),0.0,1.0) : 0.2833333;
     float gloss = pow(max(0.0,dot(n,normalize(light+view))),
                       mix(8.0,128.0,smoothness));
     float specular = has_specular == 1 ?
-                     dot(texture2D(specular_map,diffuse_coord).rgb,vec3(0.333333))
+                     dot(texture2D(specular_map,specular_coord).rgb,vec3(0.333333))
                      : 0.4;
     // Diffuse DDS colors are sRGB. Applying linear-space light directly to
     // encoded RGB makes dark outfits artificially black. Decode/encode around
     // diffuse lighting; unlit mode above still shows the untouched source DDS.
     vec3 albedoLinear = pow(surface.rgb, vec3(2.2));
+    if (has_detail == 1) {
+        vec3 fineAlbedo = pow(texture2D(detail_map,detail_coord).rgb, vec3(2.2));
+        albedoLinear *= mix(vec3(1.0),fineAlbedo*2.0,0.5);
+    }
     // A soft studio fill keeps back-facing dark armor legible without
     // replacing the original texture or lifting black pixels to invented colors.
     // The additional fill is strictly nonnegative and can be disabled.
@@ -118,21 +145,30 @@ class Renderer3:
             shaders.compileShader(FRAGMENT,GL_FRAGMENT_SHADER))
         glUseProgram(self.program)
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
-            'diffuse_map','normal_map','specular_map','gloss_map','has_diffuse','has_normal',
-            'has_specular','has_gloss','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
-        for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2),('gloss_map',3)):
+            'diffuse_map','normal_map','specular_map','gloss_map','detail_map','detail_normal_map',
+            'normal_uv','specular_uv','gloss_uv','detail_uv','detail_normal_uv',
+            'has_diffuse','has_normal','has_specular','has_gloss','has_detail','has_detail_normal','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
+        for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2),('gloss_map',3),
+                          ('detail_map',4),('detail_normal_map',5)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
-             gloss_texture=False, alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
-        from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f
+             gloss_texture=False, detail=False, detail_normal=False, uv_matrices=None,
+             alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
+        from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f, glUniformMatrix3fv, GL_FALSE
         glUseProgram(self.program)
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
                            ('has_specular',specular), ('has_gloss',gloss_texture),
+                           ('has_detail',detail), ('has_detail_normal',detail_normal),
                            ('use_alpha_texture',alpha_texture),
                            ('unlit_diffuse',unlit)):
             glUniform1i(self.uniforms[name],int(bool(value)))
+        from texture_transform import gl_matrix3, IDENTITY
+        matrices = uv_matrices or {}
+        for role in ('normal','specular','gloss','detail','detail_normal'):
+            glUniformMatrix3fv(self.uniforms[role + '_uv'],1,GL_FALSE,
+                               gl_matrix3(matrices.get(role,IDENTITY)))
         for name,value in (('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),
                            ('illumination',illumination), ('studio_fill',fill)):
             glUniform1f(self.uniforms[name],float(value))
