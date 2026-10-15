@@ -407,7 +407,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.virtual_file_tree.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.virtual_file_tree.setTextElideMode(Qt.ElideMiddle)
         self._virtual_model = VirtualTreeModel(self.virtual_file_tree,
-                                   labels=('File / Folder', 'Size'))
+                                   labels=('File / Folder', 'Size'),
+                                   size_provider=self._virtual_file_size)
         self.virtual_file_tree.setModel(self._virtual_model)
         self.virtual_file_tree.selectionModel().selectionChanged.connect(
             self._virtual_selection_changed)
@@ -1146,6 +1147,16 @@ class QtWorkspaceEditor(QMainWindow):
         if is_model(rel):
             return 'models'
         return 'files'
+
+    def _virtual_file_size(self, rel):
+        """Stat only displayed file rows, not every large-library candidate."""
+        try:
+            path = self.workspace.joinpath('files', *rel.split('/'))
+            size = path.stat().st_size
+            return ('%.1f MiB' % (size / 1048576) if size > 1048576
+                    else '%.0f KiB' % (size / 1024))
+        except (OSError, ValueError):
+            return 'Missing'
 
     def _populate_virtual_explorer(self):
         """Construct metadata nodes, leaving Qt rows unloaded until expanded."""
