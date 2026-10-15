@@ -217,24 +217,29 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIn('Build Mod', build.text())
         self.assertEqual(len(self.win.nav_buttons), len(SECTIONS))
 
-    def test_qpropertyanimation_is_an_overlay_and_does_not_resize(self):
+    def test_icon_hover_only_shows_names_and_sidebar_fills_window_height(self):
+        from PySide6.QtTest import QTest
+        self.assertFalse(hasattr(self.win, 'menu_button'))
+        self.assertIs(
+            self.win.application_shell.itemAt(0).widget(), self.win.nav_rail)
+        self.assertEqual(self.win.nav_rail.y(), 0)
+        self.assertEqual(
+            self.win.nav_rail.height(), self.win.centralWidget().height())
+        self.assertEqual(self.win.nav_rail.width(), 66)
         width = self.win.stack.width()
-        self.assertFalse(self.win._drawer_open)
-        from PySide6.QtCore import QEvent
-        self.win.eventFilter(self.win.nav_rail, QEvent(QEvent.Enter))
-        self.assertTrue(self.win._drawer_open)
-        self.assertEqual(self.win.menu_animation.duration(),205)
-        self.assertTrue(self.win.drawer.isVisible())
-        self.win.menu_animation.setCurrentTime(205)
-        self.application.processEvents()
-        self.assertEqual(self.win.drawer.x(),0)
-        self.assertEqual(self.win.stack.width(),width)
-        self.win.open_page(1)
-        self.win.menu_animation.setCurrentTime(205)
-        self.application.processEvents()
-        self.assertEqual(self.win.stack.currentIndex(),1)
-        self.assertFalse(self.win._drawer_open)
-        self.assertEqual(self.win.stack.width(),width)
+        for label, button in zip(SECTIONS, self.win.rail_buttons):
+            self.assertEqual(button.toolTip(), label)
+            self.assertEqual(button.accessibleName(), label)
+            QTest.mouseMove(button, button.rect().center())
+            self.application.processEvents()
+            # Moving over any icon must not open the full drawer or
+            # resize the main content; only the native tooltip is enabled.
+            self.assertFalse(self.win._drawer_open)
+            self.assertFalse(self.win.drawer.isVisible())
+            self.assertEqual(self.win.stack.width(), width)
+        self.win.rail_buttons[SECTIONS.index('Instructions')].click()
+        self.assertEqual(
+            self.win.stack.currentIndex(), SECTIONS.index('Instructions'))
 
     def test_info_click_opens_help_without_triggering_adjacent_action(self):
         # The compact Modding page routes help through a menu, rather than
