@@ -92,7 +92,8 @@ def _detached(result):
     return out
 
 
-def prepare_model_cached(workspace,relative,*,force=False,cancel=None,**kwargs):
+def prepare_model_cached(workspace,relative,*,force=False,cancel=None,
+                         geometry_ready=None,**kwargs):
     """Return a detached result mapping, cache hit and wall-clock duration."""
     global _cache_bytes
     from async_model_resolve import resolve_model
@@ -119,7 +120,8 @@ def prepare_model_cached(workspace,relative,*,force=False,cancel=None,**kwargs):
                 _cache_bytes -= _cache.pop(key)[2]
                 record('model', 'dependency_cache_invalidated', cache_hit=False)
     with span('model', 'cpu_resolve', cache_hit=False):
-        result=resolve_model(workspace,relative,cancel=cancel,**kwargs)
+        result=resolve_model(workspace,relative,cancel=cancel,
+                             geometry_ready=geometry_ready,**kwargs)
     if cancel is not None and cancel():
         raise InterruptedError('Obsolete model preparation cancelled')
     size=_result_size(result)
