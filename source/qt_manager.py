@@ -84,7 +84,7 @@ from qt_home_dashboard import HomeDashboard
 ROOT = Path(__file__).resolve().parent
 COLORS = {'bg':'#0b0b0d','surface':'#17171d','panel':'#202027',
           'text':'#f5f3f6','muted':'#a6a3ae','accent':'#cf394b','outline':'#353139'}
-SECTIONS = ('Home','Instructions','Asset Library','Modding','Play & Restore','Settings','Credits',
+SECTIONS = ('Home','Instructions','Asset Library','Modding','Settings','Credits',
             "What's New",'Developer')
 
 
@@ -479,20 +479,42 @@ class QtManager(QMainWindow):
         rail_layout = QVBoxLayout(self.nav_rail)
         rail_layout.setContentsMargins(7, 12, 7, 12)
         rail_layout.setSpacing(7)
-        self.rail_buttons = []
-        for index, title in enumerate(SECTIONS):
+        # Main sections above, quick actions and Settings pinned to the bottom.
+        self.rail_buttons = [None] * len(SECTIONS)
+
+        def nav_icon_button(index, title):
             button = QToolButton(self.nav_rail)
             button.setObjectName('railActive' if index == 0 else 'railButton')
             button.setIcon(navigation_icon(title, size=23))
             button.setIconSize(QSize(23, 23))
             button.setFixedSize(51, 43)
             button.setAccessibleName(title)
-            button.setToolTip(title)  # Qt shows the name on icon hover only.
+            button.setToolTip(title)
             button.clicked.connect(
                 lambda _checked=False, target=index: self.open_page(target))
+            self.rail_buttons[index] = button
+            return button
+
+        for index, title in enumerate(SECTIONS):
+            if title != 'Settings':
+                rail_layout.addWidget(nav_icon_button(index, title))
+        rail_layout.addStretch(1)
+        self.quick_play_buttons = {}
+        for title, callback in (
+                ('Play with Mods', self.launch),
+                ('Play without Mods', self.play_without_mods)):
+            button = QToolButton(self.nav_rail)
+            button.setObjectName('railQuickPlay')
+            button.setIcon(navigation_icon(title, size=23))
+            button.setIconSize(QSize(23, 23))
+            button.setFixedSize(51, 43)
+            button.setAccessibleName(title)
+            button.setToolTip(title)
+            button.clicked.connect(callback)
             rail_layout.addWidget(button)
-            self.rail_buttons.append(button)
-        rail_layout.addStretch()
+            self.quick_play_buttons[title] = button
+        rail_layout.addWidget(
+            nav_icon_button(SECTIONS.index('Settings'), 'Settings'))
         self.application_shell.insertWidget(0, self.nav_rail, 0)
 
         self.stage_holder = QWidget()
@@ -514,8 +536,6 @@ class QtManager(QMainWindow):
         navlay.addWidget(_label('WORKSPACE', muted=True))
         self.nav_buttons = []
         for index, title in enumerate(SECTIONS):
-            # Qt interprets & as a keyboard-mnemonic marker in QPushButton.
-            # Double it to render a literal "Play & Restore", not "Play _Restore".
             btn = NavigationButton(title.replace('&', '&&'))
             btn.clicked.connect(lambda _checked=False, idx=index: self.open_page(idx))
             btn.setAccessibleName(title)
@@ -551,7 +571,6 @@ class QtManager(QMainWindow):
         # before any paths are exposed to the preview/editor.
         self._asset_library_page()
         self._modding_page()
-        self._play_page()
         from qt_asset_library import AssetLibraryController
         self.asset_library_controller = AssetLibraryController(self)
         self.asset_library_controller.finished.connect(self._asset_library_finished)
@@ -606,6 +625,7 @@ class QtManager(QMainWindow):
         self._shared_catalog_timer.start()
         QTimer.singleShot(0, self._position_drawer)
         QTimer.singleShot(0, self.home_dashboard.refresh_status)
+        QTimer.singleShot(1000, self._resume_auto_restore_if_needed)
         QTimer.singleShot(400, lambda: report_startup_ready(APP_HOME))
         # Optional diagnostic heartbeat: zero recurring work by default.
         from performance_trace import (
@@ -1631,59 +1651,6 @@ class QtManager(QMainWindow):
         except (OSError, ValueError, RuntimeError) as exc:
             self.failure(exc)
 
-    def _play_page(self):
-        scroll, lay = _scroll_page()
-        heading = _label('Play & Restore')
-        heading.setObjectName('sectionTitle')
-        lay.addWidget(heading)
-        lay.addWidget(_label('Offline mod testing. The live game files must be restored before normal multiplayer.', muted=True))
-        card, panel = _card('MOD LAUNCH STATUS', 'Launcher and restoration status are read from the real swap journal and original backups.')
-        lay.addWidget(card)
-        self.launch_status = _label('Checking current game state…')
-        status_line = QHBoxLayout()
-        self.launch_status_row = status_line
-        status_line.setContentsMargins(0, 0, 0, 0)
-        status_line.setSpacing(6)
-        status_line.addWidget(self.launch_status)
-        # Compact icon directly beside the launch message, not another
-        # full-size action in the command row. Qt supplies a native icon.
-        self.refresh_status_icon = QToolButton()
-        self.refresh_status_icon.setObjectName('refreshStatusIcon')
-        self.refresh_status_icon.setFixedSize(32, 32)
-        self.refresh_status_icon.setIcon(
-            self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.refresh_status_icon.setToolTip(
-            'Refresh mod launch readiness and recovery status from the swap journal.')
-        self.refresh_status_icon.setAccessibleName('Refresh Status')
-        self.refresh_status_icon.setCursor(Qt.PointingHandCursor)
-        self.refresh_status_icon.clicked.connect(
-            lambda _checked=False: self.refresh_swap_status())
-        status_line.addWidget(self.refresh_status_icon, 0, Qt.AlignVCenter)
-        status_line.addStretch()
-        panel.addLayout(status_line)
-        box = QWidget()
-        box.setLayout(_row(
-            _action_with_info('Play With Mods', self.launch,
-                              ACTION_HINTS['Play With Mods'], primary=True),
-            _action_with_info('Play Without Mods', self.play_without_mods,
-                              ACTION_HINTS['Play Without Mods']),
-            _action_with_info('Restore Game Files', self.restore,
-                              ACTION_HINTS['Restore Game Files'])))
-        panel.addWidget(box)
-        other = QWidget()
-        other.setLayout(_row(
-            _action_with_info('Status Details', self.status_details,
-                              ACTION_HINTS['Status Details']),
-            _action_with_info('Set Up Launcher', self.setup_launcher,
-                              ACTION_HINTS['Set Up Launcher']),
-            _action_with_info('Refresh Original PAKs', self.refresh_originals,
-                              ACTION_HINTS['Refresh Original PAKs'])))
-        panel.addWidget(other)
-        lay.addWidget(_button('How Play && Restore works', lambda: self.show_help(2)))
-        lay.addStretch()
-        self.stack.addWidget(scroll)
-        self.pages['play'] = scroll
-
     def _settings_page(self):
         # These are sections INSIDE the scrollable Settings page.
         # The on-demand Menu continues to contain only the five main pages.
@@ -1848,6 +1815,11 @@ class QtManager(QMainWindow):
             muted=True))
         backup_row.addWidget(_button('Client Verification & Recovery Guide',
                                       self.client_recovery_guide))
+        backup_row.addWidget(_action_with_info(
+            'Restore Game Files', self.restore, ACTION_HINTS['Restore Game Files']))
+        backup_row.addWidget(_button('Status Details', self.status_details))
+        backup_row.addWidget(_button('Set Up Launcher', self.setup_launcher))
+        backup_row.addWidget(_button('Refresh Original PAKs', self.refresh_originals))
         backup_row.addWidget(_button('Review Duplicate PAK Copies…',
                                       self.open_pak_copy_cleanup))
         backup_row.addWidget(_label(
@@ -1861,6 +1833,8 @@ class QtManager(QMainWindow):
             'Prepared modified files are automatically recycled on successful Restore. '
             'Renaming the protected originals is quick; the first large preparation may take time.')
         lay.addWidget(launch_card)
+        self.launch_status = _label('Checking current game state…', muted=True)
+        launch_row.addWidget(self.launch_status)
         self.preparation_status = _label('Checking prepared file state…', muted=True)
         launch_row.addWidget(self.preparation_status)
         launch_row.addWidget(_action_with_info('Prepare Mod Files Now',
@@ -3848,8 +3822,8 @@ class QtManager(QMainWindow):
         if self.confirm('Offline test staged',
             'The signed PAK is staged. Start a private/offline test session now? '
             'Your game will be network-blocked using the existing firewall '
-            'safeguard. After testing, return to Play & Restore and restore '
-            'your original files.'):
+            'safeguard. Original files are restored automatically after the game '
+            'and launcher close. Manual recovery remains in Settings.'):
             self._developer_allow_online=False
             self.launch()
 
@@ -3892,8 +3866,8 @@ class QtManager(QMainWindow):
 
     def _after_install(self):
         self.refresh_swap_status()
-        if self.confirm('PAK added', 'Ready to open Play & Restore?'):
-            self.open_page(SECTIONS.index('Play & Restore'))
+        if self.confirm('PAK added', 'Open Home to launch Evolve?'):
+            self.open_page(SECTIONS.index('Home'))
 
     def import_modified_pak(self):
         try:
@@ -3942,6 +3916,21 @@ class QtManager(QMainWindow):
                 'Undo staged mod', self.refresh_swap_status)
         except Exception as exc:
             self.failure(exc)
+
+    def _resume_auto_restore_if_needed(self):
+        """Recover a modded session even after an unexpected GUI exit."""
+        from launch_integration import start_auto_restore_monitor
+        try:
+            st = state_status(Path(self.swap_path))
+            if st.phase in ('swapped', 'interrupted', 'restoring'):
+                helper = Path(self.swap_path) / 'auto_restore_watch.py'
+                if helper.is_file():
+                    start_auto_restore_monitor(Path(self.swap_path), resume=True)
+                    self._log('Auto-restore monitor is watching game and launcher.')
+                else:
+                    self._log('Auto-restore helper missing: restore via Settings.')
+        except Exception as error:
+            self._log('Auto-restore recovery needs attention: ' + str(error))
 
     def refresh_swap_status(self):
         st = state_status(Path(self.swap_path))
@@ -4542,7 +4531,7 @@ def main():
             '--capture-modding-screenshot': 'Modding',
             '--capture-settings-screenshot': 'Settings',
             '--capture-library-screenshot': 'Asset Library',
-            '--capture-play-screenshot': 'Play & Restore',
+            '--capture-play-screenshot': 'Home',
         }
         if capture_mode in capture_sections:
             main_window.open_page(SECTIONS.index(capture_sections[capture_mode]))
