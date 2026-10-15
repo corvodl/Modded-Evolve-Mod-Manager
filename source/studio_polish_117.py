@@ -89,11 +89,13 @@ def _detached(result):
     return out
 
 
-def prepare_model_cached(workspace,relative,*,force=False,**kwargs):
+def prepare_model_cached(workspace,relative,*,force=False,cancel=None,**kwargs):
     """Return a detached result mapping, cache hit and wall-clock duration."""
     global _cache_bytes
     from async_model_resolve import resolve_model
     start=time.perf_counter()
+    if cancel is not None and cancel():
+        raise InterruptedError('Obsolete model preparation cancelled')
     key=model_cache_key(workspace,relative,**kwargs)
     eligible=kwargs.get('animation_index') is None
     # Caller-provided indexes may change without detectable file modification.
@@ -102,8 +104,12 @@ def prepare_model_cached(workspace,relative,*,force=False,**kwargs):
             hit=_cache.get(key)
             if hit is not None and time.monotonic()-hit[0] < MODEL_CACHE_TTL:
                 _cache.move_to_end(key)
+                if cancel is not None and cancel():
+                    raise InterruptedError('Obsolete model preparation cancelled')
                 return _detached(hit[1]),True,(time.perf_counter()-start)*1000
-    result=resolve_model(workspace,relative,**kwargs)
+    result=resolve_model(workspace,relative,cancel=cancel,**kwargs)
+    if cancel is not None and cancel():
+        raise InterruptedError('Obsolete model preparation cancelled')
     size=_result_size(result)
     if eligible and size<=MAX_CACHE_BYTES//2:
         with _cache_lock:
