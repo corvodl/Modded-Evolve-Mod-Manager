@@ -31,7 +31,8 @@ class IntegratedWorkflowTests(unittest.TestCase):
         existing=self.swap/'auto_launch_frida.py'
         existing.write_text('MY WORKING V5 - DO NOT OVERWRITE')
         added=integration.add_missing_scripts(self.swap)
-        self.assertEqual(set(added),{'controlled_swap.py','reusable_restore.py'})
+        self.assertEqual(set(added),{'controlled_swap.py','reusable_restore.py',
+                                     'auto_restore_watch.py'})
         self.assertEqual(existing.read_text(),'MY WORKING V5 - DO NOT OVERWRITE')
         self.assertEqual(integration.add_missing_scripts(self.swap),[])
 
