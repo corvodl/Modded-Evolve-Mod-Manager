@@ -106,30 +106,45 @@ def _preset_code(mode: str, target: str, custom: str, layout=None) -> str:
     if mode not in MODES or target not in TARGETS:
         raise GfxError("Choose Hide, Remove, Custom text, or Layout override.")
     if mode == "custom":
-        if target != "title":
-            raise GfxError("Custom text applies only to the featured title.")
-        if (not isinstance(custom, str) or not 1 <= len(custom) <= 72
+        if target not in ("title", "try", "buy"):
+            raise GfxError("Custom text requires the featured title, TRY or BUY control.")
+        if (not isinstance(custom, str) or not 1 <= len(custom) <= 160
                 or custom != custom.strip() or
-                any(ord(c) < 32 or ord(c) == 127 for c in custom)):
-            raise GfxError("Enter 1–72 printable characters for the featured title.")
+                any(not c.isprintable() for c in custom)):
+            raise GfxError("Enter 1–160 printable characters for the selected text.")
     elif custom:
         raise GfxError("Custom text is only valid for the Custom text action.")
 
     lines = [f"    var {_MARKER} = true;"]
     if mode == "custom":
+        # These known featured movie instances are real runtime targets.
+        # Their internal TextField names depend on the game build; never
+        # create a synthetic text field or replace unrelated button labels.
         quoted = json.dumps(custom, ensure_ascii=True)
-        lines += [
-            "    if (_root.mcFeatureTitle != undefined) {",
-            "        _root.mcFeatureTitle._visible = true;",
-            f"        _root.mcFeatureTitle.text = {quoted};",
-            "        if (_root.mcFeatureTitle.txtTitle != undefined) {",
-            f"            _root.mcFeatureTitle.txtTitle.text = {quoted};",
-            "        }",
-            "        if (_root.mcFeatureTitle.txtText != undefined) {",
-            f"            _root.mcFeatureTitle.txtText.text = {quoted};",
-            "        }",
-            "    }",
-        ]
+        child_fields = ("txtTitle", "txtText", "txtLabel", "txtTry",
+                        "txtBuy", "label", "textField")
+        for name in _TARGET_NAMES[target]:
+            lines.extend((
+                f"    if (_root.{name} != undefined) {{",
+                f"        _root.{name}._visible = true;",
+            ))
+            # Retain compatibility with existing direct title text targets.
+            if target == "title":
+                lines.append(f"        _root.{name}.text = {quoted};")
+            else:
+                lines.extend((
+                    f"        if (_root.{name}.text != undefined) {{",
+                    f"            _root.{name}.text = {quoted};",
+                    "        }",
+                ))
+            for field in child_fields:
+                lines.extend((
+                    f"        if (_root.{name}.{field} != undefined && "
+                    f"_root.{name}.{field}.text != undefined) {{",
+                    f"            _root.{name}.{field}.text = {quoted};",
+                    "        }",
+                ))
+            lines.append("    }")
     else:
         for name in _TARGET_NAMES[target]:
             lines.extend((
