@@ -527,7 +527,9 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         if channel:
             component = channel.upper()
             if component not in ('R', 'G', 'B', 'A'):
-                raise ValueError('Unsupported explicit packed-channel selector: ' + channel)
+                raise ValueError('Unsupported explicit ' +
+                                 ('AO ' if 'ao' in names else '') +
+                                 'packed-channel selector: ' + channel)
             if component not in decoded.getbands():
                 raise ValueError('Declared packed channel is absent from the source DDS: ' + channel)
             decoded = Image.merge('RGB', (decoded.getchannel(component),) * 3)
