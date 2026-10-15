@@ -57,6 +57,7 @@ from pak_browser import archive_description, describe_archive, matching_archives
 from universal_stage import allowed_paks
 from launch_integration import state_status, launcher_commands, restore_command, package_status, add_missing_scripts
 from orphaned_swap_recovery import plan_recovery
+from injector_guard import inspect_injector
 from multi_pak_assets import load_collection
 from old_prepared import scan_prepared
 from desktop_shortcut import create_desktop_shortcut
@@ -3554,11 +3555,11 @@ class QtManager(QMainWindow):
         st = state_status(Path(self.swap_path))
         try:
             game = Path(st.game) if st.game and Path(st.game).is_dir() else self.game_root
-            if game and st.phase in ('missing','prepared','restored') and plan_recovery(game):
+            if game and st.phase in ('missing','prepared','restored') and (plan_recovery(game) or inspect_injector(game).blocks_normal_launch):
                 from launch_integration import SwapStatus
                 st = SwapStatus('unsafe',
                                 'Original game backups exist despite clean swap journal.')
-                self.launch_status.setText('Original backups remain. Restore before launching.')
+                self.launch_status.setText('Original game or injector backup remains. Restore before launching.')
                 return st
         except (OSError, ValueError):
             pass

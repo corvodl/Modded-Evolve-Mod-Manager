@@ -132,7 +132,9 @@ class MaterialRenderingTests(unittest.TestCase):
                     'path':'characters/hunters/merc_tech/tech_3p.mtl','format':'raw'}]}))
             item = _external_lookup(ts_root,
                 'characters/hunters/merc_tech/textures/tech_diff.tif')
-            self.assertEqual(item['file'], textures/'tech_diff.dds')
+            # Windows runners may expose the temp root as RUNNER~1 or
+            # runneradmin. Verify the same real file, not path spelling.
+            self.assertTrue(item['file'].samefile(textures/'tech_diff.dds'))
             result = load_preview_materials(
                 ws, 'characters/hunters/merc_tech/tech_3p.skinm', ts_root)
             self.assertEqual(result.count, 1)
@@ -142,9 +144,9 @@ class MaterialRenderingTests(unittest.TestCase):
             second = ts_root/'another'
             second.mkdir()
             Image.new('RGB',(8,8),(0,0,0)).save(second/'tech_diff.dds',format='DDS')
-            self.assertEqual(_external_lookup(ts_root,
-                'characters/hunters/merc_tech/textures/tech_diff.tif')['file'],
-                textures/'tech_diff.dds')
+            self.assertTrue(_external_lookup(ts_root,
+                'characters/hunters/merc_tech/textures/tech_diff.tif')['file']
+                .samefile(textures/'tech_diff.dds'))
 
     def test_duplicate_basename_without_full_path_is_ambiguous(self):
         from material_preview import _external_lookup

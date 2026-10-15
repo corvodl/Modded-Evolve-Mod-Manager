@@ -1286,7 +1286,9 @@ class QtWorkspaceEditor(QMainWindow):
             self.gfx_view.open_movie(
                 self.raw, rel, resolve=self._gfx_dependency,
                 context=context,
-                backend=self.manager.settings.get('gfx_ffdec_path'))
+                backend=self.manager.settings.get('gfx_ffdec_path'),
+                available_paths=self._gfx_available_paths(),
+                texture_preview=self._gfx_texture_image)
             self.status.setText(
                 'Static Scaleform GFX preview — game ActionScript callbacks are not simulated.')
         elif self.mode == 'files':
@@ -1329,29 +1331,66 @@ class QtWorkspaceEditor(QMainWindow):
                                 ' | largest mip only' +
                                 (' | streaming fragments' if self.stream else ''))
 
+    def _gfx_scoped_index(self):
+        """Cache only the selected game build's verified imported archives."""
+        if not self.read_only_library:
+            return {}
+        from build_collections import resolve_archive_build, build_index
+        identifier = self.library_archive['id']
+        context = resolve_archive_build(
+            identifier, build_id=self.library_archive.get('build_id'))
+        key = (identifier, context)
+        if getattr(self, '_gfx_index_key', None) != key:
+            self._gfx_index_cache = build_index(context)
+            self._gfx_index_key = key
+        return self._gfx_index_cache
+
+    def _gfx_available_paths(self):
+        if self.read_only_library:
+            return tuple(self._gfx_scoped_index())
+        return tuple(self.records)
+
+    def _gfx_texture_image(self, virtual):
+        """Decode a selected UI DDS with stream siblings from the same build."""
+        from evolve_pak_workspace import normalized_name
+        from material_preview import _decode_texture
+        relative = normalized_name(virtual)
+        if not relative.casefold().endswith(('.dds', '.dds.0')):
+            raise ValueError('Only manifest-listed DDS textures may be previewed.')
+        if self.read_only_library:
+            index = self._gfx_scoped_index()
+            hits = index.get(relative.casefold(), ())
+            own = [r for r in hits if r.get('_asset_library') == self.library_archive['id']]
+            matching = own if own else hits
+            if len(matching) != 1:
+                raise ValueError('DDS is missing or ambiguous in the selected game build.')
+            record = dict(matching[0])
+            record['workspace'] = None
+            return _decode_texture(record, index=index, max_dimension=2048)
+        local = [item for item in self.records if item.casefold() == relative.casefold()]
+        if len(local) != 1:
+            raise ValueError('DDS is not available in this editable project.')
+        item = checked_path(self.workspace, local[0])
+        return _decode_texture(
+            {'file': item, 'workspace': self.workspace, 'relative': local[0]},
+            max_dimension=2048)
+
     def _gfx_dependency(self, virtual):
-        """Resolve an external movie only from this project or selected build."""
+        """Resolve GFX/SWF and UI_Data XML only from this project or build."""
         from gfx_preview_backend import MAX_SOURCE
         from evolve_pak_workspace import normalized_name
         name = normalized_name(virtual).casefold()
         if self.read_only_library:
-            from asset_library_preview import archive_entries
-            from build_collections import resolve_archive_build, build_index
-            identifier = self.library_archive['id']
-            context = resolve_archive_build(
-                identifier, build_id=self.library_archive.get('build_id'))
-            # The current imported PAK takes precedence only for an exact
-            # path. For other imports, an ambiguous build result is blocked.
-            local = [(virtual_path, path) for virtual_path, path in
-                     archive_entries(identifier).items()
-                     if virtual_path.casefold() == name]
-            if len(local) == 1:
-                file = local[0][1]
-            else:
-                hits = build_index(context).get(name, [])
-                if len(hits) != 1:
-                    return None
-                file = Path(hits[0]['file'])
+            # Reuse the scoped, validated index instead of rereading and
+            # checking every file in the enormous UI_Assets manifest for
+            # each GFX import or UI_Data XML reference.
+            hits = self._gfx_scoped_index().get(name, ())
+            local = [r for r in hits
+                     if r.get('_asset_library') == self.library_archive['id']]
+            choices = local if local else hits
+            if len(choices) != 1:
+                return None  # Cross-PAK/build ambiguity must not be guessed.
+            file = Path(choices[0]['file'])
             if file.is_symlink() or not file.is_file() or file.stat().st_size > MAX_SOURCE:
                 return None
             return file.read_bytes()

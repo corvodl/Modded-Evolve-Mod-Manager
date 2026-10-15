@@ -269,7 +269,9 @@ class GfxEditorDialog(QDialog):
         self.viewer.open_movie(data, self.relative,
                                resolve=self.owner._gfx_dependency,
                                context="gfx-edit:" + str(self.snapshot.session),
-                               backend=self._backend)
+                               backend=self._backend,
+                               available_paths=self.owner._gfx_available_paths(),
+                               texture_preview=self.owner._gfx_texture_image)
         self.status.setText(
             ("Staged GFX: %d native edits; %s | %s" %
              (self.snapshot.edits,

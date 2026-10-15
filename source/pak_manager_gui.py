@@ -35,6 +35,7 @@ from workspace_editor import WorkspaceEditor
 from portable_bundle import bind_home, MARKER
 from old_prepared import scan_prepared
 from orphaned_swap_recovery import plan_recovery
+from injector_guard import inspect_injector
 from multi_pak_assets import load_collection, create_batch
 from pak_browser import describe_archive, archive_description, matching_archives, import_target, format_size
 from loose_game_files import scan_loose_files, LooseFile
@@ -1438,7 +1439,7 @@ class Manager:
             # Don't claim the game is safe when the journal is stale.
             try:
                 game = Path(st.game) if st.game else self.game_root
-                if plan_recovery(game):
+                if plan_recovery(game) or inspect_injector(game).blocks_normal_launch:
                     from launch_integration import SwapStatus
                     st = SwapStatus('unsafe', 'Unrestored original backups found in game folder.')
             except (OSError, ValueError):
