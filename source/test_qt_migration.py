@@ -50,6 +50,23 @@ class QtMigrationTests(unittest.TestCase):
         self.win.show()
         self.application.processEvents()
 
+    def test_large_inventory_is_lazy_until_respective_page_is_opened(self):
+        from qt_manager import SECTIONS
+        self.assertTrue(self.win._startup_inventory_pending)
+        self.assertFalse(self.win._library_inventory_initialized)
+        with patch.object(self.win, "refresh_project_list") as projects, \
+             patch.object(self.win, "refresh_archives") as archives:
+            self.win.open_page(SECTIONS.index("Modding"))
+            projects.assert_called_once()
+            archives.assert_called_once()
+        self.assertFalse(self.win._startup_inventory_pending)
+        with patch("asset_library.migrate_readable_archive_folders") as migrate:
+            self.win.open_page(SECTIONS.index("Asset Library"))
+            migrate.assert_called_once()
+            self.win.open_page(SECTIONS.index("Asset Library"))
+            migrate.assert_called_once()
+        self.assertTrue(self.win._library_inventory_initialized)
+
     def test_gpu_popup_toolbar_uses_real_icons(self):
         from qt_gpu_viewer import _viewport_tool_icon
         for kind in ('View','Materials','Animation','Grid','Solid','Wire'):

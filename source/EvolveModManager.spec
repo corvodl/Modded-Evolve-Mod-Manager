@@ -61,7 +61,7 @@ pyz = PYZ(a.pure)
 shared = [script for script in a.scripts if script[0] not in entrypoints]
 executables = []
 for entry, name, console in (
-    ('qt_manager', 'EvolveModManager', True),
+    ('qt_manager', 'EvolveModManager', False),
     ('worker_entry', 'EvolveModWorker', True),
 ):
     scripts = shared + [script for script in a.scripts if script[0] == entry]

@@ -173,6 +173,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.model_gpu = None
         self.model_panel = None
         self._sidebar_visibility = {'files': True, 'images': True, 'models': False}
+        self._gfx_editor_panel = None
         self.model_fallback = None
         self.model_cpu = None
         self.texture_folder = None
@@ -282,8 +283,11 @@ class QtWorkspaceEditor(QMainWindow):
                 view.setAlignment(Qt.AlignCenter)
                 view.setWordWrap(True)
             elif section == 'gfx':
-                view = GfxPreviewWidget(self)
-                self.gfx_view = view
+                self.gfx_view = GfxPreviewWidget(self)
+                self.gfx_pages = QStackedWidget()
+                self.gfx_pages.setObjectName("gfxInlineEditorPages")
+                self.gfx_pages.addWidget(self.gfx_view)
+                view = self.gfx_pages
             else:
                 view = QStackedWidget()
                 self.model_fallback = QLabel(
@@ -1233,6 +1237,8 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(str(exc))
 
     def load(self, rel, *, full_character=False):
+        if self._gfx_editor_panel is not None:
+            self._close_gfx_editor()
         if rel not in self.records:
             raise ValueError('This file is no longer in the extracted PAK.')
         # The internal pages are selected by file type; their tab bar is hidden.
@@ -1333,13 +1339,25 @@ class QtWorkspaceEditor(QMainWindow):
 
     def _gfx_scoped_index(self):
         """Cache only the selected game build's verified imported archives."""
-        if not self.read_only_library:
-            return {}
         from build_collections import resolve_archive_build, build_index
-        identifier = self.library_archive['id']
-        context = resolve_archive_build(
-            identifier, build_id=self.library_archive.get('build_id'))
-        key = (identifier, context)
+        if self.read_only_library:
+            identifier = self.library_archive['id']
+            context = resolve_archive_build(
+                identifier, build_id=self.library_archive.get('build_id'))
+        else:
+            # Only projects explicitly copied from a registered, matching
+            # Asset Library build may inspect sibling UI_Data/UI_Assets PAKs.
+            # Never use a global search or mix unassigned/legacy builds.
+            from project_catalog import _catalog
+            entries = _catalog(self.manager.projects_path).get('projects', {})
+            project = next((item for item in entries.values()
+                            if item.get('workspace') == str(self.workspace)), {})
+            identifier = project.get('source_archive_id')
+            context = project.get('source_build_id')
+            if not identifier or not context:
+                return {}
+            resolve_archive_build(identifier, build_id=context)
+        key = (str(self.workspace), identifier, context)
         if getattr(self, '_gfx_index_key', None) != key:
             self._gfx_index_cache = build_index(context)
             self._gfx_index_key = key
@@ -1348,7 +1366,10 @@ class QtWorkspaceEditor(QMainWindow):
     def _gfx_available_paths(self):
         if self.read_only_library:
             return tuple(self._gfx_scoped_index())
-        return tuple(self.records)
+        index = self._gfx_scoped_index()
+        return tuple(dict.fromkeys(
+            (*self.records, *(hit['relative'] for records in index.values()
+                              for hit in records))))
 
     def _gfx_texture_image(self, virtual):
         """Decode a selected UI DDS with stream siblings from the same build."""
@@ -1368,12 +1389,20 @@ class QtWorkspaceEditor(QMainWindow):
             record['workspace'] = None
             return _decode_texture(record, index=index, max_dimension=2048)
         local = [item for item in self.records if item.casefold() == relative.casefold()]
-        if len(local) != 1:
-            raise ValueError('DDS is not available in this editable project.')
-        item = checked_path(self.workspace, local[0])
-        return _decode_texture(
-            {'file': item, 'workspace': self.workspace, 'relative': local[0]},
-            max_dimension=2048)
+        if len(local) > 1:
+            raise ValueError('DDS is ambiguous in this editable project.')
+        if local:
+            item = checked_path(self.workspace, local[0])
+            return _decode_texture(
+                {'file': item, 'workspace': self.workspace, 'relative': local[0]},
+                max_dimension=2048)
+        index = self._gfx_scoped_index()
+        matches = index.get(relative.casefold(), ())
+        if len(matches) != 1:
+            raise ValueError('DDS is missing or ambiguous in the source game build.')
+        record = dict(matches[0])
+        record['workspace'] = None
+        return _decode_texture(record, index=index, max_dimension=2048)
 
     def _gfx_dependency(self, virtual):
         """Resolve GFX/SWF and UI_Data XML only from this project or build."""
@@ -1395,9 +1424,15 @@ class QtWorkspaceEditor(QMainWindow):
                 return None
             return file.read_bytes()
         matching = [item for item in self.records if item.casefold() == name]
-        if len(matching) != 1:
+        if len(matching) > 1:
             return None
-        source = checked_path(self.workspace, matching[0])
+        if matching:
+            source = checked_path(self.workspace, matching[0])
+        else:
+            sources = self._gfx_scoped_index().get(name, ())
+            if len(sources) != 1:
+                return None
+            source = Path(sources[0]['file'])
         if source.is_symlink() or not source.is_file() or source.stat().st_size > MAX_SOURCE:
             return None
         return source.read_bytes()
@@ -1774,6 +1809,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_skin_choice = None
         self.current, self.loaded_text, self.raw = None, '', b''
         self.gfx_view.cancel_pending()
+        self._close_gfx_editor()
         if not self.read_only_library:
             self.manager.current_workspace = str(target)
             self.manager.archive_label = name
@@ -1892,8 +1928,19 @@ class QtWorkspaceEditor(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, 'File edit rejected', str(exc))
 
+    def _close_gfx_editor(self):
+        """Return to the built-in preview without leaving a second editor window."""
+        panel = self._gfx_editor_panel
+        if panel is None:
+            return
+        self._gfx_editor_panel = None
+        self.gfx_pages.setCurrentWidget(self.gfx_view)
+        self.gfx_pages.removeWidget(panel)
+        panel.close()
+        panel.deleteLater()
+
     def edit_gfx(self):
-        """Start a private FFDec authoring session; never mutate Library."""
+        """Open a private FFDec authoring session inside the normal file editor."""
         if self.read_only_library:
             QMessageBox.information(
                 self, 'Read-only Asset Library',
@@ -1912,9 +1959,13 @@ class QtWorkspaceEditor(QMainWindow):
                 return
             if self.manager.busy:
                 raise RuntimeError('Finish the current manager operation first.')
-            from qt_gfx_editor import GfxEditorDialog
-            dialog = GfxEditorDialog(self, self.current)
-            dialog.exec()
+            if self._gfx_editor_panel is None:
+                from qt_gfx_editor import GfxEditorDialog
+                self._gfx_editor_panel = GfxEditorDialog(
+                    self, self.current, embedded=True)
+                self.gfx_pages.addWidget(self._gfx_editor_panel)
+            self.gfx_view.cancel_pending()
+            self.gfx_pages.setCurrentWidget(self._gfx_editor_panel)
         except (OSError, ValueError, RuntimeError) as exc:
             QMessageBox.warning(self, 'GFX editor', str(exc))
 
@@ -2759,6 +2810,7 @@ class QtWorkspaceEditor(QMainWindow):
         self._save_project_session()
         self._model_generation += 1
         self.gfx_view.cancel_pending()
+        self._close_gfx_editor()
         if self.model_panel is not None and not self.model_panel.close():
             event.ignore()
             return

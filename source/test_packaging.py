@@ -8,6 +8,15 @@ from unittest.mock import patch
 import app_runtime
 
 class PackagingTests(unittest.TestCase):
+    def test_production_manager_uses_gui_subsystem_but_worker_keeps_console(self):
+        spec = Path(__file__).with_name("EvolveModManager.spec").read_text("utf-8")
+        self.assertIn("('qt_manager', 'EvolveModManager', False)", spec)
+        self.assertIn("('worker_entry', 'EvolveModWorker', True)", spec)
+        self.assertIn("runtime_hooks=['qt_streams_hook.py']", spec)
+        hook = Path(__file__).with_name("qt_streams_hook.py").read_text("utf-8")
+        self.assertIn('app_dir / "Data" / "Logs"', hook)
+        self.assertNotIn("ShowWindow(", hook)
+
     def test_source_command_unchanged(self):
         cmd = [sys.executable, '-u', 'tool.py', 'build']
         with patch.object(sys, 'frozen', False, create=True):
@@ -25,7 +34,7 @@ class PackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='swap folder ') as tmp:
             root=Path(tmp)
             (root/'sibling.py').write_text('VALUE=42')
-            (root/'check.py').write_text('from pathlib import Path\nimport sibling,sys\nassert sibling.VALUE==42\nassert Path(__file__).parent==Path(sys.argv[1])\nprint("ok",flush=True)\n')
+            (root/'check.py').write_text('from pathlib import Path\nimport sibling,sys\nassert sibling.VALUE==42\nassert Path(__file__).parent.samefile(Path(sys.argv[1]))\nprint("ok",flush=True)\n')
             result=subprocess.run([sys.executable, str(Path(__file__).with_name('worker_entry.py')), str(root/'check.py'), str(root)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('ok',result.stdout)

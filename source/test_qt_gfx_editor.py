@@ -53,6 +53,30 @@ class GfxQtEditorTests(unittest.TestCase):
         self.addCleanup(self.win.close)
         self.addCleanup(parent.close)
 
+    def test_editor_is_embedded_inside_the_existing_file_editor(self):
+        self.assertEqual(self.win.gfx_pages.currentWidget(), self.win.gfx_view)
+        with patch("qt_ffdec_prompt.ffdec_is_ready", return_value=True):
+            self.win.edit_gfx()
+        panel = self.win._gfx_editor_panel
+        self.assertIsNotNone(panel)
+        self.assertTrue(panel.embedded)
+        self.assertIs(self.win.gfx_pages.currentWidget(), panel)
+        self.assertEqual(panel.editor_split.count(), 2)
+        self.assertIs(panel.editor_split.widget(0), panel.viewer)
+        self.assertEqual(panel.inspector_scroll.objectName(), "gfxAuthoringInspector")
+        self.assertEqual(self.win.gfx_pages.count(), 2)
+        self.win._close_gfx_editor()
+        self.assertIsNone(self.win._gfx_editor_panel)
+        self.assertIs(self.win.gfx_pages.currentWidget(), self.win.gfx_view)
+        self.assertEqual(self.win.gfx_pages.count(), 1)
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
+    def test_dependency_view_has_provenance_columns(self):
+        columns = self.win.gfx_view.dependency_tree
+        self.assertEqual(columns.columnCount(), 4)
+        self.assertEqual(columns.headerItem().text(2), "Actual source / origin")
+        self.assertEqual(columns.headerItem().text(3), "Status")
+
     def test_gfx_authoring_panel_has_all_edit_actions_and_real_confirm(self):
         dialog = GfxEditorDialog(self.win, self.relative)
         self.addCleanup(dialog.close)

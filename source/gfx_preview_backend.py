@@ -397,7 +397,8 @@ _CACHE_LOCK = threading.RLock()
 def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
                imports=None, build_context=None, backend=None, cancelled=None,
                texture_loader=None, available_paths=(), render_diagnostics=None,
-               root_layer_mode="all", root_layer_depth=None):
+               root_layer_mode="all", root_layer_depth=None,
+               show_video_placeholders=False):
     """Return unscaled PNG raster bytes for the selected frame or sprite.
 
     Do not use a Qt screenshot. FFDec renders the Scaleform display-list.
@@ -444,6 +445,16 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
             render_diagnostics.append(
                 f"Preview-only root {root_layer_mode}: depth {root_layer_depth}. "
                 "No source files or GFX project edits were changed.")
+    # FFDec draws a black X for DefineVideoStream, not playable game video.
+    # Remove only video placements in the temporary frame export; source
+    # bytes, nested sprites, scripts and game assets remain untouched.
+    if not show_video_placeholders:
+        from gfx_video_preview import hide_video_placeholders
+        data, hidden = hide_video_placeholders(data)
+        if hidden and render_diagnostics is not None:
+            render_diagnostics.append(
+                f"{hidden} native video placement(s) hidden in static preview. "
+                "The actual game may play video at those positions.")
     # External Scaleform 1008/1009 image definitions are not ordinary SWF
     # bitmaps. Replace verified external atlas slices with DefineBitsLossless2
     # in *temporary render-only bytes*. FFDec then applies the unchanged
