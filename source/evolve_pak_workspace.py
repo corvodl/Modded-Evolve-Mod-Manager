@@ -201,20 +201,102 @@ def pack_changed_entry(plain, entry, keys, name, cdr_fields, local_offset):
     return local+filename+crypt,meta
 
 
+
+def resolve_build_source(wdir, data, *, backup_root=None, stage=None):
+    """Recover an *exact* signed extraction baseline from a verified swap backup.
+
+    A staged PAK may have been replaced by an installed mod after extraction.
+    Never rebase the workspace against that modified PAK: its CryPak crypto,
+    original-entry checks and signatures belong to the original baseline.
+    """
+    original = Path(data['source_pak']).resolve()
+    if not original.is_file() or original.is_symlink():
+        raise FileNotFoundError('Workspace source PAK is missing: ' + str(original))
+    expected = data['source_sha256'].lower()
+    current = sha_file(original)
+    if current == expected:
+        return original, False
+    if not backup_root or not stage:
+        raise ValueError(
+            'Workspace source PAK changed since export (expected SHA-256 '
+            + expected[:12] + ', current ' + current[:12] +
+            '). Your edits are preserved. Build with the original baseline '
+            'restored, or use an exact verified backup; do not re-extract over edits.')
+    stage = Path(stage).resolve(strict=True)
+    root = Path(backup_root).resolve()
+    base = (stage / 'paks').resolve(strict=True)
+    if not original.is_relative_to(base):
+        raise ValueError('Workspace source PAK is outside the verified signing stage.')
+    rel = original.relative_to(base)
+    root_rel = root.joinpath(*rel.parts).resolve()
+    if not root_rel.is_relative_to(root):
+        raise ValueError('Unsafe archive backup path.')
+    if not root_rel.is_dir() or root_rel.is_symlink():
+        raise ValueError('Staged source differs and there are no archived signing baselines; '
+                         'your workspace edits are unchanged. Restore the exact original first.')
+    candidates = sorted(
+        (entry for entry in root_rel.iterdir() if entry.is_dir()
+         and not entry.is_symlink()), reverse=True)
+    for folder in candidates[:100]:
+        meta_file = folder / 'metadata.json'
+        candidate = folder / 'before.pak'
+        if (not meta_file.is_file() or meta_file.is_symlink() or
+                not candidate.is_file() or candidate.is_symlink() or
+                not candidate.resolve().is_relative_to(root_rel)):
+            continue
+        try:
+            metadata = json.loads(meta_file.read_text('utf-8'))
+        except (ValueError, OSError):
+            continue
+        if (metadata.get('status') not in
+                ('installed', 'restored', 'backed-up', 'rolled-back-after-error')
+                or metadata.get('relative', '').casefold() != rel.as_posix().casefold()
+                or Path(metadata.get('source', '')).resolve() != original
+                or Path(metadata.get('stage', '')).resolve() != stage
+                or str(metadata.get('old_sha256', '')).lower() != expected):
+            continue
+        if sha_file(candidate) == expected:
+            return candidate, True
+    raise ValueError(
+        'Workspace source PAK changed since export, and no exact verified '
+        'baseline exists in the staging backups. Workspace edits and swap '
+        'journals were preserved. Restore the matching staged original or '
+        'copy the edits into a newly extracted project; do not delete backups.')
+
+
+def _verified_backup_archive(source, pub, signed_basename):
+    """Read the original signed contents of a backup named before.pak."""
+    from evolve_video_pak_tool_fixed import load_archive, get_eocd_tail, twofish_ctr
+    parsed = load_archive(source, str(pub), basename=signed_basename)
+    with source.open('rb') as stream:
+        _, _, comment = get_eocd_tail(stream)
+        stream.seek(parsed['cdr_at'])
+        cipher = stream.read(parsed['cdr_size'])
+    if len(cipher) != parsed['cdr_size']:
+        raise ValueError('Truncated archived source central directory')
+    return parsed, comment, twofish_ctr(cipher, parsed['keys'][0], parsed['iv']), signed_basename
+
+
 def cmd_build(args):
     wdir=args.workspace.resolve();data=load_workspace(wdir)
     if data.get('reference_only'):
         raise ValueError('Library-derived level copies cannot be signed directly; '
                          'create a verified staged editing project first.')
-    src=args.pak.resolve() if args.pak else Path(data['source_pak']).resolve()
+    # --pak remains the original staging target, never the backup filename.
+    target = args.pak.resolve() if args.pak else Path(data['source_pak']).resolve()
+    if target != Path(data['source_pak']).resolve():
+        raise ValueError('Selected source is not this workspace original archive.')
+    src, backed_up = resolve_build_source(
+        wdir, data, backup_root=getattr(args, 'backup_root', None),
+        stage=getattr(args, 'stage', None))
     pub=args.public_key.resolve();priv=args.private_key.resolve();out=args.out.resolve()
-    if not src.is_file():raise FileNotFoundError(f'Missing PAK source: {src}')
-    if src==out:raise ValueError('Source and output must be different files')
-    if src.name.casefold()!=out.name.casefold():raise ValueError('Output basename must match source PAK basename (e.g. libs.pak)')
+    if src.resolve()==out:raise ValueError('Source and output must be different files')
+    if out.name.casefold()!=target.name.casefold():
+        raise ValueError('Output basename must match original staged PAK name (e.g. libs.pak)')
     if out.exists():raise FileExistsError(f'Output already exists; refusing overwrite: {out}')
     if not out.parent.is_dir():raise FileNotFoundError(f'Output folder does not exist: {out.parent}')
     if sha_file(src)!=data['source_sha256']:
-        raise ValueError('Workspace source PAK changed since export; re-extract before rebuilding')
+        raise ValueError('Verified source archive changed during preflight; do not rebuild.')
     if sha_file(pub)!=data['public_key_sha256']:
         raise ValueError('Workspace was exported with a different public key')
     changes=get_changes(wdir,data)
@@ -224,7 +306,11 @@ def cmd_build(args):
     pubbytes=pub.read_bytes()
     if private.public_key().public_bytes(Encoding.DER,PublicFormat.PKCS1)!=pubbytes:
         raise ValueError('Public and private signing keys do not match')
-    info,comment,cdr,signed_basename=extract_plain_cdr(src,pub)
+    info,comment,cdr,signed_basename=(
+        _verified_backup_archive(src, pub, data['signed_basename'])
+        if backed_up else extract_plain_cdr(src,pub))
+    if signed_basename.casefold() != target.name.casefold():
+        raise ValueError('Signed source filename differs from workspace target.')
     if signed_basename!=data['signed_basename'] or info['count']!=data['archive_entry_count']:
         raise ValueError('Workspace PAK structure mismatched')
     mods=[]
@@ -246,7 +332,11 @@ def cmd_build(args):
             continue
         mods.append((entry_name,replacement))
     if not mods:raise ValueError('No actual payload changes to sign')
-    print(f'Building a new signed {src.name} with {len(mods)} changed payloads; original PAK untouched.')
+    if sha_file(src) != data['source_sha256']:
+        raise ValueError('Verified source archive changed during rebuild; retry safely.')
+    if backed_up:
+        print('Using the exact verified extraction baseline from a retained swap backup; staged mods untouched.')
+    print(f'Building a new signed {target.name} with {len(mods)} changed payloads; original PAK untouched.')
     new_cdr=bytearray(cdr)
     patches=[]
     current_pos=info['cdr_at']
@@ -305,6 +395,8 @@ def main():
     df.add_argument('--workspace',required=True,type=Path)
     b=sub.add_parser('build',help='Repack only changed entries and re-sign whole CryPak CDR')
     b.add_argument('--workspace',required=True,type=Path);b.add_argument('--pak',type=Path,help='Source PAK (defaults to original export path)')
+    b.add_argument('--backup-root',type=Path,help='Retained verified swap backups (read-only)')
+    b.add_argument('--stage',type=Path,help='Signing stage root for verified backup lookup')
     b.add_argument('--public-key',required=True,type=Path);b.add_argument('--private-key',required=True,type=Path)
     b.add_argument('--out',required=True,type=Path)
     args=p.parse_args()
