@@ -29,6 +29,8 @@ PATHS = {
     "Asset Library": '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v11h14V9M9 14h6"/>',
     "Modding": '<path d="M14 7a5 5 0 0 0-6 6l-5 5a2 2 0 0 0 3 3l5-5a5 5 0 0 0 6-6l-3 3-3-3z"/>',
     "Play & Restore": '<path d="m8 5 10 7-10 7z"/><path d="M4 4v16"/>',
+    "Play with Mods": '<path d="m8 4 12 8-12 8z"/><path d="M4 5v14"/><path d="m15 4 2-2m1 4 3-1"/>',
+    "Play without Mods": '<path d="m9 5 10 7-10 7z"/><path d="M4 5v14"/><path d="m15 19 2 2 5-5"/>',
     "Settings": '<path d="M4 7h16M4 17h16M9 4v6M15 14v6"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/>',
     "Credits": '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/>',
     "What's New": '<path d="m12 2 2.1 7.9L22 12l-7.9 2.1L12 22l-2.1-7.9L2 12l7.9-2.1z"/>',
