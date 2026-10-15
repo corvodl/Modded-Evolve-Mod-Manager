@@ -281,6 +281,24 @@ class GfxQtEditorTests(unittest.TestCase):
         self.assertFalse(dialog.snapshot.changed)
         self.assertEqual(self.asset.read_bytes(), self.original)
 
+    def test_preview_root_layer_controls_preserve_original(self):
+        widget = self.win.gfx_view
+        widget.open_movie(self.original, self.relative)
+        self.assertEqual(widget.root_mode.currentData(), "all")
+        self.assertEqual(widget.root_layer.count(), 1)
+        self.assertEqual(widget.root_layer.currentData(), 1)
+        self.assertFalse(widget.root_layer.isEnabled())
+        widget.root_mode.setCurrentIndex(1)  # Hide first root depth.
+        self.assertEqual(widget.root_mode.currentData(), "hide")
+        self.assertTrue(widget.root_layer.isEnabled())
+        widget.root_mode.setCurrentIndex(2)  # Only first root depth.
+        self.assertEqual(widget.root_mode.currentData(), "isolate")
+        widget.symbol.setCurrentIndex(1)  # Sprite selection is separate.
+        self.assertFalse(widget.root_mode.isEnabled())
+        widget.symbol.setCurrentIndex(0)
+        self.assertTrue(widget.root_mode.isEnabled())
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
     def test_advanced_gfx_commands_fit_under_menus(self):
         dialog = GfxEditorDialog(self.win, self.relative)
         self.addCleanup(dialog.close)

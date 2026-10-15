@@ -396,7 +396,8 @@ _CACHE_LOCK = threading.RLock()
 
 def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
                imports=None, build_context=None, backend=None, cancelled=None,
-               texture_loader=None, available_paths=(), render_diagnostics=None):
+               texture_loader=None, available_paths=(), render_diagnostics=None,
+               root_layer_mode="all", root_layer_depth=None):
     """Return unscaled PNG raster bytes for the selected frame or sprite.
 
     Do not use a Qt screenshot. FFDec renders the Scaleform display-list.
@@ -430,6 +431,19 @@ def render_gfx(data, *, virtual="movie.gfx", frame=1, symbol=0, scale=1,
             raise GfxError("Invalid external dependency type.")
         _validate_imported_movie(blob, virtual_dep)
         checked[virtual_dep] = blob
+    # Diagnose first-frame root layers without deleting any source assets.
+    # Apply filtering BEFORE the injected bitmap definitions, so the
+    # source-size and virtual movie validation stay bound to the original.
+    if root_layer_mode != "all":
+        if symbol:
+            raise GfxError("Root layer filters cannot be applied to sprite export.")
+        from gfx_root_layer_preview import isolate_root_depth
+        data = isolate_root_depth(
+            data, mode=root_layer_mode, depth=root_layer_depth, frame=frame)
+        if render_diagnostics is not None:
+            render_diagnostics.append(
+                f"Preview-only root {root_layer_mode}: depth {root_layer_depth}. "
+                "No source files or GFX project edits were changed.")
     # External Scaleform 1008/1009 image definitions are not ordinary SWF
     # bitmaps. Replace verified external atlas slices with DefineBitsLossless2
     # in *temporary render-only bytes*. FFDec then applies the unchanged

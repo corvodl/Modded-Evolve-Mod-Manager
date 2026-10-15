@@ -6,6 +6,8 @@ on:
       - 'source/gfx_preview_backend.py'
       - 'source/gfx_external_bitmap_render.py'
       - 'source/gfx_layout_backend.py'
+      - 'source/gfx_root_layer_preview.py'
+      - 'source/test_gfx_root_layer_preview.py'
       - 'source/qt_gfx_layout_editor.py'
       - 'source/test_gfx_layout_backend.py'
       - 'source/test_gfx_external_bitmap_render.py'
@@ -50,7 +52,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python -m compileall -q source
-          python -m unittest -v test_gfx_preview test_gfx_ui_dependencies test_gfx_placement_diagnostics test_gfx_external_bitmap_render test_gfx_layout_backend test_qt_unified_explorer test_qt_asset_preview test_gfx_library_scope test_gfx_edit_backend test_gfx_featured_promo test_qt_gfx_editor
+          python -m unittest -v test_gfx_preview test_gfx_ui_dependencies test_gfx_placement_diagnostics test_gfx_external_bitmap_render test_gfx_layout_backend test_gfx_root_layer_preview test_qt_unified_explorer test_qt_asset_preview test_gfx_library_scope test_gfx_edit_backend test_gfx_featured_promo test_qt_gfx_editor
   real-renderer:
     runs-on: windows-2022
     timeout-minutes: 20
@@ -86,4 +88,4 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/source
           QT_QPA_PLATFORM: offscreen
-        run: python -m unittest -v test_gfx_preview.GfxStaticPreviewTests.test_real_ffdec_renders_red_vector_and_transparent_second_frame test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_shape_replace_produces_green_render_and_undo test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_tag_xml_roundtrip_retains_gfx_movie test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_edits_actionscript_and_recompiles_gfx test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_bitmap_replacement_exports_new_blue_image test_gfx_external_bitmap_render.ExternalBitmapRenderTests.test_real_ffdec_respects_original_bitmap_fill_and_translated_position
+        run: python -m unittest -v test_gfx_preview.GfxStaticPreviewTests.test_real_ffdec_renders_red_vector_and_transparent_second_frame test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_shape_replace_produces_green_render_and_undo test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_tag_xml_roundtrip_retains_gfx_movie test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_edits_actionscript_and_recompiles_gfx test_gfx_edit_backend.GfxEditingTests.test_real_ffdec_bitmap_replacement_exports_new_blue_image test_gfx_external_bitmap_render.ExternalBitmapRenderTests.test_real_ffdec_respects_original_bitmap_fill_and_translated_position test_gfx_root_layer_preview.RootLayerIsolationTests.test_real_ffdec_hiding_red_shape_yields_transparent_frame

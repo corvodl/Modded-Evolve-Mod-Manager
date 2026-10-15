@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from qt_navigation_icons import navigation_icon
 from gfx_ui_dependencies import related_ui_textures
 from gfx_placement_diagnostics import inspect_bitmap_placement
+from gfx_root_layer_preview import root_layers
 from gfx_preview_backend import (
     inspect_gfx, resolve_imports, ffdec_command, render_gfx, GfxError,
 )
@@ -124,13 +125,16 @@ class _RenderTask(QThread):
     result = Signal(int, object, object)
 
     def __init__(self, token, data, virtual, *, frame, symbol, scale, imports,
-                 context, backend, texture_loader=None, available_paths=()):
+                 context, backend, texture_loader=None, available_paths=(),
+                 root_layer_mode="all", root_layer_depth=None):
         super().__init__()
         self.token, self.data, self.virtual = token, data, virtual
         self.frame, self.symbol, self.scale = frame, symbol, scale
         self.imports, self.context, self.backend = imports, context, backend
         self.texture_loader = texture_loader
         self.available_paths = available_paths
+        self.root_layer_mode = root_layer_mode
+        self.root_layer_depth = root_layer_depth
         self._cancel = Event()
 
     def cancel(self):
@@ -146,7 +150,9 @@ class _RenderTask(QThread):
                 cancelled=self._cancel.is_set,
                 texture_loader=self.texture_loader,
                 available_paths=self.available_paths,
-                render_diagnostics=diagnostics)
+                render_diagnostics=diagnostics,
+                root_layer_mode=self.root_layer_mode,
+                root_layer_depth=self.root_layer_depth)
             self.result.emit(self.token, (png, tuple(diagnostics)), None)
         except Exception as exc:
             self.result.emit(self.token, None, str(exc))
@@ -169,6 +175,7 @@ class GfxPreviewWidget(QWidget):
         self._render_notes = ()
         self._texture_paths = ()
         self._bitmap_bindings = ()
+        self._root_layers = ()
         self._info = None
         self._backend = None
         layout = QVBoxLayout(self)
@@ -234,6 +241,28 @@ class GfxPreviewWidget(QWidget):
         canvas_controls.addWidget(self.external_images)
         canvas_controls.addStretch(1)
         layout.addLayout(canvas_controls)
+        layer_controls = QHBoxLayout()
+        layer_controls.addWidget(QLabel("Root layers:"))
+        self.root_mode = QComboBox()
+        self.root_mode.setObjectName("gfxRootLayerMode")
+        self.root_mode.addItem("All layers", "all")
+        self.root_mode.addItem("Hide selected layer", "hide")
+        self.root_mode.addItem("Show selected layer only", "isolate")
+        self.root_mode.setToolTip(
+            "Diagnostic preview only. Hide or isolate root display-list "
+            "depths to identify an opaque popup without changing the GFX.")
+        layer_controls.addWidget(self.root_mode)
+        self.root_layer = QComboBox()
+        self.root_layer.setObjectName("gfxRootLayerSelection")
+        self.root_layer.setMinimumContentsLength(24)
+        self.root_layer.setSizeAdjustPolicy(
+            QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        layer_controls.addWidget(self.root_layer, 2)
+        self.root_hint = QLabel("No root layer selected.")
+        self.root_hint.setObjectName("gfxRootLayerHint")
+        self.root_hint.setWordWrap(True)
+        layer_controls.addWidget(self.root_hint, 3)
+        layout.addLayout(layer_controls)
         self.details = QLabel("Select a .gfx movie")
         self.details.setObjectName("gfxMovieInfo")
         self.details.setWordWrap(True)
@@ -332,6 +361,8 @@ class GfxPreviewWidget(QWidget):
         self.background.currentIndexChanged.connect(self._background_changed)
         self.trim.toggled.connect(self.canvas.set_trim)
         self.external_images.toggled.connect(self._changed)
+        self.root_mode.currentIndexChanged.connect(self._root_changed)
+        self.root_layer.currentIndexChanged.connect(self._root_changed)
         self.texture_select.currentIndexChanged.connect(self._texture_changed)
         self.bitmap_select.currentIndexChanged.connect(self._bitmap_changed)
         self.tabs.currentChanged.connect(self._texture_tab_changed)
@@ -356,6 +387,14 @@ class GfxPreviewWidget(QWidget):
         self._available_paths = tuple(available_paths)
         self._render_notes = ()
         self._texture_paths = ()
+        self._root_layers = ()
+        self.root_mode.blockSignals(True)
+        self.root_mode.setCurrentIndex(0)
+        self.root_mode.blockSignals(False)
+        self.root_layer.blockSignals(True)
+        self.root_layer.clear()
+        self.root_layer.blockSignals(False)
+        self.root_hint.setText("No root layer selected.")
         self.external_images.setEnabled(False)
         self._bitmap_bindings = ()
         self.bitmap_select.blockSignals(True)
@@ -437,6 +476,7 @@ class GfxPreviewWidget(QWidget):
             self.frame.setMaximum(info.frames)
             self.frame.setValue(1)
             self.frame.blockSignals(False)
+            self._sync_root_layers()
             self.details.setText(
                 f"GFX v{info.version} · {info.compression} · "
                 f"{info.width}×{info.height} · {info.fps:g} fps · "
@@ -533,9 +573,50 @@ class GfxPreviewWidget(QWidget):
         self.frame.setMaximum(count)
         self.frame.setValue(1)
         self.frame.blockSignals(False)
+        self._sync_root_layers()
         self._changed()
 
+    def _root_changed(self, *_):
+        self._sync_root_layers()
+        self._start_render()
+
+    def _sync_root_layers(self):
+        if not self._raw or not self._info:
+            return
+        symbol = (self.symbol.currentData() or (0,))[0]
+        is_root = symbol == 0
+        if is_root:
+            try:
+                choices = root_layers(self._raw, frame=self.frame.value())
+            except GfxError:
+                choices = ()
+        else:
+            choices = ()
+        selected = self.root_layer.currentData()
+        self._root_layers = choices
+        self.root_layer.blockSignals(True)
+        self.root_layer.clear()
+        for item in choices:
+            self.root_layer.addItem(
+                f"Depth {item.depth} — {item.label} (#{item.character})",
+                item.depth)
+        if selected is not None:
+            for index, item in enumerate(choices):
+                if item.depth == selected:
+                    self.root_layer.setCurrentIndex(index)
+                    break
+        self.root_layer.blockSignals(False)
+        self.root_mode.setEnabled(bool(choices) and is_root)
+        self.root_layer.setEnabled(
+            bool(choices) and is_root and self.root_mode.currentData() != "all")
+        self.root_hint.setText(
+            f"{len(choices)} first-frame root depths. "
+            "Hiding a suspected popup affects this preview only."
+            if choices else
+            "Select Main timeline for root-layer diagnostics.")
+
     def _changed(self, *_):
+        self._sync_root_layers()
         self._start_render()
 
     def _start_render(self):
@@ -556,6 +637,10 @@ class GfxPreviewWidget(QWidget):
         except GfxError as exc:
             self.note.setText(str(exc) + "\n" + " ".join(diagnostics))
             return
+        layer_mode = self.root_mode.currentData() if symbol == 0 else "all"
+        if not self._root_layers or layer_mode not in ("hide", "isolate"):
+            layer_mode = "all"
+        layer_depth = self.root_layer.currentData() if layer_mode != "all" else None
         token = self._serial
         worker = _RenderTask(
             token, self._raw, self._virtual, frame=frame, symbol=symbol,
@@ -563,7 +648,8 @@ class GfxPreviewWidget(QWidget):
             backend=self._backend,
             texture_loader=(self._texture_loader if self.external_images.isChecked()
                             and self.external_images.isEnabled() else None),
-            available_paths=self._available_paths)
+            available_paths=self._available_paths,
+            root_layer_mode=layer_mode, root_layer_depth=layer_depth)
         self._jobs.append(worker)
         worker.result.connect(self._finished)
         worker.finished.connect(lambda job=worker: self._done(job))
