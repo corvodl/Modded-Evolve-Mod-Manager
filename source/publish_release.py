@@ -12,12 +12,12 @@ from release_dependency_policy import (
 
 def publish(built,output):
     built,output=Path(built).resolve(),Path(output).resolve()
-    for name in ('EvolveModManager.exe','EvolveModWorker.exe','_internal','BUILD_COMMIT.txt','BUILD_CHANNEL.txt'):
+    for name in ('EvolveModManager.exe','EvolveModWorker.exe','_internal','BUILD_COMMIT.txt','BUILD_CHANNEL.txt','BUILD_REVISION.txt'):
         if not (built/name).exists():raise ValueError('Incomplete app build: '+name)
     check_app_folder(built)  # FFDec and Java are external; never ship their binaries.
     if (built/'Data').exists() or (built/'portable_bundle.json').exists() or any(built.rglob('private_key.pem')) or any(built.rglob('*.pak')):
         raise ValueError('App-only release must not contain game PAKs or personal setup data. Build to the separate build-output folder.')
-    allowed={'EvolveModManager.exe','EvolveModWorker.exe','_internal','Docs','START-HERE.txt','BUILD_COMMIT.txt','BUILD_CHANNEL.txt'}
+    allowed={'EvolveModManager.exe','EvolveModWorker.exe','_internal','Docs','START-HERE.txt','BUILD_COMMIT.txt','BUILD_CHANNEL.txt','BUILD_REVISION.txt'}
     if any(p.name not in allowed for p in built.iterdir()):raise ValueError('Unexpected file in clean app build.')
     output.mkdir(parents=True,exist_ok=True)
     release=output/('EvolveModManager-'+datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
