@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, Signal, QPointF, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QAction
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QFrame, QLabel, QVBoxLayout,
-    QHBoxLayout, QSplitter, QPushButton, QToolButton, QTreeWidget,
+    QHBoxLayout, QSplitter, QPushButton, QToolButton, QTreeWidget, QTreeView,
     QTreeWidgetItem, QLineEdit, QDoubleSpinBox, QComboBox, QFormLayout,
     QGroupBox, QMessageBox, QScrollArea, QSizePolicy, QFileDialog,
     QCompleter, QInputDialog)
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from level_editor_core import LevelProject, PlacedObject
 from qt_level_scene_render import LevelGLViewport
 from qt_ui_components import SurfacePanel, configure_splitter
+from qt_virtual_tree import VirtualTreeModel, TreeNode
 
 
 class LevelSceneViewport(QWidget):
@@ -434,6 +435,18 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.outliner.setColumnWidth(0,250)
         self.outliner.itemSelectionChanged.connect(self._selected_outliner)
         outlay.addWidget(self.outliner,1)
+        # 25k+ placements use the lazy model instead of 25k QTreeWidgetItem
+        # wrappers. Small project behavior stays compatible with existing UX.
+        self.virtual_outliner = QTreeView()
+        self.virtual_outliner.setObjectName('virtualLevelOutliner')
+        self._outliner_model = VirtualTreeModel(self.virtual_outliner,
+                                                labels=('Label', 'Type'))
+        self.virtual_outliner.setModel(self._outliner_model)
+        self.virtual_outliner.selectionModel().selectionChanged.connect(
+            self._selected_virtual_outliner)
+        self.virtual_outliner.hide()
+        outlay.addWidget(self.virtual_outliner,1)
+        self._outliner_catalog = None
         self.out_count=QLabel("")
         outlay.addWidget(self.out_count)
         right.addWidget(outliner)
@@ -700,6 +713,7 @@ class UnrealStyleLevelEditor(QMainWindow):
                     self.refresh_maps()
                     return False
         self.project=next_project
+        self._outliner_catalog = None
         self.selected=None
         self.viewport.active=None
         self.viewport.project=next_project
@@ -894,6 +908,11 @@ class UnrealStyleLevelEditor(QMainWindow):
 
     def _populate_outliner(self):
         self._outliner_search_timer.stop()
+        if len(self.project.objects) > 1500:
+            self._populate_virtual_outliner()
+            return
+        self.virtual_outliner.hide()
+        self.outliner.show()
         self.outliner.blockSignals(True)
         self.outliner.clear()
         needle=self.filter.text().casefold()
@@ -924,6 +943,49 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.out_count.setText(
             f"{count:,} visible / {len(self.project.objects):,} placed objects")
         self.outliner.blockSignals(False)
+
+    def _populate_virtual_outliner(self):
+        """Search all placements, but allocate only visible Qt model rows."""
+        objects = self.project.objects
+        identity = (id(objects), len(objects))
+        if self._outliner_catalog is None or self._outliner_catalog[0] != identity:
+            catalog = []
+            for obj in objects:
+                node = self.project._node(obj.layer, obj.index)
+                layer = node.get('Layer') or Path(obj.layer).stem
+                haystack = (obj.name + ' ' + obj.kind + ' ' +
+                            obj.layer + ' ' + obj.geometry).casefold()
+                catalog.append((obj, layer, haystack))
+            self._outliner_catalog = (identity, catalog)
+        needle = self.filter.text().casefold()
+        root = TreeNode('')
+        groups = {}
+        total = 0
+        for obj, layer, haystack in self._outliner_catalog[1]:
+            if needle and needle not in haystack:
+                continue
+            group_key = (obj.layer, layer)
+            group = groups.get(group_key)
+            if group is None:
+                group = TreeNode(layer, 'Layer', tooltip=obj.layer)
+                root.append(group)
+                groups[group_key] = group
+            group.append(TreeNode(obj.name[:90], obj.kind[:45],
+                                  value=(obj.layer, obj.index)))
+            total += 1
+        self._outliner_model.reset_root(root)
+        self.outliner.hide()
+        self.virtual_outliner.show()
+        self.out_count.setText(
+            f'{total:,} visible / {len(objects):,} placed objects')
+        # Avoid expandAll(): child pagination happens only for viewed layers.
+
+    def _selected_virtual_outliner(self, _selected, _deselected):
+        for index in self.virtual_outliner.selectionModel().selectedRows(0):
+            value = index.data(Qt.UserRole)
+            if isinstance(value, (tuple, list)) and len(value) == 2:
+                self.select_object(*value)
+                break
 
     def _populate_content(self):
         # Unlike the World Outliner (placed entities), Content Browser
