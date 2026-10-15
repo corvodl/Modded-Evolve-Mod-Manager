@@ -35,6 +35,18 @@ class UnrealStyleLevelEditorSmoke(unittest.TestCase):
         self.addCleanup(self.editor.close)
         self.addCleanup(self.parent.close)
 
+    def test_outliner_search_waits_for_typing_to_settle(self):
+        e = self.editor
+        original = e.outliner.topLevelItemCount()
+        e.filter.setText('R')
+        e.filter.setText('Rock')
+        self.assertTrue(e._outliner_search_timer.isActive())
+        self.assertEqual(e.outliner.topLevelItemCount(), original)
+        e._outliner_search_timer.timeout.emit()
+        self.assertFalse(e._outliner_search_timer.isActive())
+        self.assertIn('visible', e.out_count.text())
+        self.assertGreaterEqual(e.outliner.topLevelItemCount(), 1)
+
     def test_unreal_layout_widgets_and_outliner(self):
         e=self.editor
         self.assertEqual(len(e.project.objects),3)
