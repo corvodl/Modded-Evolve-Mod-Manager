@@ -38,7 +38,8 @@ def export_character_animation_folder(
     explicitly records clips that were not convertible.
     """
     from character_animation_catalog import (
-        discover_animations, native_clip_playability, caf_header)
+        discover_animations, native_clip_playability, caf_header,
+        preferred_third_person_dba)
     from model_textured_export import _unpack_glb
     from native_caf import append_caf_animations
 
@@ -67,6 +68,8 @@ def export_character_animation_folder(
     doc, _ = _unpack_glb(model_blob)
     rigged = len(doc.get('skins', ())) == 1
     prefix = _safe(model_name or Path(relative).stem)
+    preferred_database = preferred_third_person_dba(
+        references, character.skeleton if character is not None else relative)
     statuses = []
     accepted = []
     sources = []
@@ -132,8 +135,11 @@ def export_character_animation_folder(
                     row['conversion'] = 'Validated'
                 except (OSError, ValueError) as exc:
                     row['conversion'] = 'Unsupported: ' + str(exc)[:160]
-        elif ref.kind == 'dba' and status == 'converter' and chosen_dba is None:
-            chosen_dba = ref
+        elif ref.kind == 'dba' and status == 'converter':
+            if chosen_dba is None or (
+                    preferred_database is not None and
+                    ref.virtual_path == preferred_database.virtual_path):
+                chosen_dba = ref
             row['conversion'] = 'DBA conversion candidate (verified separately)'
         else:
             row['conversion'] = 'Not a standalone convertible clip: ' + explanation[:125]
