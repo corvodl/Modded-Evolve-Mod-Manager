@@ -203,12 +203,27 @@ class UnifiedExplorerTests(unittest.TestCase):
         preview, explorer = editor._logical_split_sizes()
         self.assertGreater(explorer, preview)
 
+    def test_typing_search_coalesces_rebuilds(self):
+        editor = self.editor
+        with patch.object(editor, 'populate') as populate:
+            editor.search.setText('c')
+            editor.search.setText('ch')
+            editor.search.setText('character')
+            self.assertTrue(editor._search_timer.isActive())
+            populate.assert_not_called()
+            editor._search_timer.stop()
+            editor._search_timer.timeout.emit()
+            populate.assert_called_once_with()
+
     def test_search_explorer_and_pak_selection_are_in_explorer(self):
         editor = self.editor
         self.assertIs(editor.search.parentWidget(), editor.explorer)
         editor.search.setText("eye")
+        self.assertTrue(editor._search_timer.isActive())
+        editor.populate()  # Settle the debounced query deterministically.
         self.assertEqual(editor.explorer_count.text(), "1 files")
         editor.search.clear()
+        editor.populate()
         self.assertEqual(editor.explorer_count.text(), "3 files")
         editor.toggle_file_explorer(False)
         self.assertFalse(editor._explorer_visible)
