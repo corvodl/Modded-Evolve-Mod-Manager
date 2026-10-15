@@ -201,7 +201,7 @@ class SystemHealthPanel(QWidget):
                                     QMessageBox.No) == QMessageBox.Yes
 
     def _firewall(self, enabled):
-        game, *_ = self._args()
+        game, _data, _projects, _stage, swap_root = self._args()
         action = "enforce" if enabled else "remove"
         if not self._confirm("Offline firewall rule",
                              f"Do you want to {action} the manager-owned outbound block for Evolve.exe?\n\n"
