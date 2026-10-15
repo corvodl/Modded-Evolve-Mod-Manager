@@ -241,7 +241,9 @@ def export_character_asset_folder(workspace, character_folder, destination,
             payload, info = full_model
             (staging / 'Full_Character.glb').write_bytes(payload)
             from blender_texture_folder import write_texture_folder
-            write_texture_folder(payload, staging / 'Full_Character.glb')
+            write_texture_folder(payload, staging / 'Full_Character.glb',
+                                 texture_root=staging / 'textures',
+                                 model_namespace='Full_Character')
             if progress:
                 progress('Writing full character model', count, count)
         assembly_rows = []
@@ -256,11 +258,46 @@ def export_character_asset_folder(workspace, character_folder, destination,
             with out.open('xb') as target_file:
                 target_file.write(payload)
             from blender_texture_folder import write_texture_folder
-            write_texture_folder(payload, out)
+            write_texture_folder(
+                payload, out, texture_root=staging / 'textures',
+                model_namespace='__'.join(PurePosixPath(location).with_suffix('').parts))
             assembly_rows.append({'glb': location, **report})
             if progress:
                 progress('Writing CDF Blender assemblies',
                          len(records) + int(full_model is not None) + position, count)
+        # Collect only the selected skeleton's verified native CAF/DBA
+        # references. Never claim raw database files are decoded Blender clips.
+        from character_animation_export import export_character_animation_folder
+        animation_report = None
+        representative = full_model
+        if representative is None and assemblies:
+            representative = next(iter(assemblies.values()))
+        if representative is not None:
+            base_blob, base_info = representative
+            chosen_cdf = base_info.get('cdf') if isinstance(base_info, dict) else None
+            source_character = None
+            if chosen_cdf and index:
+                try:
+                    from character_assembly import assemble_character
+                    source_character = assemble_character(
+                        home, chosen_cdf, index)
+                except (ValueError, OSError):
+                    pass  # Preserve source attachments and write diagnostics.
+            animation_report = export_character_animation_folder(
+                staging, base_blob, chosen_cdf or virtual,
+                index or {}, home, character=source_character,
+                model_name=short_name, cancelled=cancelled, progress=progress,
+                references=() if not index or not chosen_cdf else None)
+        else:
+            animation_folder = staging / 'animations'
+            animation_folder.mkdir(exist_ok=True)
+            (animation_folder / 'animation_manifest.json').write_text(
+                json.dumps({
+                    'format': 'evolve-character-animation-export-v1',
+                    'converted_clips': [], 'raw_sources': [],
+                    'note': 'No verified CDF rig available. Original animation '
+                            'source assets in this directory remain unconverted.'
+                }, indent=2), encoding='utf-8')
         # Provenance preserves full virtual game paths without adding redundant
         # directories to the user-visible output.
         (staging / 'asset_sources.json').write_text(
@@ -269,7 +306,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
                         'unresolved_companions': list(conflicts),
                         'full_model': info,
                         'cdf_assemblies': assembly_rows,
-                        'cdf_assembly_errors': list(assembly_errors)}, indent=2, default=str),
+                        'cdf_assembly_errors': list(assembly_errors),
+                        'animations': animation_report}, indent=2, default=str),
             encoding='utf-8')
         os.replace(staging, target)
         return {
@@ -277,6 +315,7 @@ def export_character_asset_folder(workspace, character_folder, destination,
             'unresolved': tuple(conflicts), 'full_model': info,
             'cdf_assemblies': tuple(assembly_rows),
             'cdf_assembly_errors': tuple(assembly_errors),
+            'animations': animation_report,
         }
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
