@@ -39,13 +39,14 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
     checkpoint()
+    downstream_cancel = {'cancel': cancel} if cancel is not None else {}
     character = None
     assembly_error = ''
     try:
         character = assemble_character(
             workspace, relative, index, texture_folder=texture_folder,
             projects_root=projects_root, stage_root=stage_root,
-            equipment=equipment, cancel=cancel)
+            equipment=equipment, **downstream_cancel)
     except (ValueError, OSError) as exc:
         assembly_error = str(exc)
     checkpoint()
@@ -86,7 +87,7 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                 materials = load_preview_materials(
                     workspace, source_material_model, texture_folder,
                     projects_root=projects_root, stage_root=stage_root,
-                    index=index, cancel=cancel)
+                    index=index, **downstream_cancel)
         except (ValueError, OSError) as exc:
             issue = str(exc)
     checkpoint()
@@ -94,7 +95,7 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
     with span('model', 'animation_discovery'):
         references, idle, config = discover_animations(
             skeleton, index, preferred_workspace=workspace,
-            loose_index=animation_index, cancel=cancel)
+            loose_index=animation_index, **downstream_cancel)
     checkpoint()
     checkpoint()
     return {
