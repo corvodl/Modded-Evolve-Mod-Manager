@@ -22,7 +22,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Download and install
 
-1. Download **EvolveModManager-Windows.zip** from the [Main Windows release](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Main) and extract the **entire** `EvolveModManager` folder to a writable location.
+1. Download the **Windows installer** or **portable ZIP** from the [Main Windows release](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Main). Release filenames include the version and patch revision. If using the portable ZIP, extract the **entire** `EvolveModManager` folder to a writable location.
 2. Run `EvolveModManager.exe`. The **Instructions** tab is shown first with a link to the required Modded Evolve website. No installation folder picker opens until you click Set Up Manager.
 3. After the normal client has installed Evolve Stage 2, close the game and client. Click **Set Up Manager**, select the client-installed **EvolveGame** folder, and select the normal Modded Evolve client executable.
 4. The manager builds local signing resources, an injector and staged custom-signed PAKs from **your installed game files**. It does not alter the original installed PAKs during setup. Allow substantial free disk space for staging; the amount depends on the game files and original-snapshot option.
