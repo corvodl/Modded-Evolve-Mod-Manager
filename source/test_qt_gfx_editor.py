@@ -281,6 +281,18 @@ class GfxQtEditorTests(unittest.TestCase):
         self.assertFalse(dialog.snapshot.changed)
         self.assertEqual(self.asset.read_bytes(), self.original)
 
+    def test_recognized_dialog_hides_by_default_preview_only(self):
+        from test_gfx_root_layer_preview import synthetic_dialog_main_menu
+        widget = self.win.gfx_view
+        movie = synthetic_dialog_main_menu()
+        widget.open_movie(movie, "Libs/UI/main_menu.gfx")
+        self.assertEqual(widget.root_mode.currentData(), "hide")
+        self.assertEqual(widget.root_layer.currentData(), 74)
+        self.assertIn("Dialog-style overlay", widget.root_hint.text())
+        widget.root_mode.setCurrentIndex(0)
+        self.assertEqual(widget.root_mode.currentData(), "all")
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
     def test_preview_root_layer_controls_preserve_original(self):
         widget = self.win.gfx_view
         widget.open_movie(self.original, self.relative)
