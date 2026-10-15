@@ -608,8 +608,10 @@ class QtManager(QMainWindow):
         QTimer.singleShot(0, self.home_dashboard.refresh_status)
         QTimer.singleShot(400, lambda: report_startup_ready(APP_HOME))
         # Optional diagnostic heartbeat: zero recurring work by default.
-        from performance_trace import start_qt_heartbeat, record
+        from performance_trace import (
+            start_qt_heartbeat, install_qt_startup_events, record)
         self._perf_heartbeat = start_qt_heartbeat(self)
+        self._perf_startup_observer = install_qt_startup_events(self)
         record('startup', 'home_constructed')
         # Both release channels are verified; beta updates always need approval.
         if (self.build_channel() in ('main','beta') and
