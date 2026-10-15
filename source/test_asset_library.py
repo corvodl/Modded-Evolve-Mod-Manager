@@ -2,6 +2,7 @@
 from __future__ import annotations
 import tempfile
 from pathlib import Path
+from hashlib import sha256
 from unittest import TestCase
 from unittest.mock import patch
 import json
@@ -32,11 +33,23 @@ class ExtractedAssetLibraryTests(TestCase):
             "original_size": len(value), "compressed_size": len(value)}
             for key, value in self.data.items()}}
 
+    def _stream_fixture(self, source, info, entry, destination, **_kwargs):
+        """Stub RSA-verified fixture bytes while checking atomic output usage.
+
+        Real CTR, DEFLATE, CRC and counter behavior is regression-tested in
+        test_pak_streaming; this suite verifies library publication/rollback.
+        """
+        data = self.data.get(entry, b'abc')
+        with Path(destination).open('xb') as handle:
+            handle.write(data)
+        return {'bytes': len(data), 'sha256': sha256(data).hexdigest(),
+                'head': data[:8]}
+
     def _import(self):
         with patch("evolve_pak_rekey.extract_plain_cdr",
                    return_value=(self.info, b"", b"", self.source.name)) as verify, \
-             patch("evolve_gameplay_editor.decrypt_entry",
-                   side_effect=lambda source, info, entry: self.data[entry]) as decrypt:
+             patch("pak_streaming.stream_signed_entry",
+                   side_effect=self._stream_fixture) as decrypt:
             result = lib.import_pak(self.source, root=self.library,
                                     extra_keys=[self.key])
         return result, verify, decrypt
@@ -54,7 +67,7 @@ class ExtractedAssetLibraryTests(TestCase):
         self.assertEqual(index[key][0]["file"].read_bytes(), self.data[key])
         self.assertTrue(index[key][0]["file"].is_relative_to(self.library))
         with patch("evolve_pak_rekey.extract_plain_cdr") as verify_again, \
-             patch("evolve_gameplay_editor.decrypt_entry") as decrypt_again:
+             patch("pak_streaming.stream_signed_entry") as decrypt_again:
             repeat = lib.import_pak(self.source, root=self.library,
                                     extra_keys=[self.key])
         self.assertEqual(repeat["status"], "already-imported")
@@ -82,8 +95,8 @@ class ExtractedAssetLibraryTests(TestCase):
             "compressed_size": 3}
         with patch("evolve_pak_rekey.extract_plain_cdr",
                    return_value=(self.info, b"", b"", self.source.name)), \
-             patch("evolve_gameplay_editor.decrypt_entry",
-                   side_effect=lambda *args: b"abc"):
+             patch("pak_streaming.stream_signed_entry",
+                   side_effect=self._stream_fixture):
             with self.assertRaises(ValueError):
                 lib.import_pak(self.source, root=self.library,
                                extra_keys=[self.key])
@@ -103,8 +116,8 @@ class ExtractedAssetLibraryTests(TestCase):
         special.write_bytes(b"fictional level archive")
         with patch("evolve_pak_rekey.extract_plain_cdr",
                    return_value=(self.info, b"", b"", special.name)), \
-             patch("evolve_gameplay_editor.decrypt_entry",
-                   side_effect=lambda source, info, entry: self.data[entry]):
+             patch("pak_streaming.stream_signed_entry",
+                   side_effect=self._stream_fixture):
             result = lib.import_pak(special, root=self.library,
                                     extra_keys=[self.key])
         self.assertEqual(result["status"], "imported")
@@ -117,8 +130,8 @@ class ExtractedAssetLibraryTests(TestCase):
         other.write_bytes(b"synthetic custom PAK")
         with patch("evolve_pak_rekey.extract_plain_cdr",
                    return_value=(self.info, b"", b"", other.name)), \
-             patch("evolve_gameplay_editor.decrypt_entry",
-                   side_effect=lambda source, info, entry: self.data[entry]):
+             patch("pak_streaming.stream_signed_entry",
+                   side_effect=self._stream_fixture):
             lib.import_pak(other, root=self.library, extra_keys=[self.key])
         status = lib.required_archive_status(self.library)
         self.assertEqual((status["shared"], status["animations"]), (0, 0))
@@ -150,8 +163,8 @@ class ExtractedAssetLibraryTests(TestCase):
         imported.write_bytes(self.source.read_bytes())
         with patch("evolve_pak_rekey.extract_plain_cdr",
                    return_value=(self.info, b"", b"", imported.name)), \
-             patch("evolve_gameplay_editor.decrypt_entry",
-                   side_effect=lambda source, info, entry: self.data[entry]):
+             patch("pak_streaming.stream_signed_entry",
+                   side_effect=self._stream_fixture):
             lib.import_pak(imported, root=self.library, extra_keys=[self.key])
         rel = "Game/" + imported.name
         self.assertEqual(lib.covered_stage_archives(

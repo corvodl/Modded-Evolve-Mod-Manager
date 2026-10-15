@@ -55,7 +55,7 @@ class ModernQtNavigationTests(unittest.TestCase):
 
     def test_sidebar_icons_have_unclipped_bounds_at_narrow_width(self):
         # Exercise the actual sidebar buttons, not just isolated SVG assets.
-        self.win.menu_button.click()
+        self.win.toggle_menu(True)
         self.win.menu_animation.setCurrentTime(205)
         self.app.processEvents()
         for label in SECTIONS[:-1]:
@@ -82,7 +82,7 @@ class ModernQtNavigationTests(unittest.TestCase):
         # offscreen Qt paint-device error on Windows. Capture the real button
         # instead, and test the bundled icon's 2x raster independently.
         from PySide6.QtGui import QImage
-        self.win.menu_button.click()
+        self.win.toggle_menu(True)
         self.win.menu_animation.setCurrentTime(205)
         self.app.processEvents()
         button = self.win.nav_buttons[0]

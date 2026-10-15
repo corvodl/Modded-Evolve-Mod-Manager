@@ -30,6 +30,18 @@ LOCAL_SIG = b"PK\x03\x04"
 
 class Twofish:
     def __init__(self, key):
+        self.bulk = None
+        from native_twofish_bulk import GcryptBulkTwofish
+        try:
+            self.bulk = GcryptBulkTwofish(key)
+        except OSError:
+            # No application-bundled native library: retain reference path.
+            pass
+        if self.bulk is not None:
+            self.impl = None
+            self.batch = True
+            self.lib = None
+            return
         try:
             from twofish import Twofish as PythonTwofish
             self.impl = PythonTwofish(key)
@@ -60,6 +72,8 @@ class Twofish:
             self.batch = True
 
     def encrypt_blocks(self, blocks):
+        if self.bulk is not None:
+            return self.bulk.encrypt_blocks(blocks)
         if self.impl:
             return b''.join(self.impl.encrypt(blocks[i:i+16]) for i in range(0, len(blocks), 16))
         out = ctypes.create_string_buffer(len(blocks))
@@ -69,6 +83,9 @@ class Twofish:
         return out.raw
 
     def close(self):
+        if self.bulk is not None:
+            self.bulk.close()
+            self.bulk = None
         if self.lib:
             self.lib.gcry_cipher_close(self.handle)
             self.lib = None

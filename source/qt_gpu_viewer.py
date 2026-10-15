@@ -5,6 +5,7 @@ It never accesses installed PAKs or writes extracted workspace files.
 """
 from __future__ import annotations
 import math
+import time
 import sys
 import json
 from pathlib import Path
@@ -159,6 +160,16 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.textures = []
         self.normal_textures = []
         self.specular_textures = []
+        self._pending_texture_uploads = []
+        self._gpu_upload_total_ms = 0.0
+        self._frame_started_at = time.perf_counter()
+        self._geometry_frame_seen = False
+        self._first_texture_frame_seen = False
+        self._full_texture_frame_seen = False
+        self._drawn_with_textures = False
+        self._frame_drawn_with_full_quality = False
+        self._textures_final_requested = materials is not None
+        self.frameSwapped.connect(self._frame_presented)
         self.translucent_slots = set()
         self._batch_sort_cache = None
         self.enhanced_materials = True
@@ -182,7 +193,31 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.projection_mode = 'Orthographic'
         self.specular_intensity = 0.35
 
+    def _reset_frame_timeline(self):
+        self._frame_started_at = time.perf_counter()
+        self._geometry_frame_seen = False
+        self._first_texture_frame_seen = False
+        self._full_texture_frame_seen = False
+        self._drawn_with_textures = False
+        self._frame_drawn_with_full_quality = False
+
+    def _frame_presented(self):
+        """Visible-frame milestones; not a claim of completed GPU timing."""
+        from performance_trace import record
+        elapsed = (time.perf_counter() - self._frame_started_at) * 1000
+        if not self._geometry_frame_seen:
+            self._geometry_frame_seen = True
+            record('model', 'first_geometry_frame', elapsed_ms=elapsed)
+        if self._drawn_with_textures and not self._first_texture_frame_seen:
+            self._first_texture_frame_seen = True
+            record('model', 'first_texture_frame', elapsed_ms=elapsed)
+        if (self._frame_drawn_with_full_quality and
+                not self._full_texture_frame_seen):
+            self._full_texture_frame_seen = True
+            record('model', 'final_quality_frame', elapsed_ms=elapsed)
+
     def set_mesh(self, mesh, materials=None, prepared_geometry=None):
+        self._reset_frame_timeline()
         geometry = (prepared_geometry if prepared_geometry is not None
                     else prepare_geometry(mesh, shading=self.shading))
         # Replacing an existing model must also upload the NEW diffuse maps.
@@ -198,9 +233,9 @@ class QtGLModelCanvas(QOpenGLWidget):
             self.makeCurrent()
             try:
                 self._release_textures()
-                self._upload_textures()
             finally:
                 self.doneCurrent()
+        self._queue_texture_uploads()
         self.update()
 
     def set_enhanced_materials(self, enabled):
@@ -278,13 +313,16 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.update()
 
     def set_materials(self, materials):
-        self.makeCurrent()
-        try:
-            self._release_textures()
-            self.materials = materials
-            self._upload_textures()
-        finally:
-            self.doneCurrent()
+        self._full_texture_frame_seen = False
+        self._frame_drawn_with_full_quality = False
+        if self.isValid():
+            self.makeCurrent()
+            try:
+                self._release_textures()
+            finally:
+                self.doneCurrent()
+        self.materials = materials
+        self._queue_texture_uploads()
         self.update()
 
     def set_quality(self, quality):
@@ -307,90 +345,125 @@ class QtGLModelCanvas(QOpenGLWidget):
             setattr(self,name,[])
         self.translucent_slots = set()
         self._batch_sort_cache = None
+        self._pending_texture_uploads = []
 
-    def _upload_textures(self):
+    def _queue_texture_uploads(self):
+        """Build no-GL descriptors; the first render can show mesh geometry."""
+        self._pending_texture_uploads = []
+        self.translucent_slots = set()
+        self._batch_sort_cache = None
+        self._gpu_upload_total_ms = 0.0
+        self.gpu_upload_ms = None
+        self._textures_final_requested = self.materials is not None
+        self._frame_drawn_with_full_quality = False
+        groups = (
+            ('textures', getattr(self.materials, 'textures', ()) if self.materials else ()),
+            ('normal_textures', getattr(self.materials, 'normal_maps', ()) if self.materials else ()),
+            ('specular_textures', getattr(self.materials, 'specular_maps', ()) if self.materials else ()),
+        )
+        for target, images in groups:
+            setattr(self, target, [0] * len(images))
+            for index, image in enumerate(images):
+                if image is not None:
+                    self._pending_texture_uploads.append((target, index, image))
+
+    def _upload_textures(self, *, max_uploads=1):
+        """Submit at most one verified full-resolution GL image per frame.
+
+        This is a per-frame count budget, not a guarantee that a single driver
+        upload meets a wall-clock deadline. All GL calls run on the widget's
+        context thread; final diffuse/normal/specular quality is unchanged.
+        """
         import time
-        started=time.perf_counter()
         from OpenGL.GL import (
             glGenTextures, glBindTexture, glTexImage2D, glTexParameteri,
-            glPixelStorei, GL_TEXTURE_2D, GL_RGB, GL_UNSIGNED_BYTE,
+            glPixelStorei, GL_TEXTURE_2D, GL_RGB, GL_RGBA, GL_UNSIGNED_BYTE,
             GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR,
             GL_LINEAR_MIPMAP_LINEAR, GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T,
             GL_REPEAT, GL_UNPACK_ALIGNMENT, glGenerateMipmap,
         )
-        if not self.materials:
-            return
-        from OpenGL.GL import GL_RGBA
+        if not self._pending_texture_uploads:
+            return 0
+        started = time.perf_counter()
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-        sources = (('textures', self.materials.textures),
-                   ('normal_textures',getattr(self.materials,'normal_maps',())),
-                   ('specular_textures',getattr(self.materials,'specular_maps',())))
-        for target,images in sources:
-            uploads=[]
-            for index,im in enumerate(images):
-                if im is None:
-                    uploads.append(0)
-                    continue
-                rgba = 'A' in im.getbands()
-                # A diffuse texture's alpha may encode a mask unrelated to
-                # transparency. Trust the material flag, not raw alpha bytes.
-                if (target == 'textures' and rgba and self.materials and
-                        index < len(getattr(self.materials, 'alpha_modes', ())) and
-                        self.materials.alpha_modes[index] and
-                        im.getchannel('A').getextrema()[0] < 255):
-                    self.translucent_slots.add(index)
-                mode = 'RGBA' if rgba else 'RGB'
-                # Pillow's first DDS row is top-left while OpenGL expects
-                # its first upload row at v=0 (bottom-left). The CPU UV preview
-                # already indexes the top row at v=0; reverse only GPU bytes.
-                from gl_texture_upload import gl_upload_pixels
-                pixels = gl_upload_pixels(im, mode)
-                format_id = GL_RGBA if rgba else GL_RGB
-                texid = int(glGenTextures(1))
-                glBindTexture(GL_TEXTURE_2D,texid)
-                glTexImage2D(GL_TEXTURE_2D,0,format_id,im.width,im.height,0,
-                             format_id,GL_UNSIGNED_BYTE,pixels)
-                # Mipmaps and optional anisotropic filtering preserve fine
-                # detail on the oblique surfaces common in character previews.
-                # Never upscale decoded DDS images: the GPU receives the source
-                # resolution selected by the verified material resolver.
-                try:
-                    glGenerateMipmap(GL_TEXTURE_2D)
-                except Exception:
-                    # Some older OpenGL contexts lack a mipmap entry point.
-                    # Keep the model visible at its *original* image size.
-                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR)
-                else:
-                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,
-                                    GL_LINEAR_MIPMAP_LINEAR)
-                glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR)
-                try:
-                    from OpenGL.GL import glGetFloatv
-                    from OpenGL.GL.EXT.texture_filter_anisotropic import (
-                        GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                        GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)
-                    maximum=float(glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT))
-                    if maximum >= 2:
-                        from OpenGL.GL import glTexParameterf
-                        glTexParameterf(GL_TEXTURE_2D,
-                                        GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                                        min(maximum,8.))
-                except (ImportError,ValueError,RuntimeError):
-                    # Hardware lacking this extension still uses trilinear mipmaps.
-                    pass
-                for param in (GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T):
-                    glTexParameteri(GL_TEXTURE_2D,param,GL_REPEAT)
-                uploads.append(texid)
-            setattr(self,target,uploads)
-        glBindTexture(GL_TEXTURE_2D,0)
-        self.gpu_upload_ms=round((time.perf_counter()-started)*1000,2)
+        uploaded = 0
+        while self._pending_texture_uploads and uploaded < max_uploads:
+            target, index, im = self._pending_texture_uploads.pop(0)
+            rgba = 'A' in im.getbands()
+            if (target == 'textures' and rgba and self.materials and
+                    index < len(getattr(self.materials, 'alpha_modes', ())) and
+                    self.materials.alpha_modes[index] and
+                    im.getchannel('A').getextrema()[0] < 255):
+                self.translucent_slots.add(index)
+                self._batch_sort_cache = None
+            mode = 'RGBA' if rgba else 'RGB'
+            # Preserve CryEngine DDS orientation and original source mip size.
+            from gl_texture_upload import gl_upload_pixels
+            pixels = gl_upload_pixels(im, mode)
+            fmt = GL_RGBA if rgba else GL_RGB
+            texid = int(glGenTextures(1))
+            glBindTexture(GL_TEXTURE_2D, texid)
+            glTexImage2D(GL_TEXTURE_2D, 0, fmt, im.width, im.height, 0,
+                         fmt, GL_UNSIGNED_BYTE, pixels)
+            try:
+                glGenerateMipmap(GL_TEXTURE_2D)
+            except Exception:
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            else:
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                GL_LINEAR_MIPMAP_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            try:
+                from OpenGL.GL import glGetFloatv, glTexParameterf
+                from OpenGL.GL.EXT.texture_filter_anisotropic import (
+                    GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                    GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)
+                maximum = float(glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT))
+                if maximum >= 2:
+                    glTexParameterf(GL_TEXTURE_2D,
+                                    GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                                    min(maximum, 8.))
+            except (ImportError, ValueError, RuntimeError):
+                pass
+            for parameter in (GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T):
+                glTexParameteri(GL_TEXTURE_2D, parameter, GL_REPEAT)
+            getattr(self, target)[index] = texid
+            uploaded += 1
+        glBindTexture(GL_TEXTURE_2D, 0)
+        elapsed = (time.perf_counter() - started) * 1000
+        self._gpu_upload_total_ms += elapsed
+        self.gpu_upload_ms = round(self._gpu_upload_total_ms, 2)
+        from performance_trace import record
+        record('model', 'gl_texture_submitted', submitted=uploaded,
+               remaining=len(self._pending_texture_uploads),
+               elapsed_ms=elapsed)
+        # Upload takes place after drawing the current frame; even the final
+        # upload needs one *more* paint before the user can see the texture.
+        if uploaded:
+            self.update()
+        if not self._pending_texture_uploads:
+            record('model', 'full_quality_textures_ready',
+                   elapsed_ms=self._gpu_upload_total_ms)
+        return uploaded
 
     def initializeGL(self):
         from OpenGL.GL import (
             glClearColor, glEnable, glShadeModel, glLightfv, glLightModelfv,
+            glGetString, GL_VENDOR, GL_RENDERER, GL_VERSION,
             GL_DEPTH_TEST, GL_NORMALIZE, GL_LIGHT0, GL_LIGHTING, GL_SMOOTH,
             GL_POSITION, GL_AMBIENT, GL_DIFFUSE, GL_LIGHT_MODEL_AMBIENT,
         )
+        from performance_trace import record
+        def safe_device(value):
+            return (value.decode('ascii', 'replace') if isinstance(value, bytes)
+                    else str(value or 'unknown'))
+        try:
+            record('gpu', 'context_initialized',
+                   gpu_vendor=safe_device(glGetString(GL_VENDOR)),
+                   gpu_renderer=safe_device(glGetString(GL_RENDERER)),
+                   gpu_version=safe_device(glGetString(GL_VERSION)))
+        except (RuntimeError, ValueError, TypeError):
+            pass  # Optional diagnostic cannot block a supported GL context.
         glClearColor(0.092, 0.09, 0.115, 1.0)
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_NORMALIZE)
@@ -401,7 +474,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         glLightfv(GL_LIGHT0,GL_DIFFUSE,[0.83,0.85,0.91,1.0])
         glLightfv(GL_LIGHT0,GL_AMBIENT,[0.13,0.13,0.16,1.0])
         glLightModelfv(GL_LIGHT_MODEL_AMBIENT,[0.08,0.08,0.09,1.0])
-        self._upload_textures()
+        # Stage textures after the first geometry frame, not inside GL setup.
+        self._queue_texture_uploads()
         try:
             from renderer_3 import Renderer3
             self._renderer3 = Renderer3()
@@ -465,6 +539,11 @@ class QtGLModelCanvas(QOpenGLWidget):
             glBlendFunc, glDepthMask, GL_LIGHT0, GL_DIFFUSE, GL_LIGHTING,
             GL_TEXTURE0, GL_BLEND, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glClearColor(*background)
+        # Capture state *before* uploading textures at the end of paintGL.
+        # frameSwapped reports what was really drawn, not new driver handles.
+        self._drawn_with_textures = any(self.textures)
+        self._frame_drawn_with_full_quality = (
+            self._textures_final_requested and not self._pending_texture_uploads)
         strength=self.light_strength
         glLightfv(GL_LIGHT0,GL_DIFFUSE,
                   [min(1.0,0.83*strength),min(1.0,0.85*strength),
@@ -613,6 +692,9 @@ class QtGLModelCanvas(QOpenGLWidget):
             glBindTexture(GL_TEXTURE_2D,0)
             glDisable(GL_TEXTURE_2D)
             glPolygonMode(GL_FRONT_AND_BACK,GL_FILL)
+        # Geometry has been submitted; upload one verified texture for the
+        # following frame, leaving the GUI event loop responsive.
+        self._upload_textures(max_uploads=1)
 
     def mousePressEvent(self,event):
         self._last = event.position()

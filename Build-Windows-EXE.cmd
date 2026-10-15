@@ -8,6 +8,11 @@ echo Building the portable Evolve Mod Manager...
 echo Build computer needs Python 3.11 x64. The finished app includes Python.
 call source\Setup-Environment.cmd
 if errorlevel 1 goto failed
+rem Production GitHub builds include approved native Twofish with LGPL notices.
+if /i "%EVOLVE_REQUIRE_NATIVE_TWOFISH%"=="1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "source\\Prepare-Native-Twofish.ps1" -Require
+  if errorlevel 1 goto failed
+)
 rem Pin and bundle the independent GPLv2 converter and its complete source.
 powershell -NoProfile -ExecutionPolicy Bypass -File "source\Prepare-Cryengine-Converter.ps1"
 if errorlevel 1 goto failed
@@ -31,6 +36,14 @@ if errorlevel 1 goto failed_source
 "%PACKAGE_ROOT%\.build\venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --distpath "%PACKAGE_ROOT%\.build\app-dist" --workpath "%PACKAGE_ROOT%\.build\pyinstaller" EvolveModManager.spec
 if errorlevel 1 goto failed_source
 popd
+rem Defensive license staging: PyInstaller can omit non-Python data during
+rem analysis/collect even though native DLLs are available at runtime.
+rem Verify and copy the exact approved MSYS2 redistribution texts into the
+rem packaged _internal root BEFORE the installed worker's mandatory smoke test.
+if /i "%EVOLVE_REQUIRE_NATIVE_TWOFISH%"=="1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "source\\Stage-Native-Twofish-Licenses.ps1"
+  if errorlevel 1 goto failed
+)
 rem Older builds had an editable UI sidecar. Do not accidentally release it.
 if exist ".build\app-dist\EvolveModManager\ui_text.json" del /q ".build\app-dist\EvolveModManager\ui_text.json"
 if exist ".build\app-dist\EvolveModManager\ui_text.json" goto failed

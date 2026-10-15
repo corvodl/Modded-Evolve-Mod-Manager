@@ -33,6 +33,15 @@ jobs:
         with:
           python-version: "3.11"
           architecture: "x64"
+      - name: Install LGPL native bulk Twofish via signed MSYS2 packages
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-libgcrypt
+            mingw-w64-x86_64-libgpg-error
       - name: Resolve stable milestone or patch revision
         shell: pwsh
         env:
@@ -63,6 +72,9 @@ jobs:
           Write-Host "Publishing stable milestone $version, revision $($data.revision) ($($data.release_type))."
       - name: Build and test EXE
         shell: cmd
+        env:
+          EVOLVE_REQUIRE_NATIVE_TWOFISH: '1'
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: call Build-Windows-EXE.cmd
       - name: Verify GUI launches without a dependent console
         shell: pwsh

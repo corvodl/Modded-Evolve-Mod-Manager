@@ -1,0 +1,148 @@
+name: Verify Windows installer, portable ZIP and native Twofish (nonpublishing)
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-windows-distribution-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-install:
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 76
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      EVOLVE_REQUIRE_NATIVE_TWOFISH: '1'
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - name: Install signed MSYS2 native Twofish dependencies
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-libgcrypt
+            mingw-w64-x86_64-libgpg-error
+      - name: Run Windows regression suite, build GUI/worker and compile portable ZIP
+        shell: cmd
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: call Build-Windows-EXE.cmd
+      - name: Run extended native, streaming, GUI and performance regressions
+        shell: pwsh
+        run: |
+          Push-Location source
+          try {
+            & '../.build/venv/Scripts/python.exe' -m unittest -v test_native_twofish_bulk test_pak_streaming test_qt_virtual_tree test_model_dependency_fingerprint test_model_geometry_stage test_model_deep_cancellation test_model_progressive_uploads test_level_early_publication test_level_working_set test_level_residency_performance test_map_frame_milestones test_performance_trace test_background_warmups
+            if ($LASTEXITCODE -ne 0) { throw 'Extended performance regressions failed.' }
+          } finally { Pop-Location }
+      - name: Capture actual Windows compiled Qt UI
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: windows
+        run: |
+          $exe = (Resolve-Path '.build/app-dist/EvolveModManager/EvolveModManager.exe').Path
+          $image = (Join-Path (Get-Location) 'dist/PR76-actual-Windows-window.png')
+          $proc = Start-Process -FilePath $exe -ArgumentList @('--capture-screenshot', $image) -PassThru
+          try {
+            if (-not $proc.WaitForExit(90000)) { $proc.Kill(); throw 'Compiled GUI screenshot timed out' }
+            if ($proc.ExitCode -ne 0 -or !(Test-Path $image)) { throw 'Compiled Windows GUI did not render' }
+          } finally { $proc.Dispose() }
+      - name: Verify portable ZIP, exact build SHA and native crypto licenses
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression
+          $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path 'dist/EvolveModManager-Windows.zip'))
+          try {
+            $names = @($zip.Entries | ForEach-Object { $_.FullName })
+            $required = @(
+              'EvolveModManager/EvolveModManager.exe',
+              'EvolveModManager/EvolveModWorker.exe',
+              'EvolveModManager/BUILD_COMMIT.txt',
+              'EvolveModManager/BUILD_CHANNEL.txt',
+              'EvolveModManager/_internal/libgcrypt-20.dll',
+              'EvolveModManager/_internal/libgpg-error-0.dll',
+              'EvolveModManager/_internal/Licenses/Native-Twofish/NOTICE.txt',
+              'EvolveModManager/_internal/Licenses/Native-Twofish/libgcrypt/COPYING',
+              'EvolveModManager/_internal/Licenses/Native-Twofish/libgcrypt/COPYING.LIB',
+              'EvolveModManager/_internal/Licenses/Native-Twofish/libgpg-error/COPYING',
+              'EvolveModManager/_internal/Licenses/Native-Twofish/libgpg-error/COPYING.LIB'
+            )
+            foreach ($name in $required) {
+              if ($name -notin $names) { throw "ZIP missing $name" }
+            }
+            if ($names | Where-Object { $_ -match '(?i)(^|/)Data/|private_key[.]pem$|[.]pak$' }) {
+              throw 'Private game data included in portable ZIP'
+            }
+            $stream = $zip.GetEntry('EvolveModManager/BUILD_COMMIT.txt').Open()
+            $reader = [IO.StreamReader]::new($stream)
+            try { $recorded = $reader.ReadToEnd().Trim() } finally { $reader.Dispose() }
+            if ($recorded -ne '${{ github.sha }}') { throw 'Packaged SHA differs from tested candidate' }
+            Write-Host "Verified $($names.Count) ZIP entries including native DLLs and licenses."
+          } finally { $zip.Dispose() }
+      - name: Install Inno Setup compiler
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (!(Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install Inno Setup compiler' }
+          }
+      - name: Build real per-user installer
+        shell: pwsh
+        run: |
+          & './installer/Build-Installer.ps1'
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed' }
+          if ((Get-Item 'dist/EvolveModManager-Setup.exe').Length -lt 1048576) {
+            throw 'Windows installer output is unexpectedly small'
+          }
+      - name: Install and smoke-test packaged native worker in clean runner directory
+        shell: pwsh
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP 'EvolveModManager-PR76'
+          $setup = (Resolve-Path 'dist/EvolveModManager-Setup.exe').Path
+          $args = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$target")
+          $proc = Start-Process -FilePath $setup -ArgumentList $args -PassThru
+          try {
+            if (-not $proc.WaitForExit(120000)) { $proc.Kill(); throw 'Installer timeout' }
+            if ($proc.ExitCode -ne 0) { throw "Installer exited $($proc.ExitCode)" }
+          } finally { $proc.Dispose() }
+          foreach ($item in @('EvolveModManager.exe','EvolveModWorker.exe','_internal/libgcrypt-20.dll','_internal/libgpg-error-0.dll','_internal/Licenses/Native-Twofish/NOTICE.txt')) {
+            if (!(Test-Path (Join-Path $target $item))) { throw "Installed app missing $item" }
+          }
+          & (Join-Path $target 'EvolveModWorker.exe') ((Resolve-Path 'source/packaging_smoke.py').Path)
+          if ($LASTEXITCODE -ne 0) { throw 'Installed native worker validation failed' }
+      - name: Record five-sample synthetic spatial and native Twofish baselines
+        shell: pwsh
+        run: |
+          Push-Location source
+          try {
+            & '../.build/venv/Scripts/python.exe' performance_benchmarks.py spatial --repeats 5 | Set-Content '../dist/performance-spatial-synthetic.json'
+            if ($LASTEXITCODE -ne 0) { throw 'Spatial baseline failed' }
+            & '../.build/venv/Scripts/python.exe' performance_benchmarks.py crypto --repeats 5 --bytes 1048576 | Set-Content '../dist/performance-twofish-synthetic.json'
+            if ($LASTEXITCODE -ne 0) { throw 'Twofish baseline failed' }
+          } finally { Pop-Location }
+      - name: Preserve verified build outputs (not a public release)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PR76-Windows-Installer-ZIP-Native-Twofish
+          path: |
+            dist/EvolveModManager-Setup.exe
+            dist/EvolveModManager-Windows.zip
+            dist/PR76-actual-Windows-window.png
+            dist/performance-*-synthetic.json
+          if-no-files-found: warn
+          retention-days: 7

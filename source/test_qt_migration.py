@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QTableWidget, QFrame, QCheckBox, QToolButton, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QCheckBox, QToolButton, QLineEdit, QMessageBox
 
 from launch_integration import SwapStatus
 from qt_manager import QtManager, SECTIONS, qt_style
@@ -54,11 +54,13 @@ class QtMigrationTests(unittest.TestCase):
         from qt_manager import SECTIONS
         self.assertTrue(self.win._startup_inventory_pending)
         self.assertFalse(self.win._library_inventory_initialized)
-        with patch.object(self.win, "refresh_project_list") as projects, \
+        with patch.object(self.win, "_load_initial_modding_inventory") as loading, \
+             patch.object(self.win, "refresh_project_list") as projects, \
              patch.object(self.win, "refresh_archives") as archives:
             self.win.open_page(SECTIONS.index("Modding"))
-            projects.assert_called_once()
-            archives.assert_called_once()
+            loading.assert_called_once()
+            projects.assert_not_called()
+            archives.assert_not_called()
         self.assertFalse(self.win._startup_inventory_pending)
         with patch("asset_library.migrate_readable_archive_folders") as migrate:
             self.win.open_page(SECTIONS.index("Asset Library"))
@@ -111,7 +113,8 @@ class QtMigrationTests(unittest.TestCase):
             item.text() for item in
             self.win.pages['asset_library'].findChildren(QLabel)).casefold())
         self.assertEqual(self.win.stack.currentIndex(), 0)
-        self.assertTrue(self.win.menu_button.text().startswith('☰'))
+        self.assertFalse(hasattr(self.win, 'menu_button'))
+        self.assertEqual(self.win.nav_rail.width(), 66)
         self.assertIn('modded-evolve.com',
             ' '.join(widget.text() for widget in
                      self.win.pages['instructions'].findChildren(QLabel)))
@@ -132,19 +135,21 @@ class QtMigrationTests(unittest.TestCase):
         self.assertFalse(self.win.home_brand_button.icon().isNull())
         self.assertEqual(len(self.win.rail_buttons), len(SECTIONS))
         self.assertIsNotNone(self.win.pages['home'])
-        for section in SECTIONS[1:]:
+        for section in SECTIONS[1:-1]:
             self.assertIn(section, self.win.home_dashboard.tiles)
-            self.assertFalse(self.win.home_dashboard.tiles[section].isEnabled() is False)
+            self.assertTrue(self.win.home_dashboard.tiles[section].isEnabled())
+            self.assertIn(section, self.win.home_dashboard.tiles[section]
+                          .findChildren(QLabel)[1].text())
         self.win.open_page(SECTIONS.index('Modding'))
         self.win.home_brand_button.click()
         self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index('Home'))
         self.assertEqual(self.win.page_location.text().strip(), '/  Home')
 
-    def test_developer_tile_cannot_bypass_access_code(self):
-        from PySide6.QtWidgets import QInputDialog
+    def test_developer_is_not_on_home_and_rail_stays_gated(self):
+        self.assertNotIn('Developer', self.win.home_dashboard.tiles)
         with patch('qt_manager.QInputDialog.getText',
                    return_value=('', False)) as prompt:
-            self.win.home_dashboard.tiles['Developer'].click()
+            self.win.rail_buttons[SECTIONS.index('Developer')].click()
             prompt.assert_called_once()
         self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index('Home'))
         self.assertFalse(self.win._developer_allow_writes)
@@ -176,6 +181,9 @@ class QtMigrationTests(unittest.TestCase):
         # QPushButton interprets an unescaped & as a Windows mnemonic.
         self.assertEqual(self.win.nav_buttons[SECTIONS.index('Play & Restore')].text(), 'Play && Restore')
         self.assertEqual(self.win.nav_buttons[SECTIONS.index('Play & Restore')].accessibleName(), 'Play & Restore')
+        help_texts = [b.text() for b in
+                      self.win.pages['play'].findChildren(QPushButton)]
+        self.assertIn('How Play && Restore works', help_texts)
         self.win.nav_buttons[SECTIONS.index('Play & Restore')].click()
         self.application.processEvents()
         self.assertEqual(self.win.stack.currentIndex(), SECTIONS.index('Play & Restore'))
@@ -209,23 +217,29 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIn('Build Mod', build.text())
         self.assertEqual(len(self.win.nav_buttons), len(SECTIONS))
 
-    def test_qpropertyanimation_is_an_overlay_and_does_not_resize(self):
+    def test_icon_hover_only_shows_names_and_sidebar_fills_window_height(self):
+        from PySide6.QtTest import QTest
+        self.assertFalse(hasattr(self.win, 'menu_button'))
+        self.assertIs(
+            self.win.application_shell.itemAt(0).widget(), self.win.nav_rail)
+        self.assertEqual(self.win.nav_rail.y(), 0)
+        self.assertEqual(
+            self.win.nav_rail.height(), self.win.centralWidget().height())
+        self.assertEqual(self.win.nav_rail.width(), 66)
         width = self.win.stack.width()
-        self.assertFalse(self.win._drawer_open)
-        self.win.menu_button.click()
-        self.assertTrue(self.win._drawer_open)
-        self.assertEqual(self.win.menu_animation.duration(),205)
-        self.assertTrue(self.win.drawer.isVisible())
-        self.win.menu_animation.setCurrentTime(205)
-        self.application.processEvents()
-        self.assertEqual(self.win.drawer.x(),0)
-        self.assertEqual(self.win.stack.width(),width)
-        self.win.open_page(1)
-        self.win.menu_animation.setCurrentTime(205)
-        self.application.processEvents()
-        self.assertEqual(self.win.stack.currentIndex(),1)
-        self.assertFalse(self.win._drawer_open)
-        self.assertEqual(self.win.stack.width(),width)
+        for label, button in zip(SECTIONS, self.win.rail_buttons):
+            self.assertEqual(button.toolTip(), label)
+            self.assertEqual(button.accessibleName(), label)
+            QTest.mouseMove(button, button.rect().center())
+            self.application.processEvents()
+            # Moving over any icon must not open the full drawer or
+            # resize the main content; only the native tooltip is enabled.
+            self.assertFalse(self.win._drawer_open)
+            self.assertFalse(self.win.drawer.isVisible())
+            self.assertEqual(self.win.stack.width(), width)
+        self.win.rail_buttons[SECTIONS.index('Instructions')].click()
+        self.assertEqual(
+            self.win.stack.currentIndex(), SECTIONS.index('Instructions'))
 
     def test_info_click_opens_help_without_triggering_adjacent_action(self):
         # The compact Modding page routes help through a menu, rather than
@@ -448,6 +462,37 @@ class QtMigrationTests(unittest.TestCase):
         self.assertIn('manual fallback', explanations)
         self.assertFalse(hasattr(self.win, 'skip_live_backup_checkbox'))
 
+    def test_explorer_position_setting_persists_and_updates_open_editors(self):
+        workspace = self.base / 'explorer-position'
+        (workspace / 'files').mkdir(parents=True)
+        (workspace / '.evolve-pak-workspace.json').write_text(
+            json.dumps({'entries': []}), encoding='utf-8')
+        editor = QtWorkspaceEditor(self.win, workspace)
+        self.addCleanup(editor.close)
+        self.win.editors.append(editor)
+        preference = self.win.file_explorer_side_combo
+        self.assertEqual(preference.objectName(), 'fileExplorerPositionSetting')
+        self.assertEqual(preference.currentText(), 'Right')
+        self.assertIs(editor.editor_split.widget(1), editor.explorer)
+        preference.setCurrentText('Left')
+        self.assertEqual(self.win.settings['file_explorer_side'], 'Left')
+        self.assertIs(editor.editor_split.widget(0), editor.explorer)
+        preference.setCurrentText('Right')
+        self.assertEqual(self.win.settings['file_explorer_side'], 'Right')
+        self.assertIs(editor.editor_split.widget(1), editor.explorer)
+
+    def test_imported_library_columns_grow_for_full_pak_names(self):
+        table = self.win.asset_table
+        long_name = 'characters_creatures_reaver_data.pak'
+        table.setRowCount(1)
+        table.setItem(0, 3, QTableWidgetItem(long_name))
+        table.setColumnWidth(3, 75)
+        self.win._fit_library_column_widths()
+        self.assertEqual(table.horizontalHeader().sectionResizeMode(3),
+                         QHeaderView.Interactive)
+        self.assertGreaterEqual(table.columnWidth(3),
+                                table.sizeHintForColumn(3) + 12)
+
     def test_table_search_description_and_original_names(self):
         stage = self.base/'stage'/'paks'/'Game'
         stage.mkdir(parents=True)
@@ -460,6 +505,9 @@ class QtMigrationTests(unittest.TestCase):
             'Game/characters_monsters_goliath_ts.pak':'Game/characters_monsters_goliath_ts.pak',
         }):
             self.win.refresh_archives()
+        # Archive inventory remains lazy until the legacy inspector is
+        # actually requested; refresh its rows explicitly in this test.
+        self.win.refresh_table()
         self.assertEqual(self.win.table.rowCount(),2)
         self.win.search.setText('Goliath Models')
         self.application.processEvents()
@@ -482,7 +530,7 @@ class QtMigrationTests(unittest.TestCase):
         self.win.projects_path = str(self.base/'Projects')
         editor = QtWorkspaceEditor(self.win,ws)
         self.addCleanup(editor.close)
-        self.assertEqual(editor.tabs.count(),4)
+        self.assertEqual(editor.tabs.count(),5)  # Text, Textures, Models, GFX, Media
         self.assertIsInstance(editor, QMainWindow)
         self.assertIsNotNone(editor.centralWidget())
         self.assertTrue(editor.windowFlags() & Qt.WindowMaximizeButtonHint)

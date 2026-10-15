@@ -120,6 +120,40 @@ def launcher_commands(swap_dir: Path, stage_dir: Path, phase: str):
     return commands
 
 
+
+def unmodded_launch_target(swap_dir: Path, game_root=None):
+    """Validate a *clean* installation and return the configured normal client.
+
+    Never start the swap injector or use staged PAKs for normal play. A clean
+    journal is not sufficient on its own: interrupted swaps may leave original
+    backups even when the journal is missing or stale.
+    """
+    from installed_game_versions import client_executable
+    from online_guard import target_executable
+    from orphaned_swap_recovery import plan_recovery
+
+    status = state_status(Path(swap_dir))
+    if status.phase not in ('missing', 'prepared', 'restored'):
+        raise RuntimeError('Original game files are not confirmed restored. '
+                           'Use Restore Game Files before playing without mods.')
+    root = Path(status.game) if status.game else (
+        Path(game_root) if game_root else None)
+    if root is None:
+        raise RuntimeError('Game location is unknown. Complete setup first.')
+    root = root.resolve()
+    target_executable(root)
+    # Examine real game backups, not just controlled_swap_state.json.
+    if plan_recovery(root):
+        raise RuntimeError('Original game backups still exist. '
+                           'Restore Game Files before normal play.')
+    require_clean_injector(root)
+    client = client_executable(swap_dir)
+    if client is None:
+        raise FileNotFoundError('Normal Modded Evolve client is not configured '
+                                'or its EXE is missing. Run Set Up Manager.')
+    return root, client
+
+
 def restore_command(swap_dir: Path):
     p=Path(swap_dir)/'reusable_restore.py'
     if not p.is_file():

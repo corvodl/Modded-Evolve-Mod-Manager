@@ -16,21 +16,24 @@ import shutil
 import subprocess
 import tempfile
 import time
+from threading import Event
 
 from PIL import Image
-from PySide6.QtCore import Qt, QUrl, QTimer, QSize
+from PySide6.QtCore import Qt, QUrl, QTimer, QSize, QModelIndex, Signal
 from PySide6.QtGui import QPixmap, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QComboBox, QTreeWidget, QTreeWidgetItem, QLineEdit, QPushButton, QPlainTextEdit,
+    QComboBox, QTreeWidget, QTreeWidgetItem, QTreeView, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
     QDockWidget, QTreeWidgetItemIterator, QFrame, QAbstractItemView, QHeaderView, QStyle,
+    QSizePolicy,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
 from dds_png_import import encode_png_as_dds, compression_for_dds
 from model_asset import is_model, inspect_model, export_model, replace_model
 from qt_gfx_preview import GfxPreviewWidget
+from qt_media_preview import MediaPreview, is_media
 from gfx_preview_backend import MAX_SOURCE as MAX_GFX_SOURCE, export_gfx_png
 from model_preview import find_preview_mesh, render_mesh
 from qt_cpu_model_viewer import QtCPUModelCanvas
@@ -49,6 +52,7 @@ from evolve_pak_workspace import normalized_name
 from version_info import app_version, footer_version
 from qt_navigation_icons import navigation_icon, action_icon
 from qt_ui_components import configure_splitter
+from qt_virtual_tree import VirtualTreeModel, TreeNode
 from studio_polish_117 import (prepare_model_cached, clear_model_cache,
     model_cache_stats, export_preflight, project_session_key,
     sanitized_project_session)
@@ -132,7 +136,8 @@ class QtLooseFileEditor(QMainWindow):
 
 
 class QtWorkspaceEditor(QMainWindow):
-    TABS = ('files', 'images', 'models', 'gfx')
+    modelGeometryReady = Signal(int, object)
+    TABS = ('files', 'images', 'models', 'gfx', 'media')
 
     def __init__(self, manager, workspace, archive_map=None, *, library_archive=None):
         super().__init__(manager)
@@ -174,6 +179,10 @@ class QtWorkspaceEditor(QMainWindow):
         self.model_gpu = None
         self.model_panel = None
         self._sidebar_visibility = {'files': True, 'images': True, 'models': False}
+        # Widths are always (preview, explorer), regardless of which side
+        # the explorer occupies. Keep the last visible sizes when hidden.
+        self._file_explorer_side = 'Right'
+        self._last_visible_split_sizes = (940, 310)
         self._gfx_editor_panel = None
         self.model_fallback = None
         self.model_cpu = None
@@ -193,6 +202,8 @@ class QtWorkspaceEditor(QMainWindow):
         self._model_pool = None
         self._model_signals = None
         self._model_generation = 0
+        self._model_cancel = Event()
+        self.modelGeometryReady.connect(self._model_geometry_ready)
         self._model_prepared = False
         self._prepared_geometry = None
         self._prepared_animation = None
@@ -239,12 +250,17 @@ class QtWorkspaceEditor(QMainWindow):
         self.editor_split.setObjectName('unifiedEditorSplitter')
         self.tabs = QTabWidget()
         self.tabs.setObjectName('internalFileTypeViewer')
+        # Hidden GFX/media tabs contribute oversized minimumSizeHint widths.
+        # Let the user expand the explorer under Files First without forcing
+        # a near-full-width viewport merely to fit inactive toolbar rows.
+        self.tabs.setMinimumWidth(320)
+        self.tabs.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.tabs.tabBar().hide()
         self.tabs.setDocumentMode(True)
         self.tabs.setStyleSheet('QTabWidget::pane { border: 0; }')
         self.trees, self.views, self.actions = {}, {}, {}
         self.splitters = {section: self.editor_split for section in self.TABS}
-        for section, label in zip(self.TABS, ('Text', 'Textures', '3D Model', 'Scaleform GFX')):
+        for section, label in zip(self.TABS, ('Text', 'Textures', '3D Model', 'Scaleform GFX', 'Audio / Video')):
             tab = QWidget()
             box = QVBoxLayout(tab)
             box.setContentsMargins(0, 0, 0, 0)
@@ -283,6 +299,9 @@ class QtWorkspaceEditor(QMainWindow):
                 view = QLabel('Choose a DDS texture in File Explorer.')
                 view.setAlignment(Qt.AlignCenter)
                 view.setWordWrap(True)
+            elif section == 'media':
+                self.media_view = MediaPreview(self)
+                view = self.media_view
             elif section == 'gfx':
                 self.gfx_view = GfxPreviewWidget(self)
                 self.gfx_pages = QStackedWidget()
@@ -300,7 +319,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_cpu.setObjectName('cpuModelPreview')
                 view.addWidget(self.model_cpu)
             box.addWidget(view, 1)
-            self.tabs.addTab(tab, navigation_icon({'files':'text','images':'texture','models':'model','gfx':'gfx'}[section]), label)
+            self.tabs.addTab(tab, navigation_icon({'files':'text','images':'texture','models':'model','gfx':'gfx','media':'files'}[section]), label)
             self.views[section] = view
             self.actions[section] = widgets
         self.editor_split.addWidget(self.tabs)
@@ -338,7 +357,13 @@ class QtWorkspaceEditor(QMainWindow):
         self.search.setPlaceholderText('Search files and folders…')
         self.search.addAction(navigation_icon('search', size=18), QLineEdit.LeadingPosition)
         self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(self.populate)
+        # Searching a large extracted library can create thousands of Qt
+        # items. Wait for typing to settle instead of rebuilding every key.
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(200)
+        self._search_timer.timeout.connect(self.populate)
+        self.search.textChanged.connect(lambda _text: self._search_timer.start())
         explorer_box.addWidget(self.search)
         explorer_controls = QHBoxLayout()
         self.favorites_only = QPushButton('Favorites')
@@ -378,15 +403,35 @@ class QtWorkspaceEditor(QMainWindow):
         self.file_tree.customContextMenuRequested.connect(
             lambda point: self.show_context_menu('files', point))
         explorer_box.addWidget(self.file_tree, 1)
+        self.virtual_file_tree = QTreeView()
+        self.virtual_file_tree.setObjectName('virtualAssetExplorerTree')
+        self.virtual_file_tree.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.virtual_file_tree.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.virtual_file_tree.setTextElideMode(Qt.ElideMiddle)
+        self._virtual_model = VirtualTreeModel(self.virtual_file_tree,
+                                   labels=('File / Folder', 'Size'),
+                                   size_provider=self._virtual_file_size)
+        self.virtual_file_tree.setModel(self._virtual_model)
+        self.virtual_file_tree.selectionModel().selectionChanged.connect(
+            self._virtual_selection_changed)
+        self.virtual_file_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.virtual_file_tree.customContextMenuRequested.connect(
+            self._show_virtual_context_menu)
+        self.virtual_file_tree.hide()
+        self._virtual_active = False
+        explorer_box.addWidget(self.virtual_file_tree, 1)
         self.trees = {section: self.file_tree for section in self.TABS}
         self._explorer_visible = True
-        # Explorer lives on the left, like Finder/QtCreator; the main
-        # preview remains the largest and most resizeable work area.
-        self.editor_split.insertWidget(0, self.explorer)
-        self.editor_split.setStretchFactor(0, 2)
-        self.editor_split.setStretchFactor(1, 5)
-        self.editor_split.setSizes([310, 940])
+        # The preview stays on the left and the resizable File Explorer on
+        # the right, restoring the original editor layout.
+        self.editor_split.addWidget(self.explorer)
+        self.editor_split.setStretchFactor(0, 5)
+        self.editor_split.setStretchFactor(1, 2)
+        self.editor_split.setSizes([940, 310])
         main.addWidget(self.editor_split, 1)
+        self.set_file_explorer_side(
+            getattr(manager, 'file_explorer_side',
+                    manager.settings.get('file_explorer_side', 'Right')))
         self.status = QLabel(
             'Asset Library: preview and export only; editing and importing are disabled.'
             if self.read_only_library else
@@ -613,11 +658,56 @@ class QtWorkspaceEditor(QMainWindow):
             self._file_explorer_action.setChecked(showing)
             self._file_explorer_action.blockSignals(False)
 
+    def _logical_split_sizes(self):
+        """Return (preview, explorer) widths independently of panel order."""
+        sizes = self.editor_split.sizes()
+        if self._file_explorer_side == 'Left':
+            return sizes[1], sizes[0]
+        return sizes[0], sizes[1]
+
+    def _set_logical_split_sizes(self, preview, explorer):
+        widths = ((explorer, preview) if self._file_explorer_side == 'Left'
+                  else (preview, explorer))
+        self.editor_split.setSizes(list(widths))
+        if preview > 0 and explorer > 0:
+            self._last_visible_split_sizes = (preview, explorer)
+
+    def set_file_explorer_side(self, side):
+        """Reposition the explorer live without changing its visible width."""
+        if side not in ('Left', 'Right'):
+            side = 'Right'
+        if self._file_explorer_side == side:
+            return
+        preview, explorer = self._logical_split_sizes()
+        if preview <= 0 or explorer <= 0:
+            preview, explorer = self._last_visible_split_sizes
+        self.editor_split.insertWidget(
+            0 if side == 'Left' else 1, self.explorer)
+        self._file_explorer_side = side
+        if side == 'Left':
+            self.editor_split.setStretchFactor(0, 2)
+            self.editor_split.setStretchFactor(1, 5)
+        else:
+            self.editor_split.setStretchFactor(0, 5)
+            self.editor_split.setStretchFactor(1, 2)
+        if self._explorer_visible:
+            self._set_logical_split_sizes(preview, explorer)
+        else:
+            self._last_visible_split_sizes = (preview, explorer)
+
     def toggle_file_explorer(self, visible):
-        self._explorer_visible = bool(visible)
-        self.explorer.setVisible(bool(visible))
+        visible = bool(visible)
+        if self._explorer_visible and not visible:
+            preview, explorer = self._logical_split_sizes()
+            if preview > 0 and explorer > 0:
+                self._last_visible_split_sizes = (preview, explorer)
+        self._explorer_visible = visible
+        self.explorer.setVisible(visible)
         if visible:
-            self.editor_split.setSizes([310, 940])
+            preview, explorer = self._logical_split_sizes()
+            if preview <= 0 or explorer <= 0:
+                preview, explorer = self._last_visible_split_sizes
+            self._set_logical_split_sizes(preview, explorer)
         self._sync_file_explorer_button()
 
     def set_workspace_layout(self, name):
@@ -627,12 +717,16 @@ class QtWorkspaceEditor(QMainWindow):
             raise ValueError('Unknown layout preset.')
         explorer_width, viewport_width = options[name]
         self.toggle_file_explorer(True)
-        self.editor_split.setSizes([explorer_width * 120, viewport_width * 120])
+        self._set_logical_split_sizes(viewport_width * 120,
+                                      explorer_width * 120)
 
     def save_workspace_layout(self):
+        preview, explorer = self._logical_split_sizes()
+        if preview <= 0 or explorer <= 0:
+            preview, explorer = self._last_visible_split_sizes
         self.manager.settings['editor_workspace_layout'] = {
             'tab': self.tabs.currentIndex(),
-            'sizes': {section: split.sizes() for section, split in self.splitters.items()},
+            'sizes': {section: [preview, explorer] for section in self.TABS},
         }
         try:
             self.manager.persist()
@@ -652,8 +746,8 @@ class QtWorkspaceEditor(QMainWindow):
             pair = sizes.get('models') or sizes.get('files')
             if (isinstance(pair, list) and len(pair) == 2 and
                     all(isinstance(n, int) and n > 0 for n in pair)):
-                # Saved widths used the old viewer-left/explorer-right order.
-                self.editor_split.setSizes(list(reversed(pair)))
+                # Saved sizes are always (preview, explorer), not screen order.
+                self._set_logical_split_sizes(*pair)
 
     def _capture_playback_preferences(self):
         if self.current and self.mode=='models' and self.model_panel is not None:
@@ -677,8 +771,11 @@ class QtWorkspaceEditor(QMainWindow):
         if self.model_gpu is not None:
             camera={'rotation':list(self.model_gpu.rotation),
                     'pan':list(self.model_gpu.pan),'zoom':self.model_gpu.zoom}
+        preview, explorer = self._logical_split_sizes()
+        if preview <= 0 or explorer <= 0:
+            preview, explorer = self._last_visible_split_sizes
         data={'tab':self.tabs.currentIndex(),'selected':selected,
-              'sizes':{key:split.sizes() for key,split in self.splitters.items()},
+              'sizes':{key:[preview, explorer] for key in self.TABS},
               'camera':camera}
         sessions=self.manager.settings.get('editor_project_sessions',{})
         if not isinstance(sessions,dict):
@@ -702,7 +799,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         for name,pair in session.get('sizes',{}).items():
             if name in self.splitters:
-                self.splitters[name].setSizes(pair)
+                self._set_logical_split_sizes(*pair)
         self._restored_camera=session.get('camera',{})
         selected = session.get('selected', {})
         tab = session.get('tab', 0)
@@ -1039,6 +1136,8 @@ class QtWorkspaceEditor(QMainWindow):
         return entries
 
     def _category(self, rel):
+        if is_media(rel):
+            return 'media'
         # In the read-only Asset Library, a CDF is a visual character
         # assembly entry. Editable mod projects retain the XML text editor.
         if self.read_only_library and rel.casefold().endswith('.cdf'):
@@ -1051,8 +1150,135 @@ class QtWorkspaceEditor(QMainWindow):
             return 'models'
         return 'files'
 
+    def _virtual_file_size(self, rel):
+        """Stat only displayed file rows, not every large-library candidate."""
+        try:
+            path = self.workspace.joinpath('files', *rel.split('/'))
+            size = path.stat().st_size
+            return ('%.1f MiB' % (size / 1048576) if size > 1048576
+                    else '%.0f KiB' % (size / 1024))
+        except (OSError, ValueError):
+            return 'Missing'
+
+    def _populate_virtual_explorer(self):
+        """Construct metadata nodes, leaving Qt rows unloaded until expanded."""
+        started = time.perf_counter()
+        needle = self.search.text().casefold()
+        names = [rel for rel in sorted(self.records, key=str.casefold)
+                 if needle in rel.casefold() and
+                 (not self.favorites_only.isChecked() or
+                  str(self.workspace) + '|' + rel in self.favorites)]
+        first_stream = {}
+        for rel in names:
+            if is_split_dds(rel):
+                base, suffix = rel.rsplit('.', 1)
+                first_stream[base.casefold()] = min(
+                    first_stream.get(base.casefold(), 99), int(suffix))
+        names = [rel for rel in names if not is_split_dds(rel) or
+                 int(rel.rsplit('.', 1)[1]) ==
+                 first_stream[rel.rsplit('.', 1)[0].casefold()]]
+        from model_families import group_model_families
+        from character_full_models import discover_full_characters
+        families = group_model_families(names)
+        full_characters = discover_full_characters(names)
+        root = TreeNode('')
+        folders = {}
+        files = {}
+        for rel in names:
+            parts = rel.split('/')
+            parent = root
+            for position, piece in enumerate(parts[:-1]):
+                path = '/'.join(parts[:position+1])
+                child = folders.get(path)
+                if child is None:
+                    from character_aliases import pretty_folder
+                    child = TreeNode(pretty_folder(piece, '/'.join(parts[:position])),
+                                     'Folder', tooltip=path)
+                    parent.append(child)
+                    folders[path] = child
+                parent = child
+            data = self.records.get(rel, {})
+            count = data.get('bytes', data.get('size', 0))
+            size = (('%.1f MiB' % (count / 1048576)
+                     if count >= 1048576 else '%d KiB' % (count / 1024))
+                    if isinstance(count, (int, float)) and count > 0 else '')
+            node = TreeNode(parts[-1], self._category(rel), value=rel,
+                            tooltip=rel, size=size)
+            parent.append(node)
+            files[rel] = node
+        for primary, family in families.items():
+            owner = files.get(primary)
+            if owner is None:
+                continue
+            owner.label = family.title
+            owner.size = str(len(family.members)) + ' assets'
+            for member in family.members:
+                if member == primary:
+                    continue
+                child = files.get(member)
+                if child is None or child.parent is None:
+                    continue
+                old = child.parent
+                old.children.remove(child)
+                for ordinal, peer in enumerate(old.children):
+                    peer.ordinal = ordinal
+                owner.append(child)
+        for primary, full in full_characters.items():
+            owner = files.get(primary)
+            parent = owner.parent if owner else None
+            if parent is None:
+                continue
+            option = TreeNode(full.label, 'CDF assembly', value=primary,
+                              tooltip=full.definition, variant='full-character')
+            parent.children.insert(0, option)
+            for ordinal, peer in enumerate(parent.children):
+                peer.ordinal = ordinal
+                peer.parent = parent
+        self._virtual_active = True
+        self.file_tree.hide()
+        self.virtual_file_tree.show()
+        self._virtual_model.reset_root(root)
+        self.explorer_count.setText(str(len(names)) + ' files')
+        self.last_populate_ms = round((time.perf_counter()-started)*1000, 3)
+
+    def _virtual_selection_changed(self, _selected, _deselected):
+        if self._virtual_active:
+            self.load_selection()
+
+    def _show_virtual_context_menu(self, point):
+        index = self.virtual_file_tree.indexAt(point)
+        rel = index.data(Qt.UserRole) if index.isValid() else None
+        if not isinstance(rel, str):
+            return
+        self.virtual_file_tree.setCurrentIndex(index)
+        menu = QMenu(self.virtual_file_tree)
+        menu.addAction('Preview / Open', self.load_selection)
+        menu.addAction('Toggle Favorite ★', self.toggle_favorite)
+        if self.read_only_library:
+            menu.addAction('Export Original File…', self.export_raw)
+            menu.addAction('Open Asset Library Folder', self.explore)
+        else:
+            menu.addAction('Project History & Undo…', self.open_project_history)
+            menu.addAction('Import Over / Replace', self.import_raw)
+            menu.addAction('Restore Original Extraction', self.restore_original)
+            menu.addAction('Export Raw File', self.export_raw)
+            if self._category(rel) == 'gfx':
+                menu.addAction('Edit full Scaleform GFX…', self.edit_gfx)
+                menu.addAction('Export rendered PNG…', self.export_png)
+            menu.addAction('Reveal Extracted File in Explorer', self.explore)
+        menu.addAction('Copy Relative Path',
+                       lambda: QApplication.clipboard().setText(self.selected()))
+        menu.exec(self.virtual_file_tree.mapToGlobal(point))
+
     def populate(self):
         """One searchable PAK tree; entries open the matching viewer on click."""
+        self._search_timer.stop()  # An explicit refresh supersedes pending text.
+        if len(self.records) > 1500:
+            self._populate_virtual_explorer()
+            return
+        self._virtual_active = False
+        self.virtual_file_tree.hide()
+        self.file_tree.show()
         started = time.perf_counter()
         needle = self.search.text().casefold()
         tree = self.file_tree
@@ -1197,6 +1423,12 @@ class QtWorkspaceEditor(QMainWindow):
         self.last_populate_ms = round((time.perf_counter() - started) * 1000, 3)
 
     def selected(self):
+        if self._virtual_active:
+            current = self.virtual_file_tree.currentIndex()
+            virtual = current.data(Qt.UserRole) if current.isValid() else None
+            if isinstance(virtual, str):
+                return virtual
+            raise ValueError('Choose an extracted file, not a directory.')
         items = self.file_tree.selectedItems()
         if not items:
             raise ValueError('Choose an extracted file first.')
@@ -1226,9 +1458,11 @@ class QtWorkspaceEditor(QMainWindow):
                 if not ffdec_is_ready(self.manager) and not getattr(self, '_gfx_requirement_notified', False):
                     self._gfx_requirement_notified = True
                     show_ffdec_requirement(self)
-            item = self.file_tree.currentItem()
+            item = self.file_tree.currentItem() if not self._virtual_active else None
             full_character = bool(
-                item and item.data(0, Qt.UserRole + 2) == 'full-character')
+                (item and item.data(0, Qt.UserRole + 2) == 'full-character') or
+                (self._virtual_active and
+                 self.virtual_file_tree.currentIndex().data(Qt.UserRole + 2) == 'full-character'))
             if chosen.casefold().endswith('.lyr') and not self.read_only_library:
                 self.manager.open_level_editor(self.workspace)
             else:
@@ -1237,6 +1471,7 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(str(exc))
 
     def load(self, rel, *, full_character=False):
+        self.media_view.clear()
         if self._gfx_editor_panel is not None:
             self._close_gfx_editor()
         if rel not in self.records:
@@ -1267,6 +1502,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.dependency_button.setVisible(self.mode == 'models')
         if self.mode != 'models':
             self.dependency_button.setText('Dependencies…')
+        self._model_cancel.set()
+        self._model_cancel = Event()
         self._model_generation += 1
         if self.mode != 'gfx':
             self.gfx_view.cancel_pending()
@@ -1278,6 +1515,12 @@ class QtWorkspaceEditor(QMainWindow):
                 raise FileNotFoundError('This imported library asset is missing or changed.')
         if self.mode == 'models':
             self._load_model_background(rel)
+            return
+        if self.mode == 'media':
+            self.raw = b''
+            self.loaded_text = ''
+            self.media_view.open_file(path)
+            self.status.setText(rel + ' | local media preview | raw export available')
             return
         if self.mode == 'gfx' and path.stat().st_size > MAX_GFX_SOURCE:
             self.gfx_view.cancel_pending()
@@ -1464,29 +1707,46 @@ class QtWorkspaceEditor(QMainWindow):
         stage = self.manager.stage_path
         # Character-specific animation CAFs may live in their own signed PAK,
         # separate from the six shared texture/skeleton packages.
-        try:
-            from shared_pak_cache import start_character_catalog
-            start_character_catalog(stage, rel)
-        except (OSError, ValueError, RuntimeError) as exc:
-            self.status.setText('Character index unavailable: ' + str(exc)[:120])
         tex = self.texture_folder
         ani = self.loose_animation_index
         equipment = self.character_skin_choice
         require_assembly = self.full_character_active
         token = self._model_generation
+        cancel = self._model_cancel
+
+        def geometry_stage(payload):
+            if not cancel.is_set():
+                try:
+                    self.modelGeometryReady.emit(token, payload)
+                except RuntimeError:
+                    pass  # Editor disposed while the background job completed.
 
         def resolve(_unused):
-            # Full-game imported libraries can index hundreds of thousands
-            # of paths; keep that scan off the Qt event/UI thread.
+            if cancel.is_set():
+                raise InterruptedError('Obsolete model preparation cancelled')
+            # Character-specific PAK lookup and large library indexing can
+            # touch thousands of files. Keep them off the Qt event thread.
+            try:
+                from shared_pak_cache import start_character_catalog
+                start_character_catalog(stage, rel)
+            except (OSError, ValueError, RuntimeError):
+                pass  # The asset resolver can still open the selected model.
+            if cancel.is_set():
+                raise InterruptedError('Obsolete model preparation cancelled')
             active_index = index
-            if library_id is not None:
+            # Retain the existing catalog for additional views of this PAK:
+            # rebuilding it changed id(index), defeating model cache hits.
+            if library_id is not None and active_index is None:
                 from asset_library_preview import library_model_index
                 active_index = library_model_index(library_id)
+            if cancel.is_set():
+                raise InterruptedError('Obsolete model preparation cancelled')
             data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
                 projects_root=projects, stage_root=stage,
                 texture_folder=tex, animation_index=ani,
                 equipment=equipment, index=active_index,
-                require_assembly=require_assembly)
+                require_assembly=require_assembly, cancel=cancel.is_set,
+                geometry_ready=geometry_stage)
             return (data, cache_hit, load_ms), None
 
         # Tests and headless software previews retain deterministic synchronous
@@ -1495,7 +1755,7 @@ class QtWorkspaceEditor(QMainWindow):
         if platform in ('offscreen','minimal') or not self.isVisible():
             try:
                 self._model_ready(token, resolve(None), None)
-            except (ValueError, OSError) as exc:
+            except (ValueError, OSError, InterruptedError) as exc:
                 self._model_ready(token, None, str(exc))
             return
         from qt_gpu_viewer import _NativeConversion, _NativeResult
@@ -1507,6 +1767,42 @@ class QtWorkspaceEditor(QMainWindow):
             self._model_signals.completed.connect(self._model_ready)
         self._model_pool.start(
             _NativeConversion(resolve, None, token, self._model_signals))
+
+    def _model_geometry_ready(self, token, payload):
+        """First useful GL frame: verified geometry only, no DDS downgrade."""
+        if (token != self._model_generation or self.mode != 'models' or
+                self._model_prepared or not self.current or
+                os.environ.get('QT_QPA_PLATFORM', '').lower() in
+                ('offscreen', 'minimal')):
+            return
+        try:
+            from qt_gpu_viewer import QtGPUModelPanel
+            view = self.views['models']
+            mesh = payload['mesh']
+            geometry = payload['geometry']
+            if self.model_panel is None:
+                self.model_panel = QtGPUModelPanel(
+                    view, mesh, None, compact=True,
+                    prepared_geometry=geometry)
+                self.model_panel.setObjectName('primaryGpuModelViewer')
+                view.addWidget(self.model_panel)
+                self.model_gpu = self.model_panel.canvas
+                self.model_gpu.setObjectName('defaultGpuModelPreview')
+            else:
+                self.model_panel.set_static_mesh(
+                    mesh, None, prepared_geometry=geometry)
+            view.setCurrentWidget(self.model_panel)
+            self.status.setText(
+                self.current + ' | Verified geometry ready; '
+                'resolving materials and animations…')
+            from performance_trace import record
+            record('model', 'geometry_ui_installed',
+                   elapsed_ms=(time.perf_counter()-self._model_started_at)*1000
+                   if self._model_started_at else None)
+        except (ValueError, OSError, RuntimeError, ImportError):
+            # Never substitute a fake/low-quality mesh on GUI stage failure.
+            # Final model-ready path retains its existing software fallback.
+            pass
 
     def _model_ready(self, token, result, error):
         if token != self._model_generation or self.mode != 'models':
@@ -1623,7 +1919,7 @@ class QtWorkspaceEditor(QMainWindow):
             except (ValueError, OSError) as error:
                 self.texture_message = 'Untextured: ' + str(error)
             self.materials = materials
-            self._apply_model_texture_choices()
+            # _model_ready already applied saved texture choices once.
             materials = self.materials
             if self.model_panel is None:
                 self.model_panel = QtGPUModelPanel(view, mesh, materials, compact=True,
@@ -1802,7 +2098,9 @@ class QtWorkspaceEditor(QMainWindow):
         else:
             new_records = self._read_records(target)
         self.dependency_button.setEnabled(False)
+        self.media_view.clear()
         self.workspace, self.records = target, new_records
+        self._search_timer.stop()  # Never install a prior project's search.
         self.favorites_only.setChecked(False)
         self.preview_index = None
         self.character_preview = None
@@ -1836,6 +2134,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.tabs.blockSignals(False)
                 return
         self._capture_playback_preferences()
+        self._model_cancel.set()
         self._model_generation += 1
         self.gfx_view.cancel_pending()
         self.current, self.mode = None, None
@@ -1923,6 +2222,7 @@ class QtWorkspaceEditor(QMainWindow):
             if self.manager.busy:
                 raise RuntimeError('Wait until current manager task finishes.')
             rel = self.selected()
+            self.media_view.clear()
             action(rel)
             self.load(rel)
         except Exception as exc:
@@ -2376,14 +2676,24 @@ class QtWorkspaceEditor(QMainWindow):
         Item labels can be friendly character aliases or grouped model names,
         so always use exact virtual path metadata, never visible text.
         """
-        item = self.file_tree.currentItem()
-        if item is not None:
-            virtual = item.data(0, Qt.UserRole)
-            if virtual:
-                return Path(normalized_name(virtual)).parent.as_posix()
-            folder = item.data(0, Qt.UserRole + 1)
-            if folder:
-                return normalized_name(folder)
+        if self._virtual_active:
+            index = self.virtual_file_tree.currentIndex()
+            if index.isValid():
+                rel = index.data(Qt.UserRole)
+                if rel:
+                    return Path(normalized_name(rel)).parent.as_posix()
+                folder = index.data(Qt.UserRole + 1)
+                if folder:
+                    return normalized_name(folder)
+        else:
+            item = self.file_tree.currentItem()
+            if item is not None:
+                virtual = item.data(0, Qt.UserRole)
+                if virtual:
+                    return Path(normalized_name(virtual)).parent.as_posix()
+                folder = item.data(0, Qt.UserRole + 1)
+                if folder:
+                    return normalized_name(folder)
         if self.current:
             return Path(normalized_name(self.current)).parent.as_posix()
         raise ValueError('Select a model or a folder in File Explorer first.')
@@ -2808,6 +3118,8 @@ class QtWorkspaceEditor(QMainWindow):
             event.ignore()
             return
         self._save_project_session()
+        self.media_view.clear()
+        self._model_cancel.set()
         self._model_generation += 1
         self.gfx_view.cancel_pending()
         self._close_gfx_editor()

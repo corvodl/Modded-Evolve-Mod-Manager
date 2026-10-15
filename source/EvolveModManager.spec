@@ -21,7 +21,25 @@ datas += [(str(root/'launcher_support'), 'launcher_support'),
           (str(root/'ui_text.json'), '.'),
           (str(root/'VERSION.txt'), '.')]
 binaries = []
+# Optional for local source builds; mandatory for CI stable/installer builds.
+# Keep LGPL licenses inside the same shipped app as their native DLLs.
+import os
+bulk_root = root / 'native'
+bulk_dll = bulk_root / 'libgcrypt-20.dll'
+if os.environ.get('EVOLVE_REQUIRE_NATIVE_TWOFISH') == '1' and not bulk_dll.is_file():
+    raise FileNotFoundError('Required packaged native Twofish runtime missing')
+if bulk_dll.is_file():
+    for dll in sorted(bulk_root.glob('*.dll')):
+        binaries.append((str(dll), '.'))
+    for notice in sorted(bulk_root.glob('NOTICE.txt')):
+        datas.append((str(notice), 'Licenses/Native-Twofish'))
+    for license_file in sorted((bulk_root / 'Licenses').rglob('*')):
+        if license_file.is_file():
+            target = 'Licenses/Native-Twofish/' + license_file.relative_to(bulk_root / 'Licenses').parent.as_posix()
+            datas.append((str(license_file), target))
 hidden = [
+    'qt_media_preview', 'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets',
+    'client_profile_details', 'qt_account_profile',
     'level_blender_export', 'blender_native_project', 'blender_texture_folder',
     'level_terrain_decode', 'level_dependency_loader', 'qt_level_scene_render',
     'database_animation', 'texture_selection', 'texture_transform', 'qt_texture_selection',

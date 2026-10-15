@@ -178,12 +178,15 @@ def combine_meshes(items):
 
 
 def assemble_character(workspace, selected, index, *, texture_folder=None,
-                       projects_root=None, stage_root=None, equipment=None):
+                       projects_root=None, stage_root=None, equipment=None,
+                       cancel=None):
     """Return None when no owning CDF or no renderable bound skin exists.
 
     Only select the character body and explicitly selected weapon/skin. Extra
     equipment can be added through a future attachment choice UI.
     """
+    if cancel is not None and cancel():
+        raise InterruptedError('Character assembly cancelled')
     definition = _character_definition(selected, index, workspace)
     if definition is None:
         return None
@@ -241,6 +244,8 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         return None
     included, omitted, parts, rig_parts = [], [], [], []
     for label, skin in requested[:8]:
+        if cancel is not None and cancel():
+            raise InterruptedError('Character assembly cancelled')
         render = skin if skin.casefold().endswith('.chr') else skin + 'm'
         path = _resolve_file(index, render, workspace)
         if path is None:
@@ -254,7 +259,8 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         try:
             materials = load_preview_materials(
                 workspace, render, texture_folder, projects_root=projects_root,
-                stage_root=stage_root, index=index, cdf=cdf)
+                stage_root=stage_root, index=index, cdf=cdf,
+                **({'cancel': cancel} if cancel is not None else {}))
         except (ValueError, OSError) as exc:
             materials = None
             omitted.append(label + ' textures: ' + str(exc))
@@ -268,6 +274,8 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         included.append(label)
     if not parts:
         return None
+    if cancel is not None and cancel():
+        raise InterruptedError('Character assembly cancelled')
     mesh, materials = combine_meshes(parts)
     if omitted and materials is not None:
         from dataclasses import replace

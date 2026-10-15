@@ -334,12 +334,17 @@ def _decode_texture_pixels(raw, relative, *, max_dimension=MAX_PREVIEW_TEX_DIM,
     return tex
 
 
-def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None, material_override=None, texture_quality="highest"):
+def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None, material_override=None, texture_quality="highest", cancel=None):
+    def checkpoint():
+        if cancel is not None and cancel():
+            raise InterruptedError('Texture/material decoding cancelled')
+    checkpoint()
     if texture_quality not in ("highest","balanced"):
         raise ValueError("Unsupported texture quality setting.")
     decode_max = 4096 if texture_quality == "highest" else 1024
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
+    checkpoint()
     historical_2012 = _historical_2012_character(
         index, workspace, model_relative)
     from model_material_resolve import find_model_material
@@ -362,6 +367,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                          model_relative + '; searched: ' +
                          ', '.join(attempted[:6]) +
                          '. Check CDF material overrides or embedded material references.')
+    checkpoint()
     raw = material['file'].read_bytes()
     if len(raw) > MAX_MATERIAL_BYTES or b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
         raise ValueError('Material XML is too large or contains disallowed entities.')
@@ -486,6 +492,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; sources = []; references = []; hidden = []
     for item in subs:
+        checkpoint()
         name = item.get('Name') or 'unnamed'
         names.append(name)
         from texture_transform import parse_transform, IDENTITY
@@ -548,9 +555,11 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 result.append(None)
                 sources.append(None)
                 continue
+            checkpoint()
             image = _decode_texture(
                 found, index=index, max_dimension=decode_max,
                 historical_2012=historical_2012)
+            checkpoint()
             result.append(material_color(image, item.get('Diffuse', '1,1,1')))
             sources.append((
                 str(found.get('relative') or diffuse),

@@ -6,19 +6,11 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 **Version:** 1.2.1 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.1 (Patch 1)
+## Latest Stable — v1.2.2
 
-- Patch 1: introduce Home as the launch dashboard, with workspace shortcuts, quick setup status and a persistent outlined-icon navigation rail.
-- Patch 1: let the application logo return to Home while preserving restricted-page access controls.
-- Patch 1: rebuild modified PAK workspaces using an exact SHA-verified retained original, when available, without overwriting edited files or swap journals.
-- Refresh every Qt workspace with a cohesive charcoal interface, muted panels, restrained red accents, and reusable controls.
-- Improve Modding and Asset Library navigation with resizable project lists, contextual actions, and collapsible advanced tools.
-- Modernize File, GFX, GPU Model, and Level editors with clearer inspectors, shared toolbars, and more room for previews.
-- Simplify Settings and dialogs with consistent light/dark appearances, custom theme options, and compact-density support.
-- Improve main-menu GFX authoring, static UI symbol visibility, and separate featured title, TRY, and BUY edits.
-- Introduce an experimental read-only UI inspection interface for future verified offline game-side integration.
-- Keep the release milestone visible in editor footers without patch-revision clutter and preserve safer update handling.
-- Retain console-free Windows startup and defer expensive inventory scans until their workspace opens.
+- Speed up Modding and Asset Library navigation with background inventory, virtualized large asset trees, and demand-driven file metadata.
+- Show verified model and map geometry earlier, retain unchanged map textures, and invalidate prepared caches when source assets change.
+- Stream RSA-verified signed PAK entries in bounded chunks with native Twofish acceleration, cancellation, and preserved CRC checks.
 
 ## Download and install
 
