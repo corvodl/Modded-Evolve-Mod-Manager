@@ -16,7 +16,8 @@ from injector_guard import require_clean_injector
 ROOT = Path(__file__).resolve().parent
 SUPPORT = ROOT / 'launcher_support'
 STATE_FILE = 'controlled_swap_state.json'
-REQUIRED_SCRIPTS = ('controlled_swap.py', 'reusable_restore.py', 'auto_launch_frida.py')
+REQUIRED_SCRIPTS = ('controlled_swap.py', 'reusable_restore.py', 'auto_launch_frida.py',
+                    'auto_restore_watch.py')
 
 
 @dataclass(frozen=True)
@@ -174,3 +175,55 @@ def package_status(stage_dir: Path, swap_dir: Path):
     except ImportError:
         notes.append('Frida is not installed for this Python')
     return notes
+
+
+def start_auto_restore_monitor(swap_dir: Path, resume=False):
+    """Start a detached recovery guard; it outlives the manager and Qt process.
+
+    Called when reopening an interrupted session. Ordinary game launches also
+    start this same script from auto_launch_frida so closing the GUI is safe.
+    """
+    from app_runtime import worker_command
+    folder = Path(swap_dir).resolve()
+    helper = folder / "auto_restore_watch.py"
+    if not helper.is_file():
+        raise FileNotFoundError("Auto-restore helper is missing. Set Up Launcher first.")
+    args = [sys.executable, "-u", str(helper)]
+    if resume:
+        args.append("--resume")
+    command = worker_command(args)
+    creationflags = (getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                     | getattr(subprocess, "DETACHED_PROCESS", 0))
+    with (folder / "auto-restore.log").open("a", encoding="utf-8") as output:
+        return subprocess.Popen(
+            command, cwd=str(folder), stdin=subprocess.DEVNULL,
+            stdout=output, stderr=subprocess.STDOUT, close_fds=True,
+            creationflags=creationflags).pid
+
+
+def auto_restore_monitor_running(swap_dir: Path) -> bool:
+    """See whether a watchdog holds the independent restore lock."""
+    path = Path(swap_dir) / "auto_restore_watch.lock"
+    if not path.is_file():
+        return False
+    try:
+        with path.open("r+b") as stream:
+            stream.seek(0)
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            if sys.platform == "win32":
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            return False
+    except OSError:
+        # Fail closed if we cannot inspect the lock.
+        return True

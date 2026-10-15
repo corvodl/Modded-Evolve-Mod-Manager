@@ -20,7 +20,6 @@ from qt_ui_components import SurfacePanel
 NAVIGATION = (
     ("Modding", "Modding", "Open a project, edit assets and sign a PAK."),
     ("Asset Library", "Asset Library", "Browse textures, models, animation and GFX."),
-    ("Play & Restore", "Play & Restore", "Prepare an offline test or restore previous files."),
     ("Instructions", "Instructions", "First-time setup and safe modding workflow."),
     ("Settings", "Settings", "Appearance, paths, updates and maintenance."),
     ("What's New", "What's New", "Changes included in the latest release."),
@@ -77,6 +76,37 @@ class HomeDashboard(QScrollArea):
         hero_actions.addStretch(1)
         header.addLayout(hero_actions)
         outer.addWidget(hero)
+
+        # Launch shortcuts are visible without opening any other tab.
+        launch_panel = SurfacePanel("PLAY EVOLVE")
+        launch_panel.setObjectName("homeQuickPlay")
+        launch_description = QLabel(
+            "Choose an offline modded session or launch with original game files. "
+            "Original files are restored automatically after a modded session.")
+        launch_description.setWordWrap(True)
+        launch_panel.content.addWidget(launch_description)
+        play_actions = QHBoxLayout()
+        for title, method, icon_name, primary in (
+                ("Play with Mods", manager.launch, "Play with Mods", True),
+                ("Play without Mods", manager.play_without_mods, "Play without Mods", False)):
+            button = QPushButton(title)
+            button.setObjectName("primary" if primary else "homeSecondaryAction")
+            button.setAccessibleName(title)
+            button.setIcon(navigation_icon(icon_name, size=20))
+            button.setMinimumHeight(40)
+            button.clicked.connect(method)
+            play_actions.addWidget(button)
+        play_actions.addStretch(1)
+        launch_panel.content.addLayout(play_actions)
+        outer.addWidget(launch_panel)
+
+        # Client updates have their own clearly labelled Home section.
+        client_card = SurfacePanel("EVOLVE CLIENT")
+        client_card.setObjectName("homeClientSection")
+        self.client_version_label = QLabel("Client executable not configured")
+        self.client_version_label.setObjectName("homeStatusValue")
+        client_card.content.addWidget(self.client_version_label)
+        outer.addWidget(client_card)
 
         main = QHBoxLayout()
         main.setSpacing(15)
@@ -138,15 +168,14 @@ class HomeDashboard(QScrollArea):
         heading = QLabel("At a glance")
         heading.setObjectName("homeSectionTitle")
         right.addWidget(heading)
-        hint = QLabel("Read-only status. Game files are never edited on Home.")
+        hint = QLabel("Installed game and client status; launch actions are separate.")
         hint.setWordWrap(True)
         hint.setObjectName("muted")
         right.addWidget(hint)
-        self.status = {}
+        self.status = {"client_version": self.client_version_label}
         for key, title_text, fallback in (
                 ("game", "Game installation", "Not selected"),
                 ("game_version", "Game version", "Not detected"),
-                ("client_version", "Client version", "Not detected"),
                 ("stage", "Signing stage", "Not prepared"),
                 ("project", "Editing project", "None selected"),
                 ("output", "Last signed PAK", "No recent build")):
@@ -177,10 +206,10 @@ class HomeDashboard(QScrollArea):
             details["game"] or
             ("Version not reported" if details["game_found"]
              else "Game executable not found"))
+        installed = details["client"]
         self.status["client_version"].setText(
-            (details["client"] or
-             ("Version not reported" if details["client_found"]
-              else "Client executable not configured"))
+            (installed or ("Version not reported" if details["client_found"]
+                           else "Client executable not configured"))
             + (" · " + details["client_name"] if details["client_name"] else ""))
         self.status["game"].setText(
             "Configured" if game and Path(game).is_dir()
@@ -197,3 +226,4 @@ class HomeDashboard(QScrollArea):
         self.status["output"].setText(
             output.name if output and output.is_file()
             else "No recent signed build")
+
