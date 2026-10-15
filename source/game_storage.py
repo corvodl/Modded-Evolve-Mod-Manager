@@ -268,7 +268,12 @@ def reusable_setup(stage, swap, game, launcher):
             stage / "mykeys" / "private_key.pem").is_file() or not (
             stage / "mykeys" / "public_key.bin").is_file():
         return False
-    if (stage / "REFRESHED-TO.json").exists() or missing_scripts(swap):
+    # The first-run setup copies the core three launcher helpers. The
+    # independent auto-restore watcher is installed later by the manager
+    # when preparing a launch, so its absence alone does not require a
+    # second multi-GiB setup.
+    if (stage / "REFRESHED-TO.json").exists() or any(
+            name != "auto_restore_watch.py" for name in missing_scripts(swap)):
         return False
     status = state_status(swap)
     if status.phase not in ("restored", "prepared") or status.backups:
