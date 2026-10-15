@@ -2961,7 +2961,7 @@ class QtManager(QMainWindow):
         self.archive_entries = list(records)
         # Building thousands of rows or walking loose files is unnecessary
         # until the specialist archive inspector is opened.
-        if self.legacy_archive_panel.isVisible():
+        if not self.legacy_archive_panel.isHidden():
             self.refresh_table()
         if warm:
             self._warm_shared_assets()
