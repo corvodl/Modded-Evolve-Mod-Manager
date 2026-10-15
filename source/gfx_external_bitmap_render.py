@@ -151,6 +151,7 @@ def prepare_textured_gfx(data: bytes, virtual: str, available_paths,
     # DefineShape, PlaceObject/2/3, mask, transform, ActionScript, and
     # unreplaced Scaleform extension in their original order.
     parts = []
+    length = offset
     for code, payload in tags:
         if code == 1008 and len(payload) == 12:
             char_id, = struct.unpack_from("<H", payload)
