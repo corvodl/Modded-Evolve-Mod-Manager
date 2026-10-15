@@ -180,7 +180,8 @@ class SsaoEffect:
             glViewport(*[int(v) for v in viewport])
             glColorMask(True,True,True,True)
             glDepthMask(True)
-            glDrawBuffer(0x0405)  # GL_BACK for standard default Qt GL FBO
+            # Draw/read-buffer selection belongs to the bound FBO; Qt's
+            # widget FBO uses COLOR_ATTACHMENT0, not the GL_BACK enum.
         # OpenGL 2.1 fallback: one small compositing program, no full scene
         # material re-render. Quad vertices are already in clip space.
         glDisable(GL_DEPTH_TEST)
@@ -197,7 +198,8 @@ class SsaoEffect:
                  sin(2*pi*i/16)*(.5 if i % 2 else 1.0)) for i in range(16)]
         try:
             glUniform2f(self.uniforms['texel_size'],1.0/w,1.0/h)
-            glUniform2fv(self.uniforms['offsets'],16,points)
+            glUniform2fv(self.uniforms['offsets'],16,
+                         [v for pair in points for v in pair])
             glUniform1f(self.uniforms['sample_radius'],radius)
             glUniform1f(self.uniforms['strength'],1.0)
             glUniform1i(self.uniforms['sample_count'],samples)

@@ -18,8 +18,8 @@ class SsaoPostprocessTests(unittest.TestCase):
         self.assertIn('gl_Position = gl_Vertex',VERTEX)
 
     def test_gl_context_code_never_depends_on_crytengine(self):
-        self.assertIn('GL_DEPTH_ATTACHMENT',str(SsaoEffect._resize.__code__.co_consts))
-        self.assertIn('GL_ZERO',str(SsaoEffect.render.__code__.co_consts))
+        self.assertIn('GL_DEPTH_ATTACHMENT',SsaoEffect._resize.__code__.co_names)
+        self.assertIn('GL_ZERO',SsaoEffect.render.__code__.co_names)
         self.assertNotIn('glReadPixels',SsaoEffect.render.__code__.co_names)
 
 

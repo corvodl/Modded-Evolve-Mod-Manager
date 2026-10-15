@@ -44,8 +44,8 @@ class _CompactAnimationList(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('referencedNativeAnimations')
-        self.setMinimumHeight(112)
-        self.setMaximumHeight(152)
+        self.setMinimumHeight(88)
+        self.setMaximumHeight(108)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setSpacing(2)
@@ -182,6 +182,9 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.enhanced_materials = True
         self.unlit_diffuse = False
         self._renderer3 = None
+        self.ssao_quality = 'Off'
+        self.ssao_error = ''
+        self._ssao_effect = None
         self.rotation = [-30.0, 14.0]
         self.zoom = 1.0
         self.pan = [0., 0.]
@@ -264,6 +267,14 @@ class QtGLModelCanvas(QOpenGLWidget):
 
     def set_enhanced_materials(self, enabled):
         self.enhanced_materials = bool(enabled)
+        self.update()
+
+    def set_ssao_quality(self, quality):
+        from ssao_postprocess import QUALITY
+        if quality not in QUALITY:
+            raise ValueError('Unknown SSAO quality')
+        self.ssao_quality = quality
+        self.ssao_error = ''
         self.update()
 
     def set_visible_material_slot(self, slot):
@@ -768,6 +779,26 @@ class QtGLModelCanvas(QOpenGLWidget):
             glBindTexture(GL_TEXTURE_2D,0)
             glDisable(GL_TEXTURE_2D)
             glPolygonMode(GL_FRONT_AND_BACK,GL_FILL)
+        # SSAO is a separate, optional depth-only GPU pass. It is intentionally
+        # outside the material shader, so missing textures do not disable it.
+        if self.ssao_quality != 'Off' and not self.wireframe:
+            try:
+                if self._ssao_effect is None:
+                    from ssao_postprocess import SsaoEffect
+                    self._ssao_effect = SsaoEffect()
+                self._ssao_effect.render(
+                    arrays, quality=self.ssao_quality,
+                    perspective=self.projection_mode == 'Perspective',
+                    visible_slot=self.visible_material_slot,
+                    hidden=getattr(self.materials,'hidden',()))
+            except Exception as error:
+                # Never break the primary viewer on unsupported OpenGL FBOs.
+                self.ssao_error = str(error)[:240]
+                self.ssao_quality = 'Off'
+                if hasattr(self.parent(), 'ssao_combo'):
+                    self.parent().ssao_combo.setCurrentText('Off')
+                    self.parent().ssao_combo.setToolTip(
+                        'SSAO disabled on this GPU: ' + self.ssao_error)
         # Geometry has been submitted; upload one verified texture for the
         # following frame, leaving the GUI event loop responsive.
         self._upload_textures(max_uploads=1)
@@ -816,6 +847,9 @@ class QtGLModelCanvas(QOpenGLWidget):
                 if self._renderer3 is not None:
                     self._renderer3.close()
                     self._renderer3 = None
+                if self._ssao_effect is not None:
+                    self._ssao_effect.close()
+                    self._ssao_effect = None
             finally:
                 self.doneCurrent()
         super().closeEvent(event)
@@ -943,7 +977,7 @@ class QtGPUModelPanel(QWidget):
         # Qt must recompute scrollable content height after expanding a
         # disclosure. Otherwise QScrollArea compresses or clips lower rows.
         self._overlay_body.setSizeConstraint(QLayout.SetMinAndMaxSize)
-        self._overlay_body.setContentsMargins(9, 8, 9, 8)
+        self._overlay_body.setContentsMargins(7, 5, 7, 5)
         self._overlay.setWidget(self._overlay_content)
         self._overlay_sections = {}
         self._active_overlay = None
@@ -952,7 +986,7 @@ class QtGPUModelPanel(QWidget):
             part = QVBoxLayout(page)
             part.setSizeConstraint(QLayout.SetMinAndMaxSize)
             part.setContentsMargins(0, 0, 0, 0)
-            part.setSpacing(7)
+            part.setSpacing(4)
             self._overlay_body.addWidget(page)
             self._overlay_sections[section] = (page, part)
             page.setVisible(False)
@@ -998,7 +1032,9 @@ class QtGPUModelPanel(QWidget):
         reset.clicked.connect(self.reset_view)
         detail_line.addWidget(reset)
         detail_line.addStretch()
-        self._overlay_sections['View'][1].addWidget(options)
+        self._view_advanced = self._compact_group(
+            self._overlay_sections['View'][1], 'Display & quality', opened=False)
+        self._view_advanced.addWidget(options)
         # Short, always-visible controls also work in the embedded viewer.
         studio = QHBoxLayout()
         enhanced=QCheckBox('Renderer 3.0')
@@ -1012,13 +1048,24 @@ class QtGPUModelPanel(QWidget):
         self.camera_combo.addItems(('Isometric','Front','Back','Left','Right','Top','Bottom'))
         self.camera_combo.currentTextChanged.connect(self.canvas.set_camera_preset)
         studio.addWidget(self.camera_combo)
-        studio.addWidget(QLabel('Lighting'))
+        lighting_row = QHBoxLayout()
+        lighting_row.addWidget(QLabel('Light'))
         self.lighting_slider = QSlider(Qt.Horizontal)
         self.lighting_slider.setRange(20,200)
         self.lighting_slider.setValue(100)
         self.lighting_slider.setMaximumWidth(125)
         self.lighting_slider.valueChanged.connect(self.canvas.set_light_strength)
-        studio.addWidget(self.lighting_slider)
+        lighting_row.addWidget(self.lighting_slider, 1)
+        lighting_row.addWidget(QLabel('SSAO'))
+        self.ssao_combo = QComboBox()
+        self.ssao_combo.setObjectName('modelSsaoQuality')
+        self.ssao_combo.addItems(('Off','Low','Medium','High'))
+        self.ssao_combo.setCurrentText('Off')
+        self.ssao_combo.setToolTip(
+            'GPU screen-space contact shadows. Off by default; higher levels '
+            'sample more depth neighbours. Does not require AO texture maps.')
+        self.ssao_combo.currentTextChanged.connect(self.canvas.set_ssao_quality)
+        lighting_row.addWidget(self.ssao_combo)
         studio.addStretch()
         studio_detail = QHBoxLayout()
         self.background_combo = QComboBox()
@@ -1031,16 +1078,18 @@ class QtGPUModelPanel(QWidget):
         save_view.clicked.connect(self.save_viewport)
         studio_detail.addWidget(save_view)
         studio_detail.addStretch()
-        self._overlay_sections['View'][1].addLayout(studio)
-        self._overlay_sections['View'][1].addLayout(studio_detail)
+        self._overlay_sections['View'][1].insertLayout(0,studio)
+        self._overlay_sections['View'][1].insertLayout(1,lighting_row)
+        self._view_advanced.addLayout(studio_detail)
         inspector=QHBoxLayout()
-        inspector.addWidget(QLabel('Mesh materials'))
+        inspector.addWidget(QLabel('Part'))
         self.part_select=QComboBox()
         self.part_select.setObjectName('modelMaterialPartInspector')
         self.part_select.currentIndexChanged.connect(
             lambda _: self.canvas.set_visible_material_slot(self.part_select.currentData()))
         inspector.addWidget(self.part_select,1)
-        uvbutton=QPushButton('Show UV Layout…')
+        uvbutton=QPushButton('UV…')
+        uvbutton.setToolTip('Inspect the selected mesh UV layout')
         uvbutton.clicked.connect(self.show_uv_layout)
         inspector.addWidget(uvbutton)
         inspector_secondary = QHBoxLayout()
@@ -1061,12 +1110,16 @@ class QtGPUModelPanel(QWidget):
         inspector_secondary.addWidget(self.gloss_slider)
         inspector_secondary.addStretch()
         self._overlay_sections['Materials'][1].addLayout(inspector)
-        self._overlay_sections['Materials'][1].addLayout(inspector_secondary)
+        # Less frequently needed projection is available under View.
+        self._view_advanced.addLayout(inspector_secondary)
         self.solid_geometry = QCheckBox('Show all character geometry (ignore alpha)')
         self.solid_geometry.setToolTip('Diagnostic view: shows every decoded part even if a CryEngine material uses unsupported transparency. Does not create absent mesh parts.')
         self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
         self.solid_geometry.toggled.connect(lambda checked: (setattr(self.canvas, 'force_opaque_preview', checked), self.canvas.update()))
-        self._overlay_sections['Materials'][1].addWidget(self.solid_geometry)
+        self._material_advanced = self._compact_group(
+            self._overlay_sections['Materials'][1],
+            'Diagnostics & lighting', opened=False)
+        self._material_advanced.addWidget(self.solid_geometry)
         self.unlit_diffuse_checkbox=QCheckBox('Unlit diffuse (inspect dark textures)')
         self.unlit_diffuse_checkbox.setObjectName('modelUnlitDiffuseDiagnostic')
         self.unlit_diffuse_checkbox.setToolTip(
@@ -1076,7 +1129,7 @@ class QtGPUModelPanel(QWidget):
         self.unlit_diffuse_checkbox.toggled.connect(
             lambda checked:(setattr(self.canvas,'unlit_diffuse',checked),
                             self.canvas.update()))
-        self._overlay_sections['Materials'][1].addWidget(self.unlit_diffuse_checkbox)
+        self._material_advanced.addWidget(self.unlit_diffuse_checkbox)
         ambient_row = QHBoxLayout()
         ambient_row.addWidget(QLabel('Studio fill'))
         self.studio_fill_slider = QSlider(Qt.Horizontal)
@@ -1089,23 +1142,25 @@ class QtGPUModelPanel(QWidget):
             lambda value: (setattr(self.canvas, 'studio_fill', value/100.),
                            self.canvas.update()))
         ambient_row.addWidget(self.studio_fill_slider, 1)
-        self._overlay_sections['Materials'][1].addLayout(ambient_row)
+        self._material_advanced.addLayout(ambient_row)
         self.diffuse_source_info = QLabel('Diffuse DDS diagnostics will appear here.')
         self.diffuse_source_info.setObjectName('modelDiffuseSourceInfo')
         self.diffuse_source_info.setWordWrap(True)
         self.diffuse_source_info.setObjectName('viewHint')
-        self._overlay_sections['Materials'][1].addWidget(self.diffuse_source_info)
+        self._material_advanced.addWidget(self.diffuse_source_info)
         self.part_select.currentIndexChanged.connect(
             lambda _index: self._update_source_brightness())
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = _CompactDiagnosticText(self)
         self.native_info.setText('Native game animations: not scanned')
-        self._overlay_sections['Animation'][1].addWidget(self.native_info)
-        # Keep the selected clip's status immediately under its browser.
-        self._overlay_sections['Animation'][1].removeWidget(self.native_info)
+        # Verbose CAF/DBA diagnostics are available on demand rather than
+        # consuming the model viewport every time Animations is opened.
+        self._native_details = self._compact_group(
+            self.animation_sections['Animations'][1].layout(),
+            'Selection details', opened=False)
         self.native_info.setMaximumHeight(84)
-        self.animation_sections['Animations'][1].layout().addWidget(self.native_info)
+        self._native_details.addWidget(self.native_info)
         foot=QLabel('Renderer 3.0 approximates CryEngine materials; check optional maps in the texture diagnostics. '
                     'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
@@ -1197,6 +1252,29 @@ class QtGPUModelPanel(QWidget):
         strip.setFixedHeight(38)
         parent_layout.addWidget(strip)
 
+    def _compact_group(self, layout, label, *, opened=False):
+        """Small disclosure for optional controls; retains all tool widgets."""
+        heading = QToolButton(self)
+        heading.setObjectName('gpuCompactGroup' + label.replace(' ', '').replace('&',''))
+        heading.setText(('▾  ' if opened else '▸  ') + label)
+        heading.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        heading.setCheckable(True)
+        heading.setChecked(opened)
+        heading.setMinimumHeight(24)
+        layout.addWidget(heading)
+        content = QWidget(self)
+        details = QVBoxLayout(content)
+        details.setContentsMargins(3, 2, 3, 3)
+        details.setSpacing(3)
+        layout.addWidget(content)
+        content.setVisible(opened)
+        def set_open(active):
+            content.setVisible(active)
+            heading.setText(('▾  ' if active else '▸  ') + label)
+            QTimer.singleShot(0,self._update_animation_scrolling)
+        heading.toggled.connect(set_open)
+        return details
+
     def toggle_overlay(self, section, shown=None):
         """Display just one model tool group over the viewport."""
         if section not in self._overlay_sections:
@@ -1227,11 +1305,13 @@ class QtGPUModelPanel(QWidget):
     def _position_overlay(self):
         if not hasattr(self, '_overlay') or self._overlay is None:
             return
-        width = max(190, min(420 if self._active_overlay == 'Animation' else 470,
+        width = max(190, min(355 if self._active_overlay == 'Animation' else 370,
                              self.canvas.width() - 70))
         page = self._overlay_sections.get(self._active_overlay)
-        wanted = (page[0].sizeHint().height() + 35) if page else 200
-        height = max(80, min(wanted, 415 if self._active_overlay == 'Animation' else 500, self.canvas.height() - 55))
+        wanted = (page[0].sizeHint().height() + 20) if page else 200
+        caps = {'View': 240, 'Materials': 255, 'Animation': 315}
+        height = max(80, min(wanted, caps.get(self._active_overlay, 260),
+                             self.canvas.height() - 55))
         self._overlay.setGeometry(56, 43, width, height)
         self._position_navigation()
 
@@ -1413,7 +1493,7 @@ class QtGPUModelPanel(QWidget):
             heading.setCheckable(True)
             heading.setChecked(opened)
             heading.setToolButtonStyle(Qt.ToolButtonTextOnly)
-            heading.setMinimumHeight(31)
+            heading.setMinimumHeight(25)
             heading.setObjectName('disclosureToggle')
             body = QWidget(self)
             inner = QVBoxLayout(body)
@@ -1481,7 +1561,7 @@ class QtGPUModelPanel(QWidget):
         self.native_state_filter = QComboBox()
         self.native_state_filter.setObjectName('nativeAnimationStateFilter')
         self.native_state_filter.addItems((
-            'All availability', 'Ready in library', 'In PAK (extract on play)',
+            'All sources', 'Ready in library', 'In PAK (extract on play)',
             'Not found', 'Layered / additive', 'Graph / unavailable', 'DBA converter'))
         self.native_state_filter.currentIndexChanged.connect(self._filter_native_catalog)
         native_filters.addWidget(self.native_state_filter)
@@ -1495,7 +1575,8 @@ class QtGPUModelPanel(QWidget):
         catalog_layout.addLayout(native_filters)
         self.native_result_count = QLabel('No animation references loaded')
         self.native_result_count.setStyleSheet('color:#aeb1c1;font-size:11px;')
-        self.native_result_count.setWordWrap(True)
+        self.native_result_count.setWordWrap(False)
+        self.native_result_count.setToolTip('Showing filtered entries; other animations stay searchable.')
         catalog_layout.addWidget(self.native_result_count)
         self.native_capabilities = QLabel('')
         self.native_capabilities.setObjectName('historicalNativeCapabilityStatus')
@@ -1511,7 +1592,7 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.currentIndexChanged.connect(self._native_selection)
         self.play_native_button = QPushButton('▶  Play')
         self.play_native_button.setObjectName('playSelectedNativeAnimation')
-        self.play_native_button.setMinimumHeight(34)
+        self.play_native_button.setMinimumHeight(30)
         self.play_native_button.setStyleSheet(
             'QPushButton#playSelectedNativeAnimation {background:#4e3f73;'
             'color:#fff;font-weight:600;border-radius:7px;padding:6px 14px;}'
@@ -1809,7 +1890,7 @@ class QtGPUModelPanel(QWidget):
             shown = [chosen] + shown[:max_rows-1]
         self.native_clip_select.blockSignals(True)
         self.native_clip_select.clear()
-        self.native_clip_select.addItem('Select an animation…', -1)
+        self.native_clip_select.addItem('Choose a clip…', -1)
         suffixes = {
             'candidate': '  • Ready', 'extractable': '  • Packed',
             'missing': '  • Missing', 'layered': '  • Layered',
