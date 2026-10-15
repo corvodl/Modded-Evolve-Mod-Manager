@@ -64,6 +64,25 @@ jobs:
       - name: Build and test EXE
         shell: cmd
         run: call Build-Windows-EXE.cmd
+      - name: Verify GUI launches without a dependent console
+        shell: pwsh
+        run: |
+          function Get-PeSubsystem([string]$file) {
+            $bytes = [IO.File]::ReadAllBytes((Resolve-Path $file))
+            if ($bytes.Length -lt 256 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) {
+              throw "Invalid Windows executable: $file"
+            }
+            $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+            if ($pe -lt 64 -or $pe + 96 -gt $bytes.Length) {
+              throw "Invalid PE header: $file"
+            }
+            return [BitConverter]::ToUInt16($bytes, $pe + 24 + 68)
+          }
+          $gui = Get-PeSubsystem '.build/app-dist/EvolveModManager/EvolveModManager.exe'
+          $worker = Get-PeSubsystem '.build/app-dist/EvolveModManager/EvolveModWorker.exe'
+          if ($gui -ne 2) { throw "Manager must use Windows GUI subsystem (2); got $gui." }
+          if ($worker -ne 3) { throw "Worker must retain Windows console subsystem (3); got $worker." }
+          Write-Host 'Verified GUI process has no dependent command prompt; worker remains console-capable.'
       - name: Capture real compiled app window (Windows)
         shell: pwsh
         run: |
