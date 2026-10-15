@@ -101,8 +101,9 @@ class SceneAssembler:
         for item in doc.get("materials",()):
             value=json.loads(json.dumps(item))
             pbr=value.get("pbrMetallicRoughness",{})
-            if "baseColorTexture" in pbr:
-                pbr["baseColorTexture"]["index"]+=offsets["textures"]
+            for slot in ("baseColorTexture", "metallicRoughnessTexture"):
+                if slot in pbr:
+                    pbr[slot]["index"]+=offsets["textures"]
             for slot in ("normalTexture","emissiveTexture","occlusionTexture"):
                 if slot in value: value[slot]["index"]+=offsets["textures"]
             self.doc["materials"].append(value)

@@ -15,7 +15,7 @@ import tempfile
 from model_textured_export import _unpack_glb
 
 MAX_IMAGES = 256
-MAX_IMAGE_BYTES = 64 * 1024 * 1024
+MAX_IMAGE_BYTES = 384 * 1024 * 1024
 
 
 def _safe_name(name):

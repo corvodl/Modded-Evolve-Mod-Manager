@@ -15,7 +15,7 @@ from model_asset import DATA_STREAM_CHUNK
 from model_preview import read_preview_mesh
 
 MAX_TEXTURES = 64
-MAX_IMAGE_BYTES = 64 * 1024 * 1024  # preserve full-res PNG, still bounded per material
+MAX_IMAGE_BYTES = 384 * 1024 * 1024  # preserve full-resolution PNG, bounded per map
 
 
 def _unpack_glb(blob):

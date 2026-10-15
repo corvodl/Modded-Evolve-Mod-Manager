@@ -64,19 +64,32 @@ def gltf_vertex_basis(mesh):
                     tacc[index][j] += tangent[j]
                     bacc[index][j] += bitangent[j]
 
+    authored_normals = getattr(mesh, 'vertex_normals', ())
+    authored_tangents = getattr(mesh, 'vertex_tangents', ())
+    has_authored_normals = len(authored_normals) == count
+    has_authored_tangents = use_uv and has_authored_normals and len(authored_tangents) == count
     normals = bytearray()
     tangents = bytearray()
     for index in range(count):
-        n = _unit(nacc[index], (0.0, 1.0, 0.0))
+        if has_authored_normals:
+            sx, sy, sz = authored_normals[index]
+            n = _unit((sx, sz, -sy), (0.0, 1.0, 0.0))
+        else:
+            n = _unit(nacc[index], (0.0, 1.0, 0.0))
         normals.extend(struct.pack("<3f", *n))
         if not use_uv:
             continue
-        tangent = tuple(tacc[index][j]-n[j]*_dot(tacc[index], n)
-                        for j in range(3))
+        if has_authored_tangents:
+            sx, sy, sz, authored_sign = authored_tangents[index]
+            tangent = (sx, sz, -sy)
+        else:
+            tangent = tuple(tacc[index][j]-n[j]*_dot(tacc[index], n)
+                            for j in range(3))
         if _dot(tangent, tangent) < 1e-20:
             axis = (0.0, 0.0, 1.0) if abs(n[2]) < 0.9 else (0.0, 1.0, 0.0)
             tangent = _cross(axis, n)
         tangent = _unit(tangent, (1.0, 0.0, 0.0))
-        sign = -1.0 if _dot(_cross(n, tangent), bacc[index]) < 0 else 1.0
+        sign = (float(authored_sign) if has_authored_tangents else
+                (-1.0 if _dot(_cross(n, tangent), bacc[index]) < 0 else 1.0))
         tangents.extend(struct.pack("<4f", *tangent, sign))
     return bytes(normals), bytes(tangents) if use_uv else None

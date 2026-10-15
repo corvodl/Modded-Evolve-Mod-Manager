@@ -24,7 +24,9 @@ from multi_pak_assets import related_asset_index, _resolve, load_workspace, norm
 
 MAX_MATERIAL_BYTES = 5 * 1024 * 1024
 MAX_TEXTURE_BYTES = 64 * 1024 * 1024
-MAX_PREVIEW_TEX_DIM = 4096  # original DDS resolution where bounded by pixel budget
+MAX_PREVIEW_TEX_DIM = 16384  # no silent highest-mip downscale; memory limits remain explicit
+MAX_MATERIAL_DDS_BYTES = 512 * 1024 * 1024
+MAX_MATERIAL_PIXELS = 100_000_000
 _texture_pixels = OrderedDict()
 _texture_lock = threading.RLock()
 MAX_CACHED_TEXTURE_BYTES = 128 * 1024 * 1024
@@ -210,8 +212,8 @@ def _historical_2012_character(index, workspace, relative):
 def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM,
                     normal_map=False, historical_2012=False):
     path = item['file']
-    if path.stat().st_size > MAX_TEXTURE_BYTES:
-        raise ValueError('Texture fragment exceeds the 64 MiB preview limit.')
+    if path.stat().st_size > MAX_MATERIAL_DDS_BYTES:
+        raise ValueError('DDS fragment exceeds the 512 MiB safety limit.')
     relative = item['relative']
     if relative.casefold().endswith('.dds.0'):
         # Imported source PAKs commonly hold only .0 while higher-resolution
@@ -300,8 +302,10 @@ def _decode_texture_pixels(raw, relative, *, max_dimension=MAX_PREVIEW_TEX_DIM,
             _texture_pixels.move_to_end(key)
             return cached.copy()
     info = parse_dds(raw)
-    if len(raw) > MAX_TEXTURE_BYTES or info.width * info.height > 16_777_216:
-        raise ValueError('DDS texture exceeds preview size limits.')
+    if len(raw) > MAX_MATERIAL_DDS_BYTES or info.width * info.height > MAX_MATERIAL_PIXELS:
+        raise ValueError('DDS exceeds the 512 MiB / 100 megapixel decoding safety budget.')
+    if max_dimension >= MAX_PREVIEW_TEX_DIM and max(info.width, info.height) > MAX_PREVIEW_TEX_DIM:
+        raise ValueError('DDS top mip exceeds the supported full-resolution dimension; refusing silent downscale.')
     # CryEngine normal maps can be BC5 XY or DXT5nm alpha/green, not
     # directly usable tangent-space RGB. The same normalized pixels feed the
     # Qt shader and GLB exporter; never rescale a lower mip as a substitute.
@@ -342,7 +346,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
     checkpoint()
     if texture_quality not in ("highest","balanced"):
         raise ValueError("Unsupported texture quality setting.")
-    decode_max = 4096 if texture_quality == "highest" else 1024
+    decode_max = MAX_PREVIEW_TEX_DIM if texture_quality == "highest" else 1024
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
     checkpoint()
