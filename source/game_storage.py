@@ -126,7 +126,9 @@ def measure_storage(data_home, storage_root, stage, swap, projects):
     # Unknown non-setup entries in selected GameSets count as Other, not cleanups.
     if storage.is_dir() and storage not in measured:
         for item in storage.iterdir():
-            if item not in measured and not any(is_within(item, used) for used in measured):
+            if item not in measured and not any(
+                    is_within(item, used) or is_within(used, item)
+                    for used in measured):
                 buckets["Other"] += directory_size(item)
     return {"bytes": buckets, "old_setups": tuple(setups),
             "total": sum(buckets.values()), "active": str(active or "")}
@@ -203,6 +205,9 @@ def cleanup_candidates(storage_root, active_stage, active_swap, projects_root,
                     reason = "Setup report belongs to another directory"
                 elif state.phase != "restored":
                     reason = "Swap journal is not cleanly restored (" + state.phase + ")"
+                elif canonical(state.stage) != canonical(path / "staged") or canonical(
+                        state.game) != canonical(report["game"]):
+                    reason = "Swap journal ownership differs from this setup"
                 elif state.backups:
                     reason = "Original-file recovery backups remain"
                 elif (path / "swap" / "auto_restore_watch.lock").exists():
@@ -260,7 +265,8 @@ def reusable_setup(stage, swap, game, launcher):
     stage, swap, game = map(canonical, (stage, swap, game))
     launcher = canonical(launcher)
     if not (stage / "stage_status.json").is_file() or not (
-            stage / "mykeys" / "private_key.pem").is_file():
+            stage / "mykeys" / "private_key.pem").is_file() or not (
+            stage / "mykeys" / "public_key.bin").is_file():
         return False
     if (stage / "REFRESHED-TO.json").exists() or missing_scripts(swap):
         return False
@@ -274,7 +280,10 @@ def reusable_setup(stage, swap, game, launcher):
     try:
         plan = json.loads((stage / "rekey_plan.json").read_text("utf-8"))
         config = json.loads((swap / "launcher_config.json").read_text("utf-8"))
+        metadata = json.loads((stage / "stage_status.json").read_text("utf-8"))
         signed = allowed_paks(stage)
+        if metadata.get("status") != "fully-staged-offline" or metadata.get("count", 0) < 1:
+            return False
         if canonical(plan["source_root"]) != game or canonical(config["launcher"]) != launcher:
             return False
         if not signed or any(not (stage / "paks" / Path(*rel.split("/"))).is_file()
