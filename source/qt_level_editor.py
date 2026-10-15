@@ -607,7 +607,9 @@ class UnrealStyleLevelEditor(QMainWindow):
         token,cancel = self._map_copy_generation,self._map_copy_cancel
         def job():
             try:
-                prepared = LevelProject(target)
+                from performance_trace import span
+                with span('map', 'existing_project_parse', generation=token):
+                    prepared = LevelProject(target)
                 if not cancel.is_set():
                     self.mapCopyReady.emit(token,prepared,None)
             except (OSError,ValueError) as exc:
@@ -647,7 +649,9 @@ class UnrealStyleLevelEditor(QMainWindow):
                     library_roots=(LIBRARY_HOME,DATA_HOME/"LevelDependencyCache"),
                     cancel=cancel,progress=report)
                 report("Parsing placements",0,None)
-                prepared=LevelProject(folder)
+                from performance_trace import span
+                with span('map', 'copied_project_parse', generation=token):
+                    prepared=LevelProject(folder)
                 self.mapCopyReady.emit(token,prepared,None)
             except (OSError,ValueError,RuntimeError,InterruptedError) as exc:
                 try:
