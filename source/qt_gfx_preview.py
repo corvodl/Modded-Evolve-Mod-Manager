@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from qt_navigation_icons import navigation_icon
 from gfx_ui_dependencies import related_ui_textures
 from gfx_placement_diagnostics import inspect_bitmap_placement
-from gfx_root_layer_preview import root_layers
+from gfx_root_layer_preview import root_layers, likely_main_menu_dialog
 from gfx_preview_backend import (
     inspect_gfx, resolve_imports, ffdec_command, render_gfx, GfxError,
 )
@@ -176,6 +176,7 @@ class GfxPreviewWidget(QWidget):
         self._texture_paths = ()
         self._bitmap_bindings = ()
         self._root_layers = ()
+        self._detected_dialog_depth = None
         self._info = None
         self._backend = None
         layout = QVBoxLayout(self)
@@ -388,6 +389,7 @@ class GfxPreviewWidget(QWidget):
         self._render_notes = ()
         self._texture_paths = ()
         self._root_layers = ()
+        self._detected_dialog_depth = None
         self.root_mode.blockSignals(True)
         self.root_mode.setCurrentIndex(0)
         self.root_mode.blockSignals(False)
@@ -477,6 +479,20 @@ class GfxPreviewWidget(QWidget):
             self.frame.setValue(1)
             self.frame.blockSignals(False)
             self._sync_root_layers()
+            self._detected_dialog_depth = (
+                matched.depth if (matched := likely_main_menu_dialog(
+                    data, relative)) is not None else None)
+            if self._detected_dialog_depth is not None:
+                self.root_mode.blockSignals(True)
+                self.root_layer.blockSignals(True)
+                self.root_mode.setCurrentIndex(1)  # Preview-only hide.
+                for index in range(self.root_layer.count()):
+                    if self.root_layer.itemData(index) == self._detected_dialog_depth:
+                        self.root_layer.setCurrentIndex(index)
+                        break
+                self.root_mode.blockSignals(False)
+                self.root_layer.blockSignals(False)
+                self._sync_root_layers()
             self.details.setText(
                 f"GFX v{info.version} · {info.compression} · "
                 f"{info.width}×{info.height} · {info.fps:g} fps · "
@@ -609,11 +625,17 @@ class GfxPreviewWidget(QWidget):
         self.root_mode.setEnabled(bool(choices) and is_root)
         self.root_layer.setEnabled(
             bool(choices) and is_root and self.root_mode.currentData() != "all")
-        self.root_hint.setText(
-            f"{len(choices)} first-frame root depths. "
-            "Hiding a suspected popup affects this preview only."
-            if choices else
-            "Select Main timeline for root-layer diagnostics.")
+        if is_root and self._detected_dialog_depth is not None:
+            self.root_hint.setText(
+                f"Dialog-style overlay at depth {self._detected_dialog_depth} "
+                "(sprite #270, shape #265). "
+                "Hidden in this preview by default; select All layers to compare.")
+        else:
+            self.root_hint.setText(
+                f"{len(choices)} first-frame root depths. "
+                "Hiding a suspected popup affects this preview only."
+                if choices else
+                "Select Main timeline for root-layer diagnostics.")
 
     def _changed(self, *_):
         self._sync_root_layers()
