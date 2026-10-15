@@ -37,10 +37,10 @@ class VersionManifestTests(unittest.TestCase):
 
     def test_stable_12_notes_are_consolidated_and_hide_beta_history(self):
         from release_notes import RELEASE_NOTES, markdown
-        self.assertEqual(('1.2.0',), tuple(v for v, _ in RELEASE_NOTES[:1]))
+        self.assertEqual(('1.2.1',), tuple(v for v, _ in RELEASE_NOTES[:1]))
         self.assertEqual('v' + RELEASE_NOTES[0][0], app_version())
         for version, notes in RELEASE_NOTES:
-            self.assertTrue(1 <= len(notes) <= (12 if version == '1.2.0' else 3), version)
+            self.assertTrue(1 <= len(notes) <= (12 if version in ('1.2.0', '1.2.1') else 3), version)
             self.assertTrue(all(len(note) <= 185 for note in notes), version)
             self.assertNotIn('-beta.', version)
         root = Path(__file__).resolve().parent.parent
