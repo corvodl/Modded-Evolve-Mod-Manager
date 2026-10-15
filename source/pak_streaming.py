@@ -130,11 +130,14 @@ def stream_signed_entry(pak, info, entryname, destination, *, cancelled=None,
                 inflate_chunk(output, clear)
                 block_offset += blocks
             if inflater is not None:
-                # flush completes raw DEFLATE; all large output was already
-                # drained in bounded decompress calls above.
-                write_chunk(output, inflater.flush())
-                if not inflater.eof:
-                    raise ValueError('Incomplete encrypted DEFLATE stream')
+                # Drain capped output without calling flush(), which can
+                # return an unbounded allocation for a DEFLATE bomb.
+                while not inflater.eof:
+                    check_cancel()
+                    tail = inflater.decompress(b'', chunk_size)
+                    if not tail:
+                        raise ValueError('Incomplete encrypted DEFLATE stream')
+                    write_chunk(output, tail)
             check_cancel()
         if total != expected:
             raise ValueError('Decompressed size does not match signed directory')
