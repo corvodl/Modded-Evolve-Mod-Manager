@@ -106,7 +106,7 @@ class PatchRevisionTests(unittest.TestCase):
             self.assertEqual(u.installed_revision(root), 9)
             stamp.write_text('-1')
             self.assertEqual(u.installed_revision(root), 0)
-            self.assertEqual(u.update_workspace(root), root / 'UpdateWork')
+            self.assertEqual(u.update_workspace(root), root.resolve() / 'UpdateWork')
             self.assertNotIn('EvolveModManagerUpdates', str(u.update_workspace(root)))
 
     def test_workflows_preserve_tagged_versions_and_stage_revision(self):
