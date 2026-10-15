@@ -176,20 +176,20 @@ def patch_featured_actionscript(source: str, mode: str, target: str = "all",
     # A different control can be edited in the same session. Each preset is
     # explicitly scoped so hiding TRY/BUY never forces a reset of the title.
     # The older single-marker preset has unknown targets: fail closed.
-    if re.search(r"\\bvar\\s+" + _MARKER + r"\\s*=", source):
+    if re.search(r"\bvar\s+" + _MARKER + r"\s*=", source):
         raise GfxError(
             "An older, unscoped promo preset is present. Undo it before "
             "using independent title, TRY and BUY edits.")
-    if re.search(r"\\bvar\\s+" + _MARKER + "_" + target + r"\\s*=", source):
+    if re.search(r"\bvar\s+" + _MARKER + "_" + target + r"\s*=", source):
         raise GfxError(
             "A featured edit for this control is already staged. "
             "Undo that edit before changing the same control again.")
     if (target == "all" and
-            any(re.search(r"\\bvar\\s+" + _MARKER + "_" + item + r"\\s*=", source)
+            any(re.search(r"\bvar\s+" + _MARKER + "_" + item + r"\s*=", source)
                 for item in ("title", "try", "buy"))):
         raise GfxError("Individual title/TRY/BUY edits are staged. Undo before editing the entire promotion.")
     if target != "all" and re.search(
-            r"\\bvar\\s+" + _MARKER + r"_all\\s*=", source):
+            r"\bvar\s+" + _MARKER + r"_all\s*=", source):
         raise GfxError("An entire-promotion edit is staged. Undo before editing individual controls.")
     hits = list(_FUNCTION.finditer(source))
     if len(hits) != 1:
