@@ -42,9 +42,9 @@ def archive_description(relative: str) -> str:
                 ingame = character_name_for_internal(subject)
                 label = (ingame + ' (internal: ' + subject + ')'
                          if ingame else _title_words(subject))
-                kind = ('Models / Skeletons / Animation References'
+                kind = ('Models / Skeletons'
                         if parts[-1].casefold() == 'data'
-                        else 'Textures / Animation Assets (if present)')
+                        else 'Textures')
                 return label + ' ' + kind
         if len(parts) >= 3:
             return _title_words('_'.join(parts[2:])) + ' Characters'
