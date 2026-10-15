@@ -83,9 +83,14 @@ class RootLayerIsolationTests(unittest.TestCase):
         self.assertEqual([x.depth for x in root_layers(hidden)], [1])
         self.assertEqual([x.depth for x in root_layers(isolated)], [5])
         # The geometry definition and all nested content are still present.
+        # Filtering drops matching RemoveObject updates too; all
+        # non-placement definitions and frame boundaries must stay intact.
+        operations = {4, 5, 26, 28, 70}
         self.assertEqual(
-            [code for code, _, _ in _records(_raw(movie))[1] if code != 4],
-            [code for code, _, _ in _records(_raw(isolated))[1] if code != 4])
+            [code for code, _, _ in _records(_raw(movie))[1]
+             if code not in operations],
+            [code for code, _, _ in _records(_raw(isolated))[1]
+             if code not in operations])
         self.assertEqual(root_layers(movie), root_layers(two_root_layers()))
 
     def test_filters_never_confuse_sprite_internal_layers_with_root(self):
