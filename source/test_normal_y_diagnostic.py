@@ -47,8 +47,10 @@ class NormalYDiagnosticTests(unittest.TestCase):
         self.assertIn('uniform int normal_y_flip;', FRAGMENT)
         self.assertIn('if (normal_y_flip == 1) mapped.y = -mapped.y;', FRAGMENT)
         self.assertIn('if (normal_y_flip == 1) fine.y = -fine.y;', FRAGMENT)
-        self.assertIn("('normal_y_flip',invert_normal_y)", Renderer3.bind.__code__.co_consts)
-        self.assertIn('normal_y_flip', Renderer3.__init__.__code__.co_consts.__str__())
+        import inspect
+        self.assertIn("('normal_y_flip',invert_normal_y)",
+                      inspect.getsource(Renderer3.bind))
+        self.assertIn("'normal_y_flip'",inspect.getsource(Renderer3.__init__))
 
     def test_nonflat_y_fixture_detects_polarity(self):
         # Neutral Y=128 cannot detect an inversion. Use non-neutral Y.
