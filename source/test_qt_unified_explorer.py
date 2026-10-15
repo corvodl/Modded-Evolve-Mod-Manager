@@ -90,8 +90,8 @@ class UnifiedExplorerTests(unittest.TestCase):
         self.assertNotIn("#0000ff", tree.styleSheet().lower())
         # Qt-wide semantic selection coloring replaces per-window red QSS.
         self.assertNotIn("#772b3d", tree.styleSheet().lower())
-        self.assertIs(self.editor.editor_split.widget(0), self.editor.explorer)
-        self.assertIs(self.editor.editor_split.widget(1), self.editor.tabs)
+        self.assertIs(self.editor.editor_split.widget(0), self.editor.tabs)
+        self.assertIs(self.editor.editor_split.widget(1), self.editor.explorer)
 
     def test_click_selects_correct_editor_without_visible_tabs(self):
         editor = self.editor
@@ -134,6 +134,24 @@ class UnifiedExplorerTests(unittest.TestCase):
         self.assertIn("Configure FFDec", self.editor.gfx_view.note.text())
         self.assertEqual(source.read_bytes(), movie)
         self.assertFalse(self.editor.gfx_view.export.isEnabled())
+
+    def test_model_resolve_reuses_existing_library_index(self):
+        editor = self.editor
+        editor.read_only_library = True
+        editor.library_archive = {'id': 'synthetic-pak'}
+        original_index = {'characters/hero.skinm': []}
+        editor.preview_index = original_index
+        with patch.dict(os.environ, {'QT_QPA_PLATFORM': 'offscreen'}), \
+             patch('qt_workspace_editor.prepare_model_cached',
+                   return_value=({}, True, 1.0)) as prepare, \
+             patch('asset_library_preview.library_model_index') as build, \
+             patch('shared_pak_cache.start_character_catalog') as catalog, \
+             patch.object(editor, '_model_ready'):
+            editor._load_model_background('characters/hero.skinm')
+            build.assert_not_called()
+            self.assertIs(prepare.call_args.kwargs['index'], original_index)
+            catalog.assert_called_once_with(
+                editor.manager.stage_path, 'characters/hero.skinm')
 
     def test_search_explorer_and_pak_selection_are_in_explorer(self):
         editor = self.editor
