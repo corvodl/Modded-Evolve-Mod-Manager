@@ -6,6 +6,8 @@ import shutil
 import json
 
 from PySide6.QtCore import QObject, Signal, Qt
+from qt_ui_components import DisclosurePanel, WorkspaceHeader
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QHeaderView, QFileDialog, QMessageBox,
@@ -154,6 +156,11 @@ class AssetLibraryDialog(QDialog):
         self.setWindowTitle("Extracted PAK Asset Library")
         self.resize(990, 560)
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 10, 12, 12)
+        lay.setSpacing(8)
+        lay.addWidget(WorkspaceHeader(
+            'Asset Library Manager',
+            'Import verified archives, register game builds and inspect references.'))
         info = QLabel(
             "PAKs are verified, fully extracted ONCE, and kept as ordinary "
             "read-only reference files. You may add any supported Evolve .pak. "
@@ -251,8 +258,17 @@ class AssetLibraryDialog(QDialog):
         close.clicked.connect(self.accept)
         project_controls.addStretch(1)
         project_controls.addWidget(close)
+        # Frequent import operations stay visible; rare bulk, verification
+        # and transfer actions live in a compact disclosure panel.
+        self.advanced_tools = DisclosurePanel(
+            'Advanced library and build operations', expanded=False)
+        for secondary in (self.key_button, self.all_button):
+            controls.removeWidget(secondary)
+            self.advanced_tools.addWidget(secondary)
+        project_controls.removeWidget(close)
+        project_controls.removeWidget(self.cancel_button)
         lay.addLayout(controls)
-        lay.addLayout(project_controls)
+        self.advanced_tools.addLayout(project_controls)
         transfer_controls = QHBoxLayout()
         self.legacy_map_button = QPushButton("Prepare Legacy Map Review…")
         self.legacy_map_button.setToolTip(
@@ -274,7 +290,13 @@ class AssetLibraryDialog(QDialog):
         self.bulk_transfer_button.clicked.connect(self.export_legacy_build)
         transfer_controls.addWidget(self.bulk_transfer_button)
         transfer_controls.addStretch(1)
-        lay.addLayout(transfer_controls)
+        self.advanced_tools.addLayout(transfer_controls)
+        lay.addWidget(self.advanced_tools)
+        footer = QHBoxLayout()
+        footer.addWidget(self.cancel_button)
+        footer.addStretch(1)
+        footer.addWidget(close)
+        lay.addLayout(footer)
 
         controller.progress.connect(self._progress)
         controller.finished.connect(self._finished)
