@@ -170,15 +170,13 @@ class EasyModInstaller(QDialog):
         if review is None:
             QMessageBox.information(self, "Mod Installer", "Review the package first.")
             return
-        if not pid:
-            QMessageBox.information(self, "Mod Installer",
-                                    "Choose or create a Mods Collection first.")
-            return
         try:
-            profile = next(p for p in self.store.list_profiles() if p["id"] == pid)
+            profile = next((p for p in self.store.list_profiles() if p["id"] == pid), None)
+            if pid and profile is None:
+                raise ValueError("Selected Mods Collection was removed. Refresh the list.")
             conflicts = [m for m in profile["mods"] if m.get("enabled") and
-                         m["relative"].casefold() == review.target.casefold()]
-        except (OSError, ValueError, StopIteration) as exc:
+                         m["relative"].casefold() == review.target.casefold()] if profile else []
+        except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Mod Installer", str(exc))
             return
         changes = "\n".join("• " + x for x in review.changed_entries[:12])
@@ -193,6 +191,15 @@ class EasyModInstaller(QDialog):
                 "entry, then stage using verified backups? Game files are not changed.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
+        # The first install creates a sensible default collection only
+        # after approval, so new users don't need a separate setup wizard.
+        if pid is None:
+            try:
+                pid = self.store.create("My Mods")
+                self.reload_profiles(pid)
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, "Mod Installer", str(exc))
+                return
         self.install_button.setEnabled(False)
         def complete(imported):
             try:
