@@ -35,7 +35,7 @@ jobs:
           test_character_stages test_model_preview test_viewer_material_fixes test_beta10_library_model_material
           test_beta17_character_library test_beta18_flat_character_models test_character_export_folders
           test_beta13_layered_aliases test_beta16_wraith_shared_textures
-          test_character_preview_pipeline test_material_preview test_textured_export test_gloss_material_pipeline test_extended_texture_pipeline test_ssao_postprocess test_ssao_compact_ui test_cubemap_material test_reflection_texture_pipeline test_ambient_occlusion_pipeline
+          test_character_preview_pipeline test_material_preview test_textured_export test_gloss_material_pipeline test_extended_texture_pipeline test_ssao_postprocess test_ssao_compact_ui test_normal_y_diagnostic test_cubemap_material test_reflection_texture_pipeline test_ambient_occlusion_pipeline
           test_native_caf test_model_animation test_model_rigging test_legacy_crytek_rig test_historical_animation_handoff test_xbox360_dds test_gpu_preview
           test_beta23_animation_autoplay test_beta13_overlay_layout test_native_animation_browser
           test_dds0_selection test_asset_streaming_models test_legacy_material_texture_resolve test_multi_pak_assets

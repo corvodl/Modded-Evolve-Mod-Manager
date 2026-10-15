@@ -183,6 +183,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.unlit_diffuse = False
         self._renderer3 = None
         self.ssao_quality = 'Off'
+        self.normal_diagnostic = 'Source (unchanged)'
         self.ssao_error = ''
         self._ssao_effect = None
         self.rotation = [-30.0, 14.0]
@@ -275,6 +276,14 @@ class QtGLModelCanvas(QOpenGLWidget):
             raise ValueError('Unknown SSAO quality')
         self.ssao_quality = quality
         self.ssao_error = ''
+        self.update()
+
+    def set_normal_diagnostic(self, mode):
+        """Toggle source normal Y for visual comparison, never mutate DDS bytes."""
+        modes = ('Source (unchanged)', 'Flip green (DX to GL)', 'Flat (no normal maps)')
+        if mode not in modes:
+            raise ValueError('Unsupported normal-map comparison mode')
+        self.normal_diagnostic = mode
         self.update()
 
     def set_visible_material_slot(self, slot):
@@ -725,11 +734,14 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 glass=bool(glasses[slot]) if slot<len(glasses) else False,
                                 opacity=alpha,gloss=self.specular_intensity, alpha_cutoff=cutoff or .02,
                                 illumination=strength,diffuse=bool(tex),
-                                normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
+                                normal=(self.normal_diagnostic != 'Flat (no normal maps)' and
+                                        slot<len(self.normal_textures) and bool(self.normal_textures[slot])),
                                 specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
                                 gloss_texture=slot<len(self.gloss_textures) and bool(self.gloss_textures[slot]),
                                 detail=slot<len(self.detail_textures) and bool(self.detail_textures[slot]),
-                                detail_normal=slot<len(self.detail_normal_textures) and bool(self.detail_normal_textures[slot]),
+                                detail_normal=(self.normal_diagnostic != 'Flat (no normal maps)' and
+                                               slot<len(self.detail_normal_textures) and bool(self.detail_normal_textures[slot])),
+                                invert_normal_y=self.normal_diagnostic == 'Flip green (DX to GL)',
                                 uv_matrices={role: transform_for(self.materials,slot,role,seconds)
                                              for role in ('normal','specular','gloss','detail','detail_normal','ao')},
                                 alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
@@ -1135,6 +1147,24 @@ class QtGPUModelPanel(QWidget):
             lambda checked:(setattr(self.canvas,'unlit_diffuse',checked),
                             self.canvas.update()))
         self._material_advanced.addWidget(self.unlit_diffuse_checkbox)
+        normal_row = QHBoxLayout()
+        normal_row.addWidget(QLabel('Normal Y'))
+        self.normal_convention_combo = QComboBox(self)
+        self.normal_convention_combo.setObjectName('modelNormalYDiagnostic')
+        self.normal_convention_combo.addItems((
+            'Source (unchanged)', 'Flip green (DX to GL)', 'Flat (no normal maps)'))
+        self.normal_convention_combo.setToolTip(
+            'Compare a fixed camera/light with the normal map unchanged, '
+            'its green channel inverted, or with normal details disabled. '
+            'Preview only: neither original DDS nor Blender exports change.')
+        self.normal_convention_combo.currentTextChanged.connect(
+            self.canvas.set_normal_diagnostic)
+        normal_row.addWidget(self.normal_convention_combo, 1)
+        self._material_advanced.addLayout(normal_row)
+        self.normal_diagnostic_info = QLabel(self)
+        self.normal_diagnostic_info.setObjectName('modelNormalYSourceStatus')
+        self.normal_diagnostic_info.setWordWrap(True)
+        self._material_advanced.addWidget(self.normal_diagnostic_info)
         ambient_row = QHBoxLayout()
         ambient_row.addWidget(QLabel('Studio fill'))
         self.studio_fill_slider = QSlider(Qt.Horizontal)
@@ -1154,7 +1184,8 @@ class QtGPUModelPanel(QWidget):
         self.diffuse_source_info.setObjectName('viewHint')
         self._material_advanced.addWidget(self.diffuse_source_info)
         self.part_select.currentIndexChanged.connect(
-            lambda _index: self._update_source_brightness())
+            lambda _index: (self._update_source_brightness(),
+                            self._update_normal_source_status()))
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = _CompactDiagnosticText(self)
@@ -1369,6 +1400,33 @@ class QtGPUModelPanel(QWidget):
                 message += '\nNo Diffuse map declared in the MTL for this slot.'
         self.diffuse_source_info.setText(message)
 
+    def _update_normal_source_status(self):
+        """Explain the selected slot's actual decoded maps and preview-only mode."""
+        materials = self.canvas.materials
+        if materials is None:
+            message = 'No material maps resolved yet. Wait for background DDS loading.'
+        else:
+            slots = (sorted({subset[2] for subset in self.canvas.mesh.subsets})
+                     if self.canvas.mesh.subsets else [0])
+            selected = self.part_select.currentData()
+            if selected is not None:
+                slots = [selected]
+            primary = sum(1 for slot in slots
+                          if 0 <= slot < len(getattr(materials, 'normal_maps', ()))
+                          and materials.normal_maps[slot] is not None)
+            detail = sum(1 for slot in slots
+                         if 0 <= slot < len(getattr(materials, 'detail_normal_maps', ()))
+                         and materials.detail_normal_maps[slot] is not None)
+            message = ('%d base + %d detail normal map(s) decoded across %d part(s).'
+                       % (primary, detail, len(slots)))
+            if not (primary or detail):
+                message += ' No normal mapping to compare on this selection.'
+            else:
+                message += ' Keep camera and light fixed; compare highlights and indentations.'
+        message += ' Preview only — original DDS and GLB export stay unchanged.'
+        if hasattr(self, 'normal_diagnostic_info'):
+            self.normal_diagnostic_info.setText(message)
+
     def _populate_material_slots(self,mesh,materials):
         from material_preview import diffuse_source_stats
         slots=sorted({part[2] for part in mesh.subsets}) if mesh.subsets else [0]
@@ -1400,6 +1458,7 @@ class QtGPUModelPanel(QWidget):
         self.canvas.set_visible_material_slot(None)
         if hasattr(self,'diffuse_source_info'):
             self._update_source_brightness()
+        self._update_normal_source_status()
 
     def show_uv_layout(self):
         from io import BytesIO

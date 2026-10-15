@@ -44,6 +44,7 @@ uniform int has_specular;
 uniform int has_gloss;
 uniform int has_detail;
 uniform int has_detail_normal;
+uniform int normal_y_flip;
 uniform int has_ao;
 uniform float ao_strength;
 uniform int has_environment;
@@ -99,8 +100,12 @@ void main() {
             vec3 mapped = has_normal == 1 ?
                   texture2D(normal_map,normal_coord).xyz * 2.0 - 1.0 :
                   vec3(0.0,0.0,1.0);
+            // Viewer-only diagnostic: reverse tangent-space Y exactly once.
+            // Do NOT alter the uploaded DDS/PNG or glTF exported pixels.
+            if (normal_y_flip == 1) mapped.y = -mapped.y;
             if (has_detail_normal == 1) {
                 vec3 fine = texture2D(detail_normal_map,detail_normal_coord).xyz * 2.0 - 1.0;
+                if (normal_y_flip == 1) fine.y = -fine.y;
                 // Conservative additive tangent-space detail; full CryEngine
                 // material layering remains dependent on source shader rules.
                 mapped = normalize(vec3(mapped.xy + fine.xy, mapped.z * fine.z));
@@ -169,7 +174,7 @@ class Renderer3:
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
             'diffuse_map','normal_map','specular_map','gloss_map','detail_map','detail_normal_map','environment_map','ao_map',
             'normal_uv','specular_uv','gloss_uv','detail_uv','detail_normal_uv','ao_uv',
-            'has_diffuse','has_normal','has_specular','has_gloss','has_detail','has_detail_normal',
+            'has_diffuse','has_normal','has_specular','has_gloss','has_detail','has_detail_normal','normal_y_flip',
             'has_environment','reflection_strength','is_glass','has_ao','ao_strength','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
         for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2),('gloss_map',3),
                           ('detail_map',4),('detail_normal_map',5),('environment_map',6),('ao_map',7)):
@@ -177,7 +182,7 @@ class Renderer3:
         glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
-             gloss_texture=False, detail=False, detail_normal=False, uv_matrices=None,
+             gloss_texture=False, detail=False, detail_normal=False, invert_normal_y=False, uv_matrices=None,
              environment=False, reflection_strength=0., glass=False,
              ao=False, ao_strength=1.,
              alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
@@ -186,6 +191,7 @@ class Renderer3:
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
                            ('has_specular',specular), ('has_gloss',gloss_texture),
                            ('has_detail',detail), ('has_detail_normal',detail_normal),
+                           ('normal_y_flip',invert_normal_y),
                            ('has_environment',environment), ('is_glass',glass), ('has_ao',ao),
                            ('use_alpha_texture',alpha_texture),
                            ('unlit_diffuse',unlit)):
