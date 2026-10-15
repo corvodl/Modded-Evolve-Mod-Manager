@@ -3937,11 +3937,13 @@ class QtManager(QMainWindow):
                 self.info('Updates','No newer Stable or Beta release is available.')
         else:
             title='Beta' if candidate.channel=='beta' else 'Stable'
-            self.update_status.setText(title+' update: '+candidate.version)
+            published = (candidate.version + (' · Patch ' + str(candidate.revision)
+                         if candidate.revision else ''))
+            self.update_status.setText(title+' update: '+published)
             note=('\n\nThis is an experimental Beta. It may contain unfinished features.'
                   if candidate.channel=='beta' else '')
             if self.confirm(title+' update available',
-                            candidate.version+note+
+                            published+note+
                             '\n\nDownload, verify, install and restart? '
                             'Personal Data, keys, game files and projects remain unchanged.'):
                 self._install_stable_update(candidate)
