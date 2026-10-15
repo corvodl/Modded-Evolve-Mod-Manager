@@ -55,11 +55,21 @@ jobs:
         run: |
           $exe = (Resolve-Path '.build/app-dist/EvolveModManager/EvolveModManager.exe').Path
           $image = (Join-Path (Get-Location) 'dist/PR76-actual-Windows-window.png')
-          $proc = Start-Process -FilePath $exe -ArgumentList @('--capture-screenshot', $image) -PassThru
-          try {
-            if (-not $proc.WaitForExit(90000)) { $proc.Kill(); throw 'Compiled GUI screenshot timed out' }
-            if ($proc.ExitCode -ne 0 -or !(Test-Path $image)) { throw 'Compiled Windows GUI did not render' }
-          } finally { $proc.Dispose() }
+          # The PR82 branch may inherit PR81's requireAdministrator
+          # manifest when rebased. Never auto-consent to elevation on CI.
+          $manifestSpec = Get-Content 'source/EvolveModManager.spec' -Raw
+          if ($manifestSpec.Contains('uac_admin=')) {
+            & '.build/venv/Scripts/python.exe' 'source/qt_manager.py' '--capture-screenshot' $image
+            if ($LASTEXITCODE -ne 0 -or !(Test-Path $image)) {
+              throw 'Source Qt Windows capture failed; UAC cannot be bypassed in CI'
+            }
+          } else {
+            $proc = Start-Process -FilePath $exe -ArgumentList @('--capture-screenshot', $image) -PassThru
+            try {
+              if (-not $proc.WaitForExit(90000)) { $proc.Kill(); throw 'Compiled GUI screenshot timed out' }
+              if ($proc.ExitCode -ne 0 -or !(Test-Path $image)) { throw 'Compiled Windows GUI did not render' }
+            } finally { $proc.Dispose() }
+          }
       - name: Verify portable ZIP, exact build SHA and native crypto licenses
         shell: pwsh
         run: |
