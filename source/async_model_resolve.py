@@ -14,11 +14,13 @@ from character_assembly import assemble_character
 from character_animation_catalog import discover_animations
 from gpu_model_preview import prepare_geometry
 from workspace_file_actions import checked_path
+from performance_trace import span
 
 
 def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                   texture_folder=None, animation_index=None, equipment=None,
-                  index=None, require_assembly=False, cancel=None):
+                  index=None, require_assembly=False, cancel=None,
+                  geometry_ready=None):
     def checkpoint():
         if cancel is not None and cancel():
             raise InterruptedError('Obsolete model preparation cancelled')
@@ -51,10 +53,28 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
         raise ValueError(
             'Full Character needs a valid CDF with compatible body and '
             'equipment meshes. ' + (assembly_error or 'No CDF assembly found.'))
-    mesh = (character.mesh if character else
-            find_preview_mesh(workspace, relative, raw,
-                              projects_root=projects_root, stage_root=stage_root,
-                              index=index))
+    with span('model', 'mesh_decode'):
+        mesh = (character.mesh if character else
+                find_preview_mesh(workspace, relative, raw,
+                                  projects_root=projects_root, stage_root=stage_root,
+                                  index=index))
+    checkpoint()
+    # Geometry does not depend on decoded diffuse/normal/specular maps.
+    # Publish it before potentially expensive material and CAF discovery.
+    with span('model', 'geometry_prepare'):
+        if projects_root is not None:
+            from asset_geometry_cache import cached_geometry
+            geometry, cached = cached_geometry(
+                mesh,Path(projects_root)/'.asset-cache'/'gpu',shading='faceted')
+        else:
+            geometry = prepare_geometry(mesh, shading='faceted')
+            cached = False
+    checkpoint()
+    if geometry_ready is not None:
+        geometry_ready({'mesh': mesh, 'geometry': geometry,
+                        'character': character, 'index': index,
+                        'report': report})
+    checkpoint()
     materials = character.materials if character else None
     issue = ''
     if materials is None:
@@ -62,26 +82,19 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
             source_material_model = (
                 relative if str(mesh.source_name).startswith('Character assembly:')
                 else (mesh.source_name or relative))
-            materials = load_preview_materials(
-                workspace, source_material_model, texture_folder,
-                projects_root=projects_root, stage_root=stage_root,index=index)
+            with span('model', 'materials_resolve'):
+                materials = load_preview_materials(
+                    workspace, source_material_model, texture_folder,
+                    projects_root=projects_root, stage_root=stage_root,index=index)
         except (ValueError, OSError) as exc:
             issue = str(exc)
     checkpoint()
     skeleton = character.skeleton if character else relative
-    references, idle, config = discover_animations(
-        skeleton, index, preferred_workspace=workspace,
-        loose_index=animation_index)
+    with span('model', 'animation_discovery'):
+        references, idle, config = discover_animations(
+            skeleton, index, preferred_workspace=workspace,
+            loose_index=animation_index)
     checkpoint()
-    # Derived geometry caches are optional. A broken/unwritable cache must
-    # never prevent the game model from opening.
-    if projects_root is not None:
-        from asset_geometry_cache import cached_geometry
-        geometry, cached = cached_geometry(
-            mesh,Path(projects_root)/'.asset-cache'/'gpu',shading='faceted')
-    else:
-        geometry = prepare_geometry(mesh, shading='faceted')
-        cached = False
     checkpoint()
     return {
         'raw':raw, 'report':report, 'mesh':mesh, 'materials':materials,
