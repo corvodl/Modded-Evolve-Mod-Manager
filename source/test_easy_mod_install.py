@@ -92,6 +92,18 @@ class EasyModInstallTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Multiple targets"):
                 review_package(self.source, self.stage)
 
+    def test_only_enabled_exact_target_collisions_are_flagged(self):
+        from easy_mod_install import enabled_target_conflicts
+        profile = {"mods": [
+            {"id": "active", "relative": "Game/libs.pak", "enabled": True},
+            {"id": "disabled", "relative": "Game/libs.pak", "enabled": False},
+            {"id": "different", "relative": "Engine/shaders.pak", "enabled": True},
+        ]}
+        self.assertEqual(
+            [mod["id"] for mod in enabled_target_conflicts(profile, "game/LIBS.pak")],
+            ["active"])
+        self.assertEqual(enabled_target_conflicts(profile, "Game/videos.pak"), ())
+
     def test_changing_file_after_preview_refuses_import(self):
         reviewed = self._review(self.source)
         self.source.write_bytes(b"tampered-after-review")
