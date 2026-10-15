@@ -70,7 +70,8 @@ def tcp_connections_for_pid(pid):
         '| ConvertTo-Json -Compress'
     )
     completed=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive',
-        '-Command',command],capture_output=True,text=True,timeout=10)
+        '-Command',command],capture_output=True,text=True,timeout=10,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     if completed.returncode!=0:
         raise OSError('Windows TCP connection enumeration failed')
     decoded=json.loads(completed.stdout or '[]')
