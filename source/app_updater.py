@@ -10,6 +10,8 @@ import hashlib
 import json
 import re
 import os
+import shutil
+import time
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
@@ -23,9 +25,11 @@ from typing import Callable
 REPO = 'corvodl/Modded-Evolve-Mod-Manager'
 API = f'https://api.github.com/repos/{REPO}'
 RELEASE_ASSET = 'EvolveModManager-Windows.zip'
+REVISION_STAMP = 'BUILD_REVISION.txt'
+UPDATE_WORK_DIR = 'UpdateWork'
 MANIFEST_ASSET = 'update-manifest.json'
 ALLOWED_TOP = frozenset({'EvolveModManager.exe', 'EvolveModWorker.exe', '_internal',
-                         'Docs', 'START-HERE.txt', 'BUILD_COMMIT.txt', 'BUILD_CHANNEL.txt'})
+                         'Docs', 'START-HERE.txt', 'BUILD_COMMIT.txt', 'BUILD_CHANNEL.txt', REVISION_STAMP})
 MAX_ZIP_BYTES = 300 * 1024 * 1024
 MAX_EXPANDED_BYTES = 1_500 * 1024 * 1024
 USER_AGENT = 'EvolveModManager-Updater/2.0'
@@ -41,6 +45,8 @@ class Update:
     url: str
     size: int
     channel: str = 'main'
+    revision: int = 0
+    release_type: str = 'milestone'
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,79 @@ def _get(url: str, *, max_bytes=1_000_000) -> bytes:
     return data
 
 
+def installed_revision(app_home: Path) -> int:
+    """Old installs have revision zero."""
+    try:
+        value = (Path(app_home) / REVISION_STAMP).read_text(encoding='ascii').strip()
+        if re.fullmatch(r'0|[1-9][0-9]{0,4}', value):
+            return int(value)
+    except (OSError, UnicodeError):
+        pass
+    return 0
+
+
+def _revision_fields(manifest):
+    if manifest.get('schema') == 1:
+        if 'revision' in manifest or 'release_type' in manifest:
+            raise ValueError('Invalid schema-1 revision fields.')
+        return 0, 'milestone'
+    if manifest.get('schema') != 2:
+        raise ValueError('Unsupported update manifest schema.')
+    revision, kind = manifest.get('revision'), manifest.get('release_type')
+    if (type(revision) is not int or not 0 <= revision <= 99999 or
+            kind not in ('milestone', 'patch') or
+            (revision == 0) != (kind == 'milestone')):
+        raise ValueError('Invalid update revision and release type.')
+    return revision, kind
+
+
+def _validated_asset_name(manifest):
+    revision, kind = _revision_fields(manifest)
+    if manifest.get('schema') == 1:
+        if manifest.get('asset') != RELEASE_ASSET:
+            raise ValueError('Legacy release asset mismatch.')
+        return RELEASE_ASSET, 0, 'milestone'
+    version = str(manifest.get('version', '')).split(' - ', 1)[0]
+    version_key(version)
+    asset = f'EvolveModManager-Windows-{version}-p{revision}.zip'
+    installer = f'EvolveModManager-Setup-{version}-p{revision}.exe'
+    if manifest.get('asset') != asset or manifest.get('installer') != installer:
+        raise ValueError('Revision-specific asset mismatch.')
+    return asset, revision, kind
+
+
+def update_workspace(app_home: Path) -> Path:
+    return Path(app_home).resolve() / UPDATE_WORK_DIR
+
+
+def cleanup_completed_update_work(app_home: Path, *, max_age_seconds=86400) -> None:
+    """Prune old completed transactions, but retain failed-rollback recovery.
+
+    A detached updater may still be running in a young transaction. Only
+    32-hex-named folders older than a full day without rollback are eligible.
+    Other files and all user-owned Data are never inspected or removed.
+    """
+    work = update_workspace(app_home)
+    if not work.is_dir() or work.is_symlink():
+        return
+    now = time.time()
+    try:
+        children = tuple(work.iterdir())
+    except OSError:
+        return
+    for folder in children:
+        if (not re.fullmatch(r'[0-9a-f]{32}', folder.name) or
+                folder.is_symlink() or not folder.is_dir()):
+            continue
+        try:
+            if (now - folder.stat().st_mtime <= max_age_seconds or
+                    (folder / 'rollback').exists()):
+                continue
+            shutil.rmtree(folder)
+        except OSError:
+            pass
+
+
 def installed_commit(app_home: Path) -> str | None:
     path = Path(app_home) / 'BUILD_COMMIT.txt'
     if not path.is_file(): return None
@@ -105,29 +184,9 @@ def installed_commit(app_home: Path) -> str | None:
 
 
 def discover(current_commit: str | None = None) -> Update | None:
-    """Only offer an update when the main HEAD and published release are identical."""
-    head = json.loads(_get(API + '/branches/main'))['commit']['sha'].lower()
-    if current_commit == head: return None
-    release = json.loads(_get(API + '/releases/tags/Main'))
-    assets = {a['name']: a for a in release.get('assets', [])}
-    if MANIFEST_ASSET not in assets or RELEASE_ASSET not in assets:
-        return None  # CI may still be building the latest commit.
-    manifest = json.loads(_get(assets[MANIFEST_ASSET]['browser_download_url']))
-    sha = manifest.get('sha256', '').lower()
-    if (manifest.get('schema') != 1 or manifest.get('commit', '').lower() != head or
-            manifest.get('asset') != RELEASE_ASSET or
-            len(sha) != 64 or any(ch not in '0123456789abcdef' for ch in sha)):
-        return None
-    asset = assets[RELEASE_ASSET]
-    if (asset.get('size', 0) <= 0 or asset['size'] > MAX_ZIP_BYTES or
-            manifest.get('bytes') != asset['size']):
-        return None
-    digest = asset.get('digest')
-    if digest and digest.lower() != 'sha256:' + sha:
-        return None
-    return Update(head, str(manifest.get('version', 'Updated build')).strip()[:140],
-                  sha, asset['browser_download_url'], asset['size'])
-
+    """Stable-only compatibility discovery."""
+    update = discover_channel('main')
+    return update if update and update.commit != current_commit else None
 
 
 def version_key(value: str):
@@ -142,71 +201,82 @@ def version_key(value: str):
 
 
 def discover_channel(channel: str) -> Update | None:
-    """Match an immutable manifest against the current release branch HEAD."""
+    """Validate rolling channel manifest, checksum, version and revision."""
     if channel not in CHANNELS:
         raise ValueError('Invalid release channel.')
-    branch=json.loads(_get(API+'/branches/'+channel))
-    head=str(branch['commit']['sha']).lower()
-    if not re.fullmatch(r'[0-9a-f]{40}',head):
+    branch = json.loads(_get(API + '/branches/' + channel))
+    head = str(branch['commit']['sha']).lower()
+    if not re.fullmatch(r'[0-9a-f]{40}', head):
         raise ValueError('Invalid channel HEAD.')
-    release=json.loads(_get(API+'/releases/tags/'+CHANNELS[channel]))
-    assets={a['name']:a for a in release.get('assets',[])}
-    if MANIFEST_ASSET not in assets or RELEASE_ASSET not in assets:
+    release = json.loads(_get(API + '/releases/tags/' + CHANNELS[channel]))
+    assets = {a['name']: a for a in release.get('assets', [])}
+    if MANIFEST_ASSET not in assets:
         return None
-    manifest=json.loads(_get(assets[MANIFEST_ASSET]['browser_download_url']))
-    sha=str(manifest.get('sha256','')).lower()
-    asset=assets[RELEASE_ASSET]
-    if (manifest.get('schema') != 1 or str(manifest.get('commit','')).lower()!=head
-            or manifest.get('asset')!=RELEASE_ASSET or
-            not re.fullmatch(r'[0-9a-f]{64}',sha) or
-            manifest.get('channel','main')!=channel or
-            (channel=='beta' and not release.get('prerelease',False)) or
-            not isinstance(asset.get('size'),int) or
-            not 0<asset['size']<=MAX_ZIP_BYTES or
-            manifest.get('bytes')!=asset['size']):
+    manifest = json.loads(_get(assets[MANIFEST_ASSET]['browser_download_url']))
+    try:
+        asset_name, revision, kind = _validated_asset_name(manifest)
+        version = str(manifest.get('version', '')).strip()
+        version_key(version)
+    except (TypeError, ValueError):
         return None
-    digest=asset.get('digest')
-    if digest and str(digest).lower()!='sha256:'+sha:
+    sha = str(manifest.get('sha256', '')).lower()
+    asset = assets.get(asset_name)
+    if not asset:
         return None
-    url=asset.get('browser_download_url','')
-    prefix=f'https://github.com/{REPO}/releases/download/{CHANNELS[channel]}/'
-    if not isinstance(url,str) or not url.startswith(prefix):
+    if (str(manifest.get('commit', '')).lower() != head or
+            not re.fullmatch(r'[0-9a-f]{64}', sha) or
+            manifest.get('channel', 'main') != channel or
+            (channel == 'beta' and not release.get('prerelease', False)) or
+            not isinstance(asset.get('size'), int) or
+            not 0 < asset['size'] <= MAX_ZIP_BYTES or
+            manifest.get('bytes') != asset['size']):
         return None
-    version=str(manifest.get('version','')).strip()
-    version_key(version)
-    return Update(head,version[:140],sha,url,asset['size'],channel)
+    digest = asset.get('digest')
+    if digest and str(digest).lower() != 'sha256:' + sha:
+        return None
+    prefix = f'https://github.com/{REPO}/releases/download/{CHANNELS[channel]}/'
+    url = asset.get('browser_download_url', '')
+    if url != prefix + asset_name:
+        return None
+    return Update(head, version[:140], sha, url, asset['size'],
+                  channel, revision, kind)
 
 
-def choose_latest(candidates, installed_version, installed_commit=None):
-    """Offer one strictly newer release (stable wins on equal versions)."""
-    valid=[candidate for candidate in candidates if candidate is not None]
+def choose_latest(candidates, installed_version, installed_commit=None,
+                  installed_revision=0):
+    """Reject all version/revision downgrades; prefer stable for ties."""
+    valid = [candidate for candidate in candidates if candidate is not None]
     if not valid:
         return None
-    valid.sort(key=lambda x:(version_key(x.version), x.channel=='main'),reverse=True)
-    winner=valid[0]
+    valid.sort(key=lambda x: (version_key(x.version), x.revision,
+                              x.channel == 'main'), reverse=True)
+    winner = valid[0]
     if installed_version:
-        if version_key(winner.version)<=version_key(installed_version):
+        if ((version_key(winner.version), winner.revision) <=
+                (version_key(installed_version), installed_revision)):
             return None
-    elif winner.commit==installed_commit:
+    elif winner.commit == installed_commit:
         return None
     return winner
 
 
-def discover_latest(current_commit=None,current_version=None):
-    """Inspect both stable and beta, not ad-hoc CI artifacts."""
-    candidates=[]
-    errors=[]
+def discover_latest(current_commit=None, current_version=None,
+                    current_revision=0):
+    """Query both channels and compare revision-aware release tuples."""
+    candidates, errors = [], []
     for channel in CHANNELS:
         try:
             candidates.append(discover_channel(channel))
-        except (ValueError,KeyError,OSError,urllib.error.URLError) as exc:
-            errors.append((channel,str(exc)))
+        except (ValueError, KeyError, OSError, urllib.error.URLError) as exc:
+            errors.append((channel, str(exc)))
     if not any(candidates):
         if errors:
-            raise RuntimeError('Cannot verify either release channel: '+
-                               '; '.join(name+': '+reason for name,reason in errors))
+            raise RuntimeError('Cannot verify either release channel: ' +
+                               '; '.join(name + ': ' + reason for name, reason in errors))
         return None
-    return choose_latest(candidates,current_version,current_commit)
+    return choose_latest(candidates, current_version, current_commit,
+                         current_revision)
+
 
 def _validated_zip_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
     files = []
@@ -243,10 +313,15 @@ def _validated_zip_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
 
 
 def download_and_prepare(update: Update, scratch: Path | None = None,
-                         progress: Callable[[str, int, int], None] | None = None) -> Path:
+                         progress: Callable[[str, int, int], None] | None = None,
+                         app_home: Path | None = None) -> Path:
     """Prepare only inside a standalone scratch directory; never modify the install."""
     if scratch is None:
-        base = Path(os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()) / 'EvolveModManagerUpdates'
+        base = update_workspace(
+            app_home if app_home is not None else
+            Path(os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()) /
+            'EvolveModManager')
+        base.mkdir(parents=True, exist_ok=True)
         scratch = base / uuid.uuid4().hex
     scratch = Path(scratch).resolve()
     scratch.mkdir(parents=True, exist_ok=False)
@@ -288,10 +363,17 @@ def download_and_prepare(update: Update, scratch: Path | None = None,
             raise ValueError('Downloaded build commit differs from the selected release.')
         if (staged/'BUILD_CHANNEL.txt').read_text(encoding='ascii').strip().lower()!=update.channel:
             raise ValueError('Downloaded build channel differs from the selected release.')
+        if installed_revision(staged) != update.revision:
+            raise ValueError('Downloaded revision differs from the selected release.')
+        if (update.revision > 0 and
+                not (staged / REVISION_STAMP).is_file()):
+            raise ValueError('Patched update is missing its revision stamp.')
         if progress: progress('Ready', 1, 1)
         return staged
     except BaseException:
-        # Retain scratch as evidence for diagnosis, never touch installed data.
+        # A failed download must not leave unnecessary update archives.
+        import shutil
+        shutil.rmtree(scratch, ignore_errors=True)
         raise
 
 
@@ -302,12 +384,12 @@ def report_startup_ready(app_home: Path) -> None:
     The path must reside in the updater's scratch area, never the game or
     user-owned Data directory. A missing or invalid hint is ignored.
     """
+    cleanup_completed_update_work(app_home)
     hint = os.environ.pop('EVOLVE_MANAGER_UPDATE_ACK', '')
     if not hint:
         return
     try:
-        scratch = (Path(os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()) /
-                   'EvolveModManagerUpdates').resolve()
+        scratch = update_workspace(app_home)
         path = Path(hint).resolve()
         if (not path.is_relative_to(scratch) or
                 not path.name.startswith('startup-ok-') or path.suffix != '.txt'):
@@ -326,11 +408,13 @@ APPLY_PS1 = r'''param(
   [Parameter(Mandatory=$true)][int]$ManagerPid,
   [Parameter(Mandatory=$true)][string]$ExpectedCommit,
   [ValidateSet('main','beta')][string]$ExpectedChannel = 'main',
+  [int]$ExpectedRevision = 0,
   [switch]$Headless
 )
 $ErrorActionPreference = 'Stop'
-$Names = @('EvolveModManager.exe','EvolveModWorker.exe','_internal','Docs','START-HERE.txt','BUILD_COMMIT.txt','BUILD_CHANNEL.txt')
-$Backup = Join-Path $TargetDir ('.update-backup-' + [guid]::NewGuid().ToString('N'))
+$Names = @('EvolveModManager.exe','EvolveModWorker.exe','_internal','Docs','START-HERE.txt','BUILD_COMMIT.txt','BUILD_CHANNEL.txt','BUILD_REVISION.txt')
+$ScratchRoot = Split-Path -Parent (Split-Path -Parent $SourceDir)
+$Backup = Join-Path $ScratchRoot 'rollback'
 $Moved = New-Object System.Collections.Generic.List[string]
 $Installed = New-Object System.Collections.Generic.List[string]
 $script:NewManager = $null
@@ -403,6 +487,13 @@ try {
   }
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_COMMIT.txt') -Raw).Trim() -ne $ExpectedCommit) { throw 'Update commit mismatch.' }
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_CHANNEL.txt') -Raw).Trim().ToLowerInvariant() -ne $ExpectedChannel) { throw 'Update build channel mismatch.' }
+  $RevisionStamp = Join-Path $SourceDir 'BUILD_REVISION.txt'
+  if (Test-Path -LiteralPath $RevisionStamp) {
+    $FoundRevision = (Get-Content -LiteralPath $RevisionStamp -Raw).Trim()
+  } else {
+    $FoundRevision = '0'  # Legacy schema-1 installations.
+  }
+  if ($FoundRevision -ne [string]$ExpectedRevision) { throw 'Update build revision mismatch.' }
   Set-UpdateProgress 'Backing up current application...' 5
   $script:UpdateStep = 'creating application backup'
   try {
@@ -473,7 +564,6 @@ try {
   }
   if ((Get-Content -LiteralPath (Join-Path $TargetDir 'BUILD_COMMIT.txt') -Raw).Trim() -ne $ExpectedCommit) { throw 'Installed commit mismatch.' }
   Set-UpdateProgress 'Launching and checking updated manager...' 95
-  $ScratchRoot = Split-Path -Parent (Split-Path -Parent $SourceDir)
   $AckPath = Join-Path $ScratchRoot ('startup-ok-' + [guid]::NewGuid().ToString('N') + '.txt')
   $info = New-Object System.Diagnostics.ProcessStartInfo
   $info.FileName = Join-Path $TargetDir 'EvolveModManager.exe'
@@ -501,7 +591,13 @@ try {
   Set-UpdateProgress 'Update complete; manager reopened.' 100
   Write-Output "UPDATE SUCCESS: $ExpectedCommit"
   try { Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction Stop }
-  catch { Write-Output ("Backup retained (cleanup warning): " + $_.Exception.Message + " at " + $Backup) }
+  catch { Write-Output ("Temporary rollback cleanup warning: " + $_.Exception.Message) }
+  foreach ($path in @((Join-Path $ScratchRoot 'download.zip'), (Join-Path $ScratchRoot 'extracted'))) {
+    if (Test-Path -LiteralPath $path) {
+      try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+      catch { Write-Output ("Update scratch cleanup warning: " + $_.Exception.Message) }
+    }
+  }
 } catch {
   $Failure = $_.Exception.Message
   Write-Output "UPDATE FAILED: $Failure"
@@ -510,7 +606,7 @@ try {
   # Emit only the last lines into this private update.log to help diagnose
   # startup faults that do not display a Windows dialog.
   try {
-    $StartupLog = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'EvolveModManagerQtPreview\startup.log'
+    $StartupLog = Join-Path $TargetDir 'Data\Logs\startup.log'
     if (Test-Path -LiteralPath $StartupLog -PathType Leaf) {
       Write-Output "Manager startup diagnostics: $StartupLog"
       Get-Content -LiteralPath $StartupLog -Tail 40 -ErrorAction Stop | ForEach-Object { Write-Output ("STARTUP: " + $_) }
@@ -558,10 +654,13 @@ try {
   } else {
     Write-Output ('ROLLBACK INCOMPLETE: ' + ($RollbackErrors -join ' | '))
   }
-  Write-Output "Recovery backup location (if present): $Backup"
-  Write-Output "Update log: $PSScriptRoot\update.log"
+  if ($RollbackErrors.Count -eq 0) {
+    try { Remove-Item -LiteralPath $Backup -Recurse -Force -ErrorAction Stop }
+    catch { Write-Output ("Temporary rollback cleanup warning: " + $_.Exception.Message) }
+  } else { Write-Output "Emergency recovery files (rollback failed): $Backup" }
+  Write-Output "Update log: $TargetDir\Data\Logs\update.log"
   Write-Output 'The detached updater will not show a blocking error dialog. Details are in update.log.'
-  Write-Output 'Do not delete the original Data directory, signing keys, or any recovery backups.'
+  Write-Output 'Original personal Data was not modified by the updater.'
   exit 1
 } finally {
   if ($null -ne $script:ProgressWindow) {
@@ -582,12 +681,13 @@ def launch_apply(update: Update, staged: Path, app_home: Path, manager_pid: int)
     scratch = staged.parent.parent
     script = scratch / 'apply.ps1'
     script.write_text(APPLY_PS1, encoding='utf-8-sig')
-    log = scratch / 'update.log'
+    log = app_home / 'Data' / 'Logs' / 'update.log'
+    log.parent.mkdir(parents=True, exist_ok=True)
     with log.open('wb') as output:
         subprocess.Popen(['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
                           '-File', str(script), '-TargetDir', str(app_home), '-SourceDir', str(staged),
                           '-ManagerPid', str(manager_pid), '-ExpectedCommit', update.commit,
-                          '-ExpectedChannel', update.channel],
+                          '-ExpectedChannel', update.channel, '-ExpectedRevision', str(update.revision)],
                          stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                          creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
     return log

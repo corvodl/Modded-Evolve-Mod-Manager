@@ -281,6 +281,36 @@ class GfxQtEditorTests(unittest.TestCase):
         self.assertFalse(dialog.snapshot.changed)
         self.assertEqual(self.asset.read_bytes(), self.original)
 
+    def test_recognized_dialog_hides_by_default_preview_only(self):
+        from test_gfx_root_layer_preview import synthetic_dialog_main_menu
+        widget = self.win.gfx_view
+        movie = synthetic_dialog_main_menu()
+        widget.open_movie(movie, "Libs/UI/main_menu.gfx")
+        self.assertEqual(widget.root_mode.currentData(), "hide")
+        self.assertEqual(widget.root_layer.currentData(), 74)
+        self.assertIn("Dialog-style overlay", widget.root_hint.text())
+        widget.root_mode.setCurrentIndex(0)
+        self.assertEqual(widget.root_mode.currentData(), "all")
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
+    def test_preview_root_layer_controls_preserve_original(self):
+        widget = self.win.gfx_view
+        widget.open_movie(self.original, self.relative)
+        self.assertEqual(widget.root_mode.currentData(), "all")
+        self.assertEqual(widget.root_layer.count(), 1)
+        self.assertEqual(widget.root_layer.currentData(), 1)
+        self.assertFalse(widget.root_layer.isEnabled())
+        widget.root_mode.setCurrentIndex(1)  # Hide first root depth.
+        self.assertEqual(widget.root_mode.currentData(), "hide")
+        self.assertTrue(widget.root_layer.isEnabled())
+        widget.root_mode.setCurrentIndex(2)  # Only first root depth.
+        self.assertEqual(widget.root_mode.currentData(), "isolate")
+        widget.symbol.setCurrentIndex(1)  # Sprite selection is separate.
+        self.assertFalse(widget.root_mode.isEnabled())
+        widget.symbol.setCurrentIndex(0)
+        self.assertTrue(widget.root_mode.isEnabled())
+        self.assertEqual(self.asset.read_bytes(), self.original)
+
     def test_advanced_gfx_commands_fit_under_menus(self):
         dialog = GfxEditorDialog(self.win, self.relative)
         self.addCleanup(dialog.close)

@@ -2,6 +2,13 @@ name: Build Windows Beta installer and publish prerelease
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_mode:
+        description: "auto = patch same version, milestone = new version, patch = same version only"
+        type: choice
+        required: false
+        default: auto
+        options: [auto, milestone, patch]
   push:
     branches: [beta]
 
@@ -22,6 +29,28 @@ jobs:
         with:
           python-version: "3.11"
           architecture: x64
+      - name: Resolve beta milestone or patch revision
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_MODE: ${{ inputs.publish_mode || 'auto' }}
+        run: |
+          $version=((Get-Content 'source/VERSION.txt' -Raw).Trim() -split ' - ',2)[0]
+          New-Item -ItemType Directory -Force '.build/previous-release' | Out-Null
+          gh release view Beta *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release download Beta --pattern update-manifest.json --dir .build/previous-release --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot verify existing rolling Beta manifest.' }
+          }
+          $args=@('source/release_revision.py','--version',$version,'--mode',$env:PUBLISH_MODE)
+          if (Test-Path '.build/previous-release/update-manifest.json') {
+            $args+=@('--previous','.build/previous-release/update-manifest.json')
+          }
+          $data=(& python @args | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0 -or $null -eq $data) { throw 'Revision selection failed.' }
+          "EVOLVE_RELEASE_REVISION=$($data.revision)" >> $env:GITHUB_ENV
+          "EVOLVE_RELEASE_TYPE=$($data.release_type)" >> $env:GITHUB_ENV
+          Write-Host "Publishing beta milestone $version, revision $($data.revision) ($($data.release_type))."
       - name: Verify version is a beta prerelease
         shell: pwsh
         run: |
@@ -103,70 +132,77 @@ jobs:
       - name: Prepare beta update manifest
         shell: pwsh
         run: |
-          $zip='dist/EvolveModManager-Windows.zip'
-          $setup='dist/EvolveModManager-Setup.exe'
+          $version=((Get-Content 'source/VERSION.txt' -Raw).Trim() -split ' - ',2)[0]
+          $revision=[int]$env:EVOLVE_RELEASE_REVISION
+          $zipName="EvolveModManager-Windows-$($version)-p$($revision).zip"
+          $setupName="EvolveModManager-Setup-$($version)-p$($revision).exe"
+          Copy-Item 'dist/EvolveModManager-Windows.zip' "dist/$zipName" -Force
+          Copy-Item 'dist/EvolveModManager-Setup.exe' "dist/$setupName" -Force
           $manifest=[ordered]@{
-            schema=1
+            schema=2
             channel='beta'
             commit='${{ github.sha }}'
-            version=(Get-Content -LiteralPath 'source/VERSION.txt' -Raw).Trim()
-            asset='EvolveModManager-Windows.zip'
-            sha256=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-            bytes=(Get-Item -LiteralPath $zip).Length
-            installer='EvolveModManager-Setup.exe'
-            installer_sha256=(Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
-            installer_bytes=(Get-Item -LiteralPath $setup).Length
+            version=$version
+            revision=$revision
+            release_type=$env:EVOLVE_RELEASE_TYPE
+            asset=$zipName
+            sha256=(Get-FileHash -LiteralPath "dist/$zipName" -Algorithm SHA256).Hash.ToLowerInvariant()
+            bytes=(Get-Item -LiteralPath "dist/$zipName").Length
+            installer=$setupName
+            installer_sha256=(Get-FileHash -LiteralPath "dist/$setupName" -Algorithm SHA256).Hash.ToLowerInvariant()
+            installer_bytes=(Get-Item -LiteralPath "dist/$setupName").Length
           }
           [IO.File]::WriteAllText((Join-Path (Get-Location) 'dist/update-manifest.json'),
             ($manifest | ConvertTo-Json -Depth 3),[Text.UTF8Encoding]::new($false))
-      - name: Publish Beta release (manifest last)
+      - name: Publish Beta milestone only on new version and rolling patch (manifest last)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $latest=(gh api 'repos/${{ github.repository }}/branches/beta' --jq '.commit.sha').Trim()
           if ($LASTEXITCODE -ne 0 -or $latest -ne '${{ github.sha }}') {
-            throw 'Beta branch moved; refusing to publish an older build.'
+            throw 'Beta branch moved; refusing to publish stale artifacts.'
           }
-          $version=((Get-Content 'source/VERSION.txt' -Raw).Trim() -split ' - ',2)[0]
-          # Publish an independently versioned prerelease. Keep the rolling
-          # Beta tag as the updater-compatible latest release, not the only record.
+          $manifest=Get-Content 'dist/update-manifest.json' -Raw | ConvertFrom-Json
+          $version=$manifest.version
+          $revision=[int]$manifest.revision
+          $zipName=$manifest.asset
+          $setupName=$manifest.installer
           & '.build/venv/Scripts/python.exe' 'source/release_notes.py' --latest |
             Set-Content -Encoding utf8 'dist/release-notes.md'
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare release notes.' }
           $versionTag="v$version"
-          gh release view $versionTag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            $tagCommit=(gh api "repos/${{ github.repository }}/git/ref/tags/$versionTag" --jq '.object.sha').Trim()
-            if ($LASTEXITCODE -ne 0 -or $tagCommit -ne '${{ github.sha }}') {
-              throw "Version $versionTag already points to a different commit."
-            }
+          if ($revision -eq 0) {
+            gh release view $versionTag *> $null
+            if ($LASTEXITCODE -eq 0) { throw "Milestone $versionTag already exists; refusing to overwrite immutable versioned release." }
+            gh release create $versionTag "dist/$setupName" "dist/$zipName" 'dist/update-manifest.json' --target '${{ github.sha }}' --title "Evolve Mod Manager $version (Beta)" --prerelease --notes-file 'dist/release-notes.md'
+            if ($LASTEXITCODE -ne 0) { throw "Could not create milestone $versionTag." }
           } else {
-            gh release create $versionTag --target '${{ github.sha }}' --title "Evolve Mod Manager v$version (Beta)" --prerelease --notes-file 'dist/release-notes.md'
-            if ($LASTEXITCODE -ne 0) { throw "Could not create versioned release $versionTag." }
+            gh release view $versionTag *> $null
+            if ($LASTEXITCODE -ne 0) { throw "Patch $revision requires existing milestone $versionTag." }
           }
-          foreach ($file in @('EvolveModManager-Setup.exe',
-                 'EvolveModManager-Windows.zip','EvolveModManager-compiled-screenshot.png',
-                 'EvolveModManager-Modding-screenshot.png')) {
-            gh release upload $versionTag "dist/$file" --clobber
-            if ($LASTEXITCODE -ne 0) { throw "Could not publish $versionTag asset $file." }
-          }
-          gh release upload $versionTag 'dist/update-manifest.json' --clobber
-          if ($LASTEXITCODE -ne 0) { throw "Could not publish versioned beta manifest." }
-          gh release edit $versionTag --title "Evolve Mod Manager v$version (Beta)" --prerelease --notes-file 'dist/release-notes.md'
-          if ($LASTEXITCODE -ne 0) { throw "Could not finalize $versionTag notes." }
-          # Compatibility alias for the manager's verified updater:
           gh release view Beta *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create Beta --target '${{ github.sha }}' --title "Evolve Mod Manager v$version (Beta)" --prerelease --notes 'Experimental prerelease. Back up projects before trying new features.'
-            if ($LASTEXITCODE -ne 0) { throw 'Could not create Beta prerelease.' }
+            gh release create Beta --target '${{ github.sha }}' --title "Evolve Mod Manager $version (Beta)" --prerelease --notes 'Rolling verified beta updates.'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create rolling Beta release.' }
           }
-          foreach ($file in @('EvolveModManager-Setup.exe',
-                 'EvolveModManager-Windows.zip','EvolveModManager-compiled-screenshot.png',
-                 'EvolveModManager-Modding-screenshot.png')) {
+          foreach ($file in @($setupName,$zipName,'EvolveModManager-compiled-screenshot.png','EvolveModManager-Modding-screenshot.png')) {
             gh release upload Beta "dist/$file" --clobber
-            if ($LASTEXITCODE -ne 0) { throw "Could not publish $file." }
+            if ($LASTEXITCODE -ne 0) { throw "Could not upload $file." }
           }
+          # Only the manifest authorizes the new package, publish it last.
           gh release upload Beta 'dist/update-manifest.json' --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Could not publish Beta manifest.' }
-          gh release edit Beta --title "Evolve Mod Manager v$version (Beta)" --prerelease --notes-file 'dist/release-notes.md'
-          if ($LASTEXITCODE -ne 0) { throw 'Could not update Beta release description.' }
+          gh release edit Beta --title "Evolve Mod Manager $version · Patch $revision (Beta)" --prerelease --notes-file 'dist/release-notes.md'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not update rolling Beta notes.' }
+          # Remove no-longer-current installers/ZIPs, without touching the
+          # immutable numbered milestones. Do not retain redundant revisions.
+          $names=@(gh release view Beta --json assets --jq '.assets[].name')
+          if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate previous Beta assets.' }
+          foreach ($name in $names) {
+            if (($name -like 'EvolveModManager-Windows*.zip' -and $name -ne $zipName) -or
+                ($name -like 'EvolveModManager-Setup*.exe' -and $name -ne $setupName)) {
+              gh release delete-asset Beta $name --yes
+              if ($LASTEXITCODE -ne 0) { throw "Could not clean outdated Beta asset $name." }
+            }
+          }

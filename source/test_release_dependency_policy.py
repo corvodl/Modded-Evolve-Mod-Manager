@@ -47,7 +47,8 @@ class ExternalRuntimePackageTests(unittest.TestCase):
             built = root / "build"
             built.mkdir()
             for name in ("EvolveModManager.exe", "EvolveModWorker.exe",
-                         "BUILD_COMMIT.txt", "BUILD_CHANNEL.txt"):
+                         "BUILD_COMMIT.txt", "BUILD_CHANNEL.txt",
+                         "BUILD_REVISION.txt"):
                 (built/name).write_bytes(b"fixture")
             internal = built / "_internal"
             internal.mkdir()

@@ -77,6 +77,7 @@ class BrandingTests(unittest.TestCase):
             (internal/'ui_text.json').write_bytes((ROOT/'ui_text.json').read_bytes())
             (built/'BUILD_COMMIT.txt').write_text('a'*40)
             (built/'BUILD_CHANNEL.txt').write_text('main')
+            (built/'BUILD_REVISION.txt').write_text('0')
             (built/'START-HERE.txt').write_text('Run EvolveModManager.exe')
             (docs/'README-PORTABLE-APP.txt').write_text('Run Set Up Manager')
             release, archive = publish(built, base/'dist')

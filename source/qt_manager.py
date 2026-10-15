@@ -22,7 +22,7 @@ import traceback
 _QT_STARTUP_LOG = None
 if os.name == 'nt' and getattr(sys, 'frozen', False):
     try:
-        _QT_LOG_DIR = Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or '.') / 'EvolveModManagerQtPreview'
+        _QT_LOG_DIR = Path(sys.executable).resolve().parent / 'Data' / 'Logs'
         _QT_LOG_DIR.mkdir(parents=True, exist_ok=True)
         _QT_STARTUP_LOG = open(_QT_LOG_DIR / 'startup.log', 'a',
                                encoding='utf-8', buffering=1)
@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
 
 from app_runtime import APP_HOME, DATA_HOME, SETTINGS_FILE, settings_source, save_settings, worker_command
 from app_updater import (discover_latest, download_and_prepare,
-                         launch_apply, installed_commit, report_startup_ready)
+                         launch_apply, installed_commit, installed_revision, report_startup_ready)
 from version_info import app_version
 from qt_theme_116 import PALETTES, ROLES, palette, qt_palette_style
 from studio_polish_117 import theme_preset, validate_theme_preset, read_theme_file
@@ -3916,7 +3916,7 @@ class QtManager(QMainWindow):
             candidate=None
             error=''
             try:
-                candidate=discover_latest(installed_commit(APP_HOME),app_version().lstrip('v'))
+                candidate=discover_latest(installed_commit(APP_HOME),app_version().lstrip('v').split(' · Patch ', 1)[0], installed_revision(APP_HOME))
             except Exception as exc:
                 error=str(exc)
             self.signals.update_checked.emit((candidate,None),error,silent)
@@ -3937,11 +3937,13 @@ class QtManager(QMainWindow):
                 self.info('Updates','No newer Stable or Beta release is available.')
         else:
             title='Beta' if candidate.channel=='beta' else 'Stable'
-            self.update_status.setText(title+' update: '+candidate.version)
+            published = (candidate.version + (' · Patch ' + str(candidate.revision)
+                         if candidate.revision else ''))
+            self.update_status.setText(title+' update: '+published)
             note=('\n\nThis is an experimental Beta. It may contain unfinished features.'
                   if candidate.channel=='beta' else '')
             if self.confirm(title+' update available',
-                            candidate.version+note+
+                            published+note+
                             '\n\nDownload, verify, install and restart? '
                             'Personal Data, keys, game files and projects remain unchanged.'):
                 self._install_stable_update(candidate)
@@ -3962,7 +3964,7 @@ class QtManager(QMainWindow):
             self.signals.progress.emit(stage,int(current),int(total))
         def work():
             try:
-                staged = download_and_prepare(candidate,progress=progress)
+                staged = download_and_prepare(candidate,progress=progress,app_home=APP_HOME)
                 self.signals.update_staged.emit(candidate,staged,'')
             except Exception as exc:
                 self.signals.update_staged.emit(candidate,None,str(exc))
