@@ -1302,7 +1302,9 @@ class Manager:
             dest=builds/folder/stamp/source.name
             dest.parent.mkdir(parents=True,exist_ok=False)
             cmd=[sys.executable,'-u',str(ROOT/'evolve_pak_workspace.py'),'build','--workspace',str(ws),
-                 '--public-key',str(pub),'--private-key',str(priv),'--out',str(dest)]
+                 '--public-key',str(pub),'--private-key',str(priv),'--out',str(dest),
+                 '--stage',str(self.stage.get()),
+                 '--backup-root',str(Path(self.projects.get())/'Backups')]
             self.run_steps([('Rebuilding and signing PAK',cmd)],'Build Mod',lambda:self.after_build(dest))
         except Exception as e:self.fail(e)
 
