@@ -100,7 +100,7 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
         if kind != DATA_STREAM_CHUNK:
             continue
         _flags, stream_type, count, stride, _a, _b = struct.unpack_from('<6I', data, offset)
-        if stream_type in (0, 1, 2, 4, 5, 15):
+        if stream_type in (0, 1, 2, 5, 6, 15):
             if stream_type in streams:
                 raise ValueError('Multiple mesh position/index streams; grouped meshes are not yet supported.')
             streams[stream_type] = (count, stride, offset + 24)
@@ -159,9 +159,9 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
             if all(math.isfinite(u) and math.isfinite(v) and abs(u) <= 1e4 and abs(v) <= 1e4 for u,v in values):
                 uv_coordinates = values
     # Standalone CryEngine NORMALS (type 1: float3) and TANGENTS
-    # (type 4: float4 tangent plus handedness) are used only with verified
-    # byte strides. Unknown packed encodings are left for the UV-derived
-    # exporter fallback; never reinterpret them as float vectors.
+    # (type 6: 2x signed-short4; tangent and binormal) follow the validated
+    # CryEngine data-stream schema. Unknown layouts use the UV-derived
+    # exporter fallback; packed bytes are never reinterpreted as floats.
     source_normals = ()
     source_tangents = ()
     if transform is None and 1 in streams:
@@ -174,17 +174,33 @@ def read_preview_mesh(data: bytes, source_name: str = '') -> PreviewMesh:
             if all(all(math.isfinite(c) for c in v) and
                    0.5 < sum(c*c for c in v) < 1.5 for v in vectors):
                 source_normals = vectors
-    if source_normals and 4 in streams:
-        nc, stride, at = streams[4]
+    if source_normals and 6 in streams:
+        nc, stride, at = streams[6]
         if nc == vertex_count and stride == 16:
             raw = memoryview(data)[at:at + nc * stride]
             if len(raw) != nc * stride:
                 raise ValueError('Truncated original tangent stream.')
-            vectors = tuple(struct.iter_unpack('<4f', raw))
-            if all(all(math.isfinite(c) for c in v) and
-                   0.5 < sum(c*c for c in v[:3]) < 1.5 and
-                   abs(abs(v[3]) - 1.) < 0.01 for v in vectors):
-                source_tangents = vectors
+            packed = tuple(struct.iter_unpack('<8h', raw))
+            decoded = []
+            for i, values in enumerate(packed):
+                tangent = tuple(v / 32767.0 for v in values[:3])
+                bitangent = tuple(v / 32767.0 for v in values[4:7])
+                normal = source_normals[i]
+                tlength = sum(v*v for v in tangent)
+                blength = sum(v*v for v in bitangent)
+                if not (0.5 < tlength < 1.5 and 0.5 < blength < 1.5):
+                    decoded = []
+                    break
+                cross = (normal[1]*tangent[2]-normal[2]*tangent[1],
+                         normal[2]*tangent[0]-normal[0]*tangent[2],
+                         normal[0]*tangent[1]-normal[1]*tangent[0])
+                orientation = sum(a*b for a,b in zip(cross,bitangent))
+                if abs(orientation) < 0.25:
+                    decoded = []
+                    break
+                decoded.append((*tangent, -1.0 if orientation < 0 else 1.0))
+            if len(decoded) == vertex_count:
+                source_tangents = tuple(decoded)
     subsets = ()
     for i in range(info.chunks):
         kind, _cid, size, offset = struct.unpack_from('<4I', info.chunk_table, i * 16)
