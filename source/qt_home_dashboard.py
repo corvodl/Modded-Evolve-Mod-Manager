@@ -80,9 +80,11 @@ class HomeDashboard(QScrollArea):
         # Launch shortcuts are visible without opening any other tab.
         launch_panel = SurfacePanel("PLAY EVOLVE")
         launch_panel.setObjectName("homeQuickPlay")
-        launch_panel.content.addWidget(QLabel(
+        launch_description = QLabel(
             "Choose an offline modded session or launch with original game files. "
-            "Original files are restored automatically after a modded session."))
+            "Original files are restored automatically after a modded session.")
+        launch_description.setWordWrap(True)
+        launch_panel.content.addWidget(launch_description)
         play_actions = QHBoxLayout()
         for title, method, icon_name, primary in (
                 ("Play with Mods", manager.launch, "Play with Mods", True),
