@@ -19,7 +19,7 @@ _COMPANION = re.compile(r"_i[0-9a-f]+\.dds(?:\.0)?$", re.I)
 # Scaleform tag 1009 contains source .tif names while cooked assets
 # are .dds/.dds.0. A GFX may also embed literal DDS paths in scripts.
 _GFX_REF = re.compile(
-    rb"(?:Libs/UI/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+)\\.(?:dds|tif)(?:\\.0)?",
+    rb"(?:Libs/UI/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+)\.(?:dds|tif)(?:\.0)?",
     re.I,
 )
 _MAX_UI_XML = 512 * 1024
@@ -80,7 +80,10 @@ def related_ui_textures(movie, available_paths, resolver, *, imports=(), movie_b
     # converts tag 1009's .tif names to packed .dds(.0) companions; the
     # XML preload list alone cannot establish image-to-symbol placement.
     if isinstance(movie_bytes, bytes):
+        matched_refs = 0
         for match in _GFX_REF.findall(movie_bytes):
+            if matched_refs >= 160:  # Preserve room for explicit UI_Data preloads.
+                break
             try:
                 raw = match.decode("ascii")
                 virtual = raw if raw.casefold().startswith("libs/ui/") else str(
@@ -93,7 +96,9 @@ def related_ui_textures(movie, available_paths, resolver, *, imports=(), movie_b
                 else:
                     candidates = (virtual,)
                 for candidate in candidates:
-                    add(candidate, "GFX resource reference")
+                    if candidate.casefold() in entries:
+                        add(candidate, "GFX resource reference")
+                        matched_refs += 1
             except (UnicodeError, ValueError):
                 continue
 

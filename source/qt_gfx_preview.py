@@ -150,6 +150,9 @@ class GfxPreviewWidget(QWidget):
         tex_layout = QVBoxLayout(textures)
         self.texture_select = QComboBox()
         self.texture_select.setObjectName("gfxReferencedTexture")
+        self.texture_select.setMinimumContentsLength(26)
+        self.texture_select.setSizeAdjustPolicy(
+            QComboBox.AdjustToMinimumContentsLengthWithIcon)
         tex_layout.addWidget(self.texture_select)
         self.texture_status = QLabel("UI_Data and compiled GFX textures are read-only.")
         self.texture_status.setObjectName("gfxTextureStatus")

@@ -17,6 +17,9 @@ ActionScript.
 - It lists `main_menu_I*.dds.0`,
   `effectsModeSelect_I*.dds.0`, and
   `effectsMainMenuFocus_I*.dds.0` companions.
+- The supplied `main_menu.gfx` has compiled Scaleform tag 1009 source
+  names `main_menu_I9.tif`, `main_menu_IB.tif`, and
+  `main_menu_I108.tif`, as well as literal `Libs/UI/*.dds` paths.
 
 The UI_Data XML entries generally do **not** assign a particular DDS to
 a precise movie symbol/display-list position. A `Preload` is a resource

@@ -111,7 +111,7 @@ class GfxStaticPreviewTests(unittest.TestCase):
             with patch("gfx_preview_backend._execute", side_effect=fake_ffdec):
                 frame = render_gfx(base, virtual="Libs/UI/main_menu.gfx",
                                    imports=deps, backend=str(tool))
-            self.assertTrue(frame.startswith(b"\\x89PNG"))
+            self.assertTrue(frame[:4] == bytes((137, 80, 78, 71)))
 
     def test_cfx_zlib_movie_matches_uncompressed_metadata(self):
         a = inspect_gfx(synthetic_gfx())
