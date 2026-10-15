@@ -43,7 +43,6 @@ class PreviewMaterials:
     issues: tuple = ()
     normal_maps: tuple = ()
     specular_maps: tuple = ()
-    gloss_maps: tuple = ()  # Explicit Gloss/Glossiness/Smoothness texture slots only.
     opacity: tuple = ()
     alpha_modes: tuple = ()  # True only where material explicitly uses texture alpha
 
@@ -54,6 +53,7 @@ class PreviewMaterials:
     alpha_cutoffs: tuple = ()  # Explicit CryEngine AlphaTest thresholds
 
     hidden: tuple = ()  # Explicit NoDraw slots; never inferred from missing DDS.
+    gloss_maps: tuple = ()  # Explicit Gloss/Glossiness/Smoothness slots only.
 
     @property
     def count(self):
@@ -586,8 +586,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
-                            tuple(issues),tuple(normals),tuple(speculars),tuple(glosses),tuple(opacities),tuple(alpha_modes),
-                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden))
+                            tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
+                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden), gloss_maps=tuple(glosses))
 
 
 
