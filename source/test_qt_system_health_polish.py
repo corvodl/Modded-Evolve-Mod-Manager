@@ -106,7 +106,11 @@ class SystemHealthPolishTests(unittest.TestCase):
         manager.stage_path = "/stage"
         panel = SystemHealthPanel(manager)
         panel._last = {"firewall": ("Offline", "C:\\Users\\Private\\secrets.txt")}
-        with patch("qt_system_health.QDialog.exec", return_value=0), \
+        class SilentDialog(QDialog):
+            def exec(self):
+                return 0
+
+        with patch("qt_system_health.QDialog", SilentDialog), \
                 patch("installed_game_versions.installed_versions", return_value={
                     "client": "0.1.54", "game": "3.6"}):
             panel._report()
