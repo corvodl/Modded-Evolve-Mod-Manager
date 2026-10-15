@@ -126,6 +126,16 @@ def review_package(source, stage):
                          _hash_file(pak), tuple(changed), member_name)
 
 
+
+def enabled_target_conflicts(profile, target):
+    """Only exact enabled target collisions; never infer a safe PAK merge."""
+    if not isinstance(profile, dict) or not isinstance(profile.get("mods"), list):
+        raise ValueError("Select a valid Mods Collection.")
+    return tuple(item for item in profile["mods"]
+                 if item.get("enabled") and
+                 str(item.get("relative", "")).casefold() == str(target).casefold())
+
+
 def import_reviewed_mod(review, stage, catalog_root, profile_id):
     """Recheck changed input and add immutable library copy to existing profile.
 
