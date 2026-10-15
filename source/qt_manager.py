@@ -1485,6 +1485,10 @@ class QtManager(QMainWindow):
         current = self.current_workspace
         self._project_rows = {record['workspace']: record for record in rows}
         table = self.project_table
+        # During bulk population Qt emits selection changes that trigger
+        # expensive per-project diff verification; only validate on an
+        # explicit user selection (or a normal manual Refresh).
+        previously_blocked = table.blockSignals(True)
         table.setSortingEnabled(False)
         table.setRowCount(len(rows))
         for i, item in enumerate(rows):
@@ -1501,6 +1505,7 @@ class QtManager(QMainWindow):
             if table.item(i, 0).data(Qt.UserRole) == current:
                 table.selectRow(i)
                 break
+        table.blockSignals(previously_blocked)
         if skip_changes:
             # Diff/asset validation can be just as expensive as discovery.
             # It runs only if the user selects an actual workspace row.
