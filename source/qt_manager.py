@@ -3999,14 +3999,30 @@ class QtManager(QMainWindow):
                 raise RuntimeError('Restore the original game files before launching mods.')
             if st.stage and Path(st.stage).resolve() != Path(self.stage_path).resolve():
                 raise ValueError('Swap state belongs to another stage.')
+            # Existing setups predate the new watchdog helper. Add only
+            # the missing trusted script without overwriting their swap state.
+            added = add_missing_scripts(Path(self.swap_path))
+            if added:
+                self._log('Installed missing launch helpers: ' + ', '.join(added))
             commands = launcher_commands(Path(self.swap_path),Path(self.stage_path),st.phase)
             if self.confirm('Play with Mods?',
                              'Mods are intended for private/offline testing.\nClose game/launcher first, then wait for the launcher-ready message before pressing Play.'):
                 set_offline(self._developer_game(), not self._developer_allow_online)
-                self.run_steps(commands,'Play with Mods',self.refresh_swap_status,
+                self.run_steps(commands,'Play with Mods',self._after_modded_launch,
                                cwd=Path(self.swap_path))
         except Exception as exc:
             self.failure(exc)
+
+    def _after_modded_launch(self):
+        """Arm an independent restore guard even with older launcher helpers."""
+        st = self.refresh_swap_status()
+        if st.phase in ('swapped', 'interrupted', 'restoring'):
+            from launch_integration import start_auto_restore_monitor
+            pid = start_auto_restore_monitor(Path(self.swap_path))
+            self._log('Auto-restore watchdog started (PID ' + str(pid) + ').')
+            self.status.setText('Evolve started — originals restore after game/client exit.')
+        else:
+            self._log('No active mod swap; no restoration monitor required.')
 
     def _launch_unmodded_client(self):
         """Launch only after a fresh journal, backup and injector check.
