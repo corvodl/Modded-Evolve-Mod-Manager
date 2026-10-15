@@ -43,8 +43,14 @@ jobs:
           New-Item -ItemType Directory -Force '.build/previous-release' | Out-Null
           gh release view Main *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release download Main --pattern update-manifest.json --dir .build/previous-release --clobber
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot verify previous rolling Main manifest.' }
+            $existingAssets=@(gh release view Main --json assets --jq '.assets[].name')
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect rolling Main release.' }
+            if ($existingAssets -contains 'update-manifest.json') {
+              gh release download Main --pattern update-manifest.json --dir .build/previous-release --clobber
+              if ($LASTEXITCODE -ne 0) { throw 'Cannot verify existing Main manifest.' }
+            } else {
+              Write-Host 'Legacy Main release has no revision manifest. Bootstrapping its first immutable milestone at revision 0.'
+            }
           }
           $args=@('source/release_revision.py','--version',$version,'--mode',$env:PUBLISH_MODE)
           if (Test-Path '.build/previous-release/update-manifest.json') {
