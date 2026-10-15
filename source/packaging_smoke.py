@@ -52,6 +52,12 @@ try:
     assert cipher.encrypt_blocks(bytes(16)).hex() == '9f589f5cf6122c32b6bfec2f2ae8c35a'
     if os.environ.get('EVOLVE_REQUIRE_NATIVE_TWOFISH') == '1':
         assert cipher.bulk is not None, 'Native bulk Twofish not loaded in packaged worker'
+        license_root = BUNDLE / 'Licenses' / 'Native-Twofish'
+        assert (license_root / 'NOTICE.txt').is_file(), 'Native crypto notice missing'
+        for provider in ('libgcrypt', 'libgpg-error'):
+            for notice in ('COPYING', 'COPYING.LIB'):
+                assert (license_root / provider / notice).is_file(), (
+                    'Missing LGPL/GPL redistribution notice: ' + provider + '/' + notice)
 finally:
     cipher.close()
 assert rsa.generate_private_key(public_exponent=65537, key_size=2048).key_size == 2048
