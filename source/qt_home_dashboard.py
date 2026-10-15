@@ -169,7 +169,7 @@ class HomeDashboard(QScrollArea):
         heading = QLabel("At a glance")
         heading.setObjectName("homeSectionTitle")
         right.addWidget(heading)
-        hint = QLabel("Read-only status. Game files are never edited on Home.")
+        hint = QLabel("Installed game and client status; launch actions are separate.")
         hint.setWordWrap(True)
         hint.setObjectName("muted")
         right.addWidget(hint)
