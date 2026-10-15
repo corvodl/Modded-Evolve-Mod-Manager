@@ -76,7 +76,7 @@ from developer_memory_panel import DeveloperMemoryPanel
 from online_guard import set_offline, target_executable
 from release_notes import RELEASE_NOTES
 from qt_navigation_icons import navigation_icon
-from qt_ui_components import WorkspaceHeader, ContextActions, configure_splitter
+from qt_ui_components import WorkspaceHeader, ContextActions, DisclosurePanel, configure_splitter
 
 ROOT = Path(__file__).resolve().parent
 COLORS = {'bg':'#0b0b0d','surface':'#17171d','panel':'#202027',
@@ -1578,7 +1578,12 @@ class QtManager(QMainWindow):
         theme_line.addWidget(self.appearance_combo)
         theme_line.addStretch()
         general_row.addLayout(theme_line)
-        general_row.addWidget(_label('Customize all interface colors, including the original red accent.', muted=True))
+        self.theme_advanced = DisclosurePanel(
+            'Custom colors and saved themes', expanded=False)
+        general_row.addWidget(self.theme_advanced)
+        self.theme_advanced.addWidget(_label(
+            'Customize individual colors and saved theme presets. '
+            'Changes apply across all Qt windows.', muted=True))
         self.appearance_color_buttons = {}
         for role in ROLES:
             line = QHBoxLayout()
@@ -1588,8 +1593,8 @@ class QtManager(QMainWindow):
             self.appearance_color_buttons[role] = picker
             line.addWidget(picker)
             line.addStretch()
-            general_row.addLayout(line)
-        general_row.addWidget(_button('Reset Theme Colors', self._reset_appearance_colors))
+            self.theme_advanced.addLayout(line)
+        self.theme_advanced.addWidget(_button('Reset Theme Colors', self._reset_appearance_colors))
         presets=QHBoxLayout()
         presets.addWidget(_label('Saved themes'))
         self.theme_preset_combo=QComboBox()
@@ -1598,12 +1603,12 @@ class QtManager(QMainWindow):
         presets.addWidget(_button('Preview / Apply',self._apply_saved_theme))
         presets.addWidget(_button('Save Current',self._save_theme_preset))
         presets.addWidget(_button('Remove',self._remove_theme_preset))
-        general_row.addLayout(presets)
+        self.theme_advanced.addLayout(presets)
         preset_files=QHBoxLayout()
         preset_files.addWidget(_button('Import Theme…',self._import_theme_preset))
         preset_files.addWidget(_button('Export Theme…',self._export_theme_preset))
         preset_files.addStretch()
-        general_row.addLayout(preset_files)
+        self.theme_advanced.addLayout(preset_files)
         self._update_appearance_labels()
         self.motion_checkbox = QCheckBox('Reduce menu animation')
         self.motion_checkbox.setChecked(self.reduce_motion)
@@ -1702,7 +1707,10 @@ class QtManager(QMainWindow):
                           'Optional workspace, export and maintenance controls.')
         advanced, advanced_row = _card('ADVANCED FILE OPTIONS',
                                        'Unpack filtering, current workspace, and output location.')
-        lay.addWidget(advanced)
+        self.settings_advanced = DisclosurePanel(
+            'Advanced file and maintenance settings', expanded=False)
+        self.settings_advanced.addWidget(advanced)
+        lay.addWidget(self.settings_advanced)
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText('Optional unpack filter (clear for batch extraction)')
         advanced_row.addWidget(self.filter_input)
