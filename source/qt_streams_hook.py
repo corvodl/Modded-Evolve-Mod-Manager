@@ -1,37 +1,35 @@
-"""PyInstaller runtime hook: give windowed Qt processes valid text streams.
+"""PyInstaller runtime hook for Qt GUI-subsystem startup.
 
-Some native dependency initialization writes to stdout or stderr before the
-application module runs. Windows no-console bootloaders set both to None.
-Keep diagnostics in a per-user preview log and never touch the game/Data tree.
+A --windowed/console=False executable has no attached command prompt, and
+PyInstaller sets sys.stdout/sys.stderr to None. Provide real streams before any
+Qt/Python packages import so import-time diagnostics survive in the installed
+manager's per-user Data/Logs folder. Worker console output is unchanged.
 """
+from pathlib import Path
 import os
 import sys
-from pathlib import Path
-if os.name == 'nt':
+
+
+def _log_directory():
+    app_dir = Path(sys.executable).resolve().parent
+    # Packaging tests run the unpacked EXE under .build/app-dist. Never
+    # contaminate the validated redistributable directory with runtime logs.
+    if app_dir.parent.name.casefold() == "app-dist":
+        app_dir = Path(os.environ.get("LOCALAPPDATA") or
+                       os.environ.get("TEMP") or ".") / "EvolveModManager"
+    return app_dir / "Data" / "Logs"
+
+
+if os.name == "nt" and (sys.stdout is None or sys.stderr is None):
     try:
-        root = Path(os.environ.get('LOCALAPPDATA') or os.environ.get('TEMP') or '.') / 'EvolveModManagerQtPreview'
-        root.mkdir(parents=True, exist_ok=True)
-        stream = open(root/'runtime.log', 'a', encoding='utf-8', buffering=1)
+        destination = _log_directory()
+        destination.mkdir(parents=True, exist_ok=True)
+        stream = open(destination / "runtime.log", "a",
+                      encoding="utf-8", buffering=1)
     except OSError:
-        stream = open(os.devnull, 'w', encoding='utf-8')
+        stream = open(os.devnull, "w", encoding="utf-8")
     if sys.stdout is None:
         sys.stdout = stream
     if sys.stderr is None:
         sys.stderr = stream
-    stream.write('Qt Windows runtime hook reached.\\n')
-
-# Console bootloader is the verified startup path for Qt on the CI runner.
-# When Explorer creates a private console for this GUI, hide only that private
-# console. Never hide a shared PowerShell / cmd window opened by the user.
-if os.name == 'nt' and Path(sys.executable).stem.casefold() == 'evolvemodmanager':
-    try:
-        import ctypes as ct
-        kernel = ct.windll.kernel32
-        attached = (ct.c_ulong * 8)()
-        total = kernel.GetConsoleProcessList(attached, 8)
-        if total == 1:
-            handle = kernel.GetConsoleWindow()
-            if handle:
-                ct.windll.user32.ShowWindow(handle, 0)
-    except (AttributeError, OSError):
-        pass
+    stream.write("Qt windowed startup initialized.\\n")
