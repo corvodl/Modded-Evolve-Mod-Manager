@@ -28,6 +28,12 @@ def enabled():
     return os.environ.get('EVOLVE_PERF_TRACE') == '1'
 
 
+def operation_id():
+    """Monotonically distinguish overlapping requests within the process."""
+    with _lock:
+        return next(_ids)
+
+
 def record(operation, stage, *, elapsed_ms=None, outcome='ok', **counters):
     """Append an event; tracing failures are always nonfatal to asset work."""
     if not enabled():
@@ -97,3 +103,48 @@ def start_qt_heartbeat(owner, interval_ms=100):
     timer.timeout.connect(sample)
     timer.start()
     return timer
+
+
+def install_qt_startup_events(owner):
+    """Observe GUI first paint and first user action without changing events.
+
+    Call after main window construction; installing is opt-in only. The returned
+    QObject must be held by the owner and explicitly disposed on shutdown.
+    """
+    if not enabled():
+        return None
+    from PySide6.QtCore import QObject, QEvent
+    from PySide6.QtWidgets import QApplication
+    class _StartupObserver(QObject):
+        def __init__(self, window):
+            super().__init__(window)
+            self.window = window
+            self.created = time.perf_counter()
+            self.painted = False
+            self.interacted = False
+
+        def eventFilter(self, watched, event):
+            kind = event.type()
+            if not self.painted and watched is self.window and kind == QEvent.Paint:
+                self.painted = True
+                record('startup', 'main_first_paint',
+                       elapsed_ms=(time.perf_counter()-self.created)*1000)
+            if (self.painted and not self.interacted and
+                    kind in (QEvent.MouseButtonPress, QEvent.KeyPress,
+                             QEvent.TouchBegin)):
+                try:
+                    belongs = (watched is self.window or
+                               watched.window() is self.window)
+                except (AttributeError, RuntimeError):
+                    belongs = False
+                if belongs:
+                    self.interacted = True
+                    record('startup', 'first_accepted_interaction',
+                           elapsed_ms=(time.perf_counter()-self.created)*1000)
+            return False
+
+    observer = _StartupObserver(owner)
+    app = QApplication.instance()
+    if app is not None:
+        app.installEventFilter(observer)
+    return observer
