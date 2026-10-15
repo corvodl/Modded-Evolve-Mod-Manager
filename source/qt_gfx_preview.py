@@ -240,7 +240,7 @@ class GfxPreviewWidget(QWidget):
             self._imports, self._warnings = resolved, warnings
             self._texture_paths = related_ui_textures(
                 relative, available_paths, resolve or (lambda _path: None),
-                imports=info.imports)
+                imports=info.imports, movie_bytes=data)
             self.texture_select.blockSignals(True)
             for path, origin in self._texture_paths:
                 self.texture_select.addItem(f"{path}  [{origin}]", path)
