@@ -39,7 +39,6 @@ class HomeDashboard(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         wrapper = QWidget()
         wrapper.setObjectName("homeDashboardContent")
-        self.setWidget(wrapper)
         outer = QVBoxLayout(wrapper)
         outer.setContentsMargins(18, 14, 18, 22)
         outer.setSpacing(16)
@@ -162,6 +161,9 @@ class HomeDashboard(QScrollArea):
         main.addWidget(sidebar, 2)
         outer.addLayout(main)
         outer.addStretch(1)
+        # Qt requires the content layout to be installed before setWidget;
+        # otherwise the initial dashboard may render blank until resized.
+        self.setWidget(wrapper)
 
     def refresh_status(self):
         """Cheap file-existence checks only; no source PAK hashing/scanning."""
