@@ -335,6 +335,9 @@ def download_and_prepare(update: Update, scratch: Path | None = None,
             raise ValueError('Downloaded build channel differs from the selected release.')
         if installed_revision(staged) != update.revision:
             raise ValueError('Downloaded revision differs from the selected release.')
+        if (update.revision > 0 and
+                not (staged / REVISION_STAMP).is_file()):
+            raise ValueError('Patched update is missing its revision stamp.')
         if progress: progress('Ready', 1, 1)
         return staged
     except BaseException:
@@ -374,6 +377,7 @@ APPLY_PS1 = r'''param(
   [Parameter(Mandatory=$true)][int]$ManagerPid,
   [Parameter(Mandatory=$true)][string]$ExpectedCommit,
   [ValidateSet('main','beta')][string]$ExpectedChannel = 'main',
+  [int]$ExpectedRevision = 0,
   [switch]$Headless
 )
 $ErrorActionPreference = 'Stop'
@@ -452,7 +456,13 @@ try {
   }
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_COMMIT.txt') -Raw).Trim() -ne $ExpectedCommit) { throw 'Update commit mismatch.' }
   if ((Get-Content -LiteralPath (Join-Path $SourceDir 'BUILD_CHANNEL.txt') -Raw).Trim().ToLowerInvariant() -ne $ExpectedChannel) { throw 'Update build channel mismatch.' }
-  if (-not (Test-Path -LiteralPath (Join-Path $SourceDir 'BUILD_REVISION.txt'))) { throw 'Update build is missing revision stamp.' }
+  $RevisionStamp = Join-Path $SourceDir 'BUILD_REVISION.txt'
+  if (Test-Path -LiteralPath $RevisionStamp) {
+    $FoundRevision = (Get-Content -LiteralPath $RevisionStamp -Raw).Trim()
+  } else {
+    $FoundRevision = '0'  # Legacy schema-1 installations.
+  }
+  if ($FoundRevision -ne [string]$ExpectedRevision) { throw 'Update build revision mismatch.' }
   Set-UpdateProgress 'Backing up current application...' 5
   $script:UpdateStep = 'creating application backup'
   try {
@@ -646,7 +656,7 @@ def launch_apply(update: Update, staged: Path, app_home: Path, manager_pid: int)
         subprocess.Popen(['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
                           '-File', str(script), '-TargetDir', str(app_home), '-SourceDir', str(staged),
                           '-ManagerPid', str(manager_pid), '-ExpectedCommit', update.commit,
-                          '-ExpectedChannel', update.channel],
+                          '-ExpectedChannel', update.channel, '-ExpectedRevision', str(update.revision)],
                          stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                          creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
     return log
