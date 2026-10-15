@@ -13,6 +13,7 @@ import time
 from pathlib import Path, PurePosixPath
 from queue import Empty, Queue
 from threading import Event, Thread
+from performance_trace import span, record
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QSurfaceFormat
@@ -260,10 +261,11 @@ class LevelGLViewport(QOpenGLWidget):
             try:
                 def report(*args):
                     self._report_progress(token, cancel, args)
-                value = prepare_scene(project, cancel, report,
-                                      game=self.game_root, stage=self.stage_root,
-                                      cache_root=self.cache_root, terrain_stride=self.terrain_stride,
-                                      partial=lambda a,i,d: results.put((token,(a,i,d))))
+                with span('map', 'initial_scene_prepare', generation=token):
+                    value = prepare_scene(project, cancel, report,
+                                          game=self.game_root, stage=self.stage_root,
+                                          cache_root=self.cache_root, terrain_stride=self.terrain_stride,
+                                          partial=lambda a,i,d: results.put((token,(a,i,d))))
             except Exception as exc:
                 value = (None, {"scene initialization: " + str(exc)[:160]: 1}, {})
             if not cancel.is_set():
@@ -323,10 +325,11 @@ class LevelGLViewport(QOpenGLWidget):
             try:
                 def report(*args):
                     self._report_progress(token, cancel, args)
-                result = prepare_scene(project, cancel, report,
-                                       game=self.game_root, stage=self.stage_root,
-                                       cache_root=self.cache_root, terrain_stride=self.terrain_stride,
-                                       partial=lambda a,i,d: queue.put((token,(a,i,d))))
+                with span('map', 'scene_reload_prepare', generation=token):
+                    result = prepare_scene(project, cancel, report,
+                                           game=self.game_root, stage=self.stage_root,
+                                           cache_root=self.cache_root, terrain_stride=self.terrain_stride,
+                                           partial=lambda a,i,d: queue.put((token,(a,i,d))))
             except Exception as exc:
                 result = ({}, {"scene initialization: " + str(exc)[:160]: 1}, {})
             if not cancel.is_set():
@@ -352,6 +355,8 @@ class LevelGLViewport(QOpenGLWidget):
             # keep the independent terrain atlas/UV buffers untouched.
             next_assets = assets or {}
             self._retain_streamed_textures(next_assets)
+            record('map', 'residency_installed', generation=token,
+                   assets=len(next_assets), uploaded_textures=len(self._textures))
             self.assets = next_assets
             if self._residency:
                 self._issues.update({k[0]+': '+v:1 for k,v in self._residency.failures.items()})
