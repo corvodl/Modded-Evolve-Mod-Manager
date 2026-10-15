@@ -568,6 +568,11 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         for role, keys in role_keys.items():
             texture_node = next((n for n in item.findall('./Textures/Texture')
                                 if (n.get('Map') or n.get('map') or '').casefold() in keys), None)
+            if role == 'ao' and texture_node is None:
+                # A packed AO channel inherits its actual source texture's
+                # TexMod rather than erroneously sampling diffuse UVs.
+                texture_node = next((n for n in item.findall('./Textures/Texture')
+                                     if n.get('AOChannel') or n.get('OcclusionChannel')), None)
             try:
                 slot_transform, animated = parse_transform(texture_node)
                 if animated:
