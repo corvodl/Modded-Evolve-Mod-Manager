@@ -44,6 +44,13 @@ def record(operation, stage, *, elapsed_ms=None, outcome='ok', **counters):
         if isinstance(value, (bool, int, float)) and
         isinstance(key, str) and key.isidentifier()
     }
+    # Driver metadata is not a private asset path; whitelist only the three
+    # needed OpenGL fields, with strict sanitized ASCII and length limits.
+    import re
+    for name in ('gpu_vendor', 'gpu_renderer', 'gpu_version'):
+        value = counters.get(name)
+        if isinstance(value, str):
+            allowed[name] = re.sub(r'[^A-Za-z0-9 ._()+/-]', '', value)[:96]
     entry = {
         't_monotonic_ns': time.perf_counter_ns(),
         'operation': str(operation)[:40],
