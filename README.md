@@ -19,6 +19,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 - Inspect historical CryTek PAKs and compatible assets separately without promising playable cross-version conversions.
 - Improve offline project workflows, asset provenance, recovery, and update safety while preserving personal game and mod data.
 - Support versioned patch revisions and consolidate installation, update work, and logs under one manager folder.
+- Patch 1: embed GFX editing in File Editor, diagnose same-build UI dependencies, hide static video placeholders, and improve startup without a console window.
 
 ## Download and install
 
