@@ -137,6 +137,7 @@ class QtLooseFileEditor(QMainWindow):
 
 class QtWorkspaceEditor(QMainWindow):
     modelGeometryReady = Signal(int, object)
+    modelStageReady = Signal(int, str)
     TABS = ('files', 'images', 'models', 'gfx', 'media')
 
     def __init__(self, manager, workspace, archive_map=None, *, library_archive=None):
@@ -204,6 +205,7 @@ class QtWorkspaceEditor(QMainWindow):
         self._model_generation = 0
         self._model_cancel = Event()
         self.modelGeometryReady.connect(self._model_geometry_ready)
+        self.modelStageReady.connect(self._model_stage_ready)
         self._model_prepared = False
         self._prepared_geometry = None
         self._prepared_animation = None
@@ -1721,6 +1723,13 @@ class QtWorkspaceEditor(QMainWindow):
                 except RuntimeError:
                     pass  # Editor disposed while the background job completed.
 
+        def stage_ready(stage_name):
+            if not cancel.is_set():
+                try:
+                    self.modelStageReady.emit(token, stage_name)
+                except RuntimeError:
+                    pass  # The editor was disposed during background loading.
+
         def resolve(_unused):
             if cancel.is_set():
                 raise InterruptedError('Obsolete model preparation cancelled')
@@ -1746,7 +1755,8 @@ class QtWorkspaceEditor(QMainWindow):
                 texture_folder=tex, animation_index=ani,
                 equipment=equipment, index=active_index,
                 require_assembly=require_assembly, cancel=cancel.is_set,
-                geometry_ready=geometry_stage)
+                geometry_ready=geometry_stage,
+                stage_ready=stage_ready)
             return (data, cache_hit, load_ms), None
 
         # Tests and headless software previews retain deterministic synchronous
@@ -1767,6 +1777,35 @@ class QtWorkspaceEditor(QMainWindow):
             self._model_signals.completed.connect(self._model_ready)
         self._model_pool.start(
             _NativeConversion(resolve, None, token, self._model_signals))
+
+    def _model_stage_ready(self, token, stage):
+        """Report completed foreground geometry and actual worker stage."""
+        if (token != self._model_generation or self.mode != 'models'
+                or self._model_prepared):
+            return
+        labels = {
+            'materials': 'Reading material references and DDS textures',
+            'animations': 'Indexing character animation references',
+        }
+        if stage not in labels:
+            return
+        elapsed = (time.perf_counter()-self._model_started_at
+                   if self._model_started_at else 0.)
+        self.status.setText(
+            '%s | Mesh ready · %s (%.1f s)' %
+            (self.current, labels[stage], elapsed))
+        self.status.setToolTip(
+            'Geometry is ready to inspect while textures and animation '
+            'references are resolved in the background.')
+
+    def _slow_model_notice(self, token):
+        if (token != self._model_generation or self._model_prepared
+                or self.mode != 'models'):
+            return
+        self.status.setText(
+            '%s | Mesh ready · Asset indexing is taking longer than usual. '
+            'Viewport remains interactive; see Tools > Performance Monitor.'
+            % (self.current or 'Model'))
 
     def _model_geometry_ready(self, token, payload):
         """First useful GL frame: verified geometry only, no DDS downgrade."""
@@ -1795,6 +1834,8 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText(
                 self.current + ' | Verified geometry ready; '
                 'resolving materials and animations…')
+            QTimer.singleShot(12000,lambda generation=token:
+                              self._slow_model_notice(generation))
             from performance_trace import record
             record('model', 'geometry_ui_installed',
                    elapsed_ms=(time.perf_counter()-self._model_started_at)*1000

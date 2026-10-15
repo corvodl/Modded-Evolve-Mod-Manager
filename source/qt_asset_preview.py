@@ -345,6 +345,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             import json
             converted, failed = 0, []
             export_root = root / Path(folder).name
+            first_model = None
             progress('Preparing Blender export', 0, len(models))
             for number, rel in enumerate(models, 1):
                 if cancelled():
@@ -357,6 +358,16 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     export_glb(archive_id, rel, destination)
+                    # GLB retains embedded images for Blender's single-file
+                    # import. Independent PNG copies all live at export-root/
+                    # textures/, including deeply nested CDF assemblies.
+                    from blender_texture_folder import write_texture_folder
+                    namespace = destination.relative_to(export_root).with_suffix('').as_posix().replace('/', '__')
+                    write_texture_folder(
+                        destination.read_bytes(), destination,
+                        texture_root=export_root / 'textures', model_namespace=namespace)
+                    if first_model is None:
+                        first_model = (destination, rel)
                     converted += 1
                 except (OSError, ValueError) as error:
                     failed.append(rel + ': ' + str(error)[:110])
@@ -374,6 +385,11 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
                     output.parent.mkdir(parents=True, exist_ok=True)
                     with output.open('xb') as output_file:
                         output_file.write(blob)
+                    from blender_texture_folder import write_texture_folder
+                    namespace = output.relative_to(export_root).with_suffix('').as_posix().replace('/', '__')
+                    write_texture_folder(
+                        blob, output, texture_root=export_root / 'textures',
+                        model_namespace=namespace)
                 assembly_dest.mkdir(parents=True, exist_ok=True)
                 (assembly_dest / 'CDF_assembly_report.json').write_text(
                     json.dumps({'generated': [dict(glb=rel, **info)
@@ -381,20 +397,46 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
                                 'unsupported': list(unresolved)}, indent=2),
                     encoding='utf-8')
             failed.extend(name + ': ' + reason for name, reason in unresolved)
-            return converted, len(assemblies), failed
+            # Export one combined animation GLB for verified CAF/DBA tracks.
+            # A source-only manifest is still useful if clips are unavailable.
+            from character_animation_export import export_character_animation_folder
+            from character_assembly import assemble_character
+            animation_report = None
+            preferred = next(iter(sorted(assemblies.items())), None)
+            source_blob, source_ref, source_character = None, None, None
+            if preferred is not None:
+                _name, (source_blob, info) = preferred
+                source_ref = info.get('cdf')
+                if source_ref:
+                    try:
+                        source_character = assemble_character(
+                            workspace, source_ref, index)
+                    except (ValueError, OSError) as error:
+                        failed.append('Animation rig discovery: ' + str(error)[:180])
+            elif first_model is not None:
+                source_path, source_ref = first_model
+                source_blob = source_path.read_bytes()
+            if source_blob is not None and source_ref is not None:
+                animation_report = export_character_animation_folder(
+                    export_root, source_blob, source_ref, index, workspace,
+                    character=source_character, cancelled=cancelled,
+                    progress=progress, model_name=Path(source_ref).stem)
+            return converted, len(assemblies), failed, animation_report
 
         def finish(result):
-            converted, assembled, failed = result
+            converted, assembled, failed, animations = result
+            anim_count = animations['animations'] if animations else 0
+            source_count = animations['sources'] if animations else 0
             self.status.setText(
-                'Exported %d individual meshes and %d complete CDF GLBs; '
-                '%d unsupported | %s' %
-                (converted, assembled, len(failed), output))
+                'Exported %d meshes, %d CDF assemblies, %d playable animation clips '
+                'and %d source motions; %d unsupported | %s' %
+                (converted, assembled, anim_count, source_count, len(failed), output))
             if failed:
                 QMessageBox.information(
                     self, 'Blender export',
-                    '%d individual GLBs, %d CDF assemblies; %d skipped. '
-                    'First issue: %s' %
-                    (converted, assembled, len(failed), failed[0]))
+                    '%d individual GLBs, %d CDF assemblies, %d playable clips; '
+                    '%d skipped. First issue: %s' %
+                    (converted, assembled, anim_count, len(failed), failed[0]))
 
         def fail(error):
             self.status.setText('Blender export stopped: ' + error[:180])

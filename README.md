@@ -6,8 +6,11 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 **Version:** 1.2.3 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.3
+## Latest Stable — v1.2.3 (Patch 1 when published)
 
+- Patch 1: Decode higher-resolution DDS, explicit gloss/AO channels, original normals/tangents, detail maps, independent UVs, and environment reflections.
+- Patch 1: Add optional GPU SSAO quality presets and smaller, expandable View, Materials, and Animation controls; show individual material and animation loading stages.
+- Patch 1: Export GLBs with editable PNGs in textures/ and verified rigged CAF/DBA clips in animations/, with source files and compatibility reports.
 - Pin Play with Mods, Play without Mods, and Settings at the bottom of the sidebar; add quick launch buttons to Home.
 - Restore original PAK files automatically after the game and client close, with journal-backed recovery in Settings.
 - Show installed client version separately without an unverified update checker.
@@ -47,7 +50,13 @@ The **Data** archive generally contains meshes, skeleton files and animation con
 
 GLB export now also includes the original **bone hierarchy, inverse-bind matrices, and per-vertex skin weights** when a compatible character **.skin** or **.chr** file accompanies the matching render-mesh **.skinm** or **.chrm**. The converter resolves per-subset local bone palettes, verifies joint transforms and refuses inconsistent skinning data. In **Edit Files → Models**, the export result explicitly says whether the model was rigged and gives a reason when not.
 
-**Animation clips are not yet imported:** character animation configuration files are not the underlying CAF/DBA keyframe tracks. Rigged GLBs can be posed and edited in Blender, but reproducing the original Evolve animations requires a separate CAF/DBA decoder. Edited Blender meshes still cannot be repackaged automatically into native Evolve model files.
+**Animation conversion is selective:** the exporter only attaches verified CAF/DBA keyframes that match the selected character rig. The `animations/` folder contains a rigged animated GLB when supported, original resolved motion sources in `sources/`, and a compatibility manifest even when no motion can be exported. BSPACE/COMB graphs and an arbitrary CAF/DBA filename are not themselves Blender actions. Edited Blender meshes still cannot be repackaged automatically into native Evolve model files.
+
+### Blender export attachments (v1.2.3 Patch 1)
+
+The Asset Library and Modding character-folder exporters produce a root `textures/` directory with separate full-quality PNG copies of the images already embedded in Blender GLBs. The `animations/` directory contains an animation source/compatibility manifest and, where skeleton and controller verification succeeds, a Blender-compatible animated GLB attached to its correct armature. A missing animation GLB means no verified playable tracks were produced; inspect the manifest rather than expecting source CAF/DBA files to play automatically.
+
+Optional **SSAO** (Off, Low, Medium, High) is available in the GPU viewer to approximate depth-based contact shading. It defaults to Off and is independent of material AO maps. Detailed material/animation diagnostics are behind compact expandable sections. Unsupported CryEngine shader features remain approximate, and native GPU appearance requires testing with actual game assets.
 
 ### Blender-style menus and texture diagnostics (v1.1.11)
 

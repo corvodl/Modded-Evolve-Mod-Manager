@@ -7,6 +7,7 @@ being guessed. A skeleton is never fabricated from skin indices.
 from __future__ import annotations
 from io import BytesIO
 import json
+from PIL import Image
 from pathlib import Path
 import struct
 
@@ -15,7 +16,7 @@ from model_asset import DATA_STREAM_CHUNK
 from model_preview import read_preview_mesh
 
 MAX_TEXTURES = 64
-MAX_IMAGE_BYTES = 64 * 1024 * 1024  # preserve full-res PNG, still bounded per material
+MAX_IMAGE_BYTES = 384 * 1024 * 1024  # preserve full-resolution PNG, bounded per map
 
 
 def _unpack_glb(blob):
@@ -135,14 +136,32 @@ def embed_diffuse_textures(blob, materials):
         except ValueError:
             continue
         for role, collection in (('normal', getattr(materials, 'normal_maps', ())),
-                                 ('specular', getattr(materials, 'specular_maps', ()))):
+                                 ('specular', getattr(materials, 'specular_maps', ())),
+                                 ('gloss', getattr(materials, 'gloss_maps', ())),
+                                 ('detail', getattr(materials, 'detail_maps', ())),
+                                 ('detail_normal', getattr(materials, 'detail_normal_maps', ())),
+                                 ('ao', getattr(materials, 'ao_maps', ()))):
             if slot < 0 or slot >= len(collection) or collection[slot] is None:
                 continue
             if len(images) >= MAX_TEXTURES:
                 raise ValueError('Exceeded texture export safety limit.')
             source = collection[slot]
+            # glTF expects LINEAR roughness in the green metallic-roughness
+            # channel; CryEngine gloss is inverse smoothness. Do not interpret
+            # arbitrary RGB specular maps as gloss.
+            from material_gloss import gloss_to_metallic_roughness
+            if role == 'gloss':
+                texture = gloss_to_metallic_roughness(source)
+            elif role == 'ao':
+                # glTF occlusion uses only the RED channel as *linear* AO.
+                # Explicit packed AO channels are unpacked by the resolver.
+                source_red = (source.getchannel('R') if 'R' in source.getbands()
+                              else source.convert('L'))
+                texture = Image.merge('RGB',(source_red,source_red,source_red))
+            else:
+                texture = source.convert('RGB')
             with BytesIO() as output:
-                source.convert('RGB').save(output, format='PNG')
+                texture.save(output, format='PNG')
                 payload = output.getvalue()
             if len(payload) > MAX_IMAGE_BYTES:
                 raise ValueError('A material %s PNG is too large to embed.' % role)
@@ -152,11 +171,13 @@ def embed_diffuse_textures(blob, materials):
             doc['bufferViews'].append(view)
             images.append({'bufferView': len(doc['bufferViews']) - 1,
                            'mimeType': 'image/png',
-                           'name': '%s slot %d' % (role.title(), slot)})
+                           'name': ('Roughness from gloss slot %d' % slot
+                                    if role == 'gloss' else
+                                    '%s slot %d' % (role.title(), slot))})
             textures.append({'source': len(images) - 1})
             if role == 'normal':
                 attach_normal_texture(doc, doc['materials'].index(material), len(textures) - 1)
-                transform = transform_for(materials, slot)
+                transform = transform_for(materials, slot, 'normal')
                 if transform != IDENTITY:
                     su, sv, ou, ov, angle = transform
                     material['normalTexture']['extensions'] = {
@@ -165,9 +186,91 @@ def embed_diffuse_textures(blob, materials):
                     extensions = doc.setdefault('extensionsUsed', [])
                     if 'KHR_texture_transform' not in extensions:
                         extensions.append('KHR_texture_transform')
-            # Other optional maps remain explicitly named image resources in
-            # the GLB/textures folder; don't guess glTF PBR packing for CryEngine
-            # specular/gloss maps whose semantics differ between shaders.
+            if role == 'ao':
+                strength = (materials.ao_strengths[slot]
+                            if slot < len(getattr(materials,'ao_strengths',()))
+                            else 1.)
+                material['occlusionTexture'] = {
+                    'index': len(textures)-1, 'strength': strength}
+                transform = transform_for(materials, slot, 'ao')
+                if transform != IDENTITY:
+                    su, sv, ou, ov, angle = transform
+                    material['occlusionTexture']['extensions'] = {
+                        'KHR_texture_transform': {'scale': [su, sv],
+                                                  'offset': [ou, ov], 'rotation': angle}}
+                    extensions = doc.setdefault('extensionsUsed', [])
+                    if 'KHR_texture_transform' not in extensions:
+                        extensions.append('KHR_texture_transform')
+            if role == 'gloss':
+                # Metallic stays zero unless actual metalness information is
+                # provided, while roughnessFactor=1 keeps full texture range.
+                pbr = material.setdefault('pbrMetallicRoughness', {})
+                pbr['metallicFactor'] = 0.0
+                pbr['roughnessFactor'] = 1.0
+                pbr['metallicRoughnessTexture'] = {'index': len(textures)-1}
+                transform = transform_for(materials, slot, 'gloss')
+                if transform != IDENTITY:
+                    su, sv, ou, ov, angle = transform
+                    pbr['metallicRoughnessTexture']['extensions'] = {
+                        'KHR_texture_transform': {'scale': [su, sv],
+                                                  'offset': [ou, ov], 'rotation': angle}}
+                    extensions = doc.setdefault('extensionsUsed', [])
+                    if 'KHR_texture_transform' not in extensions:
+                        extensions.append('KHR_texture_transform')
+            if role in ('detail','detail_normal'):
+                # glTF core has no second diffuse or second normal slot.
+                # Retain the independently mapped layer in the GLB and
+                # textures/ folder, with explicit provenance for authoring.
+                transform = transform_for(materials, slot, role)
+                material.setdefault('extras', {}).setdefault(
+                    'cryEngineTextureLayers', []).append({
+                        'role': role, 'imageName': images[-1]['name'],
+                        'uvTransform': list(transform)})
+            # Specular maps remain named optional resources; CryEngine
+            # specular tint cannot safely be guessed as glTF metalness.
+        # Preserve six environment faces as separately editable named PNGs.
+        # glTF core does not attach cubemaps to PBR materials directly.
+        environments = getattr(materials, 'environment_maps', ())
+        faces = environments[slot] if 0 <= slot < len(environments) else None
+        if faces:
+            env_names = []
+            from cubemap_material import FACES
+            for face_name, face in zip(FACES, faces):
+                if len(images) >= MAX_TEXTURES:
+                    raise ValueError('Exceeded cubemap export safety limit.')
+                with BytesIO() as output:
+                    face.convert('RGB').save(output, 'PNG')
+                    payload=output.getvalue()
+                if len(payload) > MAX_IMAGE_BYTES:
+                    raise ValueError('Cubemap face PNG exceeds export safety limit.')
+                binary.extend(bytes(-len(binary)%4))
+                view={'buffer':0,'byteOffset':len(binary),'byteLength':len(payload)}
+                binary.extend(payload)
+                doc['bufferViews'].append(view)
+                name='Environment %s slot %d' % (face_name,slot)
+                images.append({'bufferView':len(doc['bufferViews'])-1,
+                               'mimeType':'image/png','name':name})
+                env_names.append(name)
+            material.setdefault('extras', {})['cryEngineEnvironmentFaces'] = env_names
+        glasses = getattr(materials, 'glass_materials', ())
+        if 0 <= slot < len(glasses) and glasses[slot]:
+            opacity = (materials.opacity[slot]
+                       if slot < len(getattr(materials,'opacity',())) else 1.)
+            transmission = max(0.,min(1.,1.-opacity))
+            if transmission > 0.:
+                material.setdefault('extensions', {})['KHR_materials_transmission'] = {
+                    'transmissionFactor': transmission}
+                used=doc.setdefault('extensionsUsed',[])
+                if 'KHR_materials_transmission' not in used:
+                    used.append('KHR_materials_transmission')
+            indices = getattr(materials, 'refraction_indices', ())
+            ior = indices[slot] if slot < len(indices) else None
+            if ior is not None:
+                material.setdefault('extensions', {})['KHR_materials_ior'] = {
+                    'ior': float(ior)}
+                used=doc.setdefault('extensionsUsed',[])
+                if 'KHR_materials_ior' not in used:
+                    used.append('KHR_materials_ior')
     if not images:
         doc.pop('images', None)
         doc.pop('textures', None)

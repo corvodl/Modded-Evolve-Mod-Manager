@@ -28,4 +28,4 @@ class TextureResolutionTests(TestCase):
                 low=_decode_texture(record,max_dimension=1024)
             self.assertEqual(high.size,(2048,2048))
             self.assertEqual(low.size,(1024,1024))
-            self.assertEqual(MAX_PREVIEW_TEX_DIM,4096)
+            self.assertEqual(MAX_PREVIEW_TEX_DIM,16384)
