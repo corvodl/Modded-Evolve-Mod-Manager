@@ -109,6 +109,29 @@ class PatchRevisionTests(unittest.TestCase):
             self.assertEqual(u.update_workspace(root), root.resolve() / 'UpdateWork')
             self.assertNotIn('EvolveModManagerUpdates', str(u.update_workspace(root)))
 
+    def test_stale_transaction_cleanup_preserves_emergency_rollback(self):
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / 'EvolveModManager'
+            root = u.update_workspace(home)
+            root.mkdir(parents=True)
+            expired = root / ('a' * 32)
+            recovery = root / ('b' * 32)
+            fresh = root / ('c' * 32)
+            unrelated = root / 'my-user-files'
+            for child in (expired, recovery, fresh, unrelated):
+                child.mkdir()
+                (child / 'readme.txt').write_text('keep safe')
+            (recovery / 'rollback').mkdir()
+            old = time.time() - 3 * 86400
+            for child in (expired, recovery, unrelated):
+                os.utime(child, (old, old))
+            u.cleanup_completed_update_work(home)
+            self.assertFalse(expired.exists())
+            self.assertTrue(recovery.exists())
+            self.assertTrue(fresh.exists())
+            self.assertTrue(unrelated.exists())
+
     def test_workflows_preserve_tagged_versions_and_stage_revision(self):
         root = Path(__file__).resolve().parent.parent
         for file, channel in [('windows-beta-release.yml', 'Beta'),
