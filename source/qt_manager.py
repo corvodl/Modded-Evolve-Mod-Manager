@@ -269,6 +269,10 @@ def qt_style():
     QToolButton#refreshStatusIcon { background:#261e26;
         border:1px solid #693647; border-radius:9px; }
     QToolButton#refreshStatusIcon:hover { background:#55303c; }
+    QToolButton#railQuickPlay { background:#24242a; border:1px solid #39343e;
+        border-radius:10px; padding:0px; }
+    QToolButton#railQuickPlay:hover { background:#60313e; border-color:#fa586c; }
+    QToolButton#railQuickPlay:pressed { background:#8b2c40; }
     QToolTip { background:#222026; color:#f7f4f7; border:1px solid #864052;
         padding:6px; }
     QMenu { background:#1e1c23; color:#eee; border:1px solid #403943; padding:5px; }
@@ -2029,6 +2033,8 @@ class QtManager(QMainWindow):
             button.setFixedSize(174, 48)
         for index, button in enumerate(getattr(self, 'rail_buttons', ())):
             button.setIcon(navigation_icon(SECTIONS[index], icon_color, 23))
+        for title, button in getattr(self, 'quick_play_buttons', {}).items():
+            button.setIcon(navigation_icon(title, icon_color, 23))
         if getattr(self, 'home_dashboard', None):
             for section, tile in self.home_dashboard.tiles.items():
                 icons = tile.findChildren(QLabel, 'homeTileIcon')
