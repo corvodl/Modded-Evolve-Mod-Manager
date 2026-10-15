@@ -173,7 +173,7 @@ def build_index(build_id, *, root=None):
     if build_id == "all" or build_id not in data["builds"]:
         raise ValueError("An explicit build context is required.")
     allowed = set(data["builds"][build_id]["members"])
-    return {name: hits for name, records in extracted_index(root).items()
+    return {name: hits for name, records in extracted_index(root, archive_ids=allowed).items()
             if (hits := [dict(record, build_id=build_id) for record in records
                          if record.get("_asset_library") in allowed])}
 

@@ -10,7 +10,10 @@ from dataclasses import dataclass
 from functools import cached_property
 from io import BytesIO
 from pathlib import Path
+from collections import OrderedDict
+import hashlib
 import re
+import threading
 from xml.etree import ElementTree as ET
 
 from PIL import Image
@@ -22,6 +25,14 @@ from multi_pak_assets import related_asset_index, _resolve, load_workspace, norm
 MAX_MATERIAL_BYTES = 5 * 1024 * 1024
 MAX_TEXTURE_BYTES = 64 * 1024 * 1024
 MAX_PREVIEW_TEX_DIM = 4096  # original DDS resolution where bounded by pixel budget
+_texture_pixels = OrderedDict()
+_texture_lock = threading.RLock()
+MAX_CACHED_TEXTURE_BYTES = 128 * 1024 * 1024
+
+
+def clear_texture_cache():
+    with _texture_lock:
+        _texture_pixels.clear()
 
 
 @dataclass(frozen=True)
@@ -272,6 +283,21 @@ def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM,
                 raw = first[:info.data_offset] + b''.join(reversed(pieces)) + first[info.data_offset:]
     else:
         raw = path.read_bytes()
+    return _decode_texture_pixels(raw, relative, max_dimension=max_dimension,
+                                  normal_map=normal_map, historical_2012=historical_2012)
+
+
+def _decode_texture_pixels(raw, relative, *, max_dimension=MAX_PREVIEW_TEX_DIM,
+                           normal_map=False, historical_2012=False):
+    # Key the assembled bytes, not a filename: edited files, stream fragments,
+    # builds and preview/export quality must never reuse stale pixels.
+    key = (hashlib.sha256(raw).digest(), relative if normal_map else None,
+           max_dimension, normal_map, historical_2012)
+    with _texture_lock:
+        cached = _texture_pixels.get(key)
+        if cached is not None:
+            _texture_pixels.move_to_end(key)
+            return cached.copy()
     info = parse_dds(raw)
     if len(raw) > MAX_TEXTURE_BYTES or info.width * info.height > 16_777_216:
         raise ValueError('DDS texture exceeds preview size limits.')
@@ -298,6 +324,13 @@ def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM,
     tex.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
     if alpha is not None:
         tex.putalpha(alpha.resize(tex.size, Image.Resampling.LANCZOS))
+    with _texture_lock:
+        _texture_pixels[key] = tex.copy()
+        _texture_pixels.move_to_end(key)
+        while (len(_texture_pixels) > 128 or
+               sum(im.width * im.height * 4
+                   for im in _texture_pixels.values()) > MAX_CACHED_TEXTURE_BYTES):
+            _texture_pixels.popitem(last=False)
     return tex
 
 

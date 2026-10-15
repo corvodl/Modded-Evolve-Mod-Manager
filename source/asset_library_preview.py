@@ -30,7 +30,7 @@ def archive_folder(identifier, root=None):
     return folder
 
 
-def archive_entries(identifier, root=None):
+def archive_entries(identifier, root=None, *, paths=None):
     """Safe manifest-listed files only, preserving original case and paths."""
     folder = archive_folder(identifier, root)
     manifest = _load_manifest(folder)
@@ -39,8 +39,11 @@ def archive_entries(identifier, root=None):
     if (files_link.is_symlink() or not files.is_relative_to(folder.resolve())):
         raise ValueError('Imported PAK file root is unsafe.')
     records = {}
+    wanted = None if paths is None else frozenset(normalized_name(p) for p in paths)
     for row in manifest['entries']:
         relative = normalized_name(row['path'])
+        if wanted is not None and relative not in wanted:
+            continue
         candidate = files.joinpath(*relative.split('/'))
         if (candidate.is_symlink() or not candidate.is_file()
                 or not candidate.resolve().is_relative_to(files)
@@ -52,7 +55,7 @@ def archive_entries(identifier, root=None):
 
 def read_asset(identifier, relative, *, root=None, limit=_PREVIEW_LIMIT):
     relative = normalized_name(relative)
-    entries = archive_entries(identifier, root)
+    entries = archive_entries(identifier, root, paths=(relative,))
     path = entries.get(relative)
     if path is None:
         raise FileNotFoundError('This imported asset is missing or has changed.')
@@ -72,7 +75,7 @@ def _outside_library(destination, root=None):
 def export_file(identifier, relative, destination, *, root=None):
     """Copy a single extracted game file unchanged, never update its source."""
     relative = normalized_name(relative)
-    src = archive_entries(identifier, root).get(relative)
+    src = archive_entries(identifier, root, paths=(relative,)).get(relative)
     if src is None:
         raise FileNotFoundError('Imported asset is missing or damaged.')
     dst = _outside_library(destination, root)
@@ -131,7 +134,7 @@ def texture_image(identifier, relative, *, root=None, build_id=None):
     """Decode whole or complete streamed DDS from its extracted companions."""
     from material_preview import _decode_texture
     relative = normalized_name(relative)
-    entry = archive_entries(identifier, root).get(relative)
+    entry = archive_entries(identifier, root, paths=(relative,)).get(relative)
     if entry is None:
         raise FileNotFoundError(relative)
     if not (relative.casefold().endswith('.dds')
@@ -202,9 +205,10 @@ def library_model_index(identifier, root=None, *, build_id=None):
     context = resolve_archive_build(identifier, root=root, build_id=build_id)
     index = build_index(context, root=root)
     root_folder = archive_folder(identifier, root)
+    archive_name = _load_manifest(root_folder)['name']
     for relative, path in own.items():
         key = relative.casefold()
-        record = {'archive': _load_manifest(root_folder)['name'],
+        record = {'archive': archive_name,
                   'workspace': root_folder,
                   'file': path, 'relative': relative, '_asset_library': identifier,
                   'build_id': context}
@@ -233,7 +237,7 @@ def export_glb(identifier, relative, destination, *, root=None, build_id=None):
         target = _outside_library(destination, root)
         if target.suffix.casefold() != '.glb' or not target.parent.is_dir():
             raise ValueError('Export to .glb outside the read-only Asset Library.')
-        files = archive_entries(identifier, root)
+        files = archive_entries(identifier, root, paths=(relative,))
         if relative not in files:
             raise FileNotFoundError('The selected model is not present in this PAK.')
         context = archive_folder(identifier, root)
