@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QComboBox, QMessageBox, QInputDialog
 )
 
-from easy_mod_install import review_package, import_reviewed_mod
+from easy_mod_install import review_package, import_reviewed_mod, enabled_target_conflicts
 from mod_profiles import ModProfiles
 from qt_background_exports import begin_file_operation, exports_busy
 
@@ -174,8 +174,7 @@ class EasyModInstaller(QDialog):
             profile = next((p for p in self.store.list_profiles() if p["id"] == pid), None)
             if pid and profile is None:
                 raise ValueError("Selected Mods Collection was removed. Refresh the list.")
-            conflicts = [m for m in profile["mods"] if m.get("enabled") and
-                         m["relative"].casefold() == review.target.casefold()] if profile else []
+            conflicts = enabled_target_conflicts(profile, review.target) if profile else ()
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Mod Installer", str(exc))
             return
