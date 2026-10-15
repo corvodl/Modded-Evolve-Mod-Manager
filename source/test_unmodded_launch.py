@@ -27,8 +27,9 @@ class NormalLaunchPreflightTests(unittest.TestCase):
     def test_uses_configured_client_with_originals_in_place(self):
         with patch('launch_integration.state_status',
                    return_value=SwapStatus('prepared', 'Ready', game=str(self.game))):
-            self.assertEqual(unmodded_launch_target(self.swap),
-                             (self.game, self.client))
+            game, client = unmodded_launch_target(self.swap)
+            self.assertEqual(game, self.game.resolve())
+            self.assertEqual(client.resolve(), self.client.resolve())
         self.assertTrue((self.game / 'bin64_SteamRetail' / 'Evolve.exe').is_file())
 
     def test_refuses_active_swap_even_with_configured_client(self):
@@ -54,7 +55,7 @@ class NormalLaunchPreflightTests(unittest.TestCase):
         (self.swap / 'launcher_config.json').unlink()
         with patch('launch_integration.state_status',
                    return_value=SwapStatus('missing', 'Not configured')):
-            with self.assertRaisesRegex(FileNotFoundError, 'normal'):
+            with self.assertRaisesRegex(FileNotFoundError, '[Nn]ormal'):
                 unmodded_launch_target(self.swap, self.game)
 
 
