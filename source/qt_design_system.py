@@ -69,6 +69,26 @@ def qt_modern_style(values, *, density="Comfortable"):
     QFrame#drawer { background: %(sidebar)s; border: 0; border-right: 1px solid %(separator)s; }
     QFrame#fileExplorerPane { background: %(sidebar)s; border: 0;
                               border-left: 1px solid %(separator)s; }
+    QFrame#workspaceSurface, QFrame#workspaceEditorFrame {
+        background: %(surface)s; border: 1px solid %(separator)s;
+        border-radius: 12px;
+    }
+    QLabel#panelTitle { color: %(text)s; font-weight: 600; font-size: 10pt; }
+    QWidget#workspaceHeader { background: transparent; }
+    QWidget#disclosurePanel, QWidget#disclosureBody, QWidget#contextActions {
+        background: transparent;
+    }
+    QPushButton#disclosureToggle {
+        text-align: left; background: %(surface)s; color: %(muted)s;
+        border: 0; border-radius: 8px; padding: 9px 12px; font-weight: 600;
+    }
+    QPushButton#disclosureToggle:hover, QPushButton#disclosureToggle:checked {
+        background: %(hover)s; color: %(text)s;
+    }
+    QToolButton#contextOverflow { background: transparent; border: 1px solid %(separator)s; }
+    QFrame#pageToolbar { background: %(surface)s; border: 1px solid %(separator)s;
+                         border-radius: 9px; }
+
     QFrame#settingsDivider { background: %(separator)s; border: 0; }
     QGroupBox {
         margin-top: 15px;
