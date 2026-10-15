@@ -26,6 +26,7 @@ from qt_gfx_preview import GfxPreviewWidget
 from qt_navigation_icons import navigation_icon, action_icon
 from gfx_featured_promo import stage_featured_promo
 from qt_gfx_layout_editor import GfxLayoutDialog
+from qt_gfx_live_inspector import LiveUiInspector
 
 
 class GfxEditorDialog(QDialog):
@@ -71,6 +72,10 @@ class GfxEditorDialog(QDialog):
         outer.addWidget(self.warning)
         self.viewer = GfxPreviewWidget(self)
         self.viewer.setup.setEnabled(True)
+        self.live_ui = LiveUiInspector(
+            lambda: self.manager.game_root or self.manager._find_game_root(),
+            self.viewer)
+        self.viewer.tabs.addTab(self.live_ui, "Live UI (experimental)")
         # Reuse the authoring panel within the ordinary file editor. The canvas
         # gets most of the width; edit controls scroll in a compact inspector.
         self.editor_split = QSplitter(Qt.Horizontal, self)
@@ -484,6 +489,7 @@ class GfxEditorDialog(QDialog):
             QMessageBox.warning(self, "Could not export rendered GFX", str(exc))
 
     def closeEvent(self, event):
+        self.live_ui.stop()
         if self._layout_dialog is not None:
             self._layout_dialog.close()
         self.viewer.cancel_pending()
