@@ -530,7 +530,7 @@ class QtMigrationTests(unittest.TestCase):
         self.win.projects_path = str(self.base/'Projects')
         editor = QtWorkspaceEditor(self.win,ws)
         self.addCleanup(editor.close)
-        self.assertEqual(editor.tabs.count(),4)
+        self.assertEqual(editor.tabs.count(),5)  # Text, Textures, Models, GFX, Media
         self.assertIsInstance(editor, QMainWindow)
         self.assertIsNotNone(editor.centralWidget())
         self.assertTrue(editor.windowFlags() & Qt.WindowMaximizeButtonHint)
