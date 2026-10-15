@@ -60,7 +60,7 @@ class QuickLaunchQtTests(unittest.TestCase):
         self.assertIn("Play with Mods", texts)
         self.assertIn("Play without Mods", texts)
         self.assertTrue(home.client_version_label.text())
-        self.assertIn("not verified", home.client_update_status.text().lower())
+        self.assertFalse(hasattr(home, "client_update_status"))
         self.assertFalse(navigation_icon("Play with Mods").isNull())
         self.assertFalse(navigation_icon("Play without Mods").isNull())
 
