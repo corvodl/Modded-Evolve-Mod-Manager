@@ -157,16 +157,18 @@ def stage_featured_promo(workspace, session, mode: str, *,
         _ffdec(["-export", "script", str(source_root), str(snapshot.working_file)],
                configured=configured, folder=root, cancelled=cancelled)
         candidates = []
-        total = 0
+        total, file_count = 0, 0
+        safe_root = source_root.resolve()
         for path in source_root.rglob("*"):
-            if (path.is_symlink() or not path.resolve().is_relative_to(source_root)):
+            if (path.is_symlink() or not path.resolve().is_relative_to(safe_root)):
                 raise GfxError("Unsafe FFDec ActionScript export.")
             if not path.is_file():
                 continue
             if path.suffix.casefold() != ".as":
                 raise GfxError("Unexpected FFDec script export extension.")
+            file_count += 1
             total += path.stat().st_size
-            if total > MAX_XML:
+            if total > MAX_XML or file_count > 2000:
                 raise GfxError("FFDec script export exceeds the bounded size.")
             raw = path.read_text(encoding="utf-8-sig")
             if _FUNCTION.search(raw):
