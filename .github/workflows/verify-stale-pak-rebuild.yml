@@ -1,0 +1,42 @@
+name: Verify exact-source PAK rebuild recovery
+
+on:
+  pull_request:
+    branches: [main, beta]
+    paths:
+      - 'source/evolve_pak_workspace.py'
+      - 'source/qt_manager.py'
+      - 'source/pak_manager_gui.py'
+      - 'source/test_add_mod_restored.py'
+      - 'source/test_editor_refresh.py'
+      - '.github/workflows/verify-stale-pak-rebuild.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-pak-rebuild:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: ${{ github.workspace }}/source
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - name: Install isolated signing test dependencies
+        shell: pwsh
+        run: python -m pip install 'cryptography>=41,<48' 'twofish>=0.3.0'
+      - name: Compile PAK builder, manager and tests
+        shell: pwsh
+        run: |
+          python -m py_compile source/evolve_pak_workspace.py source/test_add_mod_restored.py source/qt_manager.py
+          if ($LASTEXITCODE -ne 0) { throw 'Python compilation failed' }
+      - name: Verify signed PAK baseline, safe stage replacement and rollback
+        shell: pwsh
+        run: |
+          python -m unittest -v test_add_mod_restored test_editor_refresh
+          if ($LASTEXITCODE -ne 0) { throw 'CryPAK rebuild or original backup verification failed' }
