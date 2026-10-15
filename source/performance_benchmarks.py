@@ -89,10 +89,11 @@ def bench_crypto(size, repeats):
         output = twofish_ctr(payload, key, iv)
         if hashlib.sha256(output).digest() != hashlib.sha256(encrypted).digest():
             raise ValueError('Non-deterministic CTR encryption result')
-    return {'twofish_ctr_ms': measure(encrypt, repeats=repeats),
-            'input_bytes': size, 'bytes_per_second_estimate': round(
-                (size / (statistics.median(measure(encrypt, repeats=repeats)
-                                            ['samples_ms']) / 1000)), 1)}
+    timings = measure(encrypt, repeats=repeats)
+    return {'twofish_ctr_ms': timings,
+            'input_bytes': size,
+            'bytes_per_second_estimate': round(
+                size / max(1e-6, timings['median_ms'] / 1000), 1)}
  
 
 def main(argv=None):
