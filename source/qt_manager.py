@@ -4242,7 +4242,8 @@ class QtManager(QMainWindow):
             if storage is None:
                 return
             from game_storage import validate_storage_root, reusable_setup
-            root = validate_storage_root(self.game_storage_root, game=game)
+            root = validate_storage_root(
+                self.game_storage_panel.root_input.text().strip(), game=game)
             # Reusing a known-good signed setup avoids generating another
             # full set of large PAKs. We only reuse a safe exact match.
             if reusable_setup(self.stage_path, self.swap_path, game, launcher):
@@ -4261,6 +4262,7 @@ class QtManager(QMainWindow):
                 cmd.append('--preserve-old-prepared')
             if not storage:
                 cmd.append('--skip-original-snapshots')
+            self.game_storage_root = str(root)
             self.run_steps([('Creating local mod setup',cmd)],'Set up from game',
                            lambda: self._after_setup(dest))
         except Exception as exc:
@@ -4291,7 +4293,7 @@ class QtManager(QMainWindow):
                 return
             from game_storage import validate_storage_root
             folder = validate_storage_root(
-                self.game_storage_root, game=game)
+                self.game_storage_panel.root_input.text().strip(), game=game)
             keep = self.confirm_storage('Keep original snapshots?',
                                         'Choose whether the refreshed setup stores original PAK snapshots.')
             if keep is None:
@@ -4305,6 +4307,7 @@ class QtManager(QMainWindow):
                    '--destination',str(dest)]
             if not keep:
                 cmd.append('--skip-original-snapshots')
+            self.game_storage_root = str(folder)
             self.run_steps([('Refreshing originals',cmd)],'Refresh Original PAKs',
                            lambda: self._after_setup(dest))
         except Exception as exc:
