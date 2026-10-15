@@ -34,7 +34,7 @@ jobs:
         env:
           PYTHONPATH: source
         run: |
-          python -m unittest -v test_level_blender_export test_level_asset_mount test_level_dependency_loader test_level_terrain_decode test_level_source_metadata test_level_editor test_qt_level_editor test_qt_virtual_tree test_level_working_set test_level_residency_performance
+          python -m unittest -v test_level_blender_export test_level_asset_mount test_level_dependency_loader test_level_terrain_decode test_level_source_metadata test_level_editor test_qt_level_editor test_qt_virtual_tree test_level_working_set test_level_residency_performance test_level_early_publication
           python -m unittest discover -s tests -p 'test_level_scene_core.py' -v
       - name: Rasterize synthetic mesh in actual software OpenGL context
         env:
