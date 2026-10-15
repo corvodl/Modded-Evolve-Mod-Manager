@@ -3527,7 +3527,10 @@ class QtManager(QMainWindow):
                 raise RuntimeError('Wait for the current extraction or build to finish.')
             from level_editor_core import LevelProject
             from pak_dependencies import is_level_pak
-            folder = Path(workspace) if workspace is not None else None
+            # QAction.triggered(bool) may pass False to a no-argument menu
+            # callback. Treat that as the usual selection-based open.
+            folder = (Path(workspace) if workspace is not None and
+                      not isinstance(workspace, bool) else None)
             selected = self._selected_rel() if workspace is None else ''
             if workspace is None:
                 try:
@@ -3596,7 +3599,9 @@ class QtManager(QMainWindow):
                     with span('map', 'first_project_parse', generation=token):
                         prepared = LevelProject(folder)
                     error = ''
-                except (OSError, ValueError) as exc:
+                except Exception as exc:
+                    # Any project parser failure must dismiss the loading
+                    # shell instead of leaving a permanent spinner.
                     prepared, error = None, str(exc)[:250]
                 if not cancel.is_set():
                     try:
