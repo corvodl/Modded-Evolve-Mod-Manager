@@ -127,7 +127,8 @@ class EasyModInstallTests(unittest.TestCase):
         target = self.catalog / "ImportedMods" / reviewed.sha256[:20] / "libs.pak"
         target.parent.mkdir(parents=True)
         target.write_bytes(b"tampered")
-        with patch("easy_mod_install._locate_target", return_value="Game/libs.pak"):
+        with patch("easy_mod_install._locate_target", return_value="Game/libs.pak"), \
+                patch("easy_mod_install.validate_archive_pair", return_value=["changed"]):
             with self.assertRaisesRegex(RuntimeError, "different data"):
                 import_reviewed_mod(reviewed, self.stage, self.catalog, "profile")
         self.assertEqual(target.read_bytes(), b"tampered")
