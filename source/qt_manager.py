@@ -412,13 +412,22 @@ class QtManager(QMainWindow):
 
         base = QWidget()
         self.setCentralWidget(base)
-        body = QVBoxLayout(base)
+        # The icon rail occupies the complete left edge of the application,
+        # including the former Menu-button/header space. Only the workspace
+        # content uses the standard page padding.
+        self.application_shell = QHBoxLayout(base)
+        self.application_shell.setContentsMargins(0, 0, 0, 0)
+        self.application_shell.setSpacing(0)
+        self.workspace_column = QWidget(base)
+        self.workspace_column.setObjectName('mainWorkspaceColumn')
+        body = QVBoxLayout(self.workspace_column)
         body.setContentsMargins(16, 12, 16, 10)
         body.setSpacing(10)
+        self.application_shell.addWidget(self.workspace_column, 1)
 
         top = QHBoxLayout()
         # The permanent icon rail replaces the obsolete Menu button.
-        # Hover reveals full navigation; Ctrl+B remains a keyboard option.
+        # Hovering an icon shows its name via Qt tooltip, never the drawer.
         # The application icon and brand work as a Home navigation control.
         self.home_brand_button = QToolButton(self)
         self.home_brand_button.setObjectName('homeBrandButton')
@@ -441,16 +450,16 @@ class QtManager(QMainWindow):
         top.addWidget(_button('Activity', self.toggle_activity))
         body.addLayout(top)
 
-        # Persistent icon navigation is a structural departure from the old
-        # popup-only shell; the expanded drawer remains accessible on demand.
+        # Keep the workspace's view stack separate from the top-to-bottom
+        # navigation rail. The rail must never start below the header.
         self.workspace_shell = QHBoxLayout()
         self.workspace_shell.setContentsMargins(0, 0, 0, 0)
-        self.workspace_shell.setSpacing(12)
+        self.workspace_shell.setSpacing(0)
         self.nav_rail = QFrame(self)
         self.nav_rail.setObjectName('homeNavigationRail')
         self.nav_rail.setFixedWidth(66)
-        # Rail icons use their native Qt tooltips on hover. Hover never
-        # expands navigation or moves the editor's workspace.
+        # Tooltips are native, discoverable and do not change geometry.
+        # No hover event handlers are installed on the rail or its buttons.
         rail_layout = QVBoxLayout(self.nav_rail)
         rail_layout.setContentsMargins(7, 12, 7, 12)
         rail_layout.setSpacing(7)
@@ -468,7 +477,7 @@ class QtManager(QMainWindow):
             rail_layout.addWidget(button)
             self.rail_buttons.append(button)
         rail_layout.addStretch()
-        self.workspace_shell.addWidget(self.nav_rail, 0)
+        self.application_shell.insertWidget(0, self.nav_rail, 0)
 
         self.stage_holder = QWidget()
         self.stage_holder.setObjectName('stageHolder')
