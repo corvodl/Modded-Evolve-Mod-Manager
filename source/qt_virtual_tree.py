@@ -83,7 +83,7 @@ class VirtualTreeModel(QAbstractItemModel):
                 return node.label
             if index.column() == 1:
                 return node.size or node.kind
-            return node.kind
+            return node.tooltip or node.kind
         if role == Qt.UserRole:
             return node.value
         if role == Qt.ToolTipRole:
