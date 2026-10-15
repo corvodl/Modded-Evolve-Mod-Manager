@@ -154,29 +154,9 @@ def installed_commit(app_home: Path) -> str | None:
 
 
 def discover(current_commit: str | None = None) -> Update | None:
-    """Only offer an update when the main HEAD and published release are identical."""
-    head = json.loads(_get(API + '/branches/main'))['commit']['sha'].lower()
-    if current_commit == head: return None
-    release = json.loads(_get(API + '/releases/tags/Main'))
-    assets = {a['name']: a for a in release.get('assets', [])}
-    if MANIFEST_ASSET not in assets or RELEASE_ASSET not in assets:
-        return None  # CI may still be building the latest commit.
-    manifest = json.loads(_get(assets[MANIFEST_ASSET]['browser_download_url']))
-    sha = manifest.get('sha256', '').lower()
-    if (manifest.get('schema') != 1 or manifest.get('commit', '').lower() != head or
-            manifest.get('asset') != RELEASE_ASSET or
-            len(sha) != 64 or any(ch not in '0123456789abcdef' for ch in sha)):
-        return None
-    asset = assets[RELEASE_ASSET]
-    if (asset.get('size', 0) <= 0 or asset['size'] > MAX_ZIP_BYTES or
-            manifest.get('bytes') != asset['size']):
-        return None
-    digest = asset.get('digest')
-    if digest and digest.lower() != 'sha256:' + sha:
-        return None
-    return Update(head, str(manifest.get('version', 'Updated build')).strip()[:140],
-                  sha, asset['browser_download_url'], asset['size'])
-
+    """Stable-only compatibility discovery."""
+    update = discover_channel('main')
+    return update if update and update.commit != current_commit else None
 
 
 def version_key(value: str):
@@ -191,71 +171,82 @@ def version_key(value: str):
 
 
 def discover_channel(channel: str) -> Update | None:
-    """Match an immutable manifest against the current release branch HEAD."""
+    """Validate rolling channel manifest, checksum, version and revision."""
     if channel not in CHANNELS:
         raise ValueError('Invalid release channel.')
-    branch=json.loads(_get(API+'/branches/'+channel))
-    head=str(branch['commit']['sha']).lower()
-    if not re.fullmatch(r'[0-9a-f]{40}',head):
+    branch = json.loads(_get(API + '/branches/' + channel))
+    head = str(branch['commit']['sha']).lower()
+    if not re.fullmatch(r'[0-9a-f]{40}', head):
         raise ValueError('Invalid channel HEAD.')
-    release=json.loads(_get(API+'/releases/tags/'+CHANNELS[channel]))
-    assets={a['name']:a for a in release.get('assets',[])}
-    if MANIFEST_ASSET not in assets or RELEASE_ASSET not in assets:
+    release = json.loads(_get(API + '/releases/tags/' + CHANNELS[channel]))
+    assets = {a['name']: a for a in release.get('assets', [])}
+    if MANIFEST_ASSET not in assets:
         return None
-    manifest=json.loads(_get(assets[MANIFEST_ASSET]['browser_download_url']))
-    sha=str(manifest.get('sha256','')).lower()
-    asset=assets[RELEASE_ASSET]
-    if (manifest.get('schema') != 1 or str(manifest.get('commit','')).lower()!=head
-            or manifest.get('asset')!=RELEASE_ASSET or
-            not re.fullmatch(r'[0-9a-f]{64}',sha) or
-            manifest.get('channel','main')!=channel or
-            (channel=='beta' and not release.get('prerelease',False)) or
-            not isinstance(asset.get('size'),int) or
-            not 0<asset['size']<=MAX_ZIP_BYTES or
-            manifest.get('bytes')!=asset['size']):
+    manifest = json.loads(_get(assets[MANIFEST_ASSET]['browser_download_url']))
+    try:
+        asset_name, revision, kind = _validated_asset_name(manifest)
+        version = str(manifest.get('version', '')).strip()
+        version_key(version)
+    except (TypeError, ValueError):
         return None
-    digest=asset.get('digest')
-    if digest and str(digest).lower()!='sha256:'+sha:
+    sha = str(manifest.get('sha256', '')).lower()
+    asset = assets.get(asset_name)
+    if not asset:
         return None
-    url=asset.get('browser_download_url','')
-    prefix=f'https://github.com/{REPO}/releases/download/{CHANNELS[channel]}/'
-    if not isinstance(url,str) or not url.startswith(prefix):
+    if (str(manifest.get('commit', '')).lower() != head or
+            not re.fullmatch(r'[0-9a-f]{64}', sha) or
+            manifest.get('channel', 'main') != channel or
+            (channel == 'beta' and not release.get('prerelease', False)) or
+            not isinstance(asset.get('size'), int) or
+            not 0 < asset['size'] <= MAX_ZIP_BYTES or
+            manifest.get('bytes') != asset['size']):
         return None
-    version=str(manifest.get('version','')).strip()
-    version_key(version)
-    return Update(head,version[:140],sha,url,asset['size'],channel)
+    digest = asset.get('digest')
+    if digest and str(digest).lower() != 'sha256:' + sha:
+        return None
+    prefix = f'https://github.com/{REPO}/releases/download/{CHANNELS[channel]}/'
+    url = asset.get('browser_download_url', '')
+    if url != prefix + asset_name:
+        return None
+    return Update(head, version[:140], sha, url, asset['size'],
+                  channel, revision, kind)
 
 
-def choose_latest(candidates, installed_version, installed_commit=None):
-    """Offer one strictly newer release (stable wins on equal versions)."""
-    valid=[candidate for candidate in candidates if candidate is not None]
+def choose_latest(candidates, installed_version, installed_commit=None,
+                  installed_revision=0):
+    """Reject all version/revision downgrades; prefer stable for ties."""
+    valid = [candidate for candidate in candidates if candidate is not None]
     if not valid:
         return None
-    valid.sort(key=lambda x:(version_key(x.version), x.channel=='main'),reverse=True)
-    winner=valid[0]
+    valid.sort(key=lambda x: (version_key(x.version), x.revision,
+                              x.channel == 'main'), reverse=True)
+    winner = valid[0]
     if installed_version:
-        if version_key(winner.version)<=version_key(installed_version):
+        if ((version_key(winner.version), winner.revision) <=
+                (version_key(installed_version), installed_revision)):
             return None
-    elif winner.commit==installed_commit:
+    elif winner.commit == installed_commit:
         return None
     return winner
 
 
-def discover_latest(current_commit=None,current_version=None):
-    """Inspect both stable and beta, not ad-hoc CI artifacts."""
-    candidates=[]
-    errors=[]
+def discover_latest(current_commit=None, current_version=None,
+                    current_revision=0):
+    """Query both channels and compare revision-aware release tuples."""
+    candidates, errors = [], []
     for channel in CHANNELS:
         try:
             candidates.append(discover_channel(channel))
-        except (ValueError,KeyError,OSError,urllib.error.URLError) as exc:
-            errors.append((channel,str(exc)))
+        except (ValueError, KeyError, OSError, urllib.error.URLError) as exc:
+            errors.append((channel, str(exc)))
     if not any(candidates):
         if errors:
-            raise RuntimeError('Cannot verify either release channel: '+
-                               '; '.join(name+': '+reason for name,reason in errors))
+            raise RuntimeError('Cannot verify either release channel: ' +
+                               '; '.join(name + ': ' + reason for name, reason in errors))
         return None
-    return choose_latest(candidates,current_version,current_commit)
+    return choose_latest(candidates, current_version, current_commit,
+                         current_revision)
+
 
 def _validated_zip_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
     files = []
