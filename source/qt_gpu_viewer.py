@@ -150,7 +150,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.setFormat(format)
         self.setMinimumSize(260, 180)
         self.mesh = mesh
-        self.shading = 'faceted'
+        self.shading = ('smooth' if len(getattr(mesh, 'vertex_normals', ())) ==
+                        len(mesh.vertices) else 'faceted')
         self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
         self.materials = materials
         # Character assembled parts can use CryEngine alpha semantics that

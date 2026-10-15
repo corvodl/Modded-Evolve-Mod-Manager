@@ -37,8 +37,8 @@ def prepare_geometry(mesh, shading='faceted'):
     """Validate and prepare tightly packed indexed buffers once per model.
 
     The GPU receives all triangles, unlike the previous drag-time CPU sampler.
-    Normal vectors are generated from the original triangles for approximate
-    lighting because the supported CrChF input has no decoded normal stream.
+    Verified authored normal vectors are preferred in smooth mode; triangle
+    normals remain the safe fallback for mesh streams without authored data.
     """
     import numpy as np
     vertices = np.ascontiguousarray(mesh.vertices, dtype=np.float32)
@@ -68,9 +68,15 @@ def prepare_geometry(mesh, shading='faceted'):
         uvs = np.ascontiguousarray(uvs[faces].reshape(-1, 2), dtype=np.float32)
         indices = np.arange(len(vertices), dtype=np.uint32)
     elif shading == 'smooth':
-        normals = np.zeros_like(vertices)
-        for column in range(3):
-            np.add.at(normals, faces[:, column], face_normals * face_sizes[:,None])
+        authored = getattr(mesh, 'vertex_normals', ())
+        if len(authored) == len(vertices):
+            normals = np.ascontiguousarray(authored, dtype=np.float32)
+            if normals.shape != vertices.shape or not np.isfinite(normals).all():
+                raise ValueError('Invalid authored vertex normals.')
+        else:
+            normals = np.zeros_like(vertices)
+            for column in range(3):
+                np.add.at(normals, faces[:, column], face_normals * face_sizes[:,None])
         norms = np.linalg.norm(normals, axis=1)
         np.divide(normals, np.maximum(norms[:,None], 1e-8), out=normals)
         normals = np.ascontiguousarray(normals, dtype=np.float32)

@@ -42,6 +42,9 @@ def mesh_with_authored_basis():
 class ExtendedTexturePipelineTests(unittest.TestCase):
     def test_original_normal_and_signed_tangent_are_exported(self):
         mesh = read_preview_mesh(mesh_with_authored_basis())
+        from gpu_model_preview import prepare_geometry
+        preview = prepare_geometry(mesh, shading='smooth')
+        self.assertEqual(tuple(preview.normals[0]), (0.,0.,1.))
         self.assertEqual(mesh.vertex_normals[0], (0., 0., 1.))
         self.assertEqual(mesh.vertex_tangents[0], (1., 0., 0., 1.))
         doc, payload = _unpack_glb(glb_bytes(mesh))
