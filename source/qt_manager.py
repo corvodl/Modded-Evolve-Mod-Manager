@@ -4232,6 +4232,16 @@ class QtManager(QMainWindow):
             pending = scan_prepared(Path(game))
             if pending['backups'] or pending['partial']:
                 raise RuntimeError('Unfinished original-file backups exist. Use Restore Game Files first.')
+            from game_storage import validate_storage_root, reusable_setup
+            root = validate_storage_root(
+                self.game_storage_panel.root_input.text().strip(), game=game)
+            # Check existing signed setup before asking to make additional
+            # original-PAK snapshots or generate another expensive signing set.
+            if reusable_setup(self.stage_path, self.swap_path, game, launcher):
+                self.info('Existing setup reused',
+                          'Signing PAKs and launcher recovery are already configured '
+                          'for this game and client. No new PAK copies were created.')
+                return
             preserve = True
             if pending['ready']:
                 if not self.confirm('Existing prepared files',
@@ -4240,16 +4250,6 @@ class QtManager(QMainWindow):
             storage = self.confirm_storage('Original PAK copies',
                                'Choose setup storage mode. The live launch still protects original game files.')
             if storage is None:
-                return
-            from game_storage import validate_storage_root, reusable_setup
-            root = validate_storage_root(
-                self.game_storage_panel.root_input.text().strip(), game=game)
-            # Reusing a known-good signed setup avoids generating another
-            # full set of large PAKs. We only reuse a safe exact match.
-            if reusable_setup(self.stage_path, self.swap_path, game, launcher):
-                self.info('Existing setup reused',
-                          'Signing PAKs and launcher recovery are already configured '
-                          'for this game and client. No new PAK copies were created.')
                 return
             dest = root/('Setup_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
             if not self.confirm('Confirm setup',
