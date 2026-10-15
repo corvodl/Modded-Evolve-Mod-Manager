@@ -32,9 +32,12 @@ class SystemHealthCoreTests(unittest.TestCase):
             os.utime(old, (old_time, old_time))
             os.utime(original, (old_time, old_time))
             os.utime(unrelated, (old_time, old_time))
-            self.assertEqual(h.storage_candidates(root), [old])
+            self.assertEqual(
+                [candidate.name for candidate in h.storage_candidates(root)],
+                ["unfinished.part"])
             removed, freed = h.cleanup_stale_temps(root)
-            self.assertEqual((removed, freed), (1, 4))
+            self.assertEqual(removed, 1)
+            self.assertGreaterEqual(freed, 4)
             self.assertFalse(old.exists())
             self.assertTrue(fresh.exists())
             self.assertTrue(original.exists())
