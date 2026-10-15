@@ -10,7 +10,6 @@ from pathlib import Path
 
 NAV_ASSETS = Path(__file__).resolve().parent / 'assets' / 'ui_nav'
 NAV_STEMS = {
-    'Home': 'home',
     'Instructions': 'instructions',
     'Asset Library': 'asset-library',
     'Modding': 'modding',
