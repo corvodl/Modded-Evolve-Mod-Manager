@@ -43,8 +43,8 @@ if os.name == 'nt' and getattr(sys, 'frozen', False):
         sys.stderr = sys.stderr or open(os.devnull, 'w')
 
 
-from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl, QSize, QItemSelectionModel
-from PySide6.QtGui import QAction, QIcon, QPixmap, QFont, QDesktopServices, QColor, QPainter
+from PySide6.QtCore import Qt, QEvent, QEasingCurve, QPropertyAnimation, QRect, Signal, QObject, QTimer, QProcess, QProcessEnvironment, QUrl, QSize, QItemSelectionModel
+from PySide6.QtGui import QAction, QIcon, QCursor, QPixmap, QFont, QDesktopServices, QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout,
     QStackedWidget, QScrollArea, QPushButton, QLineEdit, QComboBox, QTableWidget,
@@ -415,10 +415,8 @@ class QtManager(QMainWindow):
         body.setSpacing(10)
 
         top = QHBoxLayout()
-        self.menu_button = _button('☰  Menu', self.toggle_menu)
-        self.menu_button.setObjectName('menuTrigger')
-        self.menu_button.setToolTip('Expand navigation (Esc to close)')
-        top.addWidget(self.menu_button)
+        # The permanent icon rail replaces the obsolete Menu button.
+        # Hover reveals full navigation; Ctrl+B remains a keyboard option.
         # The application icon and brand work as a Home navigation control.
         self.home_brand_button = QToolButton(self)
         self.home_brand_button.setObjectName('homeBrandButton')
@@ -449,6 +447,12 @@ class QtManager(QMainWindow):
         self.nav_rail = QFrame(self)
         self.nav_rail.setObjectName('homeNavigationRail')
         self.nav_rail.setFixedWidth(66)
+        self.nav_rail.setMouseTracking(True)
+        self.nav_rail.installEventFilter(self)
+        self._hover_collapse = QTimer(self)
+        self._hover_collapse.setSingleShot(True)
+        self._hover_collapse.setInterval(230)
+        self._hover_collapse.timeout.connect(self._collapse_hover_navigation)
         rail_layout = QVBoxLayout(self.nav_rail)
         rail_layout.setContentsMargins(7, 12, 7, 12)
         rail_layout.setSpacing(7)
@@ -508,6 +512,11 @@ class QtManager(QMainWindow):
         navlay.addStretch()
         self.drawer.move(-194, 0)
         self.drawer.hide()
+        self.drawer.installEventFilter(self)
+        self.navigation_shortcut = QAction('Toggle navigation sidebar', self)
+        self.navigation_shortcut.setShortcut('Ctrl+B')
+        self.navigation_shortcut.triggered.connect(lambda: self.toggle_menu())
+        self.addAction(self.navigation_shortcut)
         self.menu_animation = QPropertyAnimation(self.drawer, b'geometry', self)
         self.menu_animation.setDuration(205)
         self.menu_animation.setEasingCurve(QEasingCurve.OutCubic)
@@ -614,6 +623,27 @@ class QtManager(QMainWindow):
         if self._drawer_open:
             self.drawer.raise_()
 
+    def eventFilter(self, watched, event):
+        if watched in (getattr(self, 'nav_rail', None), getattr(self, 'drawer', None)):
+            if event.type() == QEvent.Enter:
+                self._hover_collapse.stop()
+                self.toggle_menu(True)
+            elif event.type() == QEvent.Leave:
+                self._hover_collapse.start()
+        return super().eventFilter(watched, event)
+
+    def _collapse_hover_navigation(self):
+        # A delay lets the pointer cross the small rail-to-drawer gap.
+        # Do not collapse while the mouse is over either navigation surface.
+        cursor = QCursor.pos()
+        for item in (self.nav_rail, self.drawer):
+            if item.isVisible() and item.rect().contains(
+                    item.mapFromGlobal(cursor)):
+                return
+        if not self.drawer.hasFocus() and not any(
+                button.hasFocus() for button in self.nav_buttons):
+            self.toggle_menu(False)
+
     def toggle_menu(self, show=None):
         open_it = not self._drawer_open if show is None else bool(show)
         if open_it == self._drawer_open:
@@ -625,7 +655,6 @@ class QtManager(QMainWindow):
         # only just started; icon painting must never use stale initial sizes.
         self.drawer.layout().activate()
         self.drawer.raise_()
-        self.menu_button.setText('✕  Close' if open_it else '☰  Menu')
         self.menu_animation.stop()
         left = self.drawer.geometry()
         right = QRect(0 if open_it else -self.drawer.width(), 0,
@@ -1571,7 +1600,7 @@ class QtManager(QMainWindow):
             _action_with_info('Refresh Original PAKs', self.refresh_originals,
                               ACTION_HINTS['Refresh Original PAKs'])))
         panel.addWidget(other)
-        lay.addWidget(_button('How Play & Restore works', lambda: self.show_help(2)))
+        lay.addWidget(_button('How Play && Restore works', lambda: self.show_help(2)))
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['play'] = scroll
