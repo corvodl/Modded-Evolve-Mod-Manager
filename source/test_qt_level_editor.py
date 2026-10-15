@@ -47,6 +47,19 @@ class UnrealStyleLevelEditorSmoke(unittest.TestCase):
         self.assertIn('visible', e.out_count.text())
         self.assertGreaterEqual(e.outliner.topLevelItemCount(), 1)
 
+    def test_preparsed_first_map_skips_constructor_disk_parse(self):
+        # The manager now does LevelProject parsing in a worker and hands the
+        # parsed project to a Qt-only constructor on the main event thread.
+        with patch('qt_level_editor.LevelProject',
+                   side_effect=AssertionError('synchronous parse')):
+            other = UnrealStyleLevelEditor(
+                self.parent, self.ws, prepared=self.editor.project)
+            try:
+                self.assertIs(other.project, self.editor.project)
+                self.assertEqual(len(other.project.objects), 3)
+            finally:
+                other.close()
+
     def test_unreal_layout_widgets_and_outliner(self):
         e=self.editor
         self.assertEqual(len(e.project.objects),3)
