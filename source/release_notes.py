@@ -4,6 +4,13 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.2.4', (
+        "Import individually verified assembled CDF characters into Blender as one GLB, with compatible named CAF/DBA Actions bound to the correct original skeleton.",
+        "Expand native CAF conversion to as many as 256 verified clips per assembly within size and resource safety limits; report unsupported clips explicitly.",
+        "Preserve compatible 2012 CryTek master-skeleton DBA conversion and reject unsupported or mismatched rigs rather than inventing motion.",
+        "Show per-assembly Blender animation counts, clip names and skip reasons after export, while keeping the separate animation manifest for diagnostics.",
+        "Add Settings integration for installing the optional standalone Blender Animation Browser through Blender's own extension system, with safe version and package checks.",
+    )),
     ('1.2.3', (
         "Patch 2: Add a collapsible, on-demand System Health dashboard for firewall rules, running processes, crash/support tools, storage and environment checks.",
         "Patch 2: Strengthen offline launch safety with upfront Windows elevation, pre-launch verification, recovery guidance and privacy-reviewed support reporting.",
