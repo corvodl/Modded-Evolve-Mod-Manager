@@ -2821,7 +2821,16 @@ class QtWorkspaceEditor(QMainWindow):
             converted = len(report['cdf_assemblies'])
             skipped = len(report['cdf_assembly_errors'])
             note += ' • %d additional CDF Blender GLB(s) in models/' % converted
-            if report['full_model'] is not None:
+            monster_stages = report.get('monster_stages', ())
+            if monster_stages:
+                note += ' • 3 root monster stage GLBs with stage-specific rig/animation metadata'
+                for stage_row in monster_stages:
+                    clips = tuple(stage_row.get('embedded_animation_clips', ()))
+                    note += ' • Stage %d: %d verified animation(s)' % (
+                        stage_row['stage'], len(clips))
+                    if not clips:
+                        note += ' (see asset_sources.json for unavailable motion)'
+            elif report['full_model'] is not None:
                 note += ' • ' + Path(report['folder']).name + '.glb included'
             else:
                 note += ' • no verified full CDF assembly'
