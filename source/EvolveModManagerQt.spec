@@ -24,7 +24,7 @@ hidden = [
     'universal_stage', 'refresh_originals', 'workspace_editor',
     'workspace_file_actions', 'pak_browser', 'portable_bundle', 'legacy_pak_workspace', 'legacy_texture_preview', 'qt_legacy_pak_editor', 'legacy_pak_import',
     'first_run_setup', 'old_prepared', 'loose_game_files',
-    'loose_file_editor', 'qt_manager', 'qt_workspace_editor', 'qt_easy_mod_installer', 'qt_quick_commands', 'easy_mod_install', 'game_storage', 'qt_game_storage', 'easy_mod_bundle', 'mod_install_receipts',
+    'loose_file_editor', 'qt_manager', 'qt_workspace_editor', 'qt_easy_mod_installer', 'qt_quick_commands', 'easy_mod_install', 'game_storage', 'qt_game_storage', 'easy_mod_bundle', 'mod_install_receipts', 'mod_install_safety',
     'qt_legacy_editor_bridge', 'qt_gpu_viewer', 'qt_font_health', 'desktop_shortcut', 'orphaned_swap_recovery',
 ]
 for package in ('cryptography', 'frida', 'twofish', 'PIL'):
