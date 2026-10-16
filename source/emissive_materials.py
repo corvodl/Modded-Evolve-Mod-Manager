@@ -67,13 +67,48 @@ def _map_references(material):
     return explicit, decal
 
 
+def shader_flags(material):
+    """Parse exact CryEngine shader-generation flag tokens, never substrings."""
+    return frozenset(part.strip().upper()
+                     for part in (material.get('StringGenMask') or '').split('%')
+                     if part.strip())
+
+
+def emission_mask_source(material, mode=None):
+    """Select the source of the emission mask, independently from opacity.
+
+    Positive GlowAmount makes Illum/Cloth/HumanSkin emission available but
+    does not imply that a Decal is masked by diffuse alpha. ALPHAGLOW opts
+    into this extra behavior explicitly.
+    """
+    mode = emission_mode(material) if mode is None else mode
+    if mode == 'legacy_alpha':
+        return 'diffuse_alpha'
+    if mode == 'legacy_decal' and 'ALPHAGLOW' in shader_flags(material):
+        return 'diffuse_alpha'
+    return 'none'
+
+
+def emission_texture_node(material):
+    """Actual emitting map node, for role-specific TexMod provenance."""
+    explicit = decal = None
+    for node in material.findall('./Textures/Texture'):
+        role = (node.get('Map') or node.get('map') or '').casefold()
+        if role in ('emittance', 'emissive', 'emission', 'glow') and explicit is None:
+            explicit = node
+        elif role == 'decal' and decal is None:
+            decal = node
+    return explicit or (decal if (material.get('Shader') or '').casefold() == 'illum'
+                        and _legacy_glow(material) else None)
+
+
 def _legacy_glow(material):
     shader = (material.get('Shader') or '').casefold()
-    mask = (material.get('StringGenMask') or '').casefold()
+    flags = shader_flags(material)
     raw = _parameter(material, 'GlowAmount')
     return (_positive_float(raw) > 0.0
             and (shader in ('illum', 'cloth', 'humanskin')
-                 or 'alphaglow' in mask))
+                 or 'ALPHAGLOW' in flags))
 
 
 def emission_mode(material):
