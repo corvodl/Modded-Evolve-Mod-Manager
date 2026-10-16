@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtWidgets import QApplication, QPushButton, QDialog, QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QPushButton, QDialog, QPlainTextEdit, QFrame
 from launch_integration import SwapStatus
 from qt_manager import QtManager, SECTIONS
 from qt_system_health import SystemHealthPanel
