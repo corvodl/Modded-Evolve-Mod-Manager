@@ -172,7 +172,8 @@ class EasyModInstaller(QDialog):
         source = self.selected_path
         legacy = self.legacy_folder
         stage = self.manager.stage_path
-        game = self.manager.game_root or self.manager._find_game_root()
+        game = (getattr(self.manager, 'game_root', None) or
+                getattr(self.manager, '_find_game_root', lambda: '')())
         self.preview_button.setEnabled(False)
         def complete(bundle):
             self.preview_button.setEnabled(True)
