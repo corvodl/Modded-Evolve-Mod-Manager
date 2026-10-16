@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import TestCase
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from PIL import Image
 from character_assembly import combine_meshes
@@ -121,6 +121,30 @@ class AssemblyEmissivePipelineTests(TestCase):
                 self.assertEqual(out.emissive_strengths,(2.5,2.5))
                 self.assertIs(out.emissive_maps[0],glow)
                 self.assertIs(out.emissive_maps[1],glow)
+
+    def test_stale_editor_index_refreshes_exact_actor_and_global_glow_assets(self):
+        from async_model_resolve import refresh_character_material_index
+        actor='characters/hunters/merc_tech/'
+        mtl=actor+'tech_3p.mtl'
+        decal='textures/particle/light/chroma_fan.dds.0'
+        other='characters/hunters/merc_lennox/wrong.dds.0'
+        local={'file':'project','relative':mtl,'workspace':'project'}
+        record=lambda name:{'file':name,'relative':name,'workspace':None}
+        original={mtl:[local]}
+        live={
+            decal:[record(decal)],
+            other:[record(other)],
+            'characters/hunters/shared/textures/eye.dds.0':
+                [record('characters/hunters/shared/textures/eye.dds.0')],
+        }
+        with patch('asset_library.extracted_index',return_value=live):
+            snapshot=refresh_character_material_index(
+                original,actor+'tech_3p.skinm')
+        self.assertIn(decal,snapshot)
+        self.assertIn('characters/hunters/shared/textures/eye.dds.0',snapshot)
+        self.assertNotIn(other,snapshot)
+        self.assertEqual(snapshot[mtl],[local])
+        self.assertEqual(original,{mtl:[local]})  # source index unchanged
 
     def test_gpu_diagnostic_identifies_original_slot_and_resolution_failure(self):
         from qt_gpu_viewer import QtGPUModelPanel
