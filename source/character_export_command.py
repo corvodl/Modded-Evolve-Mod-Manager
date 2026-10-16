@@ -73,6 +73,12 @@ def validate_character_export_destination(source_folder, destination):
         raise ValueError('Choose an existing non-linked parent export directory.')
     internal = PurePosixPath(virtual).name
     friendly = _character_name(virtual)
+    if output.name.casefold() == friendly.casefold():
+        raise ValueError(
+            'You selected an existing ' + friendly + ' folder. Select its '
+            'PARENT instead: ' + str(output.parent) + '. The manager creates '
+            + friendly + '/' + friendly + '.glb automatically; it will not '
+            'create a nested ' + friendly + '/' + friendly + ' folder.')
     if output.name.casefold() == internal.casefold() and (
             (output / 'Assemblies').exists()
             or (output / 'CDF_assembly_report.json').exists()
