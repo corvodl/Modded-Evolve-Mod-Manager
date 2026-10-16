@@ -1,4 +1,4 @@
-"""GLB diffuse/normal texture embedding and skinning-readiness diagnostics.
+"""GLB diffuse/normal/emissive texture embedding and skinning diagnostics.
 
 Uses the existing verified material/DDS streaming decoder and extracted-PAK
 project catalog. Unsupported or ambiguous textures remain unbound rather than
@@ -134,8 +134,11 @@ def embed_diffuse_textures(blob, materials):
             slot = int(name[len(prefix):].split()[0])
         except ValueError:
             continue
+        if slot < len(getattr(materials, 'hidden', ())) and materials.hidden[slot]:
+            continue
         for role, collection in (('normal', getattr(materials, 'normal_maps', ())),
-                                 ('specular', getattr(materials, 'specular_maps', ()))):
+                                 ('specular', getattr(materials, 'specular_maps', ())),
+                                 ('emissive', getattr(materials, 'emissive_maps', ()))):
             if slot < 0 or slot >= len(collection) or collection[slot] is None:
                 continue
             if len(images) >= MAX_TEXTURES:
@@ -165,6 +168,30 @@ def embed_diffuse_textures(blob, materials):
                     extensions = doc.setdefault('extensionsUsed', [])
                     if 'KHR_texture_transform' not in extensions:
                         extensions.append('KHR_texture_transform')
+            elif role == 'emissive':
+                # The emission mask is baked from an explicit CryEngine
+                # emission slot or material-authorized diffuse alpha, NEVER
+                # from arbitrary diffuse alpha used for transparency.
+                material['emissiveTexture'] = {'index': len(textures) - 1}
+                material['emissiveFactor'] = [1.0, 1.0, 1.0]
+                transform = transform_for(materials, slot)
+                if transform != IDENTITY:
+                    su, sv, ou, ov, angle = transform
+                    material['emissiveTexture']['extensions'] = {
+                        'KHR_texture_transform': {'scale': [su, sv],
+                                                   'offset': [ou, ov], 'rotation': angle}}
+                    extensions = doc.setdefault('extensionsUsed', [])
+                    if 'KHR_texture_transform' not in extensions:
+                        extensions.append('KHR_texture_transform')
+                strengths = getattr(materials, 'emissive_strengths', ())
+                strength = strengths[slot] if slot < len(strengths) else 1.
+                if strength > 1.:
+                    ext = material.setdefault('extensions', {})
+                    ext['KHR_materials_emissive_strength'] = {
+                        'emissiveStrength': min(16., float(strength))}
+                    used = doc.setdefault('extensionsUsed', [])
+                    if 'KHR_materials_emissive_strength' not in used:
+                        used.append('KHR_materials_emissive_strength')
             # Other optional maps remain explicitly named image resources in
             # the GLB/textures folder; don't guess glTF PBR packing for CryEngine
             # specular/gloss maps whose semantics differ between shaders.
