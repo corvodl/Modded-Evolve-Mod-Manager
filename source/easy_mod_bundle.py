@@ -39,8 +39,8 @@ def _members(archive):
     for entry in infos:
         name = entry.filename
         normalized = PurePosixPath(name)
-        if (not name or name.startswith(("/", "\\\\"))
-                or ":" in name or "\\\\" in name or ".." in normalized.parts
+        if (not name or name.startswith(("/", "\\"))
+                or ":" in name or "\\" in name or ".." in normalized.parts
                 or any(part in (".", "") for part in normalized.parts)
                 or entry.flag_bits & 1
                 or stat.S_IFMT(entry.external_attr >> 16) == stat.S_IFLNK):
