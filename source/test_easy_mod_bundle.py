@@ -111,8 +111,15 @@ class BundleInstallTests(unittest.TestCase):
     def test_zip_traversal_symlink_backslash_and_duplicate_names_rejected(self):
         for name in ("../Game/libs.pak", "C:/Game/libs.pak",
                      "Game\\libs.pak", "/Game/libs.pak"):
-            self.make_zip(((name, b"bad"),))
-            with zipfile.ZipFile(self.package) as archive:
+            # Write exact raw ZIP names. Windows zipfile may normalize a
+            # backslash before creating the archive.
+            marker = "Z" * len(name)
+            self.make_zip(((marker, b"bad"),))
+            data = self.package.read_bytes()
+            self.assertEqual(data.count(marker.encode("ascii")), 2)
+            self.package.write_bytes(
+                data.replace(marker.encode("ascii"), name.encode("ascii")))
+            with self.subTest(name=name), zipfile.ZipFile(self.package) as archive:
                 with self.assertRaisesRegex(ValueError, "unsafe"):
                     _members(archive)
         self.make_zip((("Game/libs.pak", b"x"), ("Game/libs.pak", b"y")))
