@@ -1396,10 +1396,15 @@ class QtWorkspaceEditor(QMainWindow):
                 item.setData(0, Qt.UserRole, primary)
                 item.setData(0, Qt.UserRole + 2, 'full-character')
                 item.setIcon(0, navigation_icon('layers', size=16))
-                item.setToolTip(0,
-                    'Full character assembled from ' + full.definition +
-                    '\\nThe CDF selects the body and compatible equipment. ' +
-                    'Original meshes remain independently selectable.')
+                item.setToolTip(0, (
+                    ('Complete original Emet 3P skin and matching native rig: '
+                     if full.definition.casefold().endswith('.skin') else
+                     'Full character assembled from ') + full.definition +
+                    ('\\nOriginal arm-complete model; no unrelated CDF '
+                     'equipment geometry is substituted.'
+                     if full.definition.casefold().endswith('.skin') else
+                     '\\nThe CDF selects the body and compatible equipment. ') +
+                    'Original meshes remain independently selectable.'))
                 parent.insertChild(0, item)
                 if primary == previous and self.full_character_active:
                     restored = item
@@ -2797,13 +2802,17 @@ class QtWorkspaceEditor(QMainWindow):
                 texture_folder=textures, projects_root=projects, stage_root=stage,
                 progress=progress, cancelled=cancelled)
             full_model = None
-            # Preserve the familiar Full_Character.glb entry. Prefer the
-            # currently open CDF; otherwise use the first verified assembly.
+            # Emet's canonical 3P remote-cannon mesh contains his arm.
+            # Prefer it for Full_Character even when a healing/beacon CDF
+            # happens to be selected; retain all CDFs under Assemblies/.
             preferred_cdf = (selected_character.cdf.casefold()
                              if selected_character is not None else None)
             chosen = next((pair for pair in assemblies.values()
-                           if preferred_cdf and
-                           pair[1]['cdf'].casefold() == preferred_cdf), None)
+                           if pair[1].get('preferred_full_character')), None)
+            if chosen is None:
+                chosen = next((pair for pair in assemblies.values()
+                               if preferred_cdf and
+                               pair[1]['cdf'].casefold() == preferred_cdf), None)
             if chosen is None and assemblies:
                 chosen = next(iter(assemblies.values()))
             if chosen is not None:
