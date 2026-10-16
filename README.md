@@ -18,11 +18,8 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 - Patch 2: Show model-loading progress from geometry preparation until the existing bottom texture-loading bar takes over.
 - Patch 2: Report unavailable GPU emissive shading and black baked glow maps without changing original textures.
 - Patch 1: Export monsters as three separate Stage 1, 2 and 3 root GLBs, each carrying only animations verified against its own CDF/skeleton; keep hunters and wildlife unchanged.
-- Restore verified CryEngine emissive materials and glow masks in model previews and Blender GLB exports.
-- Add GPU emissive intensity and optional soft bloom while preserving distinct transparency and glow mask handling.
 - Validate exported geometry, remove degenerate faces, and repair only small verified holes without disturbing skin vertex IDs.
 - Clean up nearly identical UV coordinates without joining intentional UV seams or hard edges.
-- Record geometry repair diagnostics in exported GLBs and preserve stable diffuse, normal, gloss, AO, detail and reflection support.
 
 ## Download and install
 
