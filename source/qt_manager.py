@@ -1873,6 +1873,25 @@ class QtManager(QMainWindow):
             'packages, or re-import the standard shared/animation collection. '
             'This never edits your game installation.', muted=True))
 
+        _settings_heading(lay, 'BLENDER INTEGRATION',
+                          'Install the optional standalone animation browser once for Blender 4.2+.') 
+        blender_card, blender_row = _card('EVOLVE ANIMATION BROWSER',
+            'Search and preview converted Evolve CAF/DBA animations on any compatible '
+            'rigged Blender model, including supported 2012 converter-backed clips.')
+        lay.addWidget(blender_card)
+        self.blender_addon_status = _label(
+            self._blender_addon_install_status(), muted=True)
+        blender_row.addWidget(self.blender_addon_status)
+        self.blender_addon_install_button = _button(
+            'Install / Update Blender Add-on…', self.install_blender_animation_browser)
+        self.blender_addon_install_button.setObjectName('blenderAddonInstallButton')
+        blender_row.addWidget(self.blender_addon_install_button)
+        blender_row.addWidget(_label(
+            'Uses Blender\'s own User Default extension installer and an exact v1.1.0 ZIP. '
+            'Place Evolve_Animation_Browser_v1.1.0.zip in Downloads or choose it when '
+            'prompted. This does not change your game files. Restart open Blender '
+            'windows after installing.', muted=True))
+
         _settings_heading(lay, 'BACKUPS & RECOVERY',
                           'Save disk space safely without sacrificing quick local restoration.')
         backups, backup_row = _card('ORIGINAL GAME FILES',
@@ -1953,8 +1972,79 @@ class QtManager(QMainWindow):
         self.stack.addWidget(scroll)
         self.pages['settings'] = scroll
         self.settings_sections = ('UPDATES', 'GENERAL', 'GAME & FILES', 'ASSET LIBRARY',
-                                  'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
-                                  'ADVANCED & MAINTENANCE')
+                                  'BLENDER INTEGRATION', 'BACKUPS & RECOVERY',
+                                  'LAUNCH PREFERENCES', 'ADVANCED & MAINTENANCE')
+
+    def _blender_addon_install_status(self):
+        from blender_addon_installer import installed_versions
+        installed = installed_versions()
+        if not installed:
+            return 'Evolve Animation Browser: not detected in Blender user extensions.'
+        return 'Detected installation(s): ' + ', '.join(
+            'Blender ' + version + ' (add-on v' + addon + ')'
+            for version, addon in installed)
+
+    def install_blender_animation_browser(self):
+        """Install an explicitly verified ZIP using Blender's own extension CLI."""
+        try:
+            if self.busy:
+                self.failure('Wait for the current manager operation to finish.')
+                return
+            from blender_addon_installer import (
+                blender_candidates, find_addon_package, validate_package,
+                PACKAGE_NAME, PACKAGE_VERSION)
+            candidates = blender_candidates()
+            if len(candidates) > 1:
+                chosen, ok = QInputDialog.getItem(
+                    self, 'Select Blender installation',
+                    'Install to which Blender executable?',
+                    [str(path) for path in candidates], 0, False)
+                if not ok:
+                    return
+                blender = Path(chosen)
+            elif candidates:
+                blender = candidates[0]
+            else:
+                chosen, _ = QFileDialog.getOpenFileName(
+                    self, 'Locate Blender 4.2+ executable',
+                    str(Path(os.environ.get('PROGRAMFILES', Path.home()))),
+                    'Blender (blender.exe)')
+                if not chosen:
+                    return
+                blender = Path(chosen)
+            package = find_addon_package(application=ROOT)
+            if package is None:
+                selected, _ = QFileDialog.getOpenFileName(
+                    self, 'Select Evolve Animation Browser v' + PACKAGE_VERSION,
+                    str(Path.home() / 'Downloads' / PACKAGE_NAME),
+                    'Blender extension ZIP (*.zip)')
+                if not selected:
+                    return
+                package = Path(selected)
+            validate_package(package)
+            if not self.confirm(
+                    'Install Evolve Animation Browser?',
+                    'Blender: ' + str(blender) + '\\n'
+                    'Extension: ' + str(package) + '\\n\\n'
+                    'Install and enable this verified extension in your Blender '
+                    'User Default repository? Blender preferences will be updated.'):
+                return
+            cmd = [sys.executable, '-u', str(ROOT / 'blender_addon_installer.py'),
+                   '--blender', str(blender), '--package', str(package)]
+            def installed():
+                self.blender_addon_status.setText(
+                    'Evolve Animation Browser v' + PACKAGE_VERSION +
+                    ' installed. Restart open Blender windows to see the Evolve tab.')
+                self.info('Blender extension installed',
+                          'Evolve Animation Browser v' + PACKAGE_VERSION +
+                          ' was installed through Blender. Restart any open '
+                          'Blender window; then press N in the 3D Viewport '
+                          'and select the Evolve tab.')
+            self.run_steps(
+                [('Installing and enabling Blender animation extension', cmd)],
+                'Install Blender Animation Browser', installed)
+        except (ValueError, OSError, RuntimeError) as exc:
+            self.failure(exc)
 
     def _update_appearance_labels(self):
         colors = palette(self.appearance_mode, self.appearance_overrides)
