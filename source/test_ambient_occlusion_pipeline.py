@@ -148,7 +148,9 @@ class AmbientOcclusionTests(unittest.TestCase):
         self.assertIn('texture2D(ao_map,ao_coord).r',FRAGMENT)
         self.assertIn('ambientOcclusion',FRAGMENT)
         self.assertIn('indirect+diffuse*0.76*illumination',FRAGMENT)
-        self.assertIn("'ao_map'",str(Renderer3.__init__.__code__.co_consts))
+        from renderer_3 import SAMPLER_UNITS
+        self.assertIn(('ao_map', 7), SAMPLER_UNITS)
+        self.assertIn(('emissive_map', 8), SAMPLER_UNITS)
         self.assertIn('ao_uv',FRAGMENT)
         self.assertIn('has_ao',FRAGMENT)
 
