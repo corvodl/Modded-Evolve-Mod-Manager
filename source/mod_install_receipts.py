@@ -93,6 +93,25 @@ def verify_staged_profile(root, profile_id, stage, swap, expected_ids=()):
             if (not ready_backup.is_file() or
                     digest(ready_backup) != info.get("old_sha256")):
                 raise RuntimeError("Prepared swap recovery backup is missing or corrupt.")
+            if phase != "prepared":
+                raise RuntimeError("Prepared swap was changed before verification.")
+            swap_journal = swap / "controlled_swap_state.json"
+            if not swap_journal.is_file():
+                raise RuntimeError("Prepared swap journal is missing.")
+            journal = json.loads(swap_journal.read_text(encoding="utf-8"))
+            matches = [
+                row for row in journal.get("files", [])
+                if row.get("name", "").replace("\\\\", "/").casefold()
+                   == mod["relative"].casefold()
+            ]
+            if len(matches) != 1:
+                raise RuntimeError("Prepared swap journal has missing or duplicate PAK records.")
+            record = matches[0]
+            ready = Path(record.get("ready", ""))
+            if (Path(record.get("source", "")).resolve() != target.resolve()
+                    or record.get("sha256") != mod["sha256"]
+                    or not ready.is_file() or digest(ready) != mod["sha256"]):
+                raise RuntimeError("Prepared swap PAK and journal hashes disagree.")
     return len(records)
 
 
