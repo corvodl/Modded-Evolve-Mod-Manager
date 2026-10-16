@@ -57,6 +57,27 @@ class CompactGpuModelUiTests(unittest.TestCase):
         self.assertFalse(self.panel.native_info.isVisible())
         self.assertTrue(self.panel.native_clip_select.isVisible())
 
+    def test_texture_progress_footer_tracks_actual_uploads_and_hides(self):
+        footer = self.panel.texture_loading_footer
+        bar = self.panel.texture_loading_progress
+        self.assertEqual(footer.objectName(), 'modelTextureLoadingFooter')
+        self.assertEqual(bar.objectName(), 'modelTextureLoadingProgress')
+        self.assertTrue(footer.isHidden())
+        self.panel._update_texture_load_progress(0, 6)
+        self.assertFalse(footer.isHidden())
+        self.assertEqual((bar.minimum(), bar.maximum(), bar.value()), (0, 6, 0))
+        self.assertIn('6 remaining', self.panel.texture_loading_label.text())
+        self.panel._update_texture_load_progress(4, 6)
+        self.assertEqual(bar.value(), 4)
+        self.assertIn('2 remaining', self.panel.texture_loading_label.text())
+        self.panel._update_texture_load_progress(6, 6)
+        self.assertTrue(footer.isHidden())
+        self.panel._update_texture_load_progress(0, 2)
+        self.assertFalse(footer.isHidden())
+        self.assertEqual(bar.maximum(), 2)
+        self.panel._update_texture_load_progress(0, 0)
+        self.assertTrue(footer.isHidden())
+
     def test_stage_status_explains_progress_without_blocking(self):
         status=QLabel()
         fake=SimpleNamespace(
