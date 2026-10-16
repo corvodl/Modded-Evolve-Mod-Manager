@@ -31,6 +31,7 @@ uniform sampler2D gloss_map;
 uniform sampler2D detail_map;
 uniform sampler2D detail_normal_map;
 uniform sampler2D ao_map;
+uniform sampler2D emissive_map;
 uniform samplerCube environment_map;
 uniform mat3 normal_uv;
 uniform mat3 specular_uv;
@@ -39,6 +40,9 @@ uniform mat3 detail_uv;
 uniform mat3 detail_normal_uv;
 uniform mat3 ao_uv;
 uniform int has_diffuse;
+uniform int has_emissive;
+uniform float emissive_strength;
+uniform int emission_enabled;
 uniform int has_normal;
 uniform int has_specular;
 uniform int has_gloss;
@@ -157,6 +161,8 @@ void main() {
         litLinear += reflected*reflection_strength*
                      mix(0.08, 0.85, fresnel)*(is_glass == 1 ? 1.2 : 1.0);
     }
+    if (has_emissive == 1 && emission_enabled == 1)
+        litLinear += pow(texture2D(emissive_map,diffuse_coord).rgb,vec3(2.2)) * max(0.0,emissive_strength);
     vec3 lit = pow(clamp(litLinear,0.0,1.0),vec3(1.0/2.2));
     gl_FragColor = vec4(lit,alpha);
 }
@@ -174,10 +180,10 @@ class Renderer3:
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
             'diffuse_map','normal_map','specular_map','gloss_map','detail_map','detail_normal_map','environment_map','ao_map',
             'normal_uv','specular_uv','gloss_uv','detail_uv','detail_normal_uv','ao_uv',
-            'has_diffuse','has_normal','has_specular','has_gloss','has_detail','has_detail_normal','normal_y_flip',
+            'has_emissive','emissive_strength','emission_enabled','has_diffuse','has_normal','has_specular','has_gloss','has_detail','has_detail_normal','normal_y_flip',
             'has_environment','reflection_strength','is_glass','has_ao','ao_strength','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
         for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2),('gloss_map',3),
-                          ('detail_map',4),('detail_normal_map',5),('environment_map',6),('ao_map',7)):
+                          ('detail_map',4),('detail_normal_map',5),('environment_map',6),('ao_map',7),('emissive_map',8)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
@@ -185,10 +191,12 @@ class Renderer3:
              gloss_texture=False, detail=False, detail_normal=False, invert_normal_y=False, uv_matrices=None,
              environment=False, reflection_strength=0., glass=False,
              ao=False, ao_strength=1.,
-             alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
+             alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02,
+             emissive=False, emissive_strength=0., emission_enabled=True):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f, glUniformMatrix3fv, GL_FALSE
         glUseProgram(self.program)
-        for name,value in (('has_diffuse',diffuse),('has_normal',normal),
+        for name,value in (('has_emissive',emissive),('emission_enabled',emission_enabled),
+                           ('has_diffuse',diffuse),('has_normal',normal),
                            ('has_specular',specular), ('has_gloss',gloss_texture),
                            ('has_detail',detail), ('has_detail_normal',detail_normal),
                            ('normal_y_flip',invert_normal_y),
@@ -202,7 +210,8 @@ class Renderer3:
             glUniformMatrix3fv(self.uniforms[role + '_uv'],1,GL_FALSE,
                                gl_matrix3(matrices.get(role,IDENTITY)))
         for name,value in (('ao_strength',ao_strength),('reflection_strength',reflection_strength),('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),
-                           ('illumination',illumination), ('studio_fill',fill)):
+                           ('illumination',illumination), ('studio_fill',fill),
+                           ('emissive_strength',emissive_strength)):
             glUniform1f(self.uniforms[name],float(value))
 
     def unbind(self):
