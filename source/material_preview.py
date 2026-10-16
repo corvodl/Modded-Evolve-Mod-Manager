@@ -72,6 +72,7 @@ class PreviewMaterials:
     emissive_strengths: tuple = ()
     emissive_sources: tuple = ()
     emissive_black: tuple = ()  # computed once from baked pixels, not per frame
+    emissive_masks: tuple = ()  # none, baked_diffuse_alpha, or diffuse_alpha (shader masked)
 
     @property
     def count(self):
@@ -552,7 +553,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
 
     result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; details=[]; detail_normals=[]; ao_maps=[]; ao_strengths=[]; environments=[]; reflections=[]; glasses=[]; iors=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; motions = []; sources = []; references = []; hidden = []
-    role_transforms = {role: [] for role in ('normal','specular','gloss','detail','detail_normal','ao')}
+    role_transforms = {role: [] for role in ('normal','specular','gloss','detail','detail_normal','ao','emissive')}
     role_motions = {role: [] for role in role_transforms}
     for item in subs:
         checkpoint()
@@ -581,10 +582,14 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             'detail': ('detail','detaildiffuse','detailmap'),
             'detail_normal': ('detailnormal','detailnormalmap','detailbumpmap'),
             'ao': ('ao','occlusion','occlusionmap','ambientocclusion','ambientocclusionmap'),
+            'emissive': ('emittance','emissive','emission','glow'),
         }
         for role, keys in role_keys.items():
             texture_node = next((n for n in item.findall('./Textures/Texture')
                                 if (n.get('Map') or n.get('map') or '').casefold() in keys), None)
+            if role == 'emissive':
+                from emissive_materials import emission_texture_node
+                texture_node = emission_texture_node(item)
             if role == 'ao' and texture_node is None:
                 # A packed AO channel inherits its actual source texture's
                 # TexMod rather than erroneously sampling diffuse UVs.
@@ -593,7 +598,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             try:
                 slot_transform, animated = parse_transform(texture_node)
                 if animated:
-                    issues.append(name + ': animated ' + role + ' texture modifiers require verification')
+                    issues.append(name + ': animated ' + role +
+                                  ' texture modifiers require verification; only static tiling/offset is used')
             except ValueError as error:
                 slot_transform = IDENTITY
                 issues.append(name + ': ' + str(error))
@@ -752,11 +758,12 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
-    from emissive_materials import emission_settings, emission_mode, bake_emission_map
-    emissive_maps, emissive_strengths, emissive_sources, emissive_black = [], [], [], []
+    from emissive_materials import emission_settings, emission_mode, emission_mask_source, bake_emission_map
+    from texture_transform import transform_for, IDENTITY
+    emissive_maps, emissive_strengths, emissive_sources, emissive_black, emissive_masks = [], [], [], [], []
     for slot, (item, diffuse_img, name) in enumerate(zip(subs, result, names)):
         amount, color, reference = emission_settings(item)
-        glow, provenance = None, None
+        glow, provenance, mask_policy = None, None, 'none'
         if amount > 0 and not hidden[slot]:
             emission_img = None
             if reference:
@@ -773,14 +780,22 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                     amount = 0.
             if amount > 0:
                 mode = emission_mode(item)
-                # Legacy Illum Decal RGB is *also* masked by diffuse alpha.
-                # Modern Emittance maps own their masking semantics and must
-                # never borrow unrelated diffuse/opacity alpha data.
-                use_diffuse_alpha = (mode in ('legacy_alpha', 'legacy_decal')
+                # ALPHAGLOW is an explicit shader-generation flag. An Illum
+                # Decal without it must NOT borrow an unrelated diffuse
+                # alpha channel, as Kala's independent Glow material shows.
+                use_diffuse_alpha = (emission_mask_source(item, mode) == 'diffuse_alpha'
                                      and not alpha_modes[slot])
+                # When Decal and diffuse UVs differ, pre-baking alpha into
+                # emission pixels is invalid. Defer the mask to the shader,
+                # where diffuse and emission each use their own UV transform.
+                separate_uvs = (mode == 'legacy_decal' and
+                                role_transforms['emissive'][slot] != transforms[slot])
+                defer_mask = use_diffuse_alpha and separate_uvs
+                mask_policy = ('diffuse_alpha' if defer_mask else
+                               'baked_diffuse_alpha' if use_diffuse_alpha else 'none')
                 glow = bake_emission_map(diffuse_img, color=color,
                     emission=emission_img,
-                    diffuse_alpha_mask=use_diffuse_alpha)
+                    diffuse_alpha_mask=use_diffuse_alpha and not defer_mask)
                 if glow is None:
                     issues.append(name + ': emissive texture missing')
                     amount = 0.
@@ -792,6 +807,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         emissive_strengths.append(amount)
         emissive_sources.append(provenance)
         emissive_black.append(black)
+        emissive_masks.append(mask_policy)
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
                             tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden), gloss_maps=tuple(glosses),
@@ -807,7 +823,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                              emissive_maps=tuple(emissive_maps),
                              emissive_strengths=tuple(emissive_strengths),
                              emissive_sources=tuple(emissive_sources),
-                             emissive_black=tuple(emissive_black))
+                             emissive_black=tuple(emissive_black),
+                             emissive_masks=tuple(emissive_masks))
 
 
 
