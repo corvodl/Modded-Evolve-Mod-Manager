@@ -184,6 +184,58 @@ def build_cdf_folder_glbs(workspace, character_folder, index, *,
             skipped.append((name, str(exc)[:220]))
         if progress:
             progress('Prepared CDF assemblies', number, len(candidates))
+    # Emet's complete body (including the arm) is the original
+    # emetremotecannon_3p.skinm and its exactly matched .skin. The healing and
+    # dropship CDFs in the folder are deployable/equipment variants. Export
+    # that original 3P character as an additional canonical assembly, not a
+    # guessed CDF or a blend of body geometry from unrelated equipment models.
+    from character_full_models import preferred_emet_source
+    emet = preferred_emet_source(
+        name for name in index if name.casefold().startswith(prefix))
+    if emet is not None:
+        try:
+            from multi_pak_assets import _resolve
+            model_hits, model_status = _resolve(
+                index, emet, preferred_workspace=workspace)
+            skin_hits, skin_status = _resolve(
+                index, emet[:-1], preferred_workspace=workspace)
+            if model_status != 'found' or skin_status != 'found':
+                raise ValueError(
+                    'Emet original 3P mesh or exact .skin companion unavailable/ambiguous.')
+            model_record = model_hits[0]
+            source_ws = Path(model_record.get('workspace') or workspace).resolve()
+            source_root = (source_ws / 'files').resolve()
+            source = source_root.joinpath(*emet.split('/'))
+            if (source.is_symlink() or not source.is_file()
+                    or not source.resolve().is_relative_to(source_root)
+                    or source.resolve() != Path(model_record['file']).resolve()):
+                raise ValueError('Emet original 3P mesh is not a verified source file.')
+            from model_preview import read_preview_mesh
+            from model_textured_export import textured_model_from_workspace
+            mesh = read_preview_mesh(source.read_bytes(), emet)
+            blob, info = textured_model_from_workspace(
+                mesh, source_ws, emet, index=index,
+                texture_folder=texture_folder, projects_root=projects_root,
+                stage_root=stage_root)
+            if not blob.startswith(b'glTF'):
+                raise ValueError('Emet standalone native GLB is invalid.')
+            if total + len(blob) > max_total:
+                raise ValueError('Emet character would exceed assembly safety budget.')
+            output = 'Assemblies/Emetremotecannon_3p.glb'
+            if output in results:
+                raise ValueError('Duplicate Emet 3P assembly name.')
+            total += len(blob)
+            results[output] = (blob, dict(
+                info, cdf='', parts=(emet,), part_count=1,
+                preferred_full_character=True, original_3p_model=emet,
+                embedded_animations=0, embedded_animation_clips=(),
+                animation_note=('Emet original 3P mesh with arm. A separately '
+                                'verified matching animation skeleton is needed '
+                                'before embedding CAF/DBA Actions.')))
+        except InterruptedError:
+            raise
+        except (OSError, ValueError) as exc:
+            skipped.append((emet, 'Canonical Emet 3P assembly: ' + str(exc)[:190]))
     return results, tuple(skipped)
 
 
