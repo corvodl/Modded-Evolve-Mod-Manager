@@ -142,8 +142,14 @@ def _workspace_index(workspace, projects_root=None, stage_root=None):
     # zero-byte archive placeholder. Never use it as an asset path. Keep
     # load_workspace strict for rebuilding PAKs; sanitize this READ-ONLY
     # texture/model lookup only, rejecting every other unsafe entry.
-    from evolve_pak_workspace import safe_index_entries
-    for entry in safe_index_entries(workspace):
+    try:
+        entries = load_workspace(workspace)['entries']
+    except ValueError as exc:
+        if "Unsafe archive entry name: ''" not in str(exc):
+            raise
+        from evolve_pak_workspace import safe_index_entries
+        entries = safe_index_entries(workspace)
+    for entry in entries:
         rel = normalized_name(entry['path'])
         path = (root / rel).resolve()
         if path.is_relative_to(root) and path.is_file() and not path.is_symlink():
