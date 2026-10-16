@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QComboBox, QTreeWidget, QTreeWidgetItem, QTreeView, QLineEdit, QPushButton, QPlainTextEdit,
     QTabWidget, QSplitter, QStackedWidget, QFileDialog, QMessageBox, QMenu, QScrollArea,
     QDockWidget, QTreeWidgetItemIterator, QFrame, QAbstractItemView, QHeaderView, QStyle,
-    QSizePolicy,
+    QSizePolicy, QProgressBar,
 )
 from dds_texture import is_dds, is_split_dds, parse_dds, preview_dds, export_png, replace_dds
 from dds_streaming import inspect_stream, inspect_whole_part0, replace_stream
@@ -321,6 +321,30 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_cpu.setObjectName('cpuModelPreview')
                 view.addWidget(self.model_cpu)
             box.addWidget(view, 1)
+            if section == 'models':
+                # The GPU model panel does not exist until geometry is ready.
+                # Mirror its bottom texture progress strip on the fallback
+                # page so long CryEngine mesh/skeleton reads are visible too.
+                self.model_loading_footer = QFrame(tab)
+                self.model_loading_footer.setObjectName('modelLoadingFooter')
+                loading_row = QHBoxLayout(self.model_loading_footer)
+                loading_row.setContentsMargins(8, 2, 8, 2)
+                loading_row.setSpacing(8)
+                self.model_loading_label = QLabel(
+                    'Loading model', self.model_loading_footer)
+                self.model_loading_label.setObjectName('modelLoadingLabel')
+                self.model_loading_progress = QProgressBar(self.model_loading_footer)
+                self.model_loading_progress.setObjectName('modelLoadingProgress')
+                # Geometry/rigging and library indexing have no fixed item
+                # total. Do not show invented percentages; the real counted
+                # GPU texture progress takes over once DDS loading completes.
+                self.model_loading_progress.setRange(0, 0)
+                self.model_loading_progress.setTextVisible(True)
+                self.model_loading_progress.setMaximumHeight(16)
+                loading_row.addWidget(self.model_loading_label)
+                loading_row.addWidget(self.model_loading_progress, 1)
+                self.model_loading_footer.hide()
+                box.addWidget(self.model_loading_footer)
             self.tabs.addTab(tab, navigation_icon({'files':'text','images':'texture','models':'model','gfx':'gfx','media':'files'}[section]), label)
             self.views[section] = view
             self.actions[section] = widgets
@@ -1698,14 +1722,32 @@ class QtWorkspaceEditor(QMainWindow):
         self.status.setText('Refreshing current Asset Library references…')
         self.load(self.current, full_character=self.full_character_active)
 
+    def _set_model_loading_phase(self, label, visible=True):
+        """Display actual loading stage in the compact bottom progress strip.
+
+        Percentages are indeterminate before the worker knows texture counts.
+        The GPU viewer uses a separate determinate texture-upload strip when
+        geometry has been installed; no operations block the Qt event loop.
+        """
+        footer = getattr(self, 'model_loading_footer', None)
+        if footer is None:
+            return
+        if visible:
+            self.model_loading_label.setText(label)
+            self.model_loading_progress.setRange(0, 0)
+            footer.show()
+        else:
+            footer.hide()
+
     def _load_model_background(self, rel):
         """Load heavy CryEngine files and textures away from the GUI thread."""
         self._model_prepared = False
         self._model_started_at = time.perf_counter()
         view = self.views['models']
         self.model_fallback.setPixmap(QPixmap())
-        self.model_fallback.setText('Loading character and textures…')
+        self.model_fallback.setText('Loading model geometry and skeleton…')
         view.setCurrentWidget(self.model_fallback)
+        self._set_model_loading_phase('Loading model · reading geometry…')
         self.status.setText(rel + ' | Preparing GPU model…')
         source_workspace = self.workspace
         index = self.preview_index
@@ -1802,6 +1844,11 @@ class QtWorkspaceEditor(QMainWindow):
         self.status.setToolTip(
             'Geometry is ready to inspect while textures and animation '
             'references are resolved in the background.')
+        # Until the GPU view can be installed, keep reporting the real
+        # worker phase on the same-style bottom loading strip.
+        if getattr(self, 'model_loading_footer', None) is not None and (
+                not self.model_panel or not self.model_panel.isVisible()):
+            self._set_model_loading_phase('Loading model · ' + labels[stage] + '…')
 
     def _slow_model_notice(self, token):
         if (token != self._model_generation or self._model_prepared
@@ -1836,6 +1883,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_panel.set_static_mesh(
                     mesh, None, prepared_geometry=geometry)
             view.setCurrentWidget(self.model_panel)
+            self._set_model_loading_phase('', False)
             self.model_panel.set_texture_resolution_pending(True)
             self.status.setText(
                 self.current + ' | Verified geometry ready; '
@@ -1855,6 +1903,7 @@ class QtWorkspaceEditor(QMainWindow):
         if token != self._model_generation or self.mode != 'models':
             return
         view = self.views['models']
+        self._set_model_loading_phase('', False)
         if error:
             if self.model_panel is not None:
                 self.model_panel.set_texture_resolution_pending(False)

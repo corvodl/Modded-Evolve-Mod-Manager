@@ -1456,6 +1456,7 @@ class QtGPUModelPanel(QWidget):
         self.texture_loading_label.setText(
             'Loading textures (%d remaining)' % (total - completed))
         self.texture_loading_footer.show()
+        self._update_emissive_source_status()
 
     def _create_viewport_navigation(self):
         self._tool_rail = QFrame(self.canvas)
@@ -1707,10 +1708,27 @@ class QtGPUModelPanel(QWidget):
                           if selected < len(getattr(materials, 'emissive_sources', ())) else None)
                 message += ' Strength: %.2fx.' % strength
                 message += (' Source: %s (%s).' % origin) if origin else ' Mask: material-approved diffuse alpha.'
+            black = getattr(materials, 'emissive_black', ())
+            dark_slots = [slot for slot in resolved
+                          if slot < len(black) and black[slot]]
+            if dark_slots:
+                message += (' %d material(s) have entirely black baked emission '
+                            '(no visible emissive pixels).' % len(dark_slots))
             pending = sum(1 for target, idx, _ in getattr(self.canvas, '_pending_texture_uploads', ())
                           if target == 'emissive_textures' and idx in slots)
             if pending:
                 message += ' %d emission mask(s) still uploading to the GPU.' % pending
+            if not getattr(self.canvas, 'emission_enabled', True):
+                message += ' Emissive rendering is turned off.'
+            if getattr(self.canvas, 'gl_error', None):
+                message += ' Renderer failed: ' + self.canvas.gl_error
+            elif not getattr(self.canvas, '_renderer3', None):
+                message += ' Enhanced shader is not initialized; glow cannot render yet.'
+            elif resolved and not pending:
+                handles = getattr(self.canvas, 'emissive_textures', ())
+                uploaded = sum(slot < len(handles) and bool(handles[slot])
+                               for slot in resolved)
+                message += ' GPU emission maps uploaded: %d/%d.' % (uploaded, len(resolved))
             if getattr(self.canvas, 'bloom_error', None):
                 message += ' Soft halo unavailable: ' + self.canvas.bloom_error
         self.emissive_source_info.setText(message)

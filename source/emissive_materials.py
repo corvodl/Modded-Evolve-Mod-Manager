@@ -14,17 +14,19 @@ from PIL import Image, ImageChops
 
 
 def _parameter(material, *names):
-    wanted = {name.casefold() for name in names}
-    nodes = [material]
-    nodes.extend(node for node in material.iter() if node is not material)
-    for node in nodes:
-        for key, value in node.attrib.items():
-            if key.casefold() in wanted:
-                return value
-        if (node.get('Name') or node.get('name') or '').casefold() in wanted:
-            value = node.get('Value') or node.get('value')
-            if value is not None:
-                return value
+    # Caller order is explicit priority. Attribute order and XML subtree
+    # position must not override the declared CryEngine parameter precedence.
+    nodes = [material, *(node for node in material.iter() if node is not material)]
+    for name in names:
+        wanted = name.casefold()
+        for node in nodes:
+            for key, value in node.attrib.items():
+                if key.casefold() == wanted:
+                    return value
+            if (node.get('Name') or node.get('name') or '').casefold() == wanted:
+                value = node.get('Value') or node.get('value')
+                if value is not None:
+                    return value
     return None
 
 
@@ -51,39 +53,87 @@ def _color(value):
     return tuple(min(1.0, p) for p in parts)
 
 
-def emission_settings(material):
-    """Return (emission strength, color multiplier or None, map reference).
-
-    A positive GlowAmount enables diffuse-alpha glow. No positive emission
-    settings and no explicit Emittance map means an ordinary material.
-    A Decal slot is glow ONLY with an Illum shader and positive GlowAmount.
-    """
-    shader = (material.get('Shader') or '').casefold()
-    value = _parameter(material, 'GlowAmount', 'EmissiveIntensity',
-                       'EmittanceIntensity', 'EmissiveStrength',
-                       'EmissionStrength')
-    intensity = _positive_float(value)
-    color = _color(_parameter(material, 'EmissiveColor', 'EmissionColor',
-                              'EmittanceColor', 'Emissive'))
-    emissive_ref = None
-    decal_ref = None
+def _map_references(material):
+    explicit = decal = None
     for node in material.findall('./Textures/Texture'):
         role = (node.get('Map') or node.get('map') or '').casefold()
-        ref = node.get('File') or node.get('file')
-        if not ref:
+        reference = node.get('File') or node.get('file')
+        if not reference:
             continue
-        if role in ('emittance', 'emissive', 'emission', 'glow'):
-            emissive_ref = ref
-        if role == 'decal':
-            decal_ref = ref
-    if emissive_ref and value is None:
+        if role in ('emittance', 'emissive', 'emission', 'glow') and explicit is None:
+            explicit = reference
+        if role == 'decal' and decal is None:
+            decal = reference
+    return explicit, decal
+
+
+def _legacy_glow(material):
+    shader = (material.get('Shader') or '').casefold()
+    mask = (material.get('StringGenMask') or '').casefold()
+    raw = _parameter(material, 'GlowAmount')
+    return (_positive_float(raw) > 0.0
+            and (shader in ('illum', 'cloth', 'humanskin')
+                 or 'alphaglow' in mask))
+
+
+def emission_mode(material):
+    """One of none, legacy_alpha, legacy_decal, modern_map, modern_color.
+
+    Decal is an Illum legacy *color source*, not a general-purpose emission
+    declaration. Only legacy modes use diffuse alpha as an emission mask.
+    """
+    strength, _, ref = emission_settings(material)
+    if strength <= 0.:
+        return 'none'
+    explicit, decal = _map_references(material)
+    if explicit:
+        return 'modern_map'
+    if _legacy_glow(material):
+        return ('legacy_decal' if decal and
+                (material.get('Shader') or '').casefold() == 'illum'
+                else 'legacy_alpha')
+    return 'modern_map' if ref else 'modern_color'
+
+
+def emission_settings(material):
+    """Return (strength, optional color multiplier, verified MTL map reference).
+
+    CryEngine 3 legacy GlowAmount/ALPHAGLOW normally takes its emission RGB
+    from diffuse or Illum Decal, masked by diffuse alpha. The serialized
+    Emissive="0,0,0" value on that legacy path is a default, not a black
+    multiplier. Explicit colored emission overrides it and modern black
+    emissive colors retain their black semantics.
+    """
+    shader = (material.get('Shader') or '').casefold()
+    raw_glow = _parameter(material, 'GlowAmount')
+    raw_modern = _parameter(material, 'EmissiveIntensity',
+                            'EmittanceIntensity', 'EmissiveStrength',
+                            'EmissionStrength')
+    # Positive legacy GlowAmount has priority over auxiliary intensity
+    # fields for known legacy shader modes; explicit zero disables it.
+    intensity_raw = raw_glow if raw_glow is not None else raw_modern
+    intensity = _positive_float(intensity_raw)
+    modern_color = _color(_parameter(material, 'EmissiveColor',
+                                     'EmissionColor', 'EmittanceColor'))
+    serialized_color = _color(_parameter(material, 'Emissive'))
+    legacy = _legacy_glow(material)
+    if legacy:
+        # A nonblack explicitly authored legacy Emissive is still meaningful,
+        # but CryEngine's zero default must not erase positive alpha glow.
+        color = (modern_color if modern_color is not None
+                 else serialized_color if serialized_color and any(serialized_color)
+                 else None)
+    else:
+        color = modern_color if modern_color is not None else serialized_color
+    explicit, decal = _map_references(material)
+    if explicit and intensity_raw is None:
         intensity = 1.0
-    if intensity == 0 and value is None and color and any(color):
+    if intensity_raw is None and color is not None and any(color):
         intensity = 1.0
-    if intensity <= 0:
+    if intensity <= 0.0:
         return 0.0, None, None
-    return intensity, color, (emissive_ref or
-                              (decal_ref if shader == 'illum' else None))
+    return intensity, color, (explicit or (decal if legacy and shader == 'illum'
+                                           else None))
 
 
 def bake_emission_map(diffuse, *, color=None, emission=None,

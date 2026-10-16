@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 import unittest
 from xml.etree import ElementTree as ET
 
 from PIL import Image
 
-from emissive_materials import bake_emission_map, emission_settings
+from emissive_materials import bake_emission_map, emission_settings, emission_mode
 from material_preview import PreviewMaterials
 from model_preview import read_preview_mesh
 from model_blender_export import glb_bytes
@@ -80,6 +82,135 @@ class EmissiveMaterialTests(unittest.TestCase):
         material = _unpack_glb(output)[0]['materials'][0]
         self.assertEqual(material['alphaMode'], 'BLEND')
         self.assertNotIn('emissiveTexture', material)
+
+
+class KalaLegacyGlowTests(unittest.TestCase):
+    """Matches the material declarations from the local Kala investigation."""
+
+    def test_kala_legacy_black_emissive_default_is_not_a_multiplier(self):
+        mtl = ET.fromstring('''<Material Name="Body" Shader="Illum"
+            Emissive="0,0,0" StringGenMask="%ALPHAGLOW%" Opacity="1">
+            <PublicParams GlowAmount="3"/></Material>''')
+        self.assertEqual(emission_mode(mtl), 'legacy_alpha')
+        amount, color, ref = emission_settings(mtl)
+        self.assertEqual((amount, color, ref), (3., None, None))
+        diffuse = Image.new('RGBA', (2, 1))
+        diffuse.putdata([(200, 100, 50, 128), (200, 100, 50, 0)])
+        baked = bake_emission_map(diffuse, color=color)
+        self.assertEqual(baked.getpixel((0, 0)), (100, 50, 25))
+        self.assertEqual(baked.getpixel((1, 0)), (0, 0, 0))
+        self.assertEqual(diffuse.getpixel((0, 0)), (200, 100, 50, 128))
+
+    def test_kala_illum_decal_respects_diffuse_alpha_mask(self):
+        mtl = ET.fromstring('''<Material Name="Glow" Shader="Illum"
+            Emissive="0,0,0"><PublicParams GlowAmount="3"/>
+            <Textures><Texture Map="Diffuse" File="body.tif"/>
+            <Texture Map="Decal" File="chroma_fan.tif"/></Textures></Material>''')
+        self.assertEqual(emission_mode(mtl), 'legacy_decal')
+        amount, color, ref = emission_settings(mtl)
+        self.assertEqual((amount, color, ref), (3., None, 'chroma_fan.tif'))
+        diffuse = Image.new('RGBA', (2, 1))
+        diffuse.putdata([(100, 0, 0, 0), (100, 0, 0, 255)])
+        decal = Image.new('RGB', (2, 1), (90, 180, 240))
+        baked = bake_emission_map(diffuse, color=color, emission=decal,
+                                  diffuse_alpha_mask=True)
+        self.assertEqual(baked.getpixel((0, 0)), (0, 0, 0))
+        self.assertEqual(baked.getpixel((1, 0)), (90, 180, 240))
+
+    def test_modern_emittance_does_not_inherit_diffuse_alpha(self):
+        mtl = ET.fromstring('''<Material Shader="PBR" EmissiveIntensity="2">
+            <Textures><Texture Map="Emittance" File="neon.tif"/></Textures>
+            </Material>''')
+        self.assertEqual(emission_mode(mtl), 'modern_map')
+        diffuse = Image.new('RGBA', (1, 1), (2, 2, 2, 0))
+        emission = Image.new('RGB', (1, 1), (20, 80, 160))
+        result = bake_emission_map(diffuse, emission=emission,
+                                   diffuse_alpha_mask=False)
+        self.assertEqual(result.getpixel((0, 0)), (20, 80, 160))
+
+    def test_explicit_modern_black_color_remains_intentional(self):
+        mtl = ET.fromstring('<Material Shader="PBR" EmissiveIntensity="2" EmissiveColor="0,0,0" />')
+        self.assertEqual(emission_mode(mtl), 'modern_color')
+        strength, color, _ = emission_settings(mtl)
+        self.assertEqual((strength, color), (2., (0., 0., 0.)))
+        self.assertIsNone(bake_emission_map(None, color=color))
+        black = bake_emission_map(Image.new('RGB', (1,1), 'white'),
+                                  color=color, diffuse_alpha_mask=False)
+        self.assertIsNone(black.getbbox())
+
+    def test_disabled_and_non_emissive_alpha_stay_off(self):
+        self.assertEqual(emission_settings(ET.fromstring(
+            '<Material Shader="Illum" GlowAmount="0" Emissive="0,0,0" />')),
+            (0., None, None))
+        self.assertEqual(emission_mode(ET.fromstring(
+            '<Material Shader="Glass" Opacity="0.4" />')), 'none')
+
+    def test_explicit_parameter_alias_priority_is_stable(self):
+        from emissive_materials import _parameter
+        mtl = ET.fromstring('''<Material Emissive="0,0,0" EmissiveColor="0.25,0.5,1">
+            <PublicParams EmissiveColor="0,1,0"/></Material>''')
+        self.assertEqual(_parameter(mtl, 'EmissiveColor', 'Emissive'),
+                         '0.25,0.5,1')
+
+
+class EmissiveRendererInitializationTests(unittest.TestCase):
+    def test_mocked_renderer_binds_emissive_unit_eight(self):
+        from OpenGL import GL
+        from OpenGL.GL import shaders
+        from renderer_3 import Renderer3, SAMPLER_UNITS
+        locations = {name: i+1 for i, (name, _) in enumerate(SAMPLER_UNITS)}
+        with (patch.object(shaders,'compileShader',return_value=2),
+              patch.object(shaders,'compileProgram',return_value=5),
+              patch.object(GL,'glGetUniformLocation',
+                           side_effect=lambda program,name: locations.get(name, 99)) as get_loc,
+              patch.object(GL,'glUseProgram') as use,
+              patch.object(GL,'glUniform1i') as bind,
+              patch.object(GL,'glDeleteProgram')):
+            shader = Renderer3()
+            self.assertIn('emissive_map', shader.uniforms)
+            get_loc.assert_any_call(5,'emissive_map')
+            bind.assert_any_call(shader.uniforms['emissive_map'],8)
+            self.assertEqual(use.call_args.args, (0,))
+            shader.close()
+
+    def test_failed_uniform_registration_releases_program_and_unbinds(self):
+        from OpenGL import GL
+        from OpenGL.GL import shaders
+        from renderer_3 import Renderer3
+        with (patch.object(shaders,'compileShader',return_value=2),
+              patch.object(shaders,'compileProgram',return_value=5),
+              patch.object(GL,'glGetUniformLocation',return_value=3),
+              patch.object(GL,'glUseProgram') as use,
+              patch.object(GL,'glUniform1i',
+                           side_effect=RuntimeError('bind failed')),
+              patch.object(GL,'glDeleteProgram') as delete):
+            with self.assertRaisesRegex(RuntimeError,'bind failed'):
+                Renderer3()
+            delete.assert_called_once_with(5)
+            self.assertEqual(use.call_args.args,(0,))
+
+
+class EmissiveDiagnosticsTests(unittest.TestCase):
+    def test_shader_failure_and_black_bake_are_visible_to_user(self):
+        from qt_gpu_viewer import QtGPUModelPanel
+        label = SimpleNamespace(setText=Mock())
+        canvas = SimpleNamespace(
+            materials=PreviewMaterials(
+                (Image.new('RGBA',(1,1),'white'),),('Kala Body',),'tech_3p.mtl',
+                emissive_maps=(Image.new('RGB',(1,1),'black'),),
+                emissive_strengths=(3.,),emissive_black=(True,)),
+            mesh=SimpleNamespace(subsets=((0,3,0),)),
+            gl_error="Enhanced material shader unavailable: 'emissive_map'",
+            _renderer3=None, emission_enabled=True, emissive_textures=[0],
+            _pending_texture_uploads=(), bloom_error=None)
+        panel=SimpleNamespace(
+            canvas=canvas, emissive_source_info=label,
+            part_select=SimpleNamespace(currentData=lambda:0))
+        QtGPUModelPanel._update_emissive_source_status(panel)
+        message=label.setText.call_args.args[0]
+        self.assertIn('entirely black',message)
+        self.assertIn('Renderer failed',message)
+        self.assertIn('emissive_map',message)
 
 
 class SafeModelRepairTests(unittest.TestCase):

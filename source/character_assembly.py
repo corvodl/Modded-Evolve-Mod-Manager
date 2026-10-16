@@ -107,7 +107,7 @@ def combine_meshes(items):
     # All verified emissive per-submaterial settings must survive assembly
     # remapping; otherwise Stage GLBs silently lose the glowing Kala/Goliath
     # material slots even though the standalone texture loader decoded them.
-    emissive_maps, emissive_strengths, emissive_sources = [], [], []
+    emissive_maps, emissive_strengths, emissive_sources, emissive_black = [], [], [], []
     included = []
     for name, mesh, materials in items:
         if len(vertices) + len(mesh.vertices) > MAX_VERTICES or len(triangles) + len(mesh.triangles) > MAX_TRIANGLES:
@@ -162,6 +162,9 @@ def combine_meshes(items):
                                       and slot < len(materials.emissive_strengths) else 0.)
             emissive_sources.append(materials.emissive_sources[slot] if materials
                                     and slot < len(materials.emissive_sources) else None)
+            emissive_black.append(bool(materials.emissive_black[slot]) if materials
+                                  and slot < len(getattr(materials, 'emissive_black', ()))
+                                  else False)
             names.append(name + ': ' + label)
         vertices.extend(mesh.vertices)
         triangles.extend(tuple(v + base_vertex for v in tri) for tri in mesh.triangles)
@@ -186,7 +189,8 @@ def combine_meshes(items):
                                 tuple(sources), tuple(references), tuple(uv_available), tuple(cutoffs),
                                 hidden=tuple(hidden), emissive_maps=tuple(emissive_maps),
                                 emissive_strengths=tuple(emissive_strengths),
-                                emissive_sources=tuple(emissive_sources))
+                                emissive_sources=tuple(emissive_sources),
+                                emissive_black=tuple(emissive_black))
     return mesh, material
 
 

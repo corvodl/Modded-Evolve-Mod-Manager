@@ -71,6 +71,7 @@ class PreviewMaterials:
     emissive_maps: tuple = ()
     emissive_strengths: tuple = ()
     emissive_sources: tuple = ()
+    emissive_black: tuple = ()  # computed once from baked pixels, not per frame
 
     @property
     def count(self):
@@ -751,8 +752,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
-    from emissive_materials import emission_settings, bake_emission_map
-    emissive_maps, emissive_strengths, emissive_sources = [], [], []
+    from emissive_materials import emission_settings, emission_mode, bake_emission_map
+    emissive_maps, emissive_strengths, emissive_sources, emissive_black = [], [], [], []
     for slot, (item, diffuse_img, name) in enumerate(zip(subs, result, names)):
         amount, color, reference = emission_settings(item)
         glow, provenance = None, None
@@ -771,15 +772,26 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                     issues.append(name + ': ' + str(error))
                     amount = 0.
             if amount > 0:
+                mode = emission_mode(item)
+                # Legacy Illum Decal RGB is *also* masked by diffuse alpha.
+                # Modern Emittance maps own their masking semantics and must
+                # never borrow unrelated diffuse/opacity alpha data.
+                use_diffuse_alpha = (mode in ('legacy_alpha', 'legacy_decal')
+                                     and not alpha_modes[slot])
                 glow = bake_emission_map(diffuse_img, color=color,
                     emission=emission_img,
-                    diffuse_alpha_mask=(emission_img is None and not alpha_modes[slot]))
+                    diffuse_alpha_mask=use_diffuse_alpha)
                 if glow is None:
                     issues.append(name + ': emissive texture missing')
                     amount = 0.
+        black = bool(glow is not None and glow.getbbox() is None)
+        if black:
+            issues.append(name + ': baked emission is entirely black; '
+                          'check intentional black emission color and glow mask')
         emissive_maps.append(glow)
         emissive_strengths.append(amount)
         emissive_sources.append(provenance)
+        emissive_black.append(black)
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
                             tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden), gloss_maps=tuple(glosses),
@@ -794,7 +806,8 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                             ao_maps=tuple(ao_maps), ao_strengths=tuple(ao_strengths),
                              emissive_maps=tuple(emissive_maps),
                              emissive_strengths=tuple(emissive_strengths),
-                             emissive_sources=tuple(emissive_sources))
+                             emissive_sources=tuple(emissive_sources),
+                             emissive_black=tuple(emissive_black))
 
 
 
