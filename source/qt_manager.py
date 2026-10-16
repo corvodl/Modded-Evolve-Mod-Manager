@@ -2702,15 +2702,31 @@ class QtManager(QMainWindow):
                    '--swap', str(Path(self.swap_path)),
                    '--profile', profile_id if profile_id is not None else 'baseline']
         def complete():
-            if receipt_id is not None:
-                from mod_install_receipts import mark_staged
-                mark_staged(DATA_HOME / 'Profiles', receipt_id,
-                            self.stage_path, self.swap_path)
+            try:
+                from mod_install_receipts import (
+                    mark_staged, verify_staged_profile)
+                if receipt_id is not None:
+                    count = mark_staged(
+                        DATA_HOME / 'Profiles', receipt_id,
+                        self.stage_path, self.swap_path)
+                elif profile_id is not None:
+                    count = verify_staged_profile(
+                        DATA_HOME / 'Profiles', profile_id,
+                        self.stage_path, self.swap_path)
+                else:
+                    count = 0
+            except Exception as exc:
+                self.refresh_swap_status()
+                self.failure(RuntimeError(
+                    'Profile worker finished but post-install integrity '
+                    'verification failed. Check recovery backups before '
+                    'launching the game: ' + str(exc)))
+                return
             self.refresh_archives()
             self.refresh_swap_status()
             self.info('Mod profile staged',
-                      'The selected profile was applied to the signing stage. '
-                      'No installed game files were changed.')
+                      f'Verified {count} staged signed PAK(s) and their '
+                      'recovery journals. Installed game files were not changed.')
         self.run_steps([('Applying signed Mod Profile', command)],
                        'Apply Mod Profile', complete)
 
