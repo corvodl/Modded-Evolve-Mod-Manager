@@ -42,7 +42,11 @@ class CharacterExportCommandTests(unittest.TestCase):
         self.assertEqual(Path(report['folder']).name, 'Emet')
         self.assertIs(export.call_args.kwargs['full_model'], rig)
         self.assertEqual(export.call_args.kwargs['output_name'], 'Emet')
-        self.assertEqual(len(export.call_args.kwargs['assemblies']), 2)
+        self.assertEqual(len(export.call_args.kwargs['assemblies']), 1)
+        self.assertIn('Assemblies/cannon.glb',
+                      export.call_args.kwargs['assemblies'])
+        self.assertNotIn('Assemblies/full.glb',
+                         export.call_args.kwargs['assemblies'])
 
     def test_unrelated_loose_folder_never_silently_uses_legacy_export(self):
         from character_export_command import character_export_source
