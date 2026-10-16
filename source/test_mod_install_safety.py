@@ -49,8 +49,6 @@ class SafetyTests(unittest.TestCase):
                 self.pid, self.source, "Game/libs.pak", self.stage)
 
     def test_preflight_counts_library_and_recovery_without_double_counting_volumes(self):
-        with patch("mod_install_safety.state_status", create=True):
-            pass
         with patch("launch_integration.state_status",
                    return_value=SimpleNamespace(phase="restored")):
             preview = estimate_bundle_space(
