@@ -120,7 +120,7 @@ class EasyModInstallTests(unittest.TestCase):
         self.assertEqual(result, "abc123")
         self.assertEqual(dest.read_bytes(), self.source.read_bytes())
         self.assertEqual(self.original.read_bytes(), b"the-original-signed-archive")
-        add_mod.assert_called_once_with("profile", dest, "Game/libs.pak", self.stage)
+        add_mod.assert_called_once_with("profile", dest, "Game/libs.pak", self.stage.resolve())
 
     def test_existing_import_path_must_match_verified_sha(self):
         reviewed = self._review(self.source)
