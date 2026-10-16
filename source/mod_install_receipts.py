@@ -101,7 +101,7 @@ def verify_staged_profile(root, profile_id, stage, swap, expected_ids=()):
             journal = json.loads(swap_journal.read_text(encoding="utf-8"))
             matches = [
                 row for row in journal.get("files", [])
-                if row.get("name", "").replace("\\\\", "/").casefold()
+                if row.get("name", "").replace("\\", "/").casefold()
                    == mod["relative"].casefold()
             ]
             if len(matches) != 1:
