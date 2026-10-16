@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 import shutil
+import tempfile
 
 from universal_stage import allowed_paks, digest, validate_archive_pair
 
@@ -19,6 +20,7 @@ class DiskSpacePreview:
     recovery_bytes: int
     volumes: tuple[tuple[str, int, int], ...]
     warnings: tuple[str, ...]
+    scratch_bytes: int = 0
 
     @property
     def enough(self):
@@ -97,6 +99,9 @@ def estimate_bundle_space(bundle, stage, swap, catalog, *,
                 if not path.is_file():
                     raise RuntimeError("A prior profile backup is missing: " + str(path))
                 temp_bytes += path.stat().st_size
+    # ZIP review/import extraction also needs room on the OS temporary
+    # filesystem, which may differ from the stage or catalog volume.
+    scratch = sum(e.size for e in bundle.entries) if bundle.archive_sha else 0
     # Extra overhead covers journal metadata, filesystem growth, and partials.
     requirements = {}
     _reserve(requirements, catalog, new_bytes + max(64 * 1024**2, new_bytes // 10),
@@ -105,11 +110,15 @@ def estimate_bundle_space(bundle, stage, swap, catalog, *,
              disk_usage=disk_usage)
     _reserve(requirements, store.root / "Backups", backups + max(64 * 1024**2, backups // 10),
              disk_usage=disk_usage)
+    if scratch:
+        _reserve(requirements, tempfile.gettempdir(),
+                 scratch + max(64 * 1024**2, scratch // 10),
+                 disk_usage=disk_usage)
     rows = tuple((label, required, free) for label, required, free in requirements.values())
     warnings = tuple(f"Not enough free space on {label}: need {required // 1024**2} MiB; "
                      f"only {free // 1024**2} MiB available."
                      for label, required, free in rows if required > free)
-    return DiskSpacePreview(new_bytes, temp_bytes, backups, rows, warnings)
+    return DiskSpacePreview(new_bytes, temp_bytes, backups, rows, warnings, scratch)
 
 
 @dataclass(frozen=True)
