@@ -72,6 +72,8 @@ class FullCharacterDiscoveryTests(unittest.TestCase):
             'characters/hunters/merc_other/emetremotecannon_3p.skin')))
         self.assertIsNone(preferred_emet_source((
             path, 'characters/hunters/merc_other/emetremotecannon_3p.skin')))
+        medic = 'characters/hunters/medic_emet/emetremotecannon_3p.skinm'
+        self.assertEqual(preferred_emet_source((medic, medic[:-1])), medic)
 
 
 class EmetStandaloneAssemblyTests(unittest.TestCase):
