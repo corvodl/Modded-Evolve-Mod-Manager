@@ -262,6 +262,7 @@ class ReadOnlyAssetPreviewUITests(TestCase):
                         'Assemblies/emetcannon.glb': cannon}, ())),
               patch('character_animation_export.export_character_animation_folder',
                     side_effect=fake_animations),
+              patch('qt_workspace_editor.QMessageBox.information'),
               patch('qt_asset_preview.export_glb') as old_export):
             self.window.export_blender_folder()
         picker.assert_called_once()
