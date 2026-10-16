@@ -1,22 +1,18 @@
-# Evolve Stage 2 Mod Manager — v1.2.3
+# Evolve Stage 2 Mod Manager — v1.2.4
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.2.3 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.2.4 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.3 (Patch 2)
+## Latest Stable — v1.2.4 (Release candidate — pending validation)
 
-- Patch 2: Add a collapsible, on-demand System Health dashboard for firewall rules, running processes, crash/support tools, storage and environment checks.
-- Patch 2: Strengthen offline launch safety with upfront Windows elevation, pre-launch verification, recovery guidance and privacy-reviewed support reporting.
-- Patch 2: Keep GFX Hide/Remove featured-promotion edits effective across menu video changes, and improve project browsing and workspace reuse.
-- Patch 1: Decode higher-resolution DDS, explicit gloss/AO channels, original normals/tangents, detail maps, independent UVs, and environment reflections.
-- Patch 1: Add optional GPU SSAO quality presets and smaller, expandable View, Materials, and Animation controls; show individual material and animation loading stages.
-- Patch 1: Export GLBs with editable PNGs in textures/ and verified rigged CAF/DBA clips in animations/, with source files and compatibility reports.
-- Pin Play with Mods, Play without Mods, and Settings at the bottom of the sidebar; add quick launch buttons to Home.
-- Restore original PAK files automatically after the game and client close, with journal-backed recovery in Settings.
-- Show installed client version separately without an unverified update checker.
+- Import individually verified assembled CDF characters into Blender as one GLB, with compatible named CAF/DBA Actions bound to the correct original skeleton.
+- Expand native CAF conversion to as many as 256 verified clips per assembly within size and resource safety limits; report unsupported clips explicitly.
+- Preserve compatible 2012 CryTek master-skeleton DBA conversion and reject unsupported or mismatched rigs rather than inventing motion.
+- Show per-assembly Blender animation counts, clip names and skip reasons after export, while keeping the separate animation manifest for diagnostics.
+- Add Settings integration for installing the optional standalone Blender Animation Browser through Blender's own extension system, with safe version and package checks.
 
 ## Download and install
 
