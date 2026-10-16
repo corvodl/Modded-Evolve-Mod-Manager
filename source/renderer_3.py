@@ -178,23 +178,51 @@ void main() {
 """
 
 
+# The same table owns both uniform discovery and texture unit binding.
+# Registering a new material map in one place cannot omit its lookup.
+SAMPLER_UNITS = (
+    ('diffuse_map', 0), ('normal_map', 1), ('specular_map', 2),
+    ('gloss_map', 3), ('detail_map', 4), ('detail_normal_map', 5),
+    ('environment_map', 6), ('ao_map', 7), ('emissive_map', 8),
+)
+MATERIAL_UNIFORMS = (
+    'normal_uv', 'specular_uv', 'gloss_uv', 'detail_uv', 'detail_normal_uv', 'ao_uv',
+    'has_emissive', 'emissive_strength', 'emission_enabled', 'bloom_pass',
+    'has_diffuse', 'has_normal', 'has_specular', 'has_gloss', 'has_detail',
+    'has_detail_normal', 'normal_y_flip', 'has_environment', 'reflection_strength',
+    'is_glass', 'has_ao', 'ao_strength', 'opacity', 'alpha_cutoff',
+    'use_alpha_texture', 'specular_intensity', 'illumination', 'studio_fill',
+    'unlit_diffuse',
+)
+
+
 class Renderer3:
     def __init__(self):
-        from OpenGL.GL import shaders, glGetUniformLocation, glUseProgram, glUniform1i
-        from OpenGL.GL import GL_VERTEX_SHADER, GL_FRAGMENT_SHADER
+        from OpenGL.GL import (shaders, glGetUniformLocation, glUseProgram,
+                               glUniform1i, glDeleteProgram, GL_VERTEX_SHADER,
+                               GL_FRAGMENT_SHADER)
         self.program = shaders.compileProgram(
-            shaders.compileShader(VERTEX,GL_VERTEX_SHADER),
-            shaders.compileShader(FRAGMENT,GL_FRAGMENT_SHADER))
-        glUseProgram(self.program)
-        self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
-            'diffuse_map','normal_map','specular_map','gloss_map','detail_map','detail_normal_map','environment_map','ao_map',
-            'normal_uv','specular_uv','gloss_uv','detail_uv','detail_normal_uv','ao_uv',
-            'has_emissive','emissive_strength','emission_enabled','bloom_pass','has_diffuse','has_normal','has_specular','has_gloss','has_detail','has_detail_normal','normal_y_flip',
-            'has_environment','reflection_strength','is_glass','has_ao','ao_strength','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
-        for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2),('gloss_map',3),
-                          ('detail_map',4),('detail_normal_map',5),('environment_map',6),('ao_map',7),('emissive_map',8)):
-            glUniform1i(self.uniforms[name],unit)
-        glUseProgram(0)
+            shaders.compileShader(VERTEX, GL_VERTEX_SHADER),
+            shaders.compileShader(FRAGMENT, GL_FRAGMENT_SHADER))
+        try:
+            glUseProgram(self.program)
+            self.uniforms = {
+                name: glGetUniformLocation(self.program, name)
+                for name in (tuple(name for name, _ in SAMPLER_UNITS)
+                             + MATERIAL_UNIFORMS)
+            }
+            for name, unit in SAMPLER_UNITS:
+                glUniform1i(self.uniforms[name], unit)
+        except Exception:
+            try:
+                glDeleteProgram(self.program)
+            finally:
+                self.program = 0
+            raise
+        finally:
+            # Even an unexpected Python/GL exception must not leave a
+            # partially configured shader bound in the fallback renderer.
+            glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
              gloss_texture=False, detail=False, detail_normal=False, invert_normal_y=False, uv_matrices=None,
