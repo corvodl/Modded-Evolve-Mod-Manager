@@ -29,10 +29,62 @@ class BundleReview:
     legacy: bool = False
 
 
+def _reject_raw_zip_names(archive):
+    """Inspect central AND local names before ZipInfo normalizes separators.
+
+    ZipInfo replaces the host OS separator with "/" on Windows, so testing
+    only ZipInfo.filename can mistakenly accept an original "Game\libs.pak".
+    Read the original byte names directly from the existing ZipFile handle;
+    preserve its position for subsequent normal zipfile extraction.
+    """
+    stream = archive.fp
+    if stream is None:
+        raise ValueError("ZIP archive is closed.")
+    position = stream.tell()
+    try:
+        stream.seek(archive.start_dir)
+        entries = archive.infolist()
+        for entry in entries:
+            header = stream.read(zipfile.sizeCentralDir)
+            if len(header) != zipfile.sizeCentralDir:
+                raise ValueError("Truncated ZIP central directory.")
+            fields = zipfile.struct.unpack(zipfile.structCentralDir, header)
+            if fields[zipfile._CD_SIGNATURE] != zipfile.stringCentralDir:
+                raise ValueError("Malformed ZIP central directory.")
+            filename_size = fields[zipfile._CD_FILENAME_LENGTH]
+            extra_size = fields[zipfile._CD_EXTRA_FIELD_LENGTH]
+            comment_size = fields[zipfile._CD_COMMENT_LENGTH]
+            raw = stream.read(filename_size)
+            if len(raw) != filename_size:
+                raise ValueError("Truncated ZIP central filename.")
+            if b"\\" in raw or any(ch < 32 for ch in raw):
+                raise ValueError("ZIP contains an unsafe, unnormalized filename.")
+            stream.seek(extra_size + comment_size, 1)
+        # A malicious archive can provide a safe central directory filename
+        # but an unsafe name in its local header, so check both representations.
+        for entry in entries:
+            stream.seek(entry.header_offset)
+            local = stream.read(zipfile.sizeFileHeader)
+            if len(local) != zipfile.sizeFileHeader:
+                raise ValueError("Truncated ZIP local header.")
+            fields = zipfile.struct.unpack(zipfile.structFileHeader, local)
+            if fields[zipfile._FH_SIGNATURE] != zipfile.stringFileHeader:
+                raise ValueError("Malformed ZIP local header.")
+            filename_size = fields[zipfile._FH_FILENAME_LENGTH]
+            raw = stream.read(filename_size)
+            if len(raw) != filename_size:
+                raise ValueError("Truncated ZIP local filename.")
+            if b"\\" in raw or any(ch < 32 for ch in raw):
+                raise ValueError("ZIP contains an unsafe, unnormalized filename.")
+    finally:
+        stream.seek(position)
+
+
 def _members(archive):
     infos = archive.infolist()
     if not infos or len(infos) > MAX_ZIP_MEMBERS:
         raise ValueError("ZIP is empty or contains too many entries.")
+    _reject_raw_zip_names(archive)
     total = 0
     paks = []
     names = set()
