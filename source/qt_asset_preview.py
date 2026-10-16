@@ -303,149 +303,15 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
                 self, 'Blender export stopped', err))
 
     def export_blender_folder(self):
-        """Export only the current virtual folder, without blocking the GUI."""
-        try:
-            folder = self._current_model_folder_relative()
-            self._current_model_source_folder()
-        except (OSError, ValueError) as error:
-            QMessageBox.information(self, 'Blender export', str(error))
-            return
-        output = QFileDialog.getExistingDirectory(
-            self, 'Export selected model folder (destination only)',
-            str(Path.home()))
-        if not output:
-            return
-        prefix = folder.casefold().rstrip('/') + '/'
-        models = [rel for rel in self.entries if rel.casefold().startswith(prefix)
-                  and rel.casefold().endswith(('.skinm', '.chrm', '.cgfm', '.cgam'))]
-        if len(models) > 100:
-            QMessageBox.information(
-                self, 'Blender export', 'Narrow selection to 100 models or fewer.')
-            return
-        from asset_library_preview import _outside_library
-        from qt_background_exports import begin_file_operation, exports_busy
-        if exports_busy(self):
-            QMessageBox.information(
-                self, 'Export already running',
-                'Finish or cancel the current export first.')
-            return
-        try:
-            root = _outside_library(output)
-        except (OSError, ValueError) as error:
-            QMessageBox.warning(self, 'Blender folder export', str(error))
-            return
-        archive_id = self.identifier
-        models = tuple(models)
+        """Use the same canonical character export as Modding/File Editor.
 
-        workspace = self.workspace
-
-        def work(progress, cancelled):
-            from character_asset_export import build_cdf_folder_glbs
-            from asset_library_preview import library_model_index
-            import json
-            converted, failed = 0, []
-            export_root = root / Path(folder).name
-            first_model = None
-            progress('Preparing Blender export', 0, len(models))
-            for number, rel in enumerate(models, 1):
-                if cancelled():
-                    raise InterruptedError(
-                        'Cancelled after %d of %d models.' %
-                        (number - 1, len(models)))
-                progress('Converting ' + rel, number - 1, len(models))
-                local = rel[len(folder.rstrip('/') + '/'):]
-                destination = export_root / Path(local).with_suffix('.glb')
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    export_glb(archive_id, rel, destination)
-                    # GLB retains embedded images for Blender's single-file
-                    # import. Independent PNG copies all live at export-root/
-                    # textures/, including deeply nested CDF assemblies.
-                    from blender_texture_folder import write_texture_folder
-                    namespace = destination.relative_to(export_root).with_suffix('').as_posix().replace('/', '__')
-                    write_texture_folder(
-                        destination.read_bytes(), destination,
-                        texture_root=export_root / 'textures', model_namespace=namespace)
-                    if first_model is None:
-                        first_model = (destination, rel)
-                    converted += 1
-                except (OSError, ValueError) as error:
-                    failed.append(rel + ': ' + str(error)[:110])
-                progress('Exporting Blender models', number, len(models))
-            index = library_model_index(archive_id)
-            assemblies, unresolved = build_cdf_folder_glbs(
-                workspace, folder, index,
-                progress=progress, cancelled=cancelled)
-            assembly_dest = export_root
-            if assemblies or unresolved:
-                for rel, (blob, details) in assemblies.items():
-                    if cancelled():
-                        raise InterruptedError('Cancelled during CDF assembly export.')
-                    output = assembly_dest.joinpath(*Path(rel).parts)
-                    output.parent.mkdir(parents=True, exist_ok=True)
-                    with output.open('xb') as output_file:
-                        output_file.write(blob)
-                    from blender_texture_folder import write_texture_folder
-                    namespace = output.relative_to(export_root).with_suffix('').as_posix().replace('/', '__')
-                    write_texture_folder(
-                        blob, output, texture_root=export_root / 'textures',
-                        model_namespace=namespace)
-                assembly_dest.mkdir(parents=True, exist_ok=True)
-                (assembly_dest / 'CDF_assembly_report.json').write_text(
-                    json.dumps({'generated': [dict(glb=rel, **info)
-                                              for rel, (_, info) in assemblies.items()],
-                                'unsupported': list(unresolved)}, indent=2),
-                    encoding='utf-8')
-            failed.extend(name + ': ' + reason for name, reason in unresolved)
-            # Export one combined animation GLB for verified CAF/DBA tracks.
-            # A source-only manifest is still useful if clips are unavailable.
-            from character_animation_export import export_character_animation_folder
-            from character_assembly import assemble_character
-            animation_report = None
-            preferred = next(iter(sorted(assemblies.items())), None)
-            source_blob, source_ref, source_character = None, None, None
-            if preferred is not None:
-                _name, (source_blob, info) = preferred
-                source_ref = info.get('cdf')
-                if source_ref:
-                    try:
-                        source_character = assemble_character(
-                            workspace, source_ref, index)
-                    except (ValueError, OSError) as error:
-                        failed.append('Animation rig discovery: ' + str(error)[:180])
-            elif first_model is not None:
-                source_path, source_ref = first_model
-                source_blob = source_path.read_bytes()
-            if source_blob is not None and source_ref is not None:
-                animation_report = export_character_animation_folder(
-                    export_root, source_blob, source_ref, index, workspace,
-                    character=source_character, cancelled=cancelled,
-                    progress=progress, model_name=Path(source_ref).stem)
-            return converted, len(assemblies), failed, animation_report
-
-        def finish(result):
-            converted, assembled, failed, animations = result
-            anim_count = animations['animations'] if animations else 0
-            source_count = animations['sources'] if animations else 0
-            self.status.setText(
-                'Exported %d meshes, %d CDF assemblies, %d playable animation clips '
-                'and %d source motions; %d unsupported | %s' %
-                (converted, assembled, anim_count, source_count, len(failed), output))
-            if failed:
-                QMessageBox.information(
-                    self, 'Blender export',
-                    '%d individual GLBs, %d CDF assemblies, %d playable clips; '
-                    '%d skipped. First issue: %s' %
-                    (converted, assembled, anim_count, len(failed), failed[0]))
-
-        def fail(error):
-            self.status.setText('Blender export stopped: ' + error[:180])
-            QMessageBox.warning(self, 'Blender export stopped', error)
-
-        begin_file_operation(
-            self, 'Export Asset Library models',
-            'Exporting ' + str(len(models)) + ' models from ' + folder,
-            work, on_success=finish, on_error=fail)
+        The former Asset Library override wrote individual GLBs alongside
+        Assemblies/ and CDF_assembly_report.json. That legacy layout is
+        incompatible with the character-folder export contract. Keep one
+        implementation so both menus export <Character>/<Character>.glb,
+        animations/, textures/, and models/ consistently.
+        """
+        return super().export_blender_folder()
 
     def export_model(self):
         self.export_raw()

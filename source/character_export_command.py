@@ -61,6 +61,40 @@ def _character_name(virtual):
     return internal.replace('_', ' ').title()
 
 
+def validate_character_export_destination(source_folder, destination):
+    """Prevent accidentally nesting exports in legacy flat model folders.
+
+    Keep all old GLBs untouched; ask for their parent so a fresh named
+    character directory can be created as a sibling.
+    """
+    _workspace, virtual = character_export_source(source_folder)
+    output = Path(destination).expanduser()
+    if not output.is_dir() or output.is_symlink():
+        raise ValueError('Choose an existing non-linked parent export directory.')
+    internal = PurePosixPath(virtual).name
+    friendly = _character_name(virtual)
+    if output.name.casefold() == friendly.casefold():
+        raise ValueError(
+            'You selected an existing ' + friendly + ' folder. Select its '
+            'PARENT instead: ' + str(output.parent) + '. The manager creates '
+            + friendly + '/' + friendly + '.glb automatically; it will not '
+            'create a nested ' + friendly + '/' + friendly + ' folder.')
+    if output.name.casefold() == internal.casefold() and (
+            (output / 'Assemblies').exists()
+            or (output / 'CDF_assembly_report.json').exists()
+            or any(output.glob('*.glb'))):
+        raise ValueError(
+            'This is the old flat export folder. Select its PARENT instead: '
+            + str(output.parent) + '. The new export will be '
+            + str(output.parent / friendly) + ' with ' + friendly
+            + '.glb, animations/, textures/, and models/. Existing files are preserved.')
+    if (output / friendly).exists():
+        raise FileExistsError(
+            'Character export already exists at ' + str(output / friendly)
+            + '. Choose a new empty parent folder; existing exports are never overwritten.')
+    return friendly
+
+
 def _preferred_full_assembly(assemblies, selected_cdf=None):
     """Prefer a complete verified body; never promote a rigged accessory as main."""
     entries = list(assemblies.values())
@@ -97,6 +131,7 @@ def export_character_directory(source_folder, destination, *, projects_root=None
     invent a rig or retarget incompatible animations; failures are reported.
     """
     workspace, virtual = character_export_source(source_folder)
+    display_name = validate_character_export_destination(source_folder, destination)
     if index is None:
         from material_preview import _workspace_index
         index = _workspace_index(workspace, projects_root, stage_root)
@@ -120,5 +155,5 @@ def export_character_directory(source_folder, destination, *, projects_root=None
     return export_character_asset_folder(
         workspace, virtual, destination, index=index,
         full_model=chosen, assemblies=other_assemblies, assembly_errors=errors,
-        output_name=_character_name(virtual),
+        output_name=display_name,
         progress=progress, cancelled=cancelled)

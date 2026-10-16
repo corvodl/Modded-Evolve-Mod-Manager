@@ -48,6 +48,23 @@ class CharacterExportCommandTests(unittest.TestCase):
         self.assertNotIn('Assemblies/cannon.glb',
                          export.call_args.kwargs['assemblies'])
 
+    def test_legacy_merc_emet_export_requires_parent_and_preserves_files(self):
+        from character_export_command import validate_character_export_destination
+        old = self.destination / 'merc_emet'
+        old.mkdir()
+        (old / 'Assemblies').mkdir()
+        (old / 'emet_3p.glb').write_bytes(b'unchanged')
+        with self.assertRaisesRegex(ValueError, 'Select its PARENT'):
+            validate_character_export_destination(self.base, old)
+        self.assertEqual(validate_character_export_destination(
+            self.base, self.destination), 'Emet')
+        self.assertEqual((old / 'emet_3p.glb').read_bytes(), b'unchanged')
+        friendly = self.destination / 'Emet'
+        friendly.mkdir()
+        with self.assertRaisesRegex(ValueError, 'Select its PARENT'):
+            validate_character_export_destination(self.base, friendly)
+        self.assertEqual((old / 'emet_3p.glb').read_bytes(), b'unchanged')
+
     def test_unrelated_loose_folder_never_silently_uses_legacy_export(self):
         from character_export_command import character_export_source
         with self.assertRaisesRegex(ValueError, 'extracted PAK'):

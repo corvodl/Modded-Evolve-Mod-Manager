@@ -481,9 +481,9 @@ class QtWorkspaceEditor(QMainWindow):
             'File': {'Open File Folder', 'Export Rendered GFX PNG…',
                      'Export Texture as PNG…',
                      'Export Native Model…',
-                     'Export for Blender (.glb)…',
+                     'Export Current Model Only (.glb)…',
                      'Export Animated Character (.glb)…',
-                     'Export Model Folder…'},
+                     'Export Complete Character Folder…'},
             'Edit': {'Find Text'},
             'View': None,
             'Model': {'Open GPU Viewer in New Window',
@@ -567,10 +567,10 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Export Texture as PNG…', self.export_png)
         action('File', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('File', 'Export Native Model…', self.export_model)
-        action('File', 'Export for Blender (.glb)…', self.export_blender_model)
+        action('File', 'Export Current Model Only (.glb)…', self.export_blender_model)
         action('File', 'Export Blender Project (.blend)…', lambda: self.export_blender_model(native=True))
         action('File', 'Export Animated Character (.glb)…', self.export_animated_character)
-        action('File', 'Export Model Folder…', self.export_blender_folder)
+        action('File', 'Export Complete Character Folder…', self.export_blender_folder)
         action('File', 'Export Individual Meshes as GLB…', self.export_individual_glbs)
         action('File', 'Batch Asset Export…', self.open_asset_search)
         action('File', 'Project History & Undo…', self.open_project_history)
@@ -2756,11 +2756,10 @@ class QtWorkspaceEditor(QMainWindow):
         return source
 
     def export_blender_folder(self):
-        """Export one self-contained character folder without virtual prefixes.
+        """Create a new <Character>/<Character>.glb plus categorized assets.
 
-        Example: <chosen output>/merc_parnelltank/{weapons,textures,*.skinm,
-        Full_Character.glb}. Companion TS PAK files are included by exact
-        character virtual path, and a manifest preserves source provenance.
+        The destination picker chooses the parent; never silently overwrite
+        old flat merc_<name> exports or reuse their legacy Assemblies/ layout.
         """
         try:
             virtual_folder = self._current_model_folder_relative()
@@ -2774,20 +2773,34 @@ class QtWorkspaceEditor(QMainWindow):
                 self, 'Export in progress',
                 'Wait for the current export to finish, or cancel it.')
             return
-        selected_root = Path(source).name
+        from character_export_command import character_export_source, _character_name
+        try:
+            _workspace, resolved_virtual = character_export_source(source)
+            selected_root = _character_name(resolved_virtual)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, 'Complete character export', str(exc))
+            return
         from PySide6.QtWidgets import QFileDialog
         destination = QFileDialog.getExistingDirectory(
-            self, 'Choose where to create ' + selected_root,
+            self, 'Choose PARENT folder for new ' + selected_root + '/' + selected_root + '.glb',
             str(Path(self.manager.projects_path)))
         if not destination:
             return
         folder = Path(destination)
+        from character_export_command import validate_character_export_destination
+        try:
+            if self.read_only_library:
+                from asset_library_preview import _outside_library
+                folder = _outside_library(folder)
+            validate_character_export_destination(source, folder)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, 'Complete character export', str(exc))
+            return
         workspace = self.workspace
         projects = self.manager.projects_path
         stage = self.manager.stage_path
         textures = self.texture_folder
         current_index = self.preview_index
-        selected_model = self.current if self.mode == 'models' else None
         selected_character = self.character_preview
 
         def worker(progress, cancelled):
@@ -2852,7 +2865,7 @@ class QtWorkspaceEditor(QMainWindow):
             'Copying actual character assets from imported PAKs',
             worker, on_success=completed,
             on_error=lambda error: QMessageBox.warning(
-                self, 'Model folder export stopped', error))
+                self, 'Complete character export stopped', error))
 
     def export_individual_glbs(self):
         """Legacy individual-GLB conversion, retained as a separate option."""

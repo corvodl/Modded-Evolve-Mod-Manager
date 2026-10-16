@@ -41,7 +41,7 @@ def _collection_file(batch):
     return Path(batch) / BATCH_FILE
 
 
-def load_collection(batch, *, require_complete=True):
+def load_collection(batch, *, require_complete=True, read_only=False):
     batch = Path(batch).resolve()
     data = json.loads(_collection_file(batch).read_text(encoding='utf-8'))
     if data.get('version') != BATCH_VERSION or not isinstance(data.get('archives'), list):
@@ -54,7 +54,11 @@ def load_collection(batch, *, require_complete=True):
     for item in archives:
         normalized_name(item['archive'])
         ws = _safe_workspace(batch, item['workspace'])
-        manifest = load_workspace(ws)
+        if read_only:
+            from evolve_pak_workspace import safe_index_manifest
+            manifest = safe_index_manifest(ws)
+        else:
+            manifest = load_workspace(ws)
         if manifest.get('source_sha256') != item.get('source_sha256'):
             raise ValueError('Source archive fingerprint differs for ' + item['archive'])
     return data
@@ -117,22 +121,23 @@ def create_batch(stage, public_key, destination, selected, *, filters=()):
     return status
 
 
-def collection_for_workspace(workspace):
+def collection_for_workspace(workspace, *, read_only=False):
     workspace = Path(workspace).resolve()
     batch = workspace.parent.parent
     if not _collection_file(batch).is_file():
         return None
-    data = load_collection(batch)
+    data = load_collection(batch, read_only=read_only)
     if not any(_safe_workspace(batch, item['workspace']) == workspace for item in data['archives']):
         return None
     return batch, data
 
 
 def _asset_index(batch, data):
+    from evolve_pak_workspace import safe_index_entries
     result = defaultdict(list)
     for item in data['archives']:
         workspace = _safe_workspace(batch, item['workspace'])
-        for entry in load_workspace(workspace)['entries']:
+        for entry in safe_index_entries(workspace):
             rel = normalized_name(entry['path'])
             path = (workspace/'files'/rel).resolve()
             if not path.is_relative_to((workspace/'files').resolve()) or not path.is_file() or path.is_symlink():
@@ -302,7 +307,8 @@ def _is_stage_workspace(workspace, stage_paks, expected_key=None):
     if not workspace.is_dir() or workspace.is_symlink():
         return None
     try:
-        data = load_workspace(workspace)
+        from evolve_pak_workspace import safe_index_manifest
+        data = safe_index_manifest(workspace)
         source = Path(data['source_pak']).resolve()
         if (not source.is_relative_to(stage_paks) or
                 source.suffix.casefold() != '.pak' or not source.is_file()):
@@ -391,7 +397,7 @@ def related_asset_index(workspace, projects_root=None, stage_root=None):
     index = project_asset_index(workspace, projects_root, stage_root)
     if index is not None:
         return index
-    collection = collection_for_workspace(workspace)
+    collection = collection_for_workspace(workspace, read_only=True)
     result = _asset_index(*collection) if collection else None
     if result is not None and stage_root:
         from shared_pak_cache import shared_asset_index
@@ -447,7 +453,8 @@ def model_material_links(workspace, model_relative, projects_root=None, stage_ro
     has_links = index is not None
     if index is None:
         index = defaultdict(list)
-        for item in load_workspace(workspace)['entries']:
+        from evolve_pak_workspace import safe_index_entries
+        for item in safe_index_entries(workspace):
             rel = normalized_name(item['path'])
             candidate = (workspace/'files'/rel).resolve()
             if candidate.is_relative_to((workspace/'files').resolve()) and candidate.is_file():

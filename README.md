@@ -8,6 +8,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Stable — v1.2.5
 
+- Fix Asset Library's separate character export path so Emet and other characters use the single-GLB layout instead of loose meshes, Assemblies, and old CDF assembly reports.
 - Use the same complete character-folder exporter from File Editor and Modding Tools, instead of scattering standalone model GLBs across the export root.
 - Create a character-named main GLB and categorized animations, textures, and models directories containing additional verified assemblies and equipment.
 - Preserve Emet's canonical complete 3P body when selecting the primary GLB, with explicit rig and animation compatibility reports instead of fabricated skeletons.

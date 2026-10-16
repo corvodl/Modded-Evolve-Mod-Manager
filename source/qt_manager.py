@@ -1347,7 +1347,7 @@ class QtManager(QMainWindow):
             ('Quick Commands  Ctrl+K', self.open_command_palette),
             ('Mod Profiles…', self.open_mod_profiles),
             ('Asset Library / Add PAKs…', self.open_asset_library),
-            ('Export Model Folder…', self.export_model_folder),
+            ('Export Complete Character Folder…', self.export_model_folder),
             ('Export Individual Models (.glb)…', self.export_individual_models),
             ('PAK Diff…', self.open_pak_diff),
             ('Task Manager…', self.open_task_manager),
@@ -2892,14 +2892,20 @@ class QtManager(QMainWindow):
         if not input_folder:
             return
         output_folder = QFileDialog.getExistingDirectory(
-            self, 'Choose where to create the character export', self.projects_path)
+            self, 'Choose PARENT folder for new <Character>/<Character>.glb', self.projects_path)
         if not output_folder:
             return
         from qt_background_exports import begin_file_operation, exports_busy
         if exports_busy(self):
             self.info('Export in progress', 'Finish or cancel the current model export first.')
             return
-        from character_export_command import export_character_directory
+        from character_export_command import (export_character_directory,
+                                              validate_character_export_destination)
+        try:
+            validate_character_export_destination(input_folder, output_folder)
+        except (ValueError, OSError) as exc:
+            self.failure('Complete character export stopped: ' + str(exc))
+            return
         projects, stage = self.projects_path, self.stage_path
 
         def work(progress, cancelled):
