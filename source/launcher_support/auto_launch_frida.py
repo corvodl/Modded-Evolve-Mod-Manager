@@ -189,6 +189,24 @@ class SwapController:
             print(f'WARNING: could not stop launcher: {exc}', file=sys.stderr)
 
 
+def start_restore_watchdog():
+    """Start an independent watchdog after a verified swap, not before."""
+    helper = Path(__file__).with_name("auto_restore_watch.py")
+    if not helper.is_file():
+        raise FileNotFoundError("Auto-restoration helper was not installed.")
+    command = [sys.executable]
+    if not getattr(sys, "frozen", False):
+        command.append("-u")
+    command.append(str(helper))
+    flags = (getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) |
+             getattr(subprocess, "DETACHED_PROCESS", 0))
+    with Path(__file__).with_name("auto-restore.log").open("a", encoding="utf-8") as out:
+        subprocess.Popen(command, cwd=str(helper.parent),
+                         stdin=subprocess.DEVNULL, stdout=out,
+                         stderr=subprocess.STDOUT, close_fds=True,
+                         creationflags=flags)
+
+
 def main() -> int:
     launcher = None
     session = None
@@ -231,6 +249,15 @@ def main() -> int:
         print('Check 03-Status.ps1. If swapping/interrupted, close both apps before restore.',file=sys.stderr)
         return 1
     finally:
+        # Even if the hook errors after swapping, keep waiting for both
+        # processes to exit, then attempt the existing verified restoration.
+        if ctl is not None and ctl.swapped:
+            try:
+                start_restore_watchdog()
+                print("Independent auto-restore monitor armed.", flush=True)
+            except Exception as error:
+                print("AUTO-RESTORE MONITOR FAILED: " + str(error),
+                      file=sys.stderr, flush=True)
         if session is not None:
             try: session.detach()
             except Exception: pass

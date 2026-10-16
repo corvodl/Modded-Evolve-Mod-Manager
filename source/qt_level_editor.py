@@ -12,17 +12,19 @@ from types import SimpleNamespace
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QPointF, QTimer
+from PySide6.QtCore import Qt, Signal, QPointF, QTimer, QModelIndex
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QAction
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QFrame, QLabel, QVBoxLayout,
-    QHBoxLayout, QSplitter, QPushButton, QToolButton, QTreeWidget,
+    QHBoxLayout, QSplitter, QPushButton, QToolButton, QTreeWidget, QTreeView,
     QTreeWidgetItem, QLineEdit, QDoubleSpinBox, QComboBox, QFormLayout,
     QGroupBox, QMessageBox, QScrollArea, QSizePolicy, QFileDialog,
     QCompleter, QInputDialog)
 
 from level_editor_core import LevelProject, PlacedObject
 from qt_level_scene_render import LevelGLViewport
+from qt_ui_components import SurfacePanel, configure_splitter
+from qt_virtual_tree import VirtualTreeModel, TreeNode
 
 
 class LevelSceneViewport(QWidget):
@@ -232,26 +234,18 @@ class UnrealStyleLevelEditor(QMainWindow):
     mapProgress = Signal(object)
     levelExportReady = Signal(object,object)
 
-    def __init__(self,parent,workspace):
+    def __init__(self,parent,workspace,*,prepared=None):
         super().__init__(parent)
-        self.project=LevelProject(workspace)
+        # The manager parses new maps off the GUI thread and passes an already
+        # verified project. Standalone callers remain backward-compatible.
+        self.project=prepared if prepared is not None else LevelProject(workspace)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setWindowTitle("Level Editor 3D Preview — "+self.project.level_name+" — Evolve")
         self.resize(1510,900)
         self.setMinimumSize(880,540)
         self.setObjectName("evolveLevelEditor")
-        self.setStyleSheet("""
-          QMainWindow#evolveLevelEditor, QWidget { background:#202126; color:#dbdfe5; }
-          QTreeWidget, QLineEdit, QDoubleSpinBox, QComboBox {
-            background:#2b2d32; color:#ebedf0; border:1px solid #43464b; }
-          QTreeWidget::item:selected {background:#b16c35; color:white}
-          QPushButton, QToolButton {padding:6px 10px; background:#31333a;
-            border:1px solid #494a51; border-radius:3px; color:#e6e7ec}
-          QPushButton:hover,QToolButton:hover {background:#55545a}
-          QPushButton:checked,QToolButton:checked {background:#ad7135}
-          QLabel#dockHeading { font-weight:600; color:#eeeeef; }
-          QSplitter::handle { background:#393a41; }
-        """)
+        # Inherit the shared light/dark native Qt palette. Do not pin the
+        # Level Editor to unrelated brown/orange colors or stale local QSS.
         self.selected=None
         self._refreshing=False
         self._map_catalog_generation=0
@@ -375,18 +369,15 @@ class UnrealStyleLevelEditor(QMainWindow):
         toolbar.addWidget(QLabel("   RENDER  •  Source-size depth-tested mesh instances   "))
 
     def _panel(self,title):
-        wrapper=QFrame()
-        lay=QVBoxLayout(wrapper)
-        lay.setContentsMargins(5,5,5,5)
-        lay.setSpacing(4)
-        label=QLabel(title)
-        label.setObjectName("dockHeading")
-        lay.addWidget(label)
-        return wrapper,lay
+        wrapper=SurfacePanel(title)
+        wrapper.setMinimumWidth(0)
+        return wrapper,wrapper.content
 
     def _build_workspace(self):
-        vertical=QSplitter(Qt.Vertical)
-        horizontal=QSplitter(Qt.Horizontal)
+        vertical=configure_splitter(QSplitter(Qt.Vertical))
+        vertical.setObjectName('levelEditorMainSplitter')
+        horizontal=configure_splitter(QSplitter(Qt.Horizontal))
+        horizontal.setObjectName('levelEditorViewportSplitter')
         vertical.addWidget(horizontal)
         self.setCentralWidget(vertical)
 
@@ -425,17 +416,37 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.viewport.materialsReady.connect(self._materials_ready)
         horizontal.addWidget(self.viewport)
 
-        right=QSplitter(Qt.Vertical)
+        right=configure_splitter(QSplitter(Qt.Vertical))
+        right.setObjectName('levelEditorInspectorSplitter')
         outliner,outlay=self._panel("WORLD OUTLINER")
         self.filter=QLineEdit()
         self.filter.setPlaceholderText("Search objects and layers…")
-        self.filter.textChanged.connect(self._populate_outliner)
+        # Large maps can have 25,000 placement rows; typing must not
+        # reconstruct the outliner on every keystroke.
+        self._outliner_search_timer = QTimer(self)
+        self._outliner_search_timer.setSingleShot(True)
+        self._outliner_search_timer.setInterval(200)
+        self._outliner_search_timer.timeout.connect(self._populate_outliner)
+        self.filter.textChanged.connect(
+            lambda _text: self._outliner_search_timer.start())
         outlay.addWidget(self.filter)
         self.outliner=QTreeWidget()
         self.outliner.setHeaderLabels(("Label","Type"))
         self.outliner.setColumnWidth(0,250)
         self.outliner.itemSelectionChanged.connect(self._selected_outliner)
         outlay.addWidget(self.outliner,1)
+        # 25k+ placements use the lazy model instead of 25k QTreeWidgetItem
+        # wrappers. Small project behavior stays compatible with existing UX.
+        self.virtual_outliner = QTreeView()
+        self.virtual_outliner.setObjectName('virtualLevelOutliner')
+        self._outliner_model = VirtualTreeModel(self.virtual_outliner,
+                                                labels=('Label', 'Type'))
+        self.virtual_outliner.setModel(self._outliner_model)
+        self.virtual_outliner.selectionModel().selectionChanged.connect(
+            self._selected_virtual_outliner)
+        self.virtual_outliner.hide()
+        outlay.addWidget(self.virtual_outliner,1)
+        self._outliner_catalog = None
         self.out_count=QLabel("")
         outlay.addWidget(self.out_count)
         right.addWidget(outliner)
@@ -488,7 +499,7 @@ class UnrealStyleLevelEditor(QMainWindow):
         right.addWidget(details)
         right.setSizes([470,320])
         horizontal.addWidget(right)
-        horizontal.setSizes([188,960,348])
+        horizontal.setSizes([200, 870, 320])
 
         browser,browser_layout=self._panel("CONTENT BROWSER")
         controls=QHBoxLayout()
@@ -504,8 +515,17 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.content.itemDoubleClicked.connect(self._open_browser_asset)
         self.content.setAlternatingRowColors(True)
         browser_layout.addWidget(self.content,1)
+        self.virtual_content = QTreeView()
+        self.virtual_content.setObjectName('virtualLevelContentBrowser')
+        self._content_model = VirtualTreeModel(self.virtual_content,
+                            labels=('Content', 'Type', 'Location'))
+        self.virtual_content.setModel(self._content_model)
+        self.virtual_content.doubleClicked.connect(self._open_browser_asset)
+        self.virtual_content.hide()
+        browser_layout.addWidget(self.virtual_content,1)
+        self._content_catalog = None
         vertical.addWidget(browser)
-        vertical.setSizes([680,175])
+        vertical.setSizes([680, 160])
 
     def _scene_status(self, status):
         self.statusBar().showMessage(status, 0)
@@ -611,7 +631,9 @@ class UnrealStyleLevelEditor(QMainWindow):
         token,cancel = self._map_copy_generation,self._map_copy_cancel
         def job():
             try:
-                prepared = LevelProject(target)
+                from performance_trace import span
+                with span('map', 'existing_project_parse', generation=token):
+                    prepared = LevelProject(target)
                 if not cancel.is_set():
                     self.mapCopyReady.emit(token,prepared,None)
             except (OSError,ValueError) as exc:
@@ -651,7 +673,9 @@ class UnrealStyleLevelEditor(QMainWindow):
                     library_roots=(LIBRARY_HOME,DATA_HOME/"LevelDependencyCache"),
                     cancel=cancel,progress=report)
                 report("Parsing placements",0,None)
-                prepared=LevelProject(folder)
+                from performance_trace import span
+                with span('map', 'copied_project_parse', generation=token):
+                    prepared=LevelProject(folder)
                 self.mapCopyReady.emit(token,prepared,None)
             except (OSError,ValueError,RuntimeError,InterruptedError) as exc:
                 try:
@@ -698,6 +722,8 @@ class UnrealStyleLevelEditor(QMainWindow):
                     self.refresh_maps()
                     return False
         self.project=next_project
+        self._outliner_catalog = None
+        self._content_catalog = None
         self.selected=None
         self.viewport.active=None
         self.viewport.project=next_project
@@ -891,6 +917,12 @@ class UnrealStyleLevelEditor(QMainWindow):
         self.viewport.update()
 
     def _populate_outliner(self):
+        self._outliner_search_timer.stop()
+        if len(self.project.objects) > 1500:
+            self._populate_virtual_outliner()
+            return
+        self.virtual_outliner.hide()
+        self.outliner.show()
         self.outliner.blockSignals(True)
         self.outliner.clear()
         needle=self.filter.text().casefold()
@@ -922,17 +954,69 @@ class UnrealStyleLevelEditor(QMainWindow):
             f"{count:,} visible / {len(self.project.objects):,} placed objects")
         self.outliner.blockSignals(False)
 
+    def _populate_virtual_outliner(self):
+        """Search all placements, but allocate only visible Qt model rows."""
+        objects = self.project.objects
+        identity = (id(objects), len(objects))
+        if self._outliner_catalog is None or self._outliner_catalog[0] != identity:
+            catalog = []
+            for obj in objects:
+                node = self.project._node(obj.layer, obj.index)
+                layer = node.get('Layer') or Path(obj.layer).stem
+                haystack = (obj.name + ' ' + obj.kind + ' ' +
+                            obj.layer + ' ' + obj.geometry).casefold()
+                catalog.append((obj, layer, haystack))
+            self._outliner_catalog = (identity, catalog)
+        needle = self.filter.text().casefold()
+        root = TreeNode('')
+        groups = {}
+        total = 0
+        for obj, layer, haystack in self._outliner_catalog[1]:
+            if needle and needle not in haystack:
+                continue
+            group_key = (obj.layer, layer)
+            group = groups.get(group_key)
+            if group is None:
+                group = TreeNode(layer, 'Layer', tooltip=obj.layer)
+                root.append(group)
+                groups[group_key] = group
+            group.append(TreeNode(obj.name[:90], obj.kind[:45],
+                                  value=(obj.layer, obj.index)))
+            total += 1
+        self._outliner_model.reset_root(root)
+        self.outliner.hide()
+        self.virtual_outliner.show()
+        self.out_count.setText(
+            f'{total:,} visible / {len(objects):,} placed objects')
+        # Avoid expandAll(): child pagination happens only for viewed layers.
+
+    def _selected_virtual_outliner(self, _selected, _deselected):
+        for index in self.virtual_outliner.selectionModel().selectedRows(0):
+            value = index.data(Qt.UserRole)
+            if isinstance(value, (tuple, list)) and len(value) == 2:
+                self.select_object(*value)
+                break
+
     def _populate_content(self):
         # Unlike the World Outliner (placed entities), Content Browser
         # reflects actual files and folders from the editable level workspace.
         from evolve_pak_workspace import load_workspace, normalized_name
         self.content.clear()
+        root = self.project.workspace
+        if self._content_catalog is None or self._content_catalog[0] != root:
+            catalog = load_workspace(root)
+            filenames = tuple(sorted(
+                (normalized_name(entry['path']) for entry in catalog['entries']),
+                key=str.casefold))
+            self._content_catalog = (root, filenames)
+        filenames = self._content_catalog[1]
+        if len(filenames) > 1500:
+            self._populate_virtual_content(filenames)
+            return
+        self.virtual_content.hide()
+        self.content.show()
         nodes={}
-        catalog=load_workspace(self.project.workspace)
-        filenames=sorted(
-            (normalized_name(entry["path"]) for entry in catalog["entries"]),
-            key=str.casefold)
-        for relative in filenames[:22000]:
+        for relative in filenames:
             parts=relative.split("/")
             parent=None
             for n,name in enumerate(parts[:-1]):
@@ -963,8 +1047,39 @@ class UnrealStyleLevelEditor(QMainWindow):
             f"{len(self.project.objects):,} objects • "
             f"{sum(bool(x.model) for x in self.project.scene):,} model references")
 
+    def _populate_virtual_content(self, filenames):
+        root = TreeNode('')
+        directories = {}
+        for relative in filenames:
+            parts = relative.split('/')
+            parent = root
+            for part_index, part in enumerate(parts[:-1]):
+                name = '/'.join(parts[:part_index + 1])
+                if name not in directories:
+                    node = TreeNode(part, 'Folder', tooltip=name)
+                    parent.append(node)
+                    directories[name] = node
+                parent = directories[name]
+            extension = Path(relative).suffix.casefold()
+            file_type = ('CryEngine Layer' if extension == '.lyr' else
+                         'CryEngine Map' if extension == '.cry' else
+                         'Texture' if extension in ('.dds', '.tif') else
+                         'Map Metadata' if extension in ('.xml', '.dat', '.lua') else
+                         extension.lstrip('.').upper() or 'File')
+            parent.append(TreeNode(parts[-1], file_type,
+                                   value=relative, tooltip=relative))
+        self._content_model.reset_root(root)
+        self.content.hide()
+        self.virtual_content.show()
+        self.path_label.setText(
+            f'Extracted workspace / {self.project.level_name} • '
+            f'{len(filenames):,} files • {len(self.project.layers)} layers • '
+            f'{len(self.project.objects):,} objects • '
+            f'{sum(bool(x.model) for x in self.project.scene):,} model references')
+
     def _open_browser_asset(self,item,column=0):
-        relative=item.data(0,Qt.UserRole)
+        relative=(item.data(Qt.UserRole) if isinstance(item, QModelIndex)
+                  else item.data(0, Qt.UserRole))
         if isinstance(relative,str) and relative.casefold().endswith(".lyr"):
             self.filter.setText(Path(relative).stem)
             self.statusBar().showMessage(

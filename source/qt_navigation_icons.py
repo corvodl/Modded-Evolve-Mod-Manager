@@ -24,12 +24,15 @@ from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 PATHS = {
+    "Home": '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
     "Instructions": '<path d="M12 7c-3-2-6-2-9-1v13c3-1 6-1 9 1m0-13c3-2 6-2 9-1v13c-3-1-6-1-9 1m0-13v13"/>',
     "Asset Library": '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v11h14V9M9 14h6"/>',
     "Modding": '<path d="M14 7a5 5 0 0 0-6 6l-5 5a2 2 0 0 0 3 3l5-5a5 5 0 0 0 6-6l-3 3-3-3z"/>',
     "Play & Restore": '<path d="m8 5 10 7-10 7z"/><path d="M4 4v16"/>',
+    "Play with Mods": '<path d="m8 4 12 8-12 8z"/><path d="M4 5v14"/><path d="m15 4 2-2m1 4 3-1"/>',
+    "Play without Mods": '<path d="m9 5 10 7-10 7z"/><path d="M4 5v14"/><path d="m15 19 2 2 5-5"/>',
     "Settings": '<path d="M4 7h16M4 17h16M9 4v6M15 14v6"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="17" r="2"/>',
-    "Credits": '<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M17 5a3 3 0 0 1 0 6m0 4a5 5 0 0 1 4 5"/>',
+    "Credits": '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/>',
     "What's New": '<path d="m12 2 2.1 7.9L22 12l-7.9 2.1L12 22l-2.1-7.9L2 12l7.9-2.1z"/>',
     'Developer': '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12 16h5"/>',
 }
@@ -86,7 +89,8 @@ def navigation_icon(section, color="#f5f3f6", size=24):
         return QIcon()
     safe_color = color if len(color) == 7 and color.startswith("#") else "#f5f3f6"
     asset = NAV_ASSETS / (NAV_STEMS[section] + ".svg") if section in NAV_STEMS else None
-    if asset is not None and asset.is_file():
+    # Credits deliberately uses the outlined heart instead of older users icon.
+    if section != "Credits" and asset is not None and asset.is_file():
         # Resolved entirely from the local bundled app. Do not load URLs.
         svg = asset.read_text(encoding="utf-8").replace("#f5f3f6", safe_color)
     else:

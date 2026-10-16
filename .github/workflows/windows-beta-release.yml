@@ -29,6 +29,15 @@ jobs:
         with:
           python-version: "3.11"
           architecture: x64
+      - name: Install LGPL native bulk Twofish via signed MSYS2 packages
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-libgcrypt
+            mingw-w64-x86_64-libgpg-error
       - name: Resolve beta milestone or patch revision
         shell: pwsh
         env:
@@ -65,6 +74,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Python syntax check failed; refusing to build a beta installer." }
       - name: Build and test the real Windows executable
         shell: cmd
+        env:
+          EVOLVE_REQUIRE_NATIVE_TWOFISH: '1'
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: call Build-Windows-EXE.cmd
       - name: Verify and capture compiled Windows application
         shell: pwsh

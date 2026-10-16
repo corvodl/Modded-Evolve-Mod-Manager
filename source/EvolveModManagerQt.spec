@@ -14,6 +14,8 @@ datas += [(str(root/'launcher_support'), 'launcher_support'),
           (str(root/'VERSION.txt'), '.')]
 binaries = []
 hidden = [
+    'qt_media_preview', 'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets',
+    'client_profile_details', 'qt_account_profile',
     'database_animation', 'texture_selection', 'texture_transform', 'qt_texture_selection',
     'evolve_pak_workspace', 'evolve_pak_rekey', 'evolve_gameplay_editor',
     'evolve_video_pak_tool_fixed', 'dds_texture', 'dds_png_import',
@@ -22,7 +24,7 @@ hidden = [
     'universal_stage', 'refresh_originals', 'workspace_editor',
     'workspace_file_actions', 'pak_browser', 'portable_bundle', 'legacy_pak_workspace', 'legacy_texture_preview', 'qt_legacy_pak_editor', 'legacy_pak_import',
     'first_run_setup', 'old_prepared', 'loose_game_files',
-    'loose_file_editor', 'qt_manager', 'qt_workspace_editor',
+    'loose_file_editor', 'qt_manager', 'qt_workspace_editor', 'qt_easy_mod_installer', 'qt_quick_commands', 'easy_mod_install', 'game_storage', 'qt_game_storage', 'easy_mod_bundle', 'mod_install_receipts', 'mod_install_safety',
     'qt_legacy_editor_bridge', 'qt_gpu_viewer', 'qt_font_health', 'desktop_shortcut', 'orphaned_swap_recovery',
 ]
 for package in ('cryptography', 'frida', 'twofish', 'PIL'):
@@ -59,6 +61,7 @@ for entry, name, console in (
     executables.append(EXE(
         pyz, scripts, [], exclude_binaries=True, name=name,
         debug=False, strip=False, upx=False, console=console,
+        uac_admin=(entry == 'qt_manager'),
         icon=str(root/'assets'/'hunt.ico')))
 coll = COLLECT(*executables, a.binaries, a.datas, strip=False,
                upx=False, name='EvolveModManagerQt')

@@ -13,6 +13,7 @@ import time
 from pathlib import Path, PurePosixPath
 from queue import Empty, Queue
 from threading import Event, Thread
+from performance_trace import span, record
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QSurfaceFormat
@@ -100,6 +101,12 @@ def prepare_scene(project, cancel, progress=None, *, game=None, stage=None, cach
     details["material_catalog_truncated"] = len(material_names) > 20000
     assets, issues, models = {}, Counter(), {}
     details["terrain"] = None
+    # Make the complete placement scene available to the GUI before
+    # optional terrain/atlas decoding or material residency. Qt publishes
+    # generation-checked results and keeps this a pending scene, not a
+    # fully textured one. Never change source/export fidelity.
+    if partial and not cancel.is_set():
+        partial({}, dict(issues), dict(details, pending=True))
     height_source = "levels/" + str(project.level_name) + "/leveldata/heightmap.dat"
     source_record, terrain_state = resolve_scoped(
         index, height_source, project.workspace)
@@ -166,8 +173,6 @@ def prepare_scene(project, cancel, progress=None, *, game=None, stage=None, cach
         return RenderAsset(mesh, geometry, materials, 0, cache_key, (lower,upper))
     from level_residency import SceneResidency
     # Export decodes original resources independently, one at a time below.
-    if partial:
-        partial({}, dict(issues), dict(details, pending=True))
     from level_residency import retained_bytes
     terrain_cost = retained_bytes(details.get('terrain_chunks', ()))
     atlas = details.get('terrain_atlas')
@@ -231,7 +236,16 @@ class LevelGLViewport(QOpenGLWidget):
         self._streaming = False
         self._preparing = True
         self._last_request = None
+        self._placement_index = None
+        self._placement_scene = None
         self._upload_remaining = 0
+        self._upload_bytes_remaining = 0
+        self._upload_bytes_frame = 0
+        self._map_frame_started_at = time.perf_counter()
+        self._geometry_frame_seen = False
+        self._texture_frame_seen = False
+        self._final_frame_seen = False
+        self.frameSwapped.connect(self._frame_presented)
         self._terrain_uvs = {}
         self._terrain_texture = 0
         self._cancel = Event()
@@ -260,10 +274,11 @@ class LevelGLViewport(QOpenGLWidget):
             try:
                 def report(*args):
                     self._report_progress(token, cancel, args)
-                value = prepare_scene(project, cancel, report,
-                                      game=self.game_root, stage=self.stage_root,
-                                      cache_root=self.cache_root, terrain_stride=self.terrain_stride,
-                                      partial=lambda a,i,d: results.put((token,(a,i,d))))
+                with span('map', 'initial_scene_prepare', generation=token):
+                    value = prepare_scene(project, cancel, report,
+                                          game=self.game_root, stage=self.stage_root,
+                                          cache_root=self.cache_root, terrain_stride=self.terrain_stride,
+                                          partial=lambda a,i,d: results.put((token,(a,i,d))))
             except Exception as exc:
                 value = (None, {"scene initialization: " + str(exc)[:160]: 1}, {})
             if not cancel.is_set():
@@ -271,6 +286,31 @@ class LevelGLViewport(QOpenGLWidget):
         self._loader = Thread(target=job, name="Evolve-Level-CPU-Loader", daemon=True)
         self._loader.start()
         self.statusChanged.emit("Preparing map meshes and textures in background…")
+
+    def _frame_presented(self):
+        """Record user-visible scene milestones, not inferred GPU durations."""
+        elapsed = (time.perf_counter() - self._map_frame_started_at) * 1000
+        if not self._geometry_frame_seen and (self._visible or self.terrain_chunks):
+            self._geometry_frame_seen = True
+            record('map', 'first_geometry_frame', elapsed_ms=elapsed,
+                   instances=len(self._visible), terrain_chunks=len(self.terrain_chunks))
+        if not self._texture_frame_seen and (self._textures or self._terrain_texture):
+            self._texture_frame_seen = True
+            record('map', 'first_texture_frame', elapsed_ms=elapsed)
+        if (self._geometry_frame_seen and not self._final_frame_seen and
+                self._residency is not None and not self._preparing and
+                not self._streaming):
+            needed = {
+                id(image) for obj in self._visible
+                for image in (self.assets[_asset_key(obj)].materials.textures
+                              if self.assets[_asset_key(obj)].materials else ())
+                if image is not None
+            }
+            if needed.issubset(self._textures):
+                self._final_frame_seen = True
+                record('map', 'final_quality_frame', elapsed_ms=elapsed,
+                       visible_resources=len(self._visible),
+                       uploaded_textures=len(needed))
 
     def _report_progress(self, token, cancel, args):
         if cancel.is_set():
@@ -305,10 +345,17 @@ class LevelGLViewport(QOpenGLWidget):
         self._results = Queue(maxsize=2)
         self.assets = {}
         self.scene = self.project.scene
+        self._visible = ()
         self._residency = None
         self._streaming = False
         self._preparing = True
         self._last_request = None
+        self._placement_index = None
+        self._placement_scene = None
+        self._map_frame_started_at = time.perf_counter()
+        self._geometry_frame_seen = False
+        self._texture_frame_seen = False
+        self._final_frame_seen = False
         self.terrain = None
         self.terrain_chunks = ()
         self.terrain_atlas = None
@@ -323,10 +370,11 @@ class LevelGLViewport(QOpenGLWidget):
             try:
                 def report(*args):
                     self._report_progress(token, cancel, args)
-                result = prepare_scene(project, cancel, report,
-                                       game=self.game_root, stage=self.stage_root,
-                                       cache_root=self.cache_root, terrain_stride=self.terrain_stride,
-                                       partial=lambda a,i,d: queue.put((token,(a,i,d))))
+                with span('map', 'scene_reload_prepare', generation=token):
+                    result = prepare_scene(project, cancel, report,
+                                           game=self.game_root, stage=self.stage_root,
+                                           cache_root=self.cache_root, terrain_stride=self.terrain_stride,
+                                           partial=lambda a,i,d: queue.put((token,(a,i,d))))
             except Exception as exc:
                 result = ({}, {"scene initialization: " + str(exc)[:160]: 1}, {})
             if not cancel.is_set():
@@ -347,14 +395,22 @@ class LevelGLViewport(QOpenGLWidget):
         assets, issues, details = result
         if details.get("streamed"):
             self._streaming = False
-            self._clear_gpu_textures()
-            self.assets = assets or {}
+            # Camera residency churn is not a new scene or GL context.
+            # Retain uploaded pixels which still belong to live assets, and
+            # keep the independent terrain atlas/UV buffers untouched.
+            next_assets = assets or {}
+            self._retain_streamed_textures(next_assets)
+            record('map', 'residency_installed', generation=token,
+                   assets=len(next_assets), uploaded_textures=len(self._textures))
+            self.assets = next_assets
             if self._residency:
                 self._issues.update({k[0]+': '+v:1 for k,v in self._residency.failures.items()})
             self.update()
             return
         self._preparing = details.get("pending",False)
         self.scene = details.get("scene", self.project.scene)
+        self._placement_index = None
+        self._placement_scene = None
         self._residency = details.get("residency")
         self._issues = issues
         self._dependency_report = details.get('dependencies', {})
@@ -380,6 +436,37 @@ class LevelGLViewport(QOpenGLWidget):
             'Scene available; resources load as the camera moves'))
         self.update()
 
+    def _retain_streamed_textures(self, next_assets):
+        """Drop only evicted image uploads on a camera residency update.
+
+        Texture keys are Python image identities. The previous self.assets
+        stays referenced until this method returns, preventing id() reuse
+        during comparison. Full scene/build changes still invalidate all GL
+        resources through _clear_gpu_textures().
+        """
+        live_images = {
+            id(image)
+            for asset in next_assets.values()
+            for image in (asset.materials.textures
+                          if getattr(asset, 'materials', None) else ())
+            if image is not None
+        }
+        removed = {
+            ident for pixel_id, ident in self._textures.items()
+            if pixel_id not in live_images and ident
+        }
+        if removed and self.isValid():
+            self.makeCurrent()
+            try:
+                from OpenGL.GL import glDeleteTextures
+                glDeleteTextures(list(removed))
+            finally:
+                self.doneCurrent()
+        self._textures = {
+            pixel_id: ident for pixel_id, ident in self._textures.items()
+            if pixel_id in live_images
+        }
+
     def _clear_gpu_textures(self):
         if self.isValid():
             self.makeCurrent()
@@ -403,22 +490,21 @@ class LevelGLViewport(QOpenGLWidget):
         if request == self._last_request:
             return
         self._last_request = request
-        # Prioritize nearest instances, not the arbitrary last placement of a
-        # material variant. Membership always remains in self.scene.
-        distances = {}
-        for obj in self.scene:
-            if not obj.model or obj.status == 'hidden in editor':
-                continue
-            key = _asset_key(obj)
-            distance = sum((obj.world.pos[i]-self.camera[i])**2 for i in range(3))
-            distances[key] = min(distance, distances.get(key,float('inf')))
+        # Build the grid only when a scene is installed/replaced. Camera
+        # changes probe nearby occupied cells, not every placement twice.
+        if self._placement_index is None or self._placement_scene is not self.scene:
+            from level_working_set import PlacementGrid
+            self._placement_index = PlacementGrid(self.scene, _asset_key)
+            self._placement_scene = self.scene
         eye = self._eye()
-        forward = tuple((self.camera[i]-eye[i])/max(self.distance,1e-8) for i in range(3))
-        facing = set()
-        for obj in self.scene:
-            if sum((obj.world.pos[i]-eye[i])*forward[i] for i in range(3)) > 0:
-                facing.add(_asset_key(obj))
-        keys = sorted(distances, key=lambda k:(k not in facing,distances[k]))
+        forward = tuple((self.camera[i] - eye[i]) / max(self.distance, 1e-8)
+                        for i in range(3))
+        # A margin keeps already decoded resources resident under small pans.
+        nearby = self._placement_index.nearby(
+            self.camera, max(100., self.distance * 3.), eye=eye,
+            forward=forward, retain=self.assets.keys(), margin=1.2)
+        keys = sorted(nearby, key=lambda key: (
+            not nearby[key][1], nearby[key][0]))
         if set(keys) == set(self.assets):
             return
         store, cancel, token, queue = self._residency,self._cancel,self._generation,self._results
@@ -436,10 +522,17 @@ class LevelGLViewport(QOpenGLWidget):
         if not self.show_terrain_tiles or self.terrain_atlas is None:
             return 0
         if not self._terrain_texture and self._upload_remaining > 0:
+            required_bytes = self.terrain_atlas.width * self.terrain_atlas.height * 4
+            if (required_bytes > self._upload_bytes_remaining and
+                    self._upload_bytes_frame > 0):
+                self.update()
+                return 0
             from OpenGL.GL import (glGenTextures,glBindTexture,glTexParameteri,glTexImage2D,
                 GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER,GL_LINEAR,
                 GL_RGBA,GL_UNSIGNED_BYTE,GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE)
             self._upload_remaining -= 1
+            self._upload_bytes_remaining -= required_bytes
+            self._upload_bytes_frame += required_bytes
             image = self.terrain_atlas.convert('RGBA')
             self._terrain_texture = int(glGenTextures(1))
             glBindTexture(GL_TEXTURE_2D,self._terrain_texture)
@@ -519,10 +612,17 @@ class LevelGLViewport(QOpenGLWidget):
         if self._upload_remaining <= 0 or time.monotonic() >= self._upload_deadline:
             self.update()
             return 0
-        self._upload_remaining -= 1
         rgba = image.convert("RGBA")
         if rgba.width > 2048 or rgba.height > 2048:
             rgba.thumbnail((2048,2048))
+        required_bytes = rgba.width * rgba.height * 4
+        if (required_bytes > self._upload_bytes_remaining and
+                self._upload_bytes_frame > 0):
+            self.update()
+            return 0
+        self._upload_remaining -= 1
+        self._upload_bytes_remaining -= required_bytes
+        self._upload_bytes_frame += required_bytes
         ident = int(glGenTextures(1))
         glBindTexture(GL_TEXTURE_2D,ident)
         glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR)
@@ -574,6 +674,8 @@ class LevelGLViewport(QOpenGLWidget):
         # The real source HeightmapData is drawn in authored world coordinates.
         # No flat proxy, inferred terrain texture, or generated collision.
         self._upload_remaining = 2
+        self._upload_bytes_remaining = 8 * 1024 * 1024
+        self._upload_bytes_frame = 0
         self._upload_deadline = time.monotonic()+.004
         for terrain in self.terrain_chunks:
             glDisable(GL_TEXTURE_2D)
@@ -660,6 +762,15 @@ class LevelGLViewport(QOpenGLWidget):
                 self._selection_bounds(asset.bounds)
             glPopMatrix()
         self._visible=tuple(visible)
+        if self._upload_bytes_frame:
+            # Even a single 4K driver upload can exceed a 4ms CPU deadline.
+            # Report the observed overrun; do not silently reduce source
+            # resolution or drop the final required material.
+            record('map', 'texture_upload_frame',
+                   submitted_bytes=self._upload_bytes_frame,
+                   exceeded_byte_budget=self._upload_bytes_remaining < 0,
+                   deadline_overrun_ms=max(
+                       0., (time.monotonic()-self._upload_deadline)*1000))
         from level_progress import LoadProgress
         required = {id(im) for item in visible
                     for im in (self.assets[_asset_key(item)].materials.textures

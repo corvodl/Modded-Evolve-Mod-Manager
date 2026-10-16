@@ -21,7 +21,25 @@ datas += [(str(root/'launcher_support'), 'launcher_support'),
           (str(root/'ui_text.json'), '.'),
           (str(root/'VERSION.txt'), '.')]
 binaries = []
+# Optional for local source builds; mandatory for CI stable/installer builds.
+# Keep LGPL licenses inside the same shipped app as their native DLLs.
+import os
+bulk_root = root / 'native'
+bulk_dll = bulk_root / 'libgcrypt-20.dll'
+if os.environ.get('EVOLVE_REQUIRE_NATIVE_TWOFISH') == '1' and not bulk_dll.is_file():
+    raise FileNotFoundError('Required packaged native Twofish runtime missing')
+if bulk_dll.is_file():
+    for dll in sorted(bulk_root.glob('*.dll')):
+        binaries.append((str(dll), '.'))
+    for notice in sorted(bulk_root.glob('NOTICE.txt')):
+        datas.append((str(notice), 'Licenses/Native-Twofish'))
+    for license_file in sorted((bulk_root / 'Licenses').rglob('*')):
+        if license_file.is_file():
+            target = 'Licenses/Native-Twofish/' + license_file.relative_to(bulk_root / 'Licenses').parent.as_posix()
+            datas.append((str(license_file), target))
 hidden = [
+    'qt_media_preview', 'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets',
+    'client_profile_details', 'qt_account_profile',
     'level_blender_export', 'blender_native_project', 'blender_texture_folder',
     'level_terrain_decode', 'level_dependency_loader', 'qt_level_scene_render',
     'database_animation', 'texture_selection', 'texture_transform', 'qt_texture_selection',
@@ -32,7 +50,7 @@ hidden = [
     'universal_stage', 'refresh_originals', 'workspace_editor',
     'workspace_file_actions', 'pak_browser', 'portable_bundle',
     'first_run_setup', 'old_prepared', 'loose_game_files',
-    'loose_file_editor', 'qt_manager', 'qt_workspace_editor',
+    'loose_file_editor', 'qt_manager', 'qt_workspace_editor', 'qt_easy_mod_installer', 'qt_quick_commands', 'easy_mod_install', 'game_storage', 'qt_game_storage', 'easy_mod_bundle', 'mod_install_receipts', 'mod_install_safety',
     'qt_asset_library', 'qt_asset_preview', 'asset_library_preview', 'legacy_pak_workspace', 'legacy_texture_preview', 'qt_legacy_pak_editor', 'legacy_pak_import', 'gfx_preview_backend', 'qt_gfx_preview', 'gfx_edit_backend', 'qt_gfx_editor', 'animation_converter_bridge', 'converted_motion', 'character_aliases',
     'qt_gpu_viewer', 'qt_asset_studio', 'studio_tools', 'qt_asset_intelligence', 'asset_intelligence', 'qt_workflow_lab', 'workflow_lab', 'qt_task_queue', 'asset_geometry_cache', 'operation_progress', 'qt_operation_progress', 'qt_background_exports', 'material_editor_v2', 'qt_developer_lab', 'developer_runtime_lab', 'developer_network_lab', 'developer_private_services', 'developer_support_lab', 'developer_write_policy', 'project_lifecycle', 'project_selection', 'qt_theme_116', 'quality_lab_116', 'studio_polish_117', 'renderer_3', 'developer_diagnostics_116', 'qt_font_health', 'desktop_shortcut', 'orphaned_swap_recovery',
 ]
@@ -69,6 +87,7 @@ for entry, name, console in (
     executables.append(EXE(
         pyz, scripts, [], exclude_binaries=True, name=name,
         debug=False, strip=False, upx=False, console=console,
+        uac_admin=(entry == 'qt_manager'),
         icon=str(root/'assets'/'hunt.ico')))
 coll = COLLECT(*executables, a.binaries, a.datas, strip=False,
                upx=False, name='EvolveModManager')

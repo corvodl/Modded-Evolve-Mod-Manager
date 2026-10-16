@@ -14,13 +14,21 @@ from character_assembly import assemble_character
 from character_animation_catalog import discover_animations
 from gpu_model_preview import prepare_geometry
 from workspace_file_actions import checked_path
+from performance_trace import span
 
 
 def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                   texture_folder=None, animation_index=None, equipment=None,
-                  index=None, require_assembly=False):
+                  index=None, require_assembly=False, cancel=None,
+                  geometry_ready=None, stage_ready=None):
+    def checkpoint():
+        if cancel is not None and cancel():
+            raise InterruptedError('Obsolete model preparation cancelled')
+
+    checkpoint()
     path = checked_path(workspace, relative)
     raw = path.read_bytes()
+    checkpoint()
     if str(relative).casefold().endswith('.cdf'):
         report = 'Character Definition (CDF) • referenced model assembly'
     else:
@@ -30,23 +38,59 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
             report = str(exc)
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
+    checkpoint()
+    downstream_cancel = {'cancel': cancel} if cancel is not None else {}
     character = None
     assembly_error = ''
     try:
         character = assemble_character(
             workspace, relative, index, texture_folder=texture_folder,
             projects_root=projects_root, stage_root=stage_root,
-            equipment=equipment)
+            equipment=equipment, **downstream_cancel)
     except (ValueError, OSError) as exc:
         assembly_error = str(exc)
+    checkpoint()
     if require_assembly and character is None:
-        raise ValueError(
-            'Full Character needs a valid CDF with compatible body and '
-            'equipment meshes. ' + (assembly_error or 'No CDF assembly found.'))
-    mesh = (character.mesh if character else
-            find_preview_mesh(workspace, relative, raw,
-                              projects_root=projects_root, stage_root=stage_root,
-                              index=index))
+        # Emet's original remote-cannon 3P mesh already includes his arm;
+        # the healing-totem and dropship CDFs are separate equipment models.
+        # Use the exact .skinm/.skin pair, never invent a replacement CDF.
+        from character_full_models import is_emet_primary_model
+        from multi_pak_assets import _resolve
+        native_skin_verified = False
+        if is_emet_primary_model(relative):
+            hits, state = _resolve(
+                index, relative[:-1], preferred_workspace=workspace)
+            native_skin_verified = state == 'found'
+        if not native_skin_verified:
+            raise ValueError(
+                'Full Character needs a valid CDF with compatible body and '
+                'equipment meshes. ' + (assembly_error or 'No CDF assembly found.'))
+        report = 'Emet • Original remote-cannon 3P complete mesh (with arm)'
+
+    with span('model', 'mesh_decode'):
+        mesh = (character.mesh if character else
+                find_preview_mesh(workspace, relative, raw,
+                                  projects_root=projects_root, stage_root=stage_root,
+                                  index=index))
+    checkpoint()
+    # Geometry does not depend on decoded diffuse/normal/specular maps.
+    # Publish it before potentially expensive material and CAF discovery.
+    with span('model', 'geometry_prepare'):
+        if projects_root is not None:
+            from asset_geometry_cache import cached_geometry
+            geometry, cached = cached_geometry(
+                mesh,Path(projects_root)/'.asset-cache'/'gpu',shading='faceted')
+        else:
+            geometry = prepare_geometry(mesh, shading='faceted')
+            cached = False
+    checkpoint()
+    if geometry_ready is not None:
+        geometry_ready({'mesh': mesh, 'geometry': geometry,
+                        'character': character, 'index': index,
+                        'report': report})
+    checkpoint()
+    if stage_ready is not None:
+        stage_ready('materials')
     materials = character.materials if character else None
     issue = ''
     if materials is None:
@@ -54,24 +98,23 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
             source_material_model = (
                 relative if str(mesh.source_name).startswith('Character assembly:')
                 else (mesh.source_name or relative))
-            materials = load_preview_materials(
-                workspace, source_material_model, texture_folder,
-                projects_root=projects_root, stage_root=stage_root,index=index)
+            with span('model', 'materials_resolve'):
+                materials = load_preview_materials(
+                    workspace, source_material_model, texture_folder,
+                    projects_root=projects_root, stage_root=stage_root,
+                    index=index, **downstream_cancel)
         except (ValueError, OSError) as exc:
             issue = str(exc)
+    checkpoint()
+    if stage_ready is not None:
+        stage_ready('animations')
     skeleton = character.skeleton if character else relative
-    references, idle, config = discover_animations(
-        skeleton, index, preferred_workspace=workspace,
-        loose_index=animation_index)
-    # Derived geometry caches are optional. A broken/unwritable cache must
-    # never prevent the game model from opening.
-    if projects_root is not None:
-        from asset_geometry_cache import cached_geometry
-        geometry, cached = cached_geometry(
-            mesh,Path(projects_root)/'.asset-cache'/'gpu',shading='faceted')
-    else:
-        geometry = prepare_geometry(mesh, shading='faceted')
-        cached = False
+    with span('model', 'animation_discovery'):
+        references, idle, config = discover_animations(
+            skeleton, index, preferred_workspace=workspace,
+            loose_index=animation_index, **downstream_cancel)
+    checkpoint()
+    checkpoint()
     return {
         'raw':raw, 'report':report, 'mesh':mesh, 'materials':materials,
         'character':character, 'index':index,'geometry':geometry,

@@ -14,9 +14,12 @@ import threading
 import time
 
 from qt_theme_116 import PALETTES, ROLES, palette
+from performance_trace import span, record
+from model_dependency_fingerprint import (
+    dependency_watch_paths, snapshot, unchanged)
 
 MODEL_CACHE_LIMIT = 3
-MODEL_CACHE_TTL = 30
+MODEL_CACHE_TTL = 300  # extended only with explicit dependent-file validation
 MAX_CACHE_BYTES = 384 * 1024 * 1024
 MAX_THEME_BYTES = 16384
 MAX_SESSION_COUNT = 80
@@ -89,32 +92,55 @@ def _detached(result):
     return out
 
 
-def prepare_model_cached(workspace,relative,*,force=False,**kwargs):
+def prepare_model_cached(workspace,relative,*,force=False,cancel=None,
+                         geometry_ready=None,stage_ready=None,**kwargs):
     """Return a detached result mapping, cache hit and wall-clock duration."""
     global _cache_bytes
     from async_model_resolve import resolve_model
     start=time.perf_counter()
+    if cancel is not None and cancel():
+        raise InterruptedError('Obsolete model preparation cancelled')
     key=model_cache_key(workspace,relative,**kwargs)
     eligible=kwargs.get('animation_index') is None
     # Caller-provided indexes may change without detectable file modification.
     if not force and eligible:
         with _cache_lock:
             hit=_cache.get(key)
-            if hit is not None and time.monotonic()-hit[0] < MODEL_CACHE_TTL:
-                _cache.move_to_end(key)
-                return _detached(hit[1]),True,(time.perf_counter()-start)*1000
-    result=resolve_model(workspace,relative,**kwargs)
+            if hit is not None:
+                valid = (time.monotonic() - hit[0] < MODEL_CACHE_TTL and
+                         len(hit) >= 4 and unchanged(hit[3]))
+                if valid:
+                    _cache.move_to_end(key)
+                    if cancel is not None and cancel():
+                        raise InterruptedError('Obsolete model preparation cancelled')
+                    record('model', 'prepared_cache_hit',
+                           elapsed_ms=(time.perf_counter()-start)*1000,
+                           cache_hit=True)
+                    return _detached(hit[1]),True,(time.perf_counter()-start)*1000
+                _cache_bytes -= _cache.pop(key)[2]
+                record('model', 'dependency_cache_invalidated', cache_hit=False)
+    with span('model', 'cpu_resolve', cache_hit=False):
+        result=resolve_model(workspace,relative,cancel=cancel,
+                             geometry_ready=geometry_ready,
+                             stage_ready=stage_ready,**kwargs)
+    if cancel is not None and cancel():
+        raise InterruptedError('Obsolete model preparation cancelled')
     size=_result_size(result)
     if eligible and size<=MAX_CACHE_BYTES//2:
+        source_index = result.get('index', kwargs.get('index'))
+        deps = snapshot(dependency_watch_paths(
+            workspace, relative, result, source_index))
         with _cache_lock:
             old=_cache.pop(key,None)
             if old is not None:
                 _cache_bytes-=old[2]
-            _cache[key]=(time.monotonic(),_detached(result),size)
+            _cache[key]=(time.monotonic(),_detached(result),size,deps)
             _cache_bytes+=size
             while len(_cache)>MODEL_CACHE_LIMIT or _cache_bytes>MAX_CACHE_BYTES:
                 _,entry=_cache.popitem(last=False)
                 _cache_bytes-=entry[2]
+    record('model', 'prepared_ready', elapsed_ms=(time.perf_counter()-start)*1000,
+           cache_hit=False, estimated_bytes=size)
     return result,False,(time.perf_counter()-start)*1000
 
 

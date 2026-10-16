@@ -34,6 +34,12 @@ internal sealed class DispatchRequest
     public TaskCompletionSource<int> Result = new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
+internal sealed class UiSnapshotRequest
+{
+    public TaskCompletionSource<string?> Result =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+
 public static class EvolveBridge
 {
     private const string Protocol = "evolve-dev-event-bridge-v1";
@@ -45,10 +51,15 @@ public static class EvolveBridge
     private const string VerifiedExeSha256 =
         "870227ec5ef4c2f020e6c825d13a137cc03c7a23ea55362782dc29a96127737d";
     private const int MaximumMessage = 65536;
+    // A short, bounded read-only UI tree, never raw game memory.
+    private const int MaximumUiSnapshot = 12000;
+    private const int MaximumUiNodes = 128;
     private static readonly object Sync = new();
     private static readonly Dictionary<string, VerifiedHandler> Handlers =
         new(StringComparer.Ordinal);
     private static readonly ConcurrentQueue<DispatchRequest> Pending = new();
+    private static readonly ConcurrentQueue<UiSnapshotRequest> UiPending = new();
+    private static nint UiSnapshotProvider;
     private static readonly HashSet<string> PreviousNonces = new(StringComparer.Ordinal);
     private static CancellationTokenSource? Cancellation;
     private static TcpListener? Listener;
@@ -104,6 +115,9 @@ public static class EvolveBridge
                 while (Pending.TryDequeue(out DispatchRequest? old))
                     old.Result.TrySetResult(0);
                 Handlers.Clear();
+                UiSnapshotProvider = 0;
+                while (UiPending.TryDequeue(out UiSnapshotRequest? item))
+                    item.Result.TrySetResult(null);
                 Token = token;
                 Cancellation = cancel;
                 Listener = listener;
@@ -160,6 +174,23 @@ public static class EvolveBridge
         catch (Exception) { return 0; }
     }
 
+    // Read-only, explicitly verified Scaleform tree provider. This callback
+    // is registered only by an existing trusted game-side adapter, never by
+    // network input. It returns UTF-8 JSON in a bounded caller-owned buffer.
+    [UnmanagedCallersOnly(EntryPoint = "EvolveBridge_RegisterUiSnapshot",
+        CallConvs = new[] { typeof(CallConvCdecl) })]
+    public static int RegisterUiSnapshot(nint callback)
+    {
+        if (callback == 0 || GameThread == 0 || GetCurrentThreadId() != GameThread)
+            return 0;
+        lock (Sync)
+        {
+            if (Listener == null || UiSnapshotProvider != 0) return 0;
+            UiSnapshotProvider = callback;
+        }
+        return 1;
+    }
+
     // The game's integration calls Pump once per main game tick. The listener
     // NEVER invokes native callbacks on a socket/background thread.
     [UnmanagedCallersOnly(EntryPoint = "EvolveBridge_Pump",
@@ -187,6 +218,35 @@ public static class EvolveBridge
             }
             catch (Exception) { outcome = 0; }
             item.Result.TrySetResult(outcome);
+            processed++;
+        }
+        // Read-only tree snapshots are requested over authenticated loopback
+        // but collected ONLY by a registered native adapter on game thread.
+        while (processed < 16 && UiPending.TryDequeue(out UiSnapshotRequest? ui))
+        {
+            if (ui.Result.Task.IsCompleted) continue;
+            string? snapshot = null;
+            nint callback;
+            lock (Sync) { callback = UiSnapshotProvider; }
+            if (callback != 0)
+            {
+                try
+                {
+                    byte[] buffer = new byte[MaximumUiSnapshot];
+                    fixed (byte* ptr = buffer)
+                    {
+                        var fn = (delegate* unmanaged[Cdecl]<byte*, int, int>)callback;
+                        int size = fn(ptr, buffer.Length);
+                        if (size > 0 && size <= buffer.Length)
+                        {
+                            string json = new UTF8Encoding(false, true).GetString(buffer, 0, size);
+                            if (ValidateUiSnapshot(json)) snapshot = json;
+                        }
+                    }
+                }
+                catch (Exception) { snapshot = null; }
+            }
+            ui.Result.TrySetResult(snapshot);
             processed++;
         }
         return processed;
@@ -222,6 +282,9 @@ public static class EvolveBridge
             Cancellation = null;
             Token = null;
             Handlers.Clear();
+            UiSnapshotProvider = 0;
+            while (UiPending.TryDequeue(out UiSnapshotRequest? ui))
+                ui.Result.TrySetResult(null);
             PreviousNonces.Clear();
             while (Pending.TryDequeue(out DispatchRequest? task))
                 task.Result.TrySetResult(0);
@@ -277,17 +340,49 @@ public static class EvolveBridge
             if (PreviousNonces.Count >= 2048 || !PreviousNonces.Add(nonce)) return;
         }
         string[] available;
-        lock (Sync) { available = Handlers.Keys.OrderBy(x => x, StringComparer.Ordinal).ToArray(); }
+        bool hasUi;
+        lock (Sync)
+        {
+            available = Handlers.Keys.OrderBy(x => x, StringComparer.Ordinal).ToArray();
+            hasUi = UiSnapshotProvider != 0;
+        }
         Send(stream, token, new Dictionary<string, object> {
             ["protocol"] = Protocol, ["op"] = "ready", ["nonce"] = nonce,
-            ["pid"] = pid, ["build"] = Build, ["status"] = "ready", ["events"] = available
+            ["pid"] = pid, ["build"] = Build, ["status"] = "ready", ["events"] = available,
+            ["ui_snapshot"] = hasUi ? "available" : "unavailable"
         });
         JsonElement request;
         try { request = ParseAndVerify(ReadLine(stream), token); }
         catch (IOException) { return; } // A probe closes immediately after ready.
+        string operation = GetText(request, "op");
         if (GetText(request, "protocol") != Protocol ||
-            GetText(request, "op") != "activate" ||
+            (operation != "activate" && operation != "ui_snapshot") ||
             GetText(request, "nonce") != nonce || GetInt(request, "pid") != pid) return;
+        if (operation == "ui_snapshot")
+        {
+            string id = GetText(request, "request_id");
+            if (!IsHex(id, 32)) return;
+            string? snapshot = null;
+            bool supported;
+            lock (Sync) { supported = UiSnapshotProvider != 0; }
+            if (supported)
+            {
+                UiSnapshotRequest item = new();
+                UiPending.Enqueue(item);
+                Task done = await Task.WhenAny(item.Result.Task, Task.Delay(1400));
+                if (done == item.Result.Task) snapshot = item.Result.Task.Result;
+                else item.Result.TrySetResult(null);  // No stale callback next frame.
+            }
+            Dictionary<string, object> reply = new() {
+                ["protocol"] = Protocol, ["op"] = "ui_snapshot_result",
+                ["nonce"] = nonce, ["request_id"] = id, ["pid"] = pid,
+                ["status"] = snapshot != null ? "captured" :
+                    supported ? "unavailable" : "unsupported"
+            };
+            if (snapshot != null) reply["snapshot"] = snapshot;
+            Send(stream, token, reply);
+            return;
+        }
         string eventName = GetText(request, "event");
         string identifier = GetText(request, "event_id");
         string requestId = GetText(request, "request_id");
@@ -316,6 +411,54 @@ public static class EvolveBridge
         };
         if (outcome == 0) result["error"] = "No verified game-thread handler confirmed this request.";
         Send(stream, token, result);
+    }
+
+    private static bool ValidateUiSnapshot(string data)
+    {
+        // Only structured UI metadata. The bridge never accepts memory
+        // addresses, arbitrary commands, or write operations.
+        try
+        {
+            if (Encoding.UTF8.GetByteCount(data) > MaximumUiSnapshot) return false;
+            using JsonDocument doc = JsonDocument.Parse(data);
+            JsonElement root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                GetInt(root, "schema") != 1 ||
+                root.TryGetProperty("movie", out JsonElement movie) == false ||
+                movie.ValueKind != JsonValueKind.String ||
+                movie.GetString() is not { Length: > 0 and <= 256 } ||
+                GetInt(root, "frame") is < 0 or > 100000 ||
+                !root.TryGetProperty("nodes", out JsonElement nodes) ||
+                nodes.ValueKind != JsonValueKind.Array ||
+                nodes.GetArrayLength() > MaximumUiNodes) return false;
+            HashSet<string> ids = new(StringComparer.Ordinal);
+            foreach (JsonElement node in nodes.EnumerateArray())
+            {
+                if (node.ValueKind != JsonValueKind.Object) return false;
+                string id = GetText(node, "id");
+                string kind = GetText(node, "kind");
+                if (id.Length is < 1 or > 120 || !ids.Add(id) ||
+                    kind is not ("movieclip" or "button" or "textfield" or "sprite" or "shape" or "unknown") ||
+                    GetText(node, "name").Length > 256 ||
+                    GetText(node, "text").Length > 512) return false;
+                foreach (string key in new[] { "x", "y", "width", "height" })
+                {
+                    if (!node.TryGetProperty(key, out JsonElement value) ||
+                        !value.TryGetDouble(out double number) ||
+                        !double.IsFinite(number) || Math.Abs(number) > 100000)
+                        return false;
+                }
+                if (!node.TryGetProperty("visible", out JsonElement visibility) ||
+                    visibility.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    return false;
+                if (!node.TryGetProperty("parent", out JsonElement parent) ||
+                    (parent.ValueKind != JsonValueKind.Null &&
+                     (parent.ValueKind != JsonValueKind.String ||
+                      parent.GetString()?.Length > 120))) return false;
+            }
+            return true;
+        }
+        catch (Exception) { return false; }
     }
 
     private static bool ValidateParameters(JsonElement param,

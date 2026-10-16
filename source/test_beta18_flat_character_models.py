@@ -44,6 +44,76 @@ class FullCharacterDiscoveryTests(unittest.TestCase):
             'characters/hunters/merc_other/other_3p.skinm']))
 
 
+    def test_emet_defaults_to_arm_complete_remote_cannon_three_p_model(self):
+        base = 'characters/hunters/merc_emet/'
+        files = [base + name for name in (
+            'emetremotecannon_fp.skinm', 'emetremotecannon_fp.skin',
+            'emetremotecannon_3p.skinm', 'emetremotecannon_3p.skin',
+            'emethealingtotemworld_3p.cdf',
+            'emethealingtotemworld_3p.skinm',
+            'emetdropshipbeaconworld_3p.cdf',
+            'emetdropshipbeaconworld_3p.skinm')]
+        from character_full_models import preferred_emet_source
+        choices = discover_full_characters(files)
+        original = base + 'emetremotecannon_3p.skinm'
+        self.assertEqual(preferred_emet_source(files), original)
+        self.assertEqual(choices[original].definition, original[:-1])
+        self.assertEqual(choices[original].label, 'Emet • Full Character')
+        self.assertNotIn(base + 'emethealingtotemworld_3p.skinm', choices)
+        self.assertNotIn(base + 'emetdropshipbeaconworld_3p.skinm', choices)
+        self.assertIn(base + 'emethealingtotemworld_3p.skinm', files)
+        self.assertIn(base + 'emetdropshipbeaconworld_3p.skinm', files)
+        self.assertNotIn(base + 'emetremotecannon_fp.skinm', choices)
+
+    def test_emet_requires_exact_native_skin_and_folder(self):
+        from character_full_models import preferred_emet_source
+        path = 'characters/hunters/merc_emet/emetremotecannon_3p.skinm'
+        self.assertIsNone(preferred_emet_source((path,)))
+        self.assertIsNone(preferred_emet_source((
+            'characters/hunters/merc_other/emetremotecannon_3p.skinm',
+            'characters/hunters/merc_other/emetremotecannon_3p.skin')))
+        self.assertIsNone(preferred_emet_source((
+            path, 'characters/hunters/merc_other/emetremotecannon_3p.skin')))
+        medic = 'characters/hunters/medic_emet/emetremotecannon_3p.skinm'
+        self.assertEqual(preferred_emet_source((medic, medic[:-1])), medic)
+
+
+class EmetStandaloneAssemblyTests(unittest.TestCase):
+    def test_verifies_original_emet_source_not_equipment_cdf(self):
+        from unittest.mock import patch
+        from character_asset_export import build_cdf_folder_glbs
+        from test_character_export_folders import test_glb
+        from types import SimpleNamespace
+        base = 'characters/hunters/merc_emet/'
+        full = base + 'emetremotecannon_3p.skinm'
+        skin = full[:-1]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mesh = root / 'files' / full
+            native = root / 'files' / skin
+            mesh.parent.mkdir(parents=True)
+            mesh.write_bytes(b'synthetic mesh file')
+            native.write_bytes(b'synthetic native skin companion')
+            index = {
+                full: [{'file': mesh, 'workspace': root}],
+                skin: [{'file': native, 'workspace': root}]}
+            def resolve(idx, path, preferred_workspace=None):
+                return (idx[path], 'found') if path in idx else ((), 'missing')
+            with patch('multi_pak_assets._resolve', side_effect=resolve), \
+                 patch('model_preview.read_preview_mesh',
+                       return_value=SimpleNamespace(vertices=[(0, 0, 0)])), \
+                 patch('model_textured_export.textured_model_from_workspace',
+                       return_value=(test_glb(), {'rig_status': 'Rigged: verified'})):
+                results, skipped = build_cdf_folder_glbs(
+                    root, base.rstrip('/'), index)
+            self.assertFalse(skipped)
+            data, report = results['Assemblies/Emetremotecannon_3p.glb']
+            self.assertTrue(data.startswith(b'glTF'))
+            self.assertEqual(report['original_3p_model'], full)
+            self.assertTrue(report['preferred_full_character'])
+            self.assertEqual(report['embedded_animations'], 0)
+            self.assertNotIn('CDF', report.get('cdf', ''))
+
 class CompositeBlenderExportTests(unittest.TestCase):
     def test_missing_rig_still_exports_both_assembled_mesh_parts(self):
         from types import SimpleNamespace
@@ -119,12 +189,14 @@ class FlatCharacterFolderTests(unittest.TestCase):
         dest = Path(report['folder'])
         self.assertEqual(dest.parent, self.output)
         self.assertEqual(dest.name, 'merc_parnelltank')
-        self.assertEqual((dest / 'parnelltank_3p.skinm').read_bytes(), b'MODEL')
+        self.assertEqual((dest / 'models/parnelltank_3p.skinm').read_bytes(), b'MODEL')
         self.assertEqual((dest / 'textures/body_diff.dds.0').read_bytes(),
                          b'DDS-sibling-TS')
-        self.assertEqual((dest / 'Full_Character.glb').read_bytes(), self._glb())
+        self.assertEqual((dest / 'merc_parnelltank.glb').read_bytes(), self._glb())
         self.assertFalse((dest / 'characters').exists())
         self.assertFalse((dest / 'merc_val').exists())
+        self.assertFalse((dest / 'Assemblies').exists())
+        self.assertFalse((dest / 'Full_Character.glb').exists())
         manifest = json.loads((dest / 'asset_sources.json').read_text('utf-8'))
         self.assertEqual(manifest['character_folder'], self.prefix)
         self.assertIn(self.dds, [x['virtual'] for x in manifest['files']])
@@ -133,6 +205,25 @@ class FlatCharacterFolderTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             export_character_asset_folder(
                 self.workspace, self.prefix, self.output, index=self.index)
+
+    def test_character_layout_collects_equipment_animations_and_texture_sources(self):
+        equipment = self.prefix + '/equipment/weapon.skin'
+        idle = self.prefix + '/motion/idle.caf'
+        self._add(equipment, b'WEAPON', self.workspace)
+        self._add(idle, b'CAF', self.workspace)
+        report = export_character_asset_folder(
+            self.workspace, self.prefix, self.output, index=self.index,
+            full_model=(self._glb(), {'rig_status': 'Synthetic test'}))
+        root = Path(report['folder'])
+        self.assertTrue((root / 'merc_parnelltank.glb').is_file())
+        self.assertEqual((root / 'models/equipment/weapon.skin').read_bytes(), b'WEAPON')
+        self.assertEqual((root / 'animations/motion/idle.caf').read_bytes(), b'CAF')
+        self.assertEqual((root / 'textures/body_diff.dds.0').read_bytes(),
+                         b'DDS-sibling-TS')
+        self.assertFalse((root / 'Assemblies').exists())
+        manifest = json.loads((root / 'asset_sources.json').read_text('utf-8'))
+        self.assertIn('models/equipment/weapon.skin',
+                      [row['file'] for row in manifest['files']])
 
     def test_ambiguous_cross_pak_asset_is_reported_not_guessed(self):
         self._add(self.dds, b'DIFFERENT', self.root / 'ts2')
@@ -172,11 +263,11 @@ class FlatCharacterFolderTests(unittest.TestCase):
         target = Path(report['folder'])
         self.assertEqual(len(report['cdf_assemblies']), 3)
         for stage in (1,2,3):
-            output = target/'Assemblies'/('parnell'+str(stage)+'.glb')
+            output = target/'models'/('parnell'+str(stage)+'.glb')
             self.assertTrue(output.read_bytes().startswith(b'glTF'))
         manifest = json.loads((target/'asset_sources.json').read_text('utf-8'))
         self.assertEqual(len(manifest['cdf_assemblies']), 3)
-        self.assertFalse((target/'Assemblies'/'other.glb').exists())
+        self.assertFalse((target/'models'/'other.glb').exists())
 
     def test_unsafe_cdf_assembly_path_rejected_atomically(self):
         with self.assertRaisesRegex(ValueError,'Invalid CDF'):

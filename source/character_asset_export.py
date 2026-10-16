@@ -153,14 +153,89 @@ def build_cdf_folder_glbs(workspace, character_folder, index, *,
                 stage_root=stage_root)
             if not blob.startswith(b'glTF'):
                 raise ValueError('CDF assembly did not produce Blender-compatible GLB.')
+            info = dict(info)
+            # Put animations in the SAME Assemblies/<CDF>.glb as the mesh.
+            # Each variant is validated against its own CDF skeleton; importing
+            # one GLB into Blender now exposes its named Actions immediately.
+            # The separate animations/ sources and manifest remain supported.
+            try:
+                from character_animation_export import embed_verified_assembly_animations
+                blob, motion = embed_verified_assembly_animations(
+                    blob, character, index, workspace,
+                    relative=name, cancelled=cancelled, progress=progress)
+                info['embedded_animations'] = motion['animations']
+                info['embedded_animation_clips'] = tuple(motion['converted_clips'])
+                info['animation_note'] = motion['note']
+            except InterruptedError:
+                raise
+            except (ValueError, OSError, RuntimeError, TimeoutError) as exc:
+                # Missing/unsupported or mismatched CAF/DBA data never turns a
+                # valid assembled model into a failed export or invented motion.
+                info['embedded_animations'] = 0
+                info['embedded_animation_clips'] = ()
+                info['animation_note'] = 'Animation embedding unavailable: ' + str(exc)[:180]
             if total + len(blob) > max_total:
                 raise ValueError('Assembled GLB output exceeds 512 MiB safety budget.')
             total += len(blob)
             results[output.as_posix()] = (blob, dict(info, cdf=name))
+        except InterruptedError:
+            raise
         except (ValueError, OSError) as exc:
             skipped.append((name, str(exc)[:220]))
         if progress:
             progress('Prepared CDF assemblies', number, len(candidates))
+    # Emet's complete body (including the arm) is the original
+    # emetremotecannon_3p.skinm and its exactly matched .skin. The healing and
+    # dropship CDFs in the folder are deployable/equipment variants. Export
+    # that original 3P character as an additional canonical assembly, not a
+    # guessed CDF or a blend of body geometry from unrelated equipment models.
+    from character_full_models import preferred_emet_source
+    emet = preferred_emet_source(
+        name for name in index if name.casefold().startswith(prefix))
+    if emet is not None:
+        try:
+            from multi_pak_assets import _resolve
+            model_hits, model_status = _resolve(
+                index, emet, preferred_workspace=workspace)
+            skin_hits, skin_status = _resolve(
+                index, emet[:-1], preferred_workspace=workspace)
+            if model_status != 'found' or skin_status != 'found':
+                raise ValueError(
+                    'Emet original 3P mesh or exact .skin companion unavailable/ambiguous.')
+            model_record = model_hits[0]
+            source_ws = Path(model_record.get('workspace') or workspace).resolve()
+            source_root = (source_ws / 'files').resolve()
+            source = source_root.joinpath(*emet.split('/'))
+            if (source.is_symlink() or not source.is_file()
+                    or not source.resolve().is_relative_to(source_root)
+                    or source.resolve() != Path(model_record['file']).resolve()):
+                raise ValueError('Emet original 3P mesh is not a verified source file.')
+            from model_preview import read_preview_mesh
+            from model_textured_export import textured_model_from_workspace
+            mesh = read_preview_mesh(source.read_bytes(), emet)
+            blob, info = textured_model_from_workspace(
+                mesh, source_ws, emet, index=index,
+                texture_folder=texture_folder, projects_root=projects_root,
+                stage_root=stage_root)
+            if not blob.startswith(b'glTF'):
+                raise ValueError('Emet standalone native GLB is invalid.')
+            if total + len(blob) > max_total:
+                raise ValueError('Emet character would exceed assembly safety budget.')
+            output = 'Assemblies/Emetremotecannon_3p.glb'
+            if output in results:
+                raise ValueError('Duplicate Emet 3P assembly name.')
+            total += len(blob)
+            results[output] = (blob, dict(
+                info, cdf='', parts=(emet,), part_count=1,
+                preferred_full_character=True, original_3p_model=emet,
+                embedded_animations=0, embedded_animation_clips=(),
+                animation_note=('Emet original 3P mesh with arm. A separately '
+                                'verified matching animation skeleton is needed '
+                                'before embedding CAF/DBA Actions.')))
+        except InterruptedError:
+            raise
+        except (OSError, ValueError) as exc:
+            skipped.append((emet, 'Canonical Emet 3P assembly: ' + str(exc)[:190]))
     return results, tuple(skipped)
 
 
@@ -174,9 +249,9 @@ def export_character_asset_folder(workspace, character_folder, destination,
     Never overwrite an existing export, mutate source game assets, or silently
     resolve virtual-path conflicts to arbitrarily chosen texture bytes.
 
-    full_model: optional (GLB bytes, report) for Full_Character.glb.
+    full_model: optional (GLB bytes, report) for <character>.glb.
     assemblies: mapping of Assemblies/<cdf relative>.glb to (bytes, report).
-    Original CDFs and all raw assets stay alongside the Blender GLBs.
+    Source models (including equipment), animations, and textures are categorized.
     """
     home = Path(workspace).resolve()
     destination = Path(destination).resolve()
@@ -225,13 +300,27 @@ def export_character_asset_folder(workspace, character_folder, destination,
             local_parts = PurePosixPath(local).parts
             if not local_parts or any(p in ('', '.', '..') for p in local_parts):
                 raise ValueError('Unsafe character asset filename.')
-            output = staging.joinpath(*local_parts)
+            lower = local.casefold()
+            if lower.endswith(('.dds', '.dds.0', '.png', '.tif', '.tiff',
+                               '.tga', '.jpg', '.jpeg', '.bmp', '.ktx', '.hdr')):
+                category = 'textures'
+            elif lower.endswith(('.caf', '.dba', '.adb', '.bspace', '.animevents')):
+                category = 'animations'
+            else:
+                category = 'models'
+            # Avoid duplicate textures/textures and animations/animations
+            # when source PAK paths already use the category directory.
+            organized_parts = (local_parts[1:] if local_parts[0].casefold() == category
+                               else local_parts)
+            output = staging.joinpath(category, *organized_parts)
             if not output.resolve().is_relative_to(staging.resolve()):
                 raise ValueError('Unsafe output asset path.')
             output.parent.mkdir(parents=True, exist_ok=True)
             with source.open('rb') as inp, output.open('xb') as dst:
                 shutil.copyfileobj(inp, dst, 1024 * 1024)
-            manifest_rows.append({'file': local, 'virtual': game_path, 'source': archive})
+            manifest_rows.append({'file': output.relative_to(staging).as_posix(),
+                                  'original_relative': local, 'virtual': game_path,
+                                  'source': archive})
             if progress:
                 progress('Copying character assets', i, count)
         info = None
@@ -239,9 +328,12 @@ def export_character_asset_folder(workspace, character_folder, destination,
             if cancelled and cancelled():
                 raise InterruptedError('Character export cancelled.')
             payload, info = full_model
-            (staging / 'Full_Character.glb').write_bytes(payload)
+            primary_glb = staging / (short_name + '.glb')
+            primary_glb.write_bytes(payload)
             from blender_texture_folder import write_texture_folder
-            write_texture_folder(payload, staging / 'Full_Character.glb')
+            write_texture_folder(payload, primary_glb,
+                                 texture_root=staging / 'textures',
+                                 model_namespace=short_name)
             if progress:
                 progress('Writing full character model', count, count)
         assembly_rows = []
@@ -249,18 +341,56 @@ def export_character_asset_folder(workspace, character_folder, destination,
             if cancelled and cancelled():
                 raise InterruptedError('Character export cancelled.')
             payload, report = pair
-            out = staging.joinpath(*PurePosixPath(location).parts)
+            # Keep all CDF variants and equipment in models/, never beside
+            # the canonical character GLB.
+            relative_assembly = PurePosixPath(*PurePosixPath(location).parts[1:])
+            out = staging.joinpath('models', *relative_assembly.parts)
             if not out.resolve().is_relative_to(staging.resolve()):
                 raise ValueError('CDF assembly output escapes destination.')
             out.parent.mkdir(parents=True, exist_ok=True)
             with out.open('xb') as target_file:
                 target_file.write(payload)
             from blender_texture_folder import write_texture_folder
-            write_texture_folder(payload, out)
-            assembly_rows.append({'glb': location, **report})
+            write_texture_folder(
+                payload, out, texture_root=staging / 'textures',
+                model_namespace='models__' + '__'.join(relative_assembly.with_suffix('').parts))
+            assembly_rows.append({'glb': out.relative_to(staging).as_posix(), **report})
             if progress:
                 progress('Writing CDF Blender assemblies',
                          len(records) + int(full_model is not None) + position, count)
+        # Collect only the selected skeleton's verified native CAF/DBA
+        # references. Never claim raw database files are decoded Blender clips.
+        from character_animation_export import export_character_animation_folder
+        animation_report = None
+        representative = full_model
+        if representative is None and assemblies:
+            representative = next(iter(assemblies.values()))
+        if representative is not None:
+            base_blob, base_info = representative
+            chosen_cdf = base_info.get('cdf') if isinstance(base_info, dict) else None
+            source_character = None
+            if chosen_cdf and index:
+                try:
+                    from character_assembly import assemble_character
+                    source_character = assemble_character(
+                        home, chosen_cdf, index)
+                except (ValueError, OSError):
+                    pass  # Preserve source attachments and write diagnostics.
+            animation_report = export_character_animation_folder(
+                staging, base_blob, chosen_cdf or virtual,
+                index or {}, home, character=source_character,
+                model_name=short_name, cancelled=cancelled, progress=progress,
+                references=() if not index or not chosen_cdf else None)
+        else:
+            animation_folder = staging / 'animations'
+            animation_folder.mkdir(exist_ok=True)
+            (animation_folder / 'animation_manifest.json').write_text(
+                json.dumps({
+                    'format': 'evolve-character-animation-export-v1',
+                    'converted_clips': [], 'raw_sources': [],
+                    'note': 'No verified CDF rig available. Original animation '
+                            'source assets in this directory remain unconverted.'
+                }, indent=2), encoding='utf-8')
         # Provenance preserves full virtual game paths without adding redundant
         # directories to the user-visible output.
         (staging / 'asset_sources.json').write_text(
@@ -269,7 +399,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
                         'unresolved_companions': list(conflicts),
                         'full_model': info,
                         'cdf_assemblies': assembly_rows,
-                        'cdf_assembly_errors': list(assembly_errors)}, indent=2, default=str),
+                        'cdf_assembly_errors': list(assembly_errors),
+                        'animations': animation_report}, indent=2, default=str),
             encoding='utf-8')
         os.replace(staging, target)
         return {
@@ -277,6 +408,7 @@ def export_character_asset_folder(workspace, character_folder, destination,
             'unresolved': tuple(conflicts), 'full_model': info,
             'cdf_assemblies': tuple(assembly_rows),
             'cdf_assembly_errors': tuple(assembly_errors),
+            'animations': animation_report,
         }
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

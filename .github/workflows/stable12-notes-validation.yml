@@ -1,4 +1,4 @@
-name: Verify stable 1.2 release notes and channel separation
+name: Verify stable release notes and channel separation
 
 on:
   pull_request:
@@ -34,9 +34,11 @@ jobs:
           from release_notes import RELEASE_NOTES, markdown
           from version_info import app_version
           readme = Path('README.md').read_text(encoding='utf-8')
-          assert app_version() == 'v1.2.0'
-          assert RELEASE_NOTES[0][0] == '1.2.0'
-          assert len(RELEASE_NOTES[0][1]) >= 8
+          latest = RELEASE_NOTES[0][0]
+          assert latest.count('.') == 2 and tuple(map(int, latest.split('.'))) >= (1, 2, 0)
+          assert app_version() == 'v' + latest
+          assert 1 <= len(RELEASE_NOTES[0][1]) <= 12
+          assert '## Latest Stable — v' + latest in readme
           assert all('-beta.' not in name for name, _ in RELEASE_NOTES)
           assert '## Latest Beta' not in readme
           assert '1.1.18-beta.' not in readme

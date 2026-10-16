@@ -177,13 +177,46 @@ def combine_meshes(items):
     return mesh, material
 
 
+MAX_CDF_RENDER_PARTS = 24
+
+
+def _hunter_anatomical_skin(label, binding, cdf):
+    """Only always include explicitly named body limbs, not gun attachments.
+
+    E.g. an arm supplied as a separate CA_SKIN should not disappear when a
+    weapon is selected. Names such as armgun, armory or weapon_armature are
+    *not* treated as body parts. This reads the CDF; no mesh is invented.
+    """
+    limb_names = frozenset({
+        'arm', 'leftarm', 'rightarm', 'larm', 'rarm',
+        'upperarm', 'forearm', 'leftforearm', 'rightforearm',
+        'hand', 'lefthand', 'righthand', 'lhand', 'rhand',
+    })
+    clean = lambda text: re.sub(r'[^a-z0-9]', '', text.casefold())
+    name = clean(label)
+    if name in limb_names:
+        return True
+    # Attachments may have a character name prefix, e.g. Emet_RightArm.
+    own_tokens = {clean(p) for part in Path(cdf).parts[-2:]
+                  for p in re.split(r'[^a-zA-Z0-9]+', part)
+                  if p and len(p) >= 3}
+    if any(name == prefix + limb for prefix in own_tokens for limb in limb_names):
+        return True
+    stem = Path(binding).stem.casefold()
+    tokens = tuple(t for t in re.split(r'[^a-z0-9]+', stem) if t)
+    return any(token in limb_names for token in tokens)
+
+
 def assemble_character(workspace, selected, index, *, texture_folder=None,
-                       projects_root=None, stage_root=None, equipment=None):
+                       projects_root=None, stage_root=None, equipment=None,
+                       cancel=None):
     """Return None when no owning CDF or no renderable bound skin exists.
 
     Only select the character body and explicitly selected weapon/skin. Extra
     equipment can be added through a future attachment choice UI.
     """
+    if cancel is not None and cancel():
+        raise InterruptedError('Character assembly cancelled')
     definition = _character_definition(selected, index, workspace)
     if definition is None:
         return None
@@ -213,7 +246,9 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         body_stems = [Path(rel).stem.casefold() + '_' for _, rel in primary]
         primary.extend((label, rel) for label, rel in skins
                        if (label, rel) not in primary and
-                       any(Path(rel).stem.casefold().startswith(stem) for stem in body_stems))
+                       (any(Path(rel).stem.casefold().startswith(stem)
+                            for stem in body_stems)
+                        or _hunter_anatomical_skin(label, rel, cdf)))
     options = [(label, rel) for label, rel in skins if (label, rel) not in primary]
     if equipment == 'body':
         chosen = []
@@ -240,7 +275,13 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
     if not requested:
         return None
     included, omitted, parts, rig_parts = [], [], [], []
-    for label, skin in requested[:8]:
+    if len(requested) > MAX_CDF_RENDER_PARTS:
+        omitted.extend(label + ': CDF part limit (' +
+                       str(MAX_CDF_RENDER_PARTS) + ')' for label, _ in
+                       requested[MAX_CDF_RENDER_PARTS:])
+    for label, skin in requested[:MAX_CDF_RENDER_PARTS]:
+        if cancel is not None and cancel():
+            raise InterruptedError('Character assembly cancelled')
         render = skin if skin.casefold().endswith('.chr') else skin + 'm'
         path = _resolve_file(index, render, workspace)
         if path is None:
@@ -254,7 +295,8 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         try:
             materials = load_preview_materials(
                 workspace, render, texture_folder, projects_root=projects_root,
-                stage_root=stage_root, index=index, cdf=cdf)
+                stage_root=stage_root, index=index, cdf=cdf,
+                **({'cancel': cancel} if cancel is not None else {}))
         except (ValueError, OSError) as exc:
             materials = None
             omitted.append(label + ' textures: ' + str(exc))
@@ -268,6 +310,8 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         included.append(label)
     if not parts:
         return None
+    if cancel is not None and cancel():
+        raise InterruptedError('Character assembly cancelled')
     mesh, materials = combine_meshes(parts)
     if omitted and materials is not None:
         from dataclasses import replace

@@ -12,9 +12,10 @@ import threading
 from PySide6.QtCore import QObject,Signal,QRunnable,QThreadPool,Qt,QTimer
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QLabel,
  QLineEdit,QComboBox,QPushButton,QPlainTextEdit,QFileDialog,QMessageBox,
- QTabWidget,QSpinBox,QSlider)
+ QTabWidget,QSpinBox,QSlider,QScrollArea,QFrame)
 
 from developer_memory import list_evolve_processes,read_memory,parse_address
+from qt_ui_components import DisclosurePanel, WorkspaceHeader
 from developer_runtime_lab import (parse_aob,signature_matches,take_snapshot,
  compare_snapshot,read_pointer_chain, sample_watchlist, runtime_xml_check)
 from developer_network_lab import (parse_log_file,tcp_connections_for_pid,
@@ -78,9 +79,15 @@ class DeveloperLabPanel(QWidget):
         self.signals=_AsyncSignals(self)
         self.signals.done.connect(self._completed)
         root=QVBoxLayout(self)
-        root.addWidget(QLabel('Read-only memory tracing and private/local '
-                             'network testing. Live public services are never modified.'))
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
+        root.addWidget(WorkspaceHeader(
+            "Developer Laboratory",
+            "Protected memory research, event diagnostics and isolated local "
+            "network testing. Public services are never modified."))
         self.tabs=QTabWidget()
+        self.tabs.setObjectName('developerWorkspaceTabs')
+        self.tabs.setDocumentMode(True)
         root.addWidget(self.tabs,1)
         self._memory_ui()
         self._network_ui()
@@ -89,6 +96,15 @@ class DeveloperLabPanel(QWidget):
         from qt_game_events import GameEventsPanel
         self.events_panel = GameEventsPanel(self, game_root_provider=self.game_root_provider)
         self.tabs.addTab(self.events_panel, 'Game Events')
+
+    def _add_tool_tab(self, page, title):
+        # The workbench never bypasses the manager's access-code gate.
+        # All tab widgets remain attached; scroll only on compact screens.
+        scroll=QScrollArea(self.tabs)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(page)
+        self.tabs.addTab(scroll, title)
 
     def _memory_ui(self):
         page=QWidget()
@@ -114,6 +130,9 @@ class DeveloperLabPanel(QWidget):
         actions.addWidget(button('Snapshot B',lambda:self.snapshot('B')))
         actions.addWidget(button('Compare A/B',self.compare))
         layout.addLayout(actions)
+        self.memory_advanced=DisclosurePanel(
+            'Advanced memory research (Developer only)', expanded=False)
+        layout.addWidget(self.memory_advanced)
         chain=QHBoxLayout()
         self.offsets=QLineEdit('0x0, 0x18')
         self.offsets.setPlaceholderText('Pointer offsets: 0x0, 0x18')
@@ -121,13 +140,13 @@ class DeveloperLabPanel(QWidget):
         chain.addWidget(self.offsets,1)
         chain.addWidget(button('Trace',self.pointer))
         chain.addWidget(button('Find Pointers',self.pointer_scan))
-        layout.addLayout(chain)
+        self.memory_advanced.addLayout(chain)
         sig=QHBoxLayout()
         self.signature=QLineEdit('48 8B ?? ??')
         sig.addWidget(QLabel('AOB signature in Snapshot A'))
         sig.addWidget(self.signature,1)
         sig.addWidget(button('Find',self.signature_search))
-        layout.addLayout(sig)
+        self.memory_advanced.addLayout(sig)
         patch=QHBoxLayout()
         self.patch_data=QLineEdit()
         self.patch_data.setPlaceholderText('Replacement hex bytes for Snapshot A')
@@ -136,13 +155,13 @@ class DeveloperLabPanel(QWidget):
         self.apply_patch_button = button('Apply Patch…',self.apply_patch)
         self.apply_patch_button.setEnabled(False)
         patch.addWidget(self.apply_patch_button)
-        layout.addLayout(patch)
+        self.memory_advanced.addLayout(patch)
         self.memory_output=QPlainTextEdit()
         self.memory_output.setReadOnly(True)
         self.memory_output.setPlaceholderText(
             'Snapshot differences, pointer chains, and signature matches appear here.')
         layout.addWidget(self.memory_output,1)
-        self.tabs.addTab(page,'Memory Research')
+        self._add_tool_tab(page,'Memory Research')
 
     def _network_ui(self):
         page=QWidget()
@@ -182,7 +201,7 @@ class DeveloperLabPanel(QWidget):
         self.network_output=QPlainTextEdit()
         self.network_output.setReadOnly(True)
         layout.addWidget(self.network_output,1)
-        self.tabs.addTab(page,'Relay / Protocol')
+        self._add_tool_tab(page,'Relay / Protocol')
 
     def _entity_ui(self):
         page=QWidget()
@@ -215,7 +234,7 @@ class DeveloperLabPanel(QWidget):
         self.entity_output=QPlainTextEdit()
         self.entity_output.setReadOnly(True)
         layout.addWidget(self.entity_output,1)
-        self.tabs.addTab(page,'Entity Watches / Events')
+        self._add_tool_tab(page,'Entity Watches / Events')
 
     def add_entity_watch(self):
         try:
@@ -360,7 +379,7 @@ class DeveloperLabPanel(QWidget):
         self.trace_output=QPlainTextEdit()
         self.trace_output.setReadOnly(True)
         layout.addWidget(self.trace_output,1)
-        self.tabs.addTab(page,'Tracing / Support')
+        self._add_tool_tab(page,'Tracing / Support')
 
     def _pid(self):
         number=self.pids.currentData()

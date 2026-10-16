@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from io import BytesIO
 from pathlib import Path
+import math
 from collections import OrderedDict
 import hashlib
 import re
@@ -24,7 +25,9 @@ from multi_pak_assets import related_asset_index, _resolve, load_workspace, norm
 
 MAX_MATERIAL_BYTES = 5 * 1024 * 1024
 MAX_TEXTURE_BYTES = 64 * 1024 * 1024
-MAX_PREVIEW_TEX_DIM = 4096  # original DDS resolution where bounded by pixel budget
+MAX_PREVIEW_TEX_DIM = 16384  # no silent highest-mip downscale; memory limits remain explicit
+MAX_MATERIAL_DDS_BYTES = 512 * 1024 * 1024
+MAX_MATERIAL_PIXELS = 100_000_000
 _texture_pixels = OrderedDict()
 _texture_lock = threading.RLock()
 MAX_CACHED_TEXTURE_BYTES = 128 * 1024 * 1024
@@ -53,6 +56,18 @@ class PreviewMaterials:
     alpha_cutoffs: tuple = ()  # Explicit CryEngine AlphaTest thresholds
 
     hidden: tuple = ()  # Explicit NoDraw slots; never inferred from missing DDS.
+    gloss_maps: tuple = ()  # Explicit Gloss/Glossiness/Smoothness slots only.
+    detail_maps: tuple = ()  # Optional, separately mapped detail-color layer.
+    detail_normal_maps: tuple = ()  # Optional, separately mapped detail normal.
+    map_uv_transforms: tuple = ()  # (role, per-material UV-transform tuples)
+    uv_motions: tuple = ()  # per-material supported constant (du,dv,drotate) motions
+    map_uv_motions: tuple = ()  # (role, per-material motions)
+    environment_maps: tuple = ()  # six-face PIL tuples, or None per material
+    reflection_strengths: tuple = ()
+    glass_materials: tuple = ()
+    refraction_indices: tuple = ()  # explicit source IOR only
+    ao_maps: tuple = ()  # explicit ambient-occlusion map, or verified packed channel
+    ao_strengths: tuple = ()  # per-material AO strength in [0, 1]
 
     @property
     def count(self):
@@ -209,8 +224,8 @@ def _historical_2012_character(index, workspace, relative):
 def _decode_texture(item, *, index=None, max_dimension=MAX_PREVIEW_TEX_DIM,
                     normal_map=False, historical_2012=False):
     path = item['file']
-    if path.stat().st_size > MAX_TEXTURE_BYTES:
-        raise ValueError('Texture fragment exceeds the 64 MiB preview limit.')
+    if path.stat().st_size > MAX_MATERIAL_DDS_BYTES:
+        raise ValueError('DDS fragment exceeds the 512 MiB safety limit.')
     relative = item['relative']
     if relative.casefold().endswith('.dds.0'):
         # Imported source PAKs commonly hold only .0 while higher-resolution
@@ -299,8 +314,10 @@ def _decode_texture_pixels(raw, relative, *, max_dimension=MAX_PREVIEW_TEX_DIM,
             _texture_pixels.move_to_end(key)
             return cached.copy()
     info = parse_dds(raw)
-    if len(raw) > MAX_TEXTURE_BYTES or info.width * info.height > 16_777_216:
-        raise ValueError('DDS texture exceeds preview size limits.')
+    if len(raw) > MAX_MATERIAL_DDS_BYTES or info.width * info.height > MAX_MATERIAL_PIXELS:
+        raise ValueError('DDS exceeds the 512 MiB / 100 megapixel decoding safety budget.')
+    if max_dimension >= MAX_PREVIEW_TEX_DIM and max(info.width, info.height) > MAX_PREVIEW_TEX_DIM:
+        raise ValueError('DDS top mip exceeds the supported full-resolution dimension; refusing silent downscale.')
     # CryEngine normal maps can be BC5 XY or DXT5nm alpha/green, not
     # directly usable tangent-space RGB. The same normalized pixels feed the
     # Qt shader and GLB exporter; never rescale a lower mip as a substitute.
@@ -334,12 +351,17 @@ def _decode_texture_pixels(raw, relative, *, max_dimension=MAX_PREVIEW_TEX_DIM,
     return tex
 
 
-def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None, material_override=None, texture_quality="highest"):
+def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None, material_override=None, texture_quality="highest", cancel=None):
+    def checkpoint():
+        if cancel is not None and cancel():
+            raise InterruptedError('Texture/material decoding cancelled')
+    checkpoint()
     if texture_quality not in ("highest","balanced"):
         raise ValueError("Unsupported texture quality setting.")
-    decode_max = 4096 if texture_quality == "highest" else 1024
+    decode_max = MAX_PREVIEW_TEX_DIM if texture_quality == "highest" else 1024
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
+    checkpoint()
     historical_2012 = _historical_2012_character(
         index, workspace, model_relative)
     from model_material_resolve import find_model_material
@@ -362,6 +384,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                          model_relative + '; searched: ' +
                          ', '.join(attempted[:6]) +
                          '. Check CDF material overrides or embedded material references.')
+    checkpoint()
     raw = material['file'].read_bytes()
     if len(raw) > MAX_MATERIAL_BYTES or b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
         raise ValueError('Material XML is too large or contains disallowed entities.')
@@ -455,10 +478,27 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         return hit if hit is not None else recover_unique_dds(ref)
 
     def optional_map(item, names):
-        ref = next((child.get('File') or child.get('file')
-                    for child in item.findall('./Textures/Texture')
-                    if (child.get('Map') or child.get('map') or '').casefold() in names),None)
-        normal = 'normal' in names
+        node = next((child for child in item.findall('./Textures/Texture')
+                     if (child.get('Map') or child.get('map') or '').casefold() in names), None)
+        channel = node.get('Channel', '') if node is not None else ''
+        # The gloss channel of a *named* specular texture may be packed.
+        # Only an explicit GlossChannel declaration authorizes extracting it.
+        if node is None and 'gloss' in names:
+            node = next((child for child in item.findall('./Textures/Texture')
+                         if (child.get('Map') or child.get('map') or '').casefold()
+                         in ('specular','specularcolor') and
+                         child.get('GlossChannel')), None)
+            channel = node.get('GlossChannel', '') if node is not None else ''
+        if node is None and 'ao' in names:
+            # An explicitly declared AOChannel on any bound texture is
+            # evidence of packed occlusion; alpha elsewhere is NOT assumed
+            # to be occlusion.
+            node = next((child for child in item.findall('./Textures/Texture')
+                         if child.get('AOChannel') or child.get('OcclusionChannel')), None)
+            if node is not None:
+                channel = node.get('AOChannel') or node.get('OcclusionChannel')
+        ref = (node.get('File') or node.get('file')) if node is not None else None
+        normal = 'normal' in names or 'detailnormal' in names
         if not ref and normal:
             # Some extracted materials omit the normal slot but ship a
             # conventional _ddn source in the same character/Asset Library.
@@ -479,16 +519,31 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             return None
         hit = find_texture(ref)
         if hit is None:
+            if 'ao' in names:
+                raise ValueError('Explicit AO texture was not resolved: ' + str(ref))
             return None
-        return _decode_texture(hit, index=index, max_dimension=decode_max,
-                               normal_map=normal, historical_2012=historical_2012)
+        decoded = _decode_texture(hit, index=index, max_dimension=decode_max,
+                                  normal_map=normal, historical_2012=historical_2012)
+        if channel:
+            component = channel.upper()
+            if component not in ('R', 'G', 'B', 'A'):
+                raise ValueError('Unsupported explicit ' +
+                                 ('AO ' if 'ao' in names else '') +
+                                 'packed-channel selector: ' + channel)
+            if component not in decoded.getbands():
+                raise ValueError('Declared packed channel is absent from the source DDS: ' + channel)
+            decoded = Image.merge('RGB', (decoded.getchannel(component),) * 3)
+        return decoded
 
-    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
-    transforms = []; sources = []; references = []; hidden = []
+    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; details=[]; detail_normals=[]; ao_maps=[]; ao_strengths=[]; environments=[]; reflections=[]; glasses=[]; iors=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
+    transforms = []; motions = []; sources = []; references = []; hidden = []
+    role_transforms = {role: [] for role in ('normal','specular','gloss','detail','detail_normal','ao')}
+    role_motions = {role: [] for role in role_transforms}
     for item in subs:
+        checkpoint()
         name = item.get('Name') or 'unnamed'
         names.append(name)
-        from texture_transform import parse_transform, IDENTITY
+        from texture_transform import parse_transform, parse_motion, IDENTITY
         diffuse_node = next((t for t in item.findall('./Textures/Texture')
                              if t.get('Map', '').casefold() == 'diffuse'), None)
         try:
@@ -500,12 +555,107 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             issues.append(name + ': ' + str(error))
         transforms.append(transform)
         try:
+            motions.append(parse_motion(diffuse_node))
+        except ValueError as error:
+            motions.append((0.,0.,0.))
+            issues.append(name + ': ' + str(error))
+        role_keys = {
+            'normal': ('bumpmap','normal','normalmap'),
+            'specular': ('specular','specularcolor'),
+            'gloss': ('gloss','glossiness','smoothness'),
+            'detail': ('detail','detaildiffuse','detailmap'),
+            'detail_normal': ('detailnormal','detailnormalmap','detailbumpmap'),
+            'ao': ('ao','occlusion','occlusionmap','ambientocclusion','ambientocclusionmap'),
+        }
+        for role, keys in role_keys.items():
+            texture_node = next((n for n in item.findall('./Textures/Texture')
+                                if (n.get('Map') or n.get('map') or '').casefold() in keys), None)
+            if role == 'ao' and texture_node is None:
+                # A packed AO channel inherits its actual source texture's
+                # TexMod rather than erroneously sampling diffuse UVs.
+                texture_node = next((n for n in item.findall('./Textures/Texture')
+                                     if n.get('AOChannel') or n.get('OcclusionChannel')), None)
+            try:
+                slot_transform, animated = parse_transform(texture_node)
+                if animated:
+                    issues.append(name + ': animated ' + role + ' texture modifiers require verification')
+            except ValueError as error:
+                slot_transform = IDENTITY
+                issues.append(name + ': ' + str(error))
+            role_transforms[role].append(slot_transform)
+            try:
+                role_motions[role].append(parse_motion(texture_node))
+            except ValueError as error:
+                role_motions[role].append((0.,0.,0.))
+                issues.append(name + ': ' + str(error))
+        try:
             opacity = max(0.,min(1.,float(item.get('Opacity','1'))))
         except ValueError:
             opacity = 1.
         opacities.append(opacity)
+        raw_ao_strength = (item.get('AOStrength') or item.get('OcclusionStrength')
+                           or item.get('AmbientOcclusionStrength') or '1')
+        try:
+            ao_strength = float(raw_ao_strength)
+            if not math.isfinite(ao_strength) or not 0. <= ao_strength <= 1.:
+                raise ValueError('AO strength out of [0, 1] range')
+        except ValueError:
+            issues.append(name + ': invalid AO strength, using 1.0')
+            ao_strength = 1.
+        ao_strengths.append(ao_strength)
         shader = item.get('Shader', '').casefold()
         hidden.append(shader == 'nodraw')
+        glasses.append('glass' in shader or 'refract' in shader)
+        ior = item.get('IOR') or item.get('RefractionIndex') or ''
+        try:
+            ior = float(ior) if ior else None
+            if ior is not None and not 1.0 <= ior <= 3.0:
+                raise ValueError('out-of-range IOR')
+        except ValueError:
+            issues.append(name + ': invalid explicit glass refraction index')
+            ior = None
+        iors.append(ior)
+        reflection_node = next((tex for tex in item.findall('./Textures/Texture')
+                                if (tex.get('Map') or tex.get('map') or '').casefold()
+                                in ('environment','cubemap','reflection')), None)
+        environment = None
+        if reflection_node is not None:
+            env_ref = reflection_node.get('File') or reflection_node.get('file')
+            if env_ref:
+                try:
+                    from cubemap_material import decode_cubemap_dds, assemble_cubemap_stream
+                    found = find_texture(env_ref)
+                    if found is not None:
+                        source = Path(found['file'])
+                        if source.is_symlink() or source.stat().st_size > MAX_MATERIAL_DDS_BYTES:
+                            raise ValueError('Unsafe or oversized cubemap source')
+                        raw_cube = source.read_bytes()
+                        if str(found['relative']).casefold().endswith('.dds.0'):
+                            stem = str(found['relative'])[:-2]
+                            companions = {}
+                            for number in range(1,32):
+                                match = _find_unique(index, stem+'.'+str(number))
+                                if match is None:
+                                    break
+                                child = Path(match['file'])
+                                if child.is_symlink() or child.stat().st_size > MAX_MATERIAL_DDS_BYTES:
+                                    raise ValueError('Unsafe cubemap stream part')
+                                companions[number] = child.read_bytes()
+                            if companions:
+                                raw_cube = assemble_cubemap_stream(raw_cube, companions)
+                        environment = decode_cubemap_dds(raw_cube)
+                except (ValueError,OSError) as error:
+                    issues.append(name + ': cubemap unavailable: ' + str(error))
+        environments.append(environment)
+        try:
+            intensity = float(item.get('ReflectionStrength','1'))
+            if not math.isfinite(intensity):
+                raise ValueError('non-finite intensity')
+            intensity = max(0.,min(1.,intensity))
+        except ValueError:
+            issues.append(name + ': invalid reflection strength')
+            intensity = 1.
+        reflections.append(intensity if environment else 0.)
         # CryEngine diffuse DDS alpha is frequently a mask or auxiliary data,
         # not an alpha-blend instruction. Do NOT hide opaque armor/body meshes.
         try:
@@ -513,10 +663,15 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         except ValueError:
             alpha_test = False
         cutoffs.append(float(alpha_test))
-        alpha_modes.append(bool(alpha_test) or opacity < 0.999 or
+        explicitly_packed_opacity = bool(diffuse_node is not None and diffuse_node.get('OpacityChannel'))
+        alpha_modes.append(bool(alpha_test) or opacity < 0.999 or explicitly_packed_opacity or
                            any(word in shader for word in ('glass', 'transparent', 'translucent', 'decal')))
         for target,keys in ((normals,('bumpmap','normal','normalmap')),
-                            (speculars,('specular','specularcolor','gloss'))):
+                            (speculars,('specular','specularcolor')),
+                            (glosses,('gloss','glossiness','smoothness')),
+                            (details,('detail','detaildiffuse','detailmap')),
+                            (detail_normals,('detailnormal','detailnormalmap','detailbumpmap')),
+                            (ao_maps,('ao','occlusion','occlusionmap','ambientocclusion','ambientocclusionmap'))):
             try:
                 target.append(optional_map(item,keys))
             except (OSError,ValueError) as error:
@@ -548,9 +703,17 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 result.append(None)
                 sources.append(None)
                 continue
+            checkpoint()
             image = _decode_texture(
                 found, index=index, max_dimension=decode_max,
                 historical_2012=historical_2012)
+            checkpoint()
+            if explicitly_packed_opacity:
+                channel = diffuse_node.get('OpacityChannel').upper()
+                if channel not in ('R','G','B','A') or channel not in image.getbands():
+                    raise ValueError('Explicit diffuse OpacityChannel is absent or unsupported: ' + channel)
+                image = image.convert('RGBA')
+                image.putalpha(image.getchannel(channel))
             result.append(material_color(image, item.get('Diffuse', '1,1,1')))
             sources.append((
                 str(found.get('relative') or diffuse),
@@ -576,7 +739,16 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                          ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
-                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden))
+                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden), gloss_maps=tuple(glosses),
+                            detail_maps=tuple(details), detail_normal_maps=tuple(detail_normals),
+                            map_uv_transforms=tuple((role,tuple(matrices)) for role,matrices in role_transforms.items()),
+                            uv_motions=tuple(motions),
+                            map_uv_motions=tuple((role,tuple(mats)) for role,mats in role_motions.items()),
+                            environment_maps=tuple(environments),
+                            reflection_strengths=tuple(reflections),
+                            glass_materials=tuple(glasses),
+                            refraction_indices=tuple(iors),
+                            ao_maps=tuple(ao_maps), ao_strengths=tuple(ao_strengths))
 
 
 

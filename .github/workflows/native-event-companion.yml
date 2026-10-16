@@ -2,7 +2,15 @@ name: Validate native game-side event companion (non-publishing)
 
 on:
   push:
-    branches: [feature/beta17-native-game-bridge]
+    branches: [feature/beta17-native-game-bridge, feature/live-ui-inspector-bridge-v1]
+  pull_request:
+    branches: [main, beta]
+    paths:
+      - 'native/EvolveEventBridge/**'
+      - 'native/tests/**'
+      - 'source/gfx_live_ui_bridge.py'
+      - 'source/test_gfx_live_ui_bridge.py'
+      - '.github/workflows/native-event-companion.yml'
   workflow_dispatch:
 
 permissions:
@@ -35,7 +43,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect companion exports' }
           foreach ($name in @('EvolveBridge_Start','EvolveBridge_Stop',
               'EvolveBridge_RegisterVerifiedEvent','EvolveBridge_Pump',
-              'EvolveBridge_CopyToken')) {
+              'EvolveBridge_CopyToken', 'EvolveBridge_RegisterUiSnapshot')) {
             if ($exports -notmatch [regex]::Escape($name)) { throw "Missing native export: $name" }
           }
       - name: Compile simulated Evolve.exe smoke-test host
@@ -67,12 +75,12 @@ jobs:
           # The event protocol/catalog unit tests use Python's stdlib only.
           Push-Location source
           try {
-            python -m unittest -v test_developer_event_catalog test_developer_event_live
+            python -m unittest -v test_developer_event_catalog test_developer_event_live test_gfx_live_ui_bridge
             if ($LASTEXITCODE -ne 0) { throw 'Bridge client tests failed' }
           } finally { Pop-Location }
       - name: Upload native DLL as TEST artifact only
         uses: actions/upload-artifact@v4
         with:
-          name: EvolveNativeEventBridge-transport-only-not-game-ready
+          name: EvolveNativeEventBridge-read-only-ui-transport-no-game-adapter
           path: dist/native-bridge/EvolveEventBridge.dll
           if-no-files-found: error

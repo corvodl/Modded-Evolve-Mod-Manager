@@ -1,6 +1,7 @@
 """GPU preview quality regression checks for detail-preserving texture upload."""
 from __future__ import annotations
 import ast
+import re
 from pathlib import Path
 import unittest
 
@@ -12,7 +13,9 @@ class GPUTextureQualityTests(unittest.TestCase):
         self.assertIn("glGenerateMipmap(GL_TEXTURE_2D)",src)
         self.assertIn("GL_LINEAR_MIPMAP_LINEAR",src)
         self.assertIn("GL_TEXTURE_MAX_ANISOTROPY_EXT",src)
-        self.assertIn("im.width,im.height",src)
+        # The staged uploader may format the call differently, but must
+        # submit the original decoded image dimensions, never a thumbnail.
+        self.assertRegex(src, r"glTexImage2D\(GL_TEXTURE_2D,\s*0,\s*fmt,\s*im\.width,\s*im\.height")
         self.assertNotIn("im.thumbnail(",src)
         ast.parse(src)
 

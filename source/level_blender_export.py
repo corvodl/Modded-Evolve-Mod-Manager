@@ -62,6 +62,9 @@ class SceneAssembler:
         if key in self.mesh_ids:
             return self.mesh_ids[key]
         doc, data=_unpack_glb(source)
+        for extension in doc.get('extensionsUsed', ()):
+            if extension not in self.doc.setdefault('extensionsUsed', []):
+                self.doc['extensionsUsed'].append(extension)
         if len(doc.get("meshes",()))!=1:
             raise ValueError("Expected one decoded mesh resource.")
         if len(self.binary)+len(data)>MAX_GLTF_BINARY:
@@ -101,8 +104,9 @@ class SceneAssembler:
         for item in doc.get("materials",()):
             value=json.loads(json.dumps(item))
             pbr=value.get("pbrMetallicRoughness",{})
-            if "baseColorTexture" in pbr:
-                pbr["baseColorTexture"]["index"]+=offsets["textures"]
+            for slot in ("baseColorTexture", "metallicRoughnessTexture"):
+                if slot in pbr:
+                    pbr[slot]["index"]+=offsets["textures"]
             for slot in ("normalTexture","emissiveTexture","occlusionTexture"):
                 if slot in value: value[slot]["index"]+=offsets["textures"]
             self.doc["materials"].append(value)

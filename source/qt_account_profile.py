@@ -4,10 +4,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from qt_ui_components import WorkspaceHeader
+
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QHeaderView
+    QVBoxLayout, QWidget, QHeaderView, QComboBox
 )
 
 from account_profile_snapshot import (
@@ -19,9 +21,9 @@ from account_profile_snapshot import (
 class AccountProfileInspector(QDialog):
     """Load a readable backup, compare revisions, and export an offline test copy."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, client=None):
         super().__init__(parent)
-        self.setWindowTitle("Account profile • offline inspector")
+        self.setWindowTitle("Account profile • client details and offline copies")
         self.setMinimumSize(850, 570)
         self.resize(1040, 700)
         self.source = None
@@ -31,13 +33,14 @@ class AccountProfileInspector(QDialog):
         self.perk_names = set()
         self._ownable_checks = {}
         self._progression = {}
-        self.setStyleSheet("QDialog {background:#202126; color:#e6e6e9;} "
-                           "QTableWidget,QLineEdit {background:#292a30; color:#e6e6e9;} "
-                           "QPushButton {padding:6px;}")
+        self.client = client
+        # Inherit shared Qt design tokens; never force dark colors in Light mode.
         layout = QVBoxLayout(self)
-        title = QLabel("Readable account profile backups • local test workspace")
-        title.setStyleSheet("font-size:17px;font-weight:600")
-        layout.addWidget(title)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        layout.addWidget(WorkspaceHeader(
+            "Account Profile",
+            "View local client details and compare readable test backups."))
         warning = QLabel(
             "The current TRSEVLVPC cache is encoded. This tool cannot edit server balances, "
             "grant permanent online ownership or import a copy into a live account. "
@@ -55,7 +58,7 @@ class AccountProfileInspector(QDialog):
             btn.clicked.connect(callback)
             actions.addWidget(btn)
         layout.addLayout(actions)
-        self.summary = QLabel("No readable backup selected.")
+        self.summary = QLabel("Offline backup: none selected. Client details are shown separately.")
         layout.addWidget(self.summary)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs, 1)
@@ -80,6 +83,45 @@ class AccountProfileInspector(QDialog):
         self.comparison = QLabel("Compare two readable snapshots to inspect additions and level changes.")
         self.comparison.setWordWrap(True)
         self.tabs.addTab(self.comparison, "Backup comparison")
+        details = QWidget()
+        detail_layout = QVBoxLayout(details)
+        description = QLabel('Automatically discovered local client details. Cached values may differ from the server. Missing fields are not inferred. Select a source to inspect it; refresh after the client updates your profile.')
+        description.setWordWrap(True)
+        detail_layout.addWidget(description)
+        source_row = QHBoxLayout()
+        self.client_sources = QComboBox()
+        self.client_sources.setAccessibleName('Client profile source')
+        source_row.addWidget(self.client_sources, 1)
+        refresh = QPushButton('Refresh client details')
+        refresh.clicked.connect(self.refresh_client_details)
+        source_row.addWidget(refresh)
+        detail_layout.addLayout(source_row)
+        self.client_status = QLabel()
+        self.client_status.setTextFormat(Qt.PlainText)
+        self.client_status.setWordWrap(True)
+        detail_layout.addWidget(self.client_status)
+        self.client_table = QTableWidget(0, 2)
+        self.client_table.setHorizontalHeaderLabels(['Profile detail', 'Local client value'])
+        self.client_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.client_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.client_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        detail_layout.addWidget(self.client_table)
+        self.tabs.addTab(details, 'Client details')
+        from client_profile_details import profile_sources
+        for label, path in profile_sources(client):
+            self.client_sources.addItem(label + ' — ' + str(path), path)
+        # Prefer an existing source, while keeping its location visible.
+        for index in range(self.client_sources.count()):
+            try:
+                exists = self.client_sources.itemData(index).is_file()
+            except OSError:
+                exists = False
+            if exists:
+                self.client_sources.setCurrentIndex(index)
+                break
+        self.client_sources.currentIndexChanged.connect(self.refresh_client_details)
+        self.refresh_client_details()
+        self.tabs.setCurrentWidget(details)
         footer = QHBoxLayout()
         self.allow_changes = QCheckBox("Enable offline test-copy changes (never the active account)")
         self.allow_changes.toggled.connect(self._editing_changed)
@@ -90,6 +132,23 @@ class AccountProfileInspector(QDialog):
         self.export_btn.clicked.connect(self.export_copy)
         footer.addWidget(self.export_btn)
         layout.addLayout(footer)
+
+    def refresh_client_details(self, *_):
+        from client_profile_details import read_details
+        self.client_table.setRowCount(0)
+        path = self.client_sources.currentData()
+        if path is None:
+            self.client_status.setText('No configured client or local launcher profile location is available.')
+            return
+        try:
+            rows = read_details(path)
+            self.client_table.setRowCount(len(rows))
+            for row, (label, value) in enumerate(rows):
+                self.client_table.setItem(row, 0, QTableWidgetItem(label))
+                self.client_table.setItem(row, 1, QTableWidgetItem(value))
+            self.client_status.setText('Read-only local source: ' + str(path))
+        except (OSError, ValueError) as exc:
+            self.client_status.setText(str(path) + '\n' + str(exc))
 
     def _editing_changed(self, enabled):
         self.export_btn.setEnabled(bool(enabled and self.profile))

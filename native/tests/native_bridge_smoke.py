@@ -22,6 +22,7 @@ class NativeBridgeSmokeTests(unittest.TestCase):
         sys.path.insert(0, str(source_dir))
         from developer_event_live import EventBridgeClient, EventBridgeError
         from developer_event_catalog import load_catalog
+        from gfx_live_ui_bridge import UiSnapshotBridgeClient
 
         proc = subprocess.Popen(
             [str(host), str(dll)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -46,13 +47,21 @@ class NativeBridgeSmokeTests(unittest.TestCase):
                 ).probe()
             handlers = client.probe()
             self.assertEqual(handlers, ("local_highlights",))
+            ui = UiSnapshotBridgeClient(
+                int(pid), 22345, token, lambda: "C:/Synthetic",
+                process_check=lambda target, game: None,
+                listener_check=lambda target, port: None,
+                offline_check=lambda game: True)
+            snapshot = ui.snapshot()
+            self.assertEqual(snapshot["movie"], "Libs/UI/main_menu.gfx")
+            self.assertEqual(snapshot["nodes"][1]["text"], "SYNTHETIC ONLY")
             event = next(e for e in load_catalog() if e.name == "local_highlights")
             response = client.activate(event, {"active": "true"})
             self.assertEqual(response["status"], "effect_confirmed")
             # This status is from a TEST CALLBACK, never a real game effect.
             stdout, stderr = proc.communicate(timeout=8)
             self.assertEqual(proc.returncode, 0, (stdout, stderr))
-            self.assertIn("SIMULATED_CALLBACK 1", stdout)
+            self.assertIn("SIMULATED_CALLBACK 1 UI_SNAPSHOTS 1", stdout)
         finally:
             if proc.poll() is None:
                 proc.kill()

@@ -1,33 +1,37 @@
-# Evolve Stage 2 Mod Manager — v1.2.0
+# Evolve Stage 2 Mod Manager — v1.2.4
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.2.0 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.2.4 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.0
+## Latest Stable — v1.2.4
 
-- Modernize the Qt interface with contextual tools, cleaner Settings, Flaticon navigation icons, and improved workspace layouts.
-- Manage Stage 2 PAKs through build-scoped Asset Library browsing, dependencies, bulk imports, isolated edits, and safer mod staging.
-- Improve complete character assemblies, GPU materials, rig compatibility, CAF/DBA animation browsing, and supported idle playback.
-- Use higher-resolution streamed CryEngine DDS textures and normal maps in previews and Blender exports, with explicit diagnostics.
-- Export supported rigged character assemblies, textured GLBs, and terrain/level scenes for Blender with source-safe validation.
-- Expand the Level Editor with grouped map archives, combined scenes, previews, and missing-resource reports.
-- Preview and edit Scaleform GFX with external texture placement, transparent frames, and verified static layout controls.
-- Offer experimental main-menu promotional title and TRY/BUY overrides plus preview-only popup-layer isolation; verify results offline.
-- Inspect historical CryTek PAKs and compatible assets separately without promising playable cross-version conversions.
-- Improve offline project workflows, asset provenance, recovery, and update safety while preserving personal game and mod data.
-- Support versioned patch revisions and consolidate installation, update work, and logs under one manager folder.
-- Patch 1: embed GFX editing in File Editor, diagnose same-build UI dependencies, hide static video placeholders, and improve startup without a console window.
+- Import individually verified assembled CDF characters into Blender as one GLB, with compatible named CAF/DBA Actions bound to the correct original skeleton.
+- Expand native CAF conversion to as many as 256 verified clips per assembly within size and resource safety limits; report unsupported clips explicitly.
+- Preserve compatible 2012 CryTek master-skeleton DBA conversion and reject unsupported or mismatched rigs rather than inventing motion.
+- Show per-assembly Blender animation counts, clip names and skip reasons after export, while keeping the separate animation manifest for diagnostics.
+- Add Settings integration for installing the optional standalone Blender Animation Browser through Blender's own extension system, with safe version and package checks.
+
+- Export character-named rigged GLBs with compatible animations and embedded textures, plus categorized animations/, textures/ and models/ assets including equipment.
+- Install the optional verified Evolve Animation Browser through Settings → Blender Integration.
+- Silence auto-restore watchdog console flashes during game process monitoring.
+
+- Review and install signed PAK or multi-PAK ZIP mods with validation, deduplication and conflict checks.
+- Manage installed mod profiles, installation history, undo, and Verify & Repair for matching source files.
+- Preview required disk space, choose mod storage locations, reuse verified setups, and safely clean up old setups.
+- Open Quick Commands with Ctrl+K and use streamlined Modding and Settings workflows.
+- View System Health diagnostics and launch/recovery safety checks.
+- Improve project filtering, editor lifecycle, and main-menu promotional visibility persistence.
 
 ## Download and install
 
 1. Download the **Windows installer** or **portable ZIP** from the [Main Windows release](https://github.com/corvodl/Modded-Evolve-Mod-Manager/releases/tag/Main). Release filenames include the version and patch revision. If using the portable ZIP, extract the **entire** `EvolveModManager` folder to a writable location.
-2. Run `EvolveModManager.exe`. The **Instructions** tab is shown first with a link to the required Modded Evolve website. No installation folder picker opens until you click Set Up Manager.
+2. Run `EvolveModManager.exe`. The **Home** dashboard opens first, with a shortcut to the Instructions tab and the required Modded Evolve website. No installation folder picker opens until you click Set Up Manager.
 3. After the normal client has installed Evolve Stage 2, close the game and client. Click **Set Up Manager**, select the client-installed **EvolveGame** folder, and select the normal Modded Evolve client executable.
 4. The manager builds local signing resources, an injector and staged custom-signed PAKs from **your installed game files**. It does not alter the original installed PAKs during setup. Allow substantial free disk space for staging; the amount depends on the game files and original-snapshot option.
-5. Open **Modding** to edit archives. Use **Play & Restore** to play privately/offline and restore originals afterward.
+5. Open **Modding** to edit archives. Launch from the **Play with Mods** or **Play without Mods** buttons on Home or the bottom of the sidebar. Original files are restored after the modded game and client both exit.
 
 The portable Windows release bundles Python and its required application dependencies. A separate Python installation is only necessary to **build from source**.
 
@@ -37,9 +41,10 @@ The portable Windows release bundles Python and its required application depende
 
 | Tab | What it does |
 | --- | --- |
+| **Home** | Dashboard with workspace icons, setup/build information, and quick links to all manager sections |
 | **Instructions** | Required Modded Evolve installation, first-run setup, modding and restoration walkthrough |
 | **Modding** | Archive browser, unpacking, extracted-file editing, building and adding mods |
-| **Play & Restore** | Guided offline launch, swap state, and restoration/recovery of original game files |
+| **Home** quick play | Play with Mods and Play without Mods; Settings holds manual restoration and recovery |
 | **Settings** | Projects, stage and launch-helper folders; maintenance and advanced workflows |
 | **Credits** | Project links and attribution |
 
@@ -55,7 +60,13 @@ The **Data** archive generally contains meshes, skeleton files and animation con
 
 GLB export now also includes the original **bone hierarchy, inverse-bind matrices, and per-vertex skin weights** when a compatible character **.skin** or **.chr** file accompanies the matching render-mesh **.skinm** or **.chrm**. The converter resolves per-subset local bone palettes, verifies joint transforms and refuses inconsistent skinning data. In **Edit Files → Models**, the export result explicitly says whether the model was rigged and gives a reason when not.
 
-**Animation clips are not yet imported:** character animation configuration files are not the underlying CAF/DBA keyframe tracks. Rigged GLBs can be posed and edited in Blender, but reproducing the original Evolve animations requires a separate CAF/DBA decoder. Edited Blender meshes still cannot be repackaged automatically into native Evolve model files.
+**Animation conversion is selective:** the exporter only attaches verified CAF/DBA keyframes that match the selected character rig. The `animations/` folder contains a rigged animated GLB when supported, original resolved motion sources in `sources/`, and a compatibility manifest even when no motion can be exported. BSPACE/COMB graphs and an arbitrary CAF/DBA filename are not themselves Blender actions. Edited Blender meshes still cannot be repackaged automatically into native Evolve model files.
+
+### Blender export attachments (v1.2.3 Patch 1)
+
+The Asset Library and Modding character-folder exporters produce a root `textures/` directory with separate full-quality PNG copies of the images already embedded in Blender GLBs. The `animations/` directory contains an animation source/compatibility manifest and, where skeleton and controller verification succeeds, a Blender-compatible animated GLB attached to its correct armature. A missing animation GLB means no verified playable tracks were produced; inspect the manifest rather than expecting source CAF/DBA files to play automatically.
+
+Optional **SSAO** (Off, Low, Medium, High) is available in the GPU viewer to approximate depth-based contact shading. It defaults to Off and is independent of material AO maps. Detailed material/animation diagnostics are behind compact expandable sections. Unsupported CryEngine shader features remain approximate, and native GPU appearance requires testing with actual game assets.
 
 ### Blender-style menus and texture diagnostics (v1.1.11)
 
@@ -131,9 +142,9 @@ The game browser lists certain loose editable files from the installed game. Cho
 
 ## Playing with mods and restoring originals
 
-Go to **Play & Restore → Play With Mods** for private/offline testing. Follow the guided launcher steps, wait until the launcher is ready, and then press Play in the normal Modded Evolve client. Modded game files may be incompatible with normal online/profile services.
+Select **Play with Mods** from Home or from the bottom sidebar for private/offline testing. Follow the guided launcher steps, wait until the launcher is ready, and then press Play in the normal Modded Evolve client. Modded game files may be incompatible with normal online/profile services.
 
-**When finished:** Close `Evolve.exe` and `ModdedEvolveLauncher.exe`, then click **Restore Game Files**. The usual restore relies on a recorded swap state and retains prepared mod copies for later use.
+**When finished:** Close `Evolve.exe` and `ModdedEvolveLauncher.exe`. The manager's independent watchdog waits until both processes exit and then automatically restores original files using the recorded swap state; verified mod files can be retained for the next session. If restoration needs attention, go to **Settings → Backups & Recovery → Restore Game Files**.
 
 **Missing-journal recovery:** If `*.customkey-original` backups are present but the swap journal says “Nothing to restore,” the manager checks the actual game folder and offers an independent recovery option. It preserves the currently installed modified files as uniquely named `*.customkey-recovery-mod-*` files, restores the original archives and `inject.dll` using same-drive renames, and saves a recovery manifest to `Data/RecoveryLogs`. Recovery stops on unsafe or failed file operations. Do **not** delete original backups or override recovery warnings.
 
@@ -160,3 +171,5 @@ Version **1.0.1** marks the application's first official release, **not** a clai
 ## Credits
 
 Project by **@CorvoDL**. [Source repository](https://github.com/corvodl/Modded-Evolve-Mod-Manager) · [Required Modded Evolve client](https://modded-evolve.com/).
+
+**Optional Blender Animation Browser:** Use Settings → Blender Integration to install the verified v1.1.0 ZIP in Blender 4.2+.

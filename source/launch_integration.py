@@ -16,7 +16,8 @@ from injector_guard import require_clean_injector
 ROOT = Path(__file__).resolve().parent
 SUPPORT = ROOT / 'launcher_support'
 STATE_FILE = 'controlled_swap_state.json'
-REQUIRED_SCRIPTS = ('controlled_swap.py', 'reusable_restore.py', 'auto_launch_frida.py')
+REQUIRED_SCRIPTS = ('controlled_swap.py', 'reusable_restore.py', 'auto_launch_frida.py',
+                    'auto_restore_watch.py')
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,40 @@ def launcher_commands(swap_dir: Path, stage_dir: Path, phase: str):
     return commands
 
 
+
+def unmodded_launch_target(swap_dir: Path, game_root=None):
+    """Validate a *clean* installation and return the configured normal client.
+
+    Never start the swap injector or use staged PAKs for normal play. A clean
+    journal is not sufficient on its own: interrupted swaps may leave original
+    backups even when the journal is missing or stale.
+    """
+    from installed_game_versions import client_executable
+    from online_guard import target_executable
+    from orphaned_swap_recovery import plan_recovery
+
+    status = state_status(Path(swap_dir))
+    if status.phase not in ('missing', 'prepared', 'restored'):
+        raise RuntimeError('Original game files are not confirmed restored. '
+                           'Use Restore Game Files before playing without mods.')
+    root = Path(status.game) if status.game else (
+        Path(game_root) if game_root else None)
+    if root is None:
+        raise RuntimeError('Game location is unknown. Complete setup first.')
+    root = root.resolve()
+    target_executable(root)
+    # Examine real game backups, not just controlled_swap_state.json.
+    if plan_recovery(root):
+        raise RuntimeError('Original game backups still exist. '
+                           'Restore Game Files before normal play.')
+    require_clean_injector(root)
+    client = client_executable(swap_dir)
+    if client is None:
+        raise FileNotFoundError('Normal Modded Evolve client is not configured '
+                                'or its EXE is missing. Run Set Up Manager.')
+    return root, client
+
+
 def restore_command(swap_dir: Path):
     p=Path(swap_dir)/'reusable_restore.py'
     if not p.is_file():
@@ -140,3 +175,55 @@ def package_status(stage_dir: Path, swap_dir: Path):
     except ImportError:
         notes.append('Frida is not installed for this Python')
     return notes
+
+
+def start_auto_restore_monitor(swap_dir: Path, resume=False):
+    """Start a detached recovery guard; it outlives the manager and Qt process.
+
+    Called when reopening an interrupted session. Ordinary game launches also
+    start this same script from auto_launch_frida so closing the GUI is safe.
+    """
+    from app_runtime import worker_command
+    folder = Path(swap_dir).resolve()
+    helper = folder / "auto_restore_watch.py"
+    if not helper.is_file():
+        raise FileNotFoundError("Auto-restore helper is missing. Set Up Launcher first.")
+    args = [sys.executable, "-u", str(helper)]
+    if resume:
+        args.append("--resume")
+    command = worker_command(args)
+    creationflags = (getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                     | getattr(subprocess, "DETACHED_PROCESS", 0))
+    with (folder / "auto-restore.log").open("a", encoding="utf-8") as output:
+        return subprocess.Popen(
+            command, cwd=str(folder), stdin=subprocess.DEVNULL,
+            stdout=output, stderr=subprocess.STDOUT, close_fds=True,
+            creationflags=creationflags).pid
+
+
+def auto_restore_monitor_running(swap_dir: Path) -> bool:
+    """See whether a watchdog holds the independent restore lock."""
+    path = Path(swap_dir) / "auto_restore_watch.lock"
+    if not path.is_file():
+        return False
+    try:
+        with path.open("r+b") as stream:
+            stream.seek(0)
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            if sys.platform == "win32":
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            return False
+    except OSError:
+        # Fail closed if we cannot inspect the lock.
+        return True

@@ -5,6 +5,7 @@ It never accesses installed PAKs or writes extracted workspace files.
 """
 from __future__ import annotations
 import math
+import time
 import sys
 import json
 from pathlib import Path
@@ -43,8 +44,8 @@ class _CompactAnimationList(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('referencedNativeAnimations')
-        self.setMinimumHeight(112)
-        self.setMaximumHeight(152)
+        self.setMinimumHeight(88)
+        self.setMaximumHeight(108)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setSpacing(2)
@@ -149,6 +150,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.setFormat(format)
         self.setMinimumSize(260, 180)
         self.mesh = mesh
+        # Preserve geometry staging and animation-buffer layout. Authored
+        # normals are used when Smooth shading is explicitly selected.
         self.shading = 'faceted'
         self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
         self.materials = materials
@@ -159,11 +162,30 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.textures = []
         self.normal_textures = []
         self.specular_textures = []
+        self.gloss_textures = []
+        self.detail_textures = []
+        self.detail_normal_textures = []
+        self.ao_textures = []
+        self.environment_textures = []
+        self._pending_texture_uploads = []
+        self._gpu_upload_total_ms = 0.0
+        self._frame_started_at = time.perf_counter()
+        self._geometry_frame_seen = False
+        self._first_texture_frame_seen = False
+        self._full_texture_frame_seen = False
+        self._drawn_with_textures = False
+        self._frame_drawn_with_full_quality = False
+        self._textures_final_requested = materials is not None
+        self.frameSwapped.connect(self._frame_presented)
         self.translucent_slots = set()
         self._batch_sort_cache = None
         self.enhanced_materials = True
         self.unlit_diffuse = False
         self._renderer3 = None
+        self.ssao_quality = 'Off'
+        self.normal_diagnostic = 'Source (unchanged)'
+        self.ssao_error = ''
+        self._ssao_effect = None
         self.rotation = [-30.0, 14.0]
         self.zoom = 1.0
         self.pan = [0., 0.]
@@ -181,8 +203,49 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.visible_material_slot = None
         self.projection_mode = 'Orthographic'
         self.specular_intensity = 0.35
+        self._uv_motion_started = time.monotonic()
+        self._uv_motion_timer = QTimer(self)
+        self._uv_motion_timer.setInterval(50)
+        self._uv_motion_timer.timeout.connect(self.update)
+        self._refresh_uv_motion()
+
+    def _refresh_uv_motion(self):
+        self._uv_motion_started = time.monotonic()
+        groups = (getattr(self.materials, 'uv_motions', ()),)
+        groups += tuple(values for _, values in
+                        getattr(self.materials, 'map_uv_motions', ()))
+        animated = any(any(any(rate for rate in motion) for motion in group)
+                       for group in groups)
+        if animated:
+            self._uv_motion_timer.start()
+        else:
+            self._uv_motion_timer.stop()
+
+    def _reset_frame_timeline(self):
+        self._frame_started_at = time.perf_counter()
+        self._geometry_frame_seen = False
+        self._first_texture_frame_seen = False
+        self._full_texture_frame_seen = False
+        self._drawn_with_textures = False
+        self._frame_drawn_with_full_quality = False
+
+    def _frame_presented(self):
+        """Visible-frame milestones; not a claim of completed GPU timing."""
+        from performance_trace import record
+        elapsed = (time.perf_counter() - self._frame_started_at) * 1000
+        if not self._geometry_frame_seen:
+            self._geometry_frame_seen = True
+            record('model', 'first_geometry_frame', elapsed_ms=elapsed)
+        if self._drawn_with_textures and not self._first_texture_frame_seen:
+            self._first_texture_frame_seen = True
+            record('model', 'first_texture_frame', elapsed_ms=elapsed)
+        if (self._frame_drawn_with_full_quality and
+                not self._full_texture_frame_seen):
+            self._full_texture_frame_seen = True
+            record('model', 'final_quality_frame', elapsed_ms=elapsed)
 
     def set_mesh(self, mesh, materials=None, prepared_geometry=None):
+        self._reset_frame_timeline()
         geometry = (prepared_geometry if prepared_geometry is not None
                     else prepare_geometry(mesh, shading=self.shading))
         # Replacing an existing model must also upload the NEW diffuse maps.
@@ -198,13 +261,29 @@ class QtGLModelCanvas(QOpenGLWidget):
             self.makeCurrent()
             try:
                 self._release_textures()
-                self._upload_textures()
             finally:
                 self.doneCurrent()
+        self._queue_texture_uploads()
         self.update()
 
     def set_enhanced_materials(self, enabled):
         self.enhanced_materials = bool(enabled)
+        self.update()
+
+    def set_ssao_quality(self, quality):
+        from ssao_postprocess import QUALITY
+        if quality not in QUALITY:
+            raise ValueError('Unknown SSAO quality')
+        self.ssao_quality = quality
+        self.ssao_error = ''
+        self.update()
+
+    def set_normal_diagnostic(self, mode):
+        """Toggle source normal Y for visual comparison, never mutate DDS bytes."""
+        modes = ('Source (unchanged)', 'Flip green (DX to GL)', 'Flat (no normal maps)')
+        if mode not in modes:
+            raise ValueError('Unsupported normal-map comparison mode')
+        self.normal_diagnostic = mode
         self.update()
 
     def set_visible_material_slot(self, slot):
@@ -278,13 +357,17 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.update()
 
     def set_materials(self, materials):
-        self.makeCurrent()
-        try:
-            self._release_textures()
-            self.materials = materials
-            self._upload_textures()
-        finally:
-            self.doneCurrent()
+        self._full_texture_frame_seen = False
+        self._frame_drawn_with_full_quality = False
+        if self.isValid():
+            self.makeCurrent()
+            try:
+                self._release_textures()
+            finally:
+                self.doneCurrent()
+        self.materials = materials
+        self._refresh_uv_motion()
+        self._queue_texture_uploads()
         self.update()
 
     def set_quality(self, quality):
@@ -297,7 +380,7 @@ class QtGLModelCanvas(QOpenGLWidget):
 
     def _release_textures(self):
         from OpenGL.GL import glDeleteTextures
-        for name in ('textures','normal_textures','specular_textures'):
+        for name in ('textures','normal_textures','specular_textures','gloss_textures','detail_textures','detail_normal_textures','ao_textures','environment_textures'):
             handles = getattr(self,name,[])
             if handles:
                 try:
@@ -307,90 +390,151 @@ class QtGLModelCanvas(QOpenGLWidget):
             setattr(self,name,[])
         self.translucent_slots = set()
         self._batch_sort_cache = None
+        self._pending_texture_uploads = []
 
-    def _upload_textures(self):
+    def _queue_texture_uploads(self):
+        """Build no-GL descriptors; the first render can show mesh geometry."""
+        self._pending_texture_uploads = []
+        self.translucent_slots = set()
+        self._batch_sort_cache = None
+        self._gpu_upload_total_ms = 0.0
+        self.gpu_upload_ms = None
+        self._textures_final_requested = self.materials is not None
+        self._frame_drawn_with_full_quality = False
+        groups = (
+            ('textures', getattr(self.materials, 'textures', ()) if self.materials else ()),
+            ('normal_textures', getattr(self.materials, 'normal_maps', ()) if self.materials else ()),
+            ('specular_textures', getattr(self.materials, 'specular_maps', ()) if self.materials else ()),
+            ('gloss_textures', getattr(self.materials, 'gloss_maps', ()) if self.materials else ()),
+            ('detail_textures', getattr(self.materials, 'detail_maps', ()) if self.materials else ()),
+            ('detail_normal_textures', getattr(self.materials, 'detail_normal_maps', ()) if self.materials else ()),
+            ('ao_textures', getattr(self.materials, 'ao_maps', ()) if self.materials else ()),
+            ('environment_textures', getattr(self.materials, 'environment_maps', ()) if self.materials else ()),
+        )
+        for target, images in groups:
+            setattr(self, target, [0] * len(images))
+            for index, image in enumerate(images):
+                if image is not None:
+                    self._pending_texture_uploads.append((target, index, image))
+
+    def _upload_textures(self, *, max_uploads=1):
+        """Submit at most one verified full-resolution GL image per frame.
+
+        This is a per-frame count budget, not a guarantee that a single driver
+        upload meets a wall-clock deadline. All GL calls run on the widget's
+        context thread; final diffuse/normal/specular quality is unchanged.
+        """
         import time
-        started=time.perf_counter()
         from OpenGL.GL import (
             glGenTextures, glBindTexture, glTexImage2D, glTexParameteri,
-            glPixelStorei, GL_TEXTURE_2D, GL_RGB, GL_UNSIGNED_BYTE,
+            glPixelStorei, GL_TEXTURE_2D, GL_RGB, GL_RGBA, GL_UNSIGNED_BYTE,
             GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER, GL_LINEAR,
             GL_LINEAR_MIPMAP_LINEAR, GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T,
             GL_REPEAT, GL_UNPACK_ALIGNMENT, glGenerateMipmap,
+            GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_POSITIVE_X,
         )
-        if not self.materials:
-            return
-        from OpenGL.GL import GL_RGBA
+        if not self._pending_texture_uploads:
+            return 0
+        started = time.perf_counter()
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-        sources = (('textures', self.materials.textures),
-                   ('normal_textures',getattr(self.materials,'normal_maps',())),
-                   ('specular_textures',getattr(self.materials,'specular_maps',())))
-        for target,images in sources:
-            uploads=[]
-            for index,im in enumerate(images):
-                if im is None:
-                    uploads.append(0)
-                    continue
-                rgba = 'A' in im.getbands()
-                # A diffuse texture's alpha may encode a mask unrelated to
-                # transparency. Trust the material flag, not raw alpha bytes.
-                if (target == 'textures' and rgba and self.materials and
-                        index < len(getattr(self.materials, 'alpha_modes', ())) and
-                        self.materials.alpha_modes[index] and
-                        im.getchannel('A').getextrema()[0] < 255):
-                    self.translucent_slots.add(index)
-                mode = 'RGBA' if rgba else 'RGB'
-                # Pillow's first DDS row is top-left while OpenGL expects
-                # its first upload row at v=0 (bottom-left). The CPU UV preview
-                # already indexes the top row at v=0; reverse only GPU bytes.
-                from gl_texture_upload import gl_upload_pixels
-                pixels = gl_upload_pixels(im, mode)
-                format_id = GL_RGBA if rgba else GL_RGB
+        uploaded = 0
+        while self._pending_texture_uploads and uploaded < max_uploads:
+            target, index, im = self._pending_texture_uploads.pop(0)
+            if target == 'environment_textures':
+                if len(im) != 6:
+                    raise ValueError('Cubemap must have exactly six decoded faces.')
                 texid = int(glGenTextures(1))
-                glBindTexture(GL_TEXTURE_2D,texid)
-                glTexImage2D(GL_TEXTURE_2D,0,format_id,im.width,im.height,0,
-                             format_id,GL_UNSIGNED_BYTE,pixels)
-                # Mipmaps and optional anisotropic filtering preserve fine
-                # detail on the oblique surfaces common in character previews.
-                # Never upscale decoded DDS images: the GPU receives the source
-                # resolution selected by the verified material resolver.
-                try:
-                    glGenerateMipmap(GL_TEXTURE_2D)
-                except Exception:
-                    # Some older OpenGL contexts lack a mipmap entry point.
-                    # Keep the model visible at its *original* image size.
-                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR)
-                else:
-                    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,
-                                    GL_LINEAR_MIPMAP_LINEAR)
-                glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR)
-                try:
-                    from OpenGL.GL import glGetFloatv
-                    from OpenGL.GL.EXT.texture_filter_anisotropic import (
-                        GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                        GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)
-                    maximum=float(glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT))
-                    if maximum >= 2:
-                        from OpenGL.GL import glTexParameterf
-                        glTexParameterf(GL_TEXTURE_2D,
-                                        GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                                        min(maximum,8.))
-                except (ImportError,ValueError,RuntimeError):
-                    # Hardware lacking this extension still uses trilinear mipmaps.
-                    pass
-                for param in (GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T):
-                    glTexParameteri(GL_TEXTURE_2D,param,GL_REPEAT)
-                uploads.append(texid)
-            setattr(self,target,uploads)
-        glBindTexture(GL_TEXTURE_2D,0)
-        self.gpu_upload_ms=round((time.perf_counter()-started)*1000,2)
+                glBindTexture(GL_TEXTURE_CUBE_MAP, texid)
+                for face, image in enumerate(im):
+                    if image is None or image.width != image.height:
+                        raise ValueError('Invalid cubemap face dimensions.')
+                    from gl_texture_upload import gl_upload_pixels
+                    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0,
+                                 GL_RGB, image.width, image.height, 0, GL_RGB,
+                                 GL_UNSIGNED_BYTE, gl_upload_pixels(image, 'RGB'))
+                for parameter in (GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER):
+                    glTexParameteri(GL_TEXTURE_CUBE_MAP, parameter, GL_LINEAR)
+                for parameter in (GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T):
+                    glTexParameteri(GL_TEXTURE_CUBE_MAP, parameter, GL_REPEAT)
+                getattr(self, target)[index] = texid
+                glBindTexture(GL_TEXTURE_CUBE_MAP, 0)
+                uploaded += 1
+                continue
+            rgba = 'A' in im.getbands()
+            if (target == 'textures' and rgba and self.materials and
+                    index < len(getattr(self.materials, 'alpha_modes', ())) and
+                    self.materials.alpha_modes[index] and
+                    im.getchannel('A').getextrema()[0] < 255):
+                self.translucent_slots.add(index)
+                self._batch_sort_cache = None
+            mode = 'RGBA' if rgba else 'RGB'
+            # Preserve CryEngine DDS orientation and original source mip size.
+            from gl_texture_upload import gl_upload_pixels
+            pixels = gl_upload_pixels(im, mode)
+            fmt = GL_RGBA if rgba else GL_RGB
+            texid = int(glGenTextures(1))
+            glBindTexture(GL_TEXTURE_2D, texid)
+            glTexImage2D(GL_TEXTURE_2D, 0, fmt, im.width, im.height, 0,
+                         fmt, GL_UNSIGNED_BYTE, pixels)
+            try:
+                glGenerateMipmap(GL_TEXTURE_2D)
+            except Exception:
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            else:
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                GL_LINEAR_MIPMAP_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            try:
+                from OpenGL.GL import glGetFloatv, glTexParameterf
+                from OpenGL.GL.EXT.texture_filter_anisotropic import (
+                    GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                    GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)
+                maximum = float(glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT))
+                if maximum >= 2:
+                    glTexParameterf(GL_TEXTURE_2D,
+                                    GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                                    min(maximum, 8.))
+            except (ImportError, ValueError, RuntimeError):
+                pass
+            for parameter in (GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T):
+                glTexParameteri(GL_TEXTURE_2D, parameter, GL_REPEAT)
+            getattr(self, target)[index] = texid
+            uploaded += 1
+        glBindTexture(GL_TEXTURE_2D, 0)
+        elapsed = (time.perf_counter() - started) * 1000
+        self._gpu_upload_total_ms += elapsed
+        self.gpu_upload_ms = round(self._gpu_upload_total_ms, 2)
+        from performance_trace import record
+        record('model', 'gl_texture_submitted', submitted=uploaded,
+               remaining=len(self._pending_texture_uploads),
+               elapsed_ms=elapsed)
+        # Upload takes place after drawing the current frame; even the final
+        # upload needs one *more* paint before the user can see the texture.
+        if uploaded:
+            self.update()
+        if not self._pending_texture_uploads:
+            record('model', 'full_quality_textures_ready',
+                   elapsed_ms=self._gpu_upload_total_ms)
+        return uploaded
 
     def initializeGL(self):
         from OpenGL.GL import (
             glClearColor, glEnable, glShadeModel, glLightfv, glLightModelfv,
+            glGetString, GL_VENDOR, GL_RENDERER, GL_VERSION,
             GL_DEPTH_TEST, GL_NORMALIZE, GL_LIGHT0, GL_LIGHTING, GL_SMOOTH,
             GL_POSITION, GL_AMBIENT, GL_DIFFUSE, GL_LIGHT_MODEL_AMBIENT,
         )
+        from performance_trace import record
+        def safe_device(value):
+            return (value.decode('ascii', 'replace') if isinstance(value, bytes)
+                    else str(value or 'unknown'))
+        try:
+            record('gpu', 'context_initialized',
+                   gpu_vendor=safe_device(glGetString(GL_VENDOR)),
+                   gpu_renderer=safe_device(glGetString(GL_RENDERER)),
+                   gpu_version=safe_device(glGetString(GL_VERSION)))
+        except (RuntimeError, ValueError, TypeError):
+            pass  # Optional diagnostic cannot block a supported GL context.
         glClearColor(0.092, 0.09, 0.115, 1.0)
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_NORMALIZE)
@@ -401,7 +545,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         glLightfv(GL_LIGHT0,GL_DIFFUSE,[0.83,0.85,0.91,1.0])
         glLightfv(GL_LIGHT0,GL_AMBIENT,[0.13,0.13,0.16,1.0])
         glLightModelfv(GL_LIGHT_MODEL_AMBIENT,[0.08,0.08,0.09,1.0])
-        self._upload_textures()
+        # Stage textures after the first geometry frame, not inside GL setup.
+        self._queue_texture_uploads()
         try:
             from renderer_3 import Renderer3
             self._renderer3 = Renderer3()
@@ -465,6 +610,11 @@ class QtGLModelCanvas(QOpenGLWidget):
             glBlendFunc, glDepthMask, GL_LIGHT0, GL_DIFFUSE, GL_LIGHTING,
             GL_TEXTURE0, GL_BLEND, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glClearColor(*background)
+        # Capture state *before* uploading textures at the end of paintGL.
+        # frameSwapped reports what was really drawn, not new driver handles.
+        self._drawn_with_textures = any(self.textures)
+        self._frame_drawn_with_full_quality = (
+            self._textures_final_requested and not self._pending_texture_uploads)
         strength=self.light_strength
         glLightfv(GL_LIGHT0,GL_DIFFUSE,
                   [min(1.0,0.83*strength),min(1.0,0.85*strength),
@@ -554,21 +704,46 @@ class QtGLModelCanvas(QOpenGLWidget):
                     glDepthMask(True)
                 from texture_transform import transform_for, gl_matrix
                 from OpenGL.GL import glLoadMatrixf, GL_TEXTURE
+                seconds = time.monotonic() - self._uv_motion_started
                 glActiveTexture(GL_TEXTURE0)
                 glMatrixMode(GL_TEXTURE)
-                glLoadMatrixf(gl_matrix(transform_for(self.materials, slot)))
+                glLoadMatrixf(gl_matrix(transform_for(self.materials, slot, seconds=seconds)))
                 glMatrixMode(GL_MODELVIEW)
                 tex = self.textures[slot] if use_uv and slot < len(self.textures) else 0
                 if shader:
-                    for unit,group in ((0,self.textures),(1,self.normal_textures),(2,self.specular_textures)):
+                    for unit,group in ((0,self.textures),(1,self.normal_textures),
+                                       (2,self.specular_textures),(3,self.gloss_textures),
+                                       (4,self.detail_textures),(5,self.detail_normal_textures),
+                                       (7,self.ao_textures)):
                         handle = group[slot] if use_uv and slot<len(group) else 0
                         glActiveTexture(GL_TEXTURE0+unit)
                         glBindTexture(GL_TEXTURE_2D,handle)
+                    glActiveTexture(GL_TEXTURE0+6)
+                    from OpenGL.GL import GL_TEXTURE_CUBE_MAP
+                    cubemap = (self.environment_textures[slot]
+                               if use_uv and slot < len(self.environment_textures) else 0)
+                    glBindTexture(GL_TEXTURE_CUBE_MAP,cubemap)
                     glActiveTexture(GL_TEXTURE0)
-                    shader.bind(opacity=alpha,gloss=self.specular_intensity, alpha_cutoff=cutoff or .02,
+                    strengths = getattr(self.materials,'reflection_strengths',())
+                    glasses = getattr(self.materials,'glass_materials',())
+                    ao_strengths = getattr(self.materials,'ao_strengths',())
+                    shader.bind(ao=slot<len(self.ao_textures) and bool(self.ao_textures[slot]),
+                                ao_strength=ao_strengths[slot] if slot<len(ao_strengths) else 1.,
+                                environment=bool(cubemap),
+                                reflection_strength=strengths[slot] if slot<len(strengths) else 0.,
+                                glass=bool(glasses[slot]) if slot<len(glasses) else False,
+                                opacity=alpha,gloss=self.specular_intensity, alpha_cutoff=cutoff or .02,
                                 illumination=strength,diffuse=bool(tex),
-                                normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
+                                normal=(self.normal_diagnostic != 'Flat (no normal maps)' and
+                                        slot<len(self.normal_textures) and bool(self.normal_textures[slot])),
                                 specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
+                                gloss_texture=slot<len(self.gloss_textures) and bool(self.gloss_textures[slot]),
+                                detail=slot<len(self.detail_textures) and bool(self.detail_textures[slot]),
+                                detail_normal=(self.normal_diagnostic != 'Flat (no normal maps)' and
+                                               slot<len(self.detail_normal_textures) and bool(self.detail_normal_textures[slot])),
+                                invert_normal_y=self.normal_diagnostic == 'Flip green (DX to GL)',
+                                uv_matrices={role: transform_for(self.materials,slot,role,seconds)
+                                             for role in ('normal','specular','gloss','detail','detail_normal','ao')},
                                 alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
                                 unlit=self.unlit_diffuse,fill=self.studio_fill)
                 if tex:
@@ -600,7 +775,10 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glEnable(GL_LIGHTING)
             if shader:
                 shader.unbind()
-                for unit in (2,1,0):
+                from OpenGL.GL import GL_TEXTURE_CUBE_MAP
+                glActiveTexture(GL_TEXTURE0+6)
+                glBindTexture(GL_TEXTURE_CUBE_MAP,0)
+                for unit in (7,5,4,3,2,1,0):
                     glActiveTexture(GL_TEXTURE0+unit)
                     glBindTexture(GL_TEXTURE_2D,0)
                 glEnable(GL_LIGHTING)
@@ -613,6 +791,32 @@ class QtGLModelCanvas(QOpenGLWidget):
             glBindTexture(GL_TEXTURE_2D,0)
             glDisable(GL_TEXTURE_2D)
             glPolygonMode(GL_FRONT_AND_BACK,GL_FILL)
+        # SSAO is a separate, optional depth-only GPU pass. It is intentionally
+        # outside the material shader, so missing textures do not disable it.
+        if self.ssao_quality != 'Off' and not self.wireframe:
+            try:
+                if self._ssao_effect is None:
+                    from ssao_postprocess import SsaoEffect
+                    self._ssao_effect = SsaoEffect()
+                self._ssao_effect.render(
+                    arrays, quality=self.ssao_quality,
+                    perspective=self.projection_mode == 'Perspective',
+                    visible_slot=self.visible_material_slot,
+                    hidden=getattr(self.materials,'hidden',()))
+            except Exception as error:
+                # Never break the primary viewer on unsupported OpenGL FBOs.
+                message = str(error)[:240]
+                self.ssao_quality = 'Off'
+                self.ssao_error = message
+                if hasattr(self.parent(), 'ssao_combo'):
+                    combo = self.parent().ssao_combo
+                    combo.blockSignals(True)
+                    combo.setCurrentText('Off')
+                    combo.blockSignals(False)
+                    combo.setToolTip('SSAO disabled on this GPU: ' + message)
+        # Geometry has been submitted; upload one verified texture for the
+        # following frame, leaving the GUI event loop responsive.
+        self._upload_textures(max_uploads=1)
 
     def mousePressEvent(self,event):
         self._last = event.position()
@@ -658,6 +862,9 @@ class QtGLModelCanvas(QOpenGLWidget):
                 if self._renderer3 is not None:
                     self._renderer3.close()
                     self._renderer3 = None
+                if self._ssao_effect is not None:
+                    self._ssao_effect.close()
+                    self._ssao_effect = None
             finally:
                 self.doneCurrent()
         super().closeEvent(event)
@@ -770,25 +977,22 @@ class QtGPUModelPanel(QWidget):
         self._info.setObjectName('viewportBreadcrumb')
         self._info.setText('User Perspective  •  '+mesh.source_name)
         self._info.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._info.setStyleSheet('QLabel#viewportBreadcrumb { background: rgba(22,22,26,165); color: #f0edf2; padding: 4px 7px; border-radius: 4px; }')
+        # Viewport labels use shared semantic chrome, not fixed theme colors.
         self._info.show()
         self._overlay = QScrollArea(self.canvas)
         self._overlay.setObjectName('modelOverlayControls')
         self._overlay.setWidgetResizable(True)
         self._overlay.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._overlay.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._overlay.setToolTip('Scroll inside the popover to reach more tools.')
-        self._overlay.setStyleSheet(
-            '#modelOverlayControls { background: #1b1b21; border: 1px solid #45414a; '
-            'border-radius: 9px; }'
-            'QWidget#modelOverlayContent { background: #1b1b21; }')
+        self._overlay.setToolTip('Advanced tools are collapsed; expand only the settings you need.')
+        # Shared theme colors cover the scrollable inspector in light/dark mode.
         self._overlay_content = QWidget()
         self._overlay_content.setObjectName('modelOverlayContent')
         self._overlay_body = QVBoxLayout(self._overlay_content)
         # Qt must recompute scrollable content height after expanding a
         # disclosure. Otherwise QScrollArea compresses or clips lower rows.
         self._overlay_body.setSizeConstraint(QLayout.SetMinAndMaxSize)
-        self._overlay_body.setContentsMargins(9, 8, 9, 8)
+        self._overlay_body.setContentsMargins(7, 5, 7, 5)
         self._overlay.setWidget(self._overlay_content)
         self._overlay_sections = {}
         self._active_overlay = None
@@ -797,7 +1001,7 @@ class QtGPUModelPanel(QWidget):
             part = QVBoxLayout(page)
             part.setSizeConstraint(QLayout.SetMinAndMaxSize)
             part.setContentsMargins(0, 0, 0, 0)
-            part.setSpacing(7)
+            part.setSpacing(4)
             self._overlay_body.addWidget(page)
             self._overlay_sections[section] = (page, part)
             page.setVisible(False)
@@ -843,11 +1047,13 @@ class QtGPUModelPanel(QWidget):
         reset.clicked.connect(self.reset_view)
         detail_line.addWidget(reset)
         detail_line.addStretch()
-        self._overlay_sections['View'][1].addWidget(options)
+        self._view_advanced = self._compact_group(
+            self._overlay_sections['View'][1], 'Display & quality', opened=False)
+        self._view_advanced.addWidget(options)
         # Short, always-visible controls also work in the embedded viewer.
         studio = QHBoxLayout()
         enhanced=QCheckBox('Renderer 3.0')
-        enhanced.setToolTip('Enhanced shader supports normal/specular maps and opacity. Legacy fallback remains available.')
+        enhanced.setToolTip('Enhanced shader supports normal, specular and explicit gloss/smoothness maps plus opacity. Legacy fallback remains available.')
         enhanced.setChecked(True)
         enhanced.toggled.connect(self.canvas.set_enhanced_materials)
         self.enhanced_checkbox=enhanced
@@ -857,13 +1063,24 @@ class QtGPUModelPanel(QWidget):
         self.camera_combo.addItems(('Isometric','Front','Back','Left','Right','Top','Bottom'))
         self.camera_combo.currentTextChanged.connect(self.canvas.set_camera_preset)
         studio.addWidget(self.camera_combo)
-        studio.addWidget(QLabel('Lighting'))
+        lighting_row = QHBoxLayout()
+        lighting_row.addWidget(QLabel('Light'))
         self.lighting_slider = QSlider(Qt.Horizontal)
         self.lighting_slider.setRange(20,200)
         self.lighting_slider.setValue(100)
         self.lighting_slider.setMaximumWidth(125)
         self.lighting_slider.valueChanged.connect(self.canvas.set_light_strength)
-        studio.addWidget(self.lighting_slider)
+        lighting_row.addWidget(self.lighting_slider, 1)
+        lighting_row.addWidget(QLabel('SSAO'))
+        self.ssao_combo = QComboBox()
+        self.ssao_combo.setObjectName('modelSsaoQuality')
+        self.ssao_combo.addItems(('Off','Low','Medium','High'))
+        self.ssao_combo.setCurrentText('Off')
+        self.ssao_combo.setToolTip(
+            'GPU screen-space contact shadows. Off by default; higher levels '
+            'sample more depth neighbours. Does not require AO texture maps.')
+        self.ssao_combo.currentTextChanged.connect(self.canvas.set_ssao_quality)
+        lighting_row.addWidget(self.ssao_combo)
         studio.addStretch()
         studio_detail = QHBoxLayout()
         self.background_combo = QComboBox()
@@ -876,29 +1093,37 @@ class QtGPUModelPanel(QWidget):
         save_view.clicked.connect(self.save_viewport)
         studio_detail.addWidget(save_view)
         studio_detail.addStretch()
-        self._overlay_sections['View'][1].addLayout(studio)
-        self._overlay_sections['View'][1].addLayout(studio_detail)
+        self._overlay_sections['View'][1].insertLayout(0,studio)
+        self._overlay_sections['View'][1].insertLayout(1,lighting_row)
+        self._view_advanced.addLayout(studio_detail)
         inspector=QHBoxLayout()
-        inspector.addWidget(QLabel('Mesh materials'))
+        inspector.addWidget(QLabel('Part'))
         self.part_select=QComboBox()
         self.part_select.setObjectName('modelMaterialPartInspector')
         self.part_select.currentIndexChanged.connect(
             lambda _: self.canvas.set_visible_material_slot(self.part_select.currentData()))
         inspector.addWidget(self.part_select,1)
-        uvbutton=QPushButton('Show UV Layout…')
+        uvbutton=QPushButton('UV…')
+        uvbutton.setToolTip('Inspect the selected mesh UV layout')
         uvbutton.clicked.connect(self.show_uv_layout)
         inspector.addWidget(uvbutton)
-        inspector_secondary = QHBoxLayout()
-        inspector_secondary.addWidget(QLabel('Projection'))
+        view_projection = QHBoxLayout()
+        view_projection.addWidget(QLabel('Projection'))
         self.projection_select=QComboBox()
         self.projection_select.addItems(('Orthographic','Perspective'))
         self.projection_select.currentTextChanged.connect(self.canvas.set_projection)
-        inspector_secondary.addWidget(self.projection_select)
+        view_projection.addWidget(self.projection_select)
+        view_projection.addStretch()
+        self._view_advanced.addLayout(view_projection)
+        inspector_secondary = QHBoxLayout()
         inspector_secondary.addWidget(QLabel('Gloss'))
         self.gloss_slider=QSlider(Qt.Horizontal)
         self.gloss_slider.setRange(0,100)
         self.gloss_slider.setValue(35)
         self.gloss_slider.setMaximumWidth(95)
+        self.gloss_slider.setToolTip(
+            'Overall specular highlight strength. Explicit gloss/smoothness maps '
+            'control highlight sharpness across the texture.')
         self.gloss_slider.valueChanged.connect(self.canvas.set_specular)
         inspector_secondary.addWidget(self.gloss_slider)
         inspector_secondary.addStretch()
@@ -908,7 +1133,10 @@ class QtGPUModelPanel(QWidget):
         self.solid_geometry.setToolTip('Diagnostic view: shows every decoded part even if a CryEngine material uses unsupported transparency. Does not create absent mesh parts.')
         self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
         self.solid_geometry.toggled.connect(lambda checked: (setattr(self.canvas, 'force_opaque_preview', checked), self.canvas.update()))
-        self._overlay_sections['Materials'][1].addWidget(self.solid_geometry)
+        self._material_advanced = self._compact_group(
+            self._overlay_sections['Materials'][1],
+            'Diagnostics & lighting', opened=False)
+        self._material_advanced.addWidget(self.solid_geometry)
         self.unlit_diffuse_checkbox=QCheckBox('Unlit diffuse (inspect dark textures)')
         self.unlit_diffuse_checkbox.setObjectName('modelUnlitDiffuseDiagnostic')
         self.unlit_diffuse_checkbox.setToolTip(
@@ -918,7 +1146,25 @@ class QtGPUModelPanel(QWidget):
         self.unlit_diffuse_checkbox.toggled.connect(
             lambda checked:(setattr(self.canvas,'unlit_diffuse',checked),
                             self.canvas.update()))
-        self._overlay_sections['Materials'][1].addWidget(self.unlit_diffuse_checkbox)
+        self._material_advanced.addWidget(self.unlit_diffuse_checkbox)
+        normal_row = QHBoxLayout()
+        normal_row.addWidget(QLabel('Normal Y'))
+        self.normal_convention_combo = QComboBox(self)
+        self.normal_convention_combo.setObjectName('modelNormalYDiagnostic')
+        self.normal_convention_combo.addItems((
+            'Source (unchanged)', 'Flip green (DX to GL)', 'Flat (no normal maps)'))
+        self.normal_convention_combo.setToolTip(
+            'Compare a fixed camera/light with the normal map unchanged, '
+            'its green channel inverted, or with normal details disabled. '
+            'Preview only: neither original DDS nor Blender exports change.')
+        self.normal_convention_combo.currentTextChanged.connect(
+            self.canvas.set_normal_diagnostic)
+        normal_row.addWidget(self.normal_convention_combo, 1)
+        self._material_advanced.addLayout(normal_row)
+        self.normal_diagnostic_info = QLabel(self)
+        self.normal_diagnostic_info.setObjectName('modelNormalYSourceStatus')
+        self.normal_diagnostic_info.setWordWrap(True)
+        self._material_advanced.addWidget(self.normal_diagnostic_info)
         ambient_row = QHBoxLayout()
         ambient_row.addWidget(QLabel('Studio fill'))
         self.studio_fill_slider = QSlider(Qt.Horizontal)
@@ -931,37 +1177,38 @@ class QtGPUModelPanel(QWidget):
             lambda value: (setattr(self.canvas, 'studio_fill', value/100.),
                            self.canvas.update()))
         ambient_row.addWidget(self.studio_fill_slider, 1)
-        self._overlay_sections['Materials'][1].addLayout(ambient_row)
+        self._material_advanced.addLayout(ambient_row)
         self.diffuse_source_info = QLabel('Diffuse DDS diagnostics will appear here.')
         self.diffuse_source_info.setObjectName('modelDiffuseSourceInfo')
         self.diffuse_source_info.setWordWrap(True)
-        self.diffuse_source_info.setStyleSheet(
-            'QLabel#modelDiffuseSourceInfo {color:#bbb9c9;'
-            'background:#24252e;border-radius:6px;padding:8px;}')
-        self._overlay_sections['Materials'][1].addWidget(self.diffuse_source_info)
+        self.diffuse_source_info.setObjectName('viewHint')
+        self._material_advanced.addWidget(self.diffuse_source_info)
         self.part_select.currentIndexChanged.connect(
-            lambda _index: self._update_source_brightness())
+            lambda _index: (self._update_source_brightness(),
+                            self._update_normal_source_status()))
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = _CompactDiagnosticText(self)
         self.native_info.setText('Native game animations: not scanned')
-        self._overlay_sections['Animation'][1].addWidget(self.native_info)
-        # Keep the selected clip's status immediately under its browser.
-        self._overlay_sections['Animation'][1].removeWidget(self.native_info)
+        # Verbose CAF/DBA diagnostics are available on demand rather than
+        # consuming the model viewport every time Animations is opened.
+        self._native_details = self._compact_group(
+            self.animation_sections['Animations'][1].layout(),
+            'Selection details', opened=False)
         self.native_info.setMaximumHeight(84)
-        self.animation_sections['Animations'][1].layout().addWidget(self.native_info)
+        self._native_details.addWidget(self.native_info)
         foot=QLabel('Renderer 3.0 approximates CryEngine materials; check optional maps in the texture diagnostics. '
                     'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
-        self._overlay_sections['View'][1].addWidget(foot)
+        self._view_advanced.addWidget(foot)
         self._build_compact_timeline(layout)
         QTimer.singleShot(0,self._position_overlay)
 
     def _create_viewport_navigation(self):
         self._tool_rail = QFrame(self.canvas)
         self._tool_rail.setObjectName('viewportToolRail')
-        self._tool_rail.setStyleSheet('QFrame#viewportToolRail { background: rgba(31,31,36,220); border: 1px solid #49464e; border-radius: 5px; }')
+        # Reusable toolbar surface comes from qt_design_system.
         rail = QVBoxLayout(self._tool_rail)
         rail.setContentsMargins(3,4,3,4)
         rail.setSpacing(3)
@@ -989,7 +1236,7 @@ class QtGPUModelPanel(QWidget):
         rail.addStretch()
         self._axis_widget = QFrame(self.canvas)
         self._axis_widget.setObjectName('viewportAxisControls')
-        self._axis_widget.setStyleSheet('QFrame#viewportAxisControls { background: rgba(31,31,36,220); border: 1px solid #49464e; border-radius: 14px; }')
+        # The camera axis rail shares the same neutral surface.
         axes = QHBoxLayout(self._axis_widget)
         axes.setContentsMargins(3,3,3,3)
         axes.setSpacing(2)
@@ -1015,7 +1262,7 @@ class QtGPUModelPanel(QWidget):
     def _build_compact_timeline(self,parent_layout):
         strip = QFrame(self)
         strip.setObjectName('viewportTimeline')
-        strip.setStyleSheet('QFrame#viewportTimeline { background: #212126; border-top: 1px solid #47424a; }')
+        # Timeline retains compact Qt-native controls and inherited colors.
         bar = QHBoxLayout(strip)
         bar.setContentsMargins(6,2,6,2)
         bar.setSpacing(5)
@@ -1040,6 +1287,29 @@ class QtGPUModelPanel(QWidget):
         bar.addWidget(more)
         strip.setFixedHeight(38)
         parent_layout.addWidget(strip)
+
+    def _compact_group(self, layout, label, *, opened=False):
+        """Small disclosure for optional controls; retains all tool widgets."""
+        heading = QToolButton(self)
+        heading.setObjectName('gpuCompactGroup' + label.replace(' ', '').replace('&',''))
+        heading.setText(('▾  ' if opened else '▸  ') + label)
+        heading.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        heading.setCheckable(True)
+        heading.setChecked(opened)
+        heading.setMinimumHeight(24)
+        layout.addWidget(heading)
+        content = QWidget(self)
+        details = QVBoxLayout(content)
+        details.setContentsMargins(3, 2, 3, 3)
+        details.setSpacing(3)
+        layout.addWidget(content)
+        content.setVisible(opened)
+        def set_open(active):
+            content.setVisible(active)
+            heading.setText(('▾  ' if active else '▸  ') + label)
+            QTimer.singleShot(0,self._update_animation_scrolling)
+        heading.toggled.connect(set_open)
+        return details
 
     def toggle_overlay(self, section, shown=None):
         """Display just one model tool group over the viewport."""
@@ -1071,11 +1341,13 @@ class QtGPUModelPanel(QWidget):
     def _position_overlay(self):
         if not hasattr(self, '_overlay') or self._overlay is None:
             return
-        width = max(190, min(420 if self._active_overlay == 'Animation' else 470,
+        width = max(190, min(355 if self._active_overlay == 'Animation' else 370,
                              self.canvas.width() - 70))
         page = self._overlay_sections.get(self._active_overlay)
-        wanted = (page[0].sizeHint().height() + 35) if page else 200
-        height = max(80, min(wanted, 415 if self._active_overlay == 'Animation' else 500, self.canvas.height() - 55))
+        wanted = (page[0].sizeHint().height() + 20) if page else 200
+        caps = {'View': 240, 'Materials': 255, 'Animation': 315}
+        height = max(80, min(wanted, caps.get(self._active_overlay, 260),
+                             self.canvas.height() - 55))
         self._overlay.setGeometry(56, 43, width, height)
         self._position_navigation()
 
@@ -1128,6 +1400,33 @@ class QtGPUModelPanel(QWidget):
                 message += '\nNo Diffuse map declared in the MTL for this slot.'
         self.diffuse_source_info.setText(message)
 
+    def _update_normal_source_status(self):
+        """Explain the selected slot's actual decoded maps and preview-only mode."""
+        materials = self.canvas.materials
+        if materials is None:
+            message = 'No material maps resolved yet. Wait for background DDS loading.'
+        else:
+            slots = (sorted({subset[2] for subset in self.canvas.mesh.subsets})
+                     if self.canvas.mesh.subsets else [0])
+            selected = self.part_select.currentData()
+            if selected is not None:
+                slots = [selected]
+            primary = sum(1 for slot in slots
+                          if 0 <= slot < len(getattr(materials, 'normal_maps', ()))
+                          and materials.normal_maps[slot] is not None)
+            detail = sum(1 for slot in slots
+                         if 0 <= slot < len(getattr(materials, 'detail_normal_maps', ()))
+                         and materials.detail_normal_maps[slot] is not None)
+            message = ('%d base + %d detail normal map(s) decoded across %d part(s).'
+                       % (primary, detail, len(slots)))
+            if not (primary or detail):
+                message += ' No normal mapping to compare on this selection.'
+            else:
+                message += ' Keep camera and light fixed; compare highlights and indentations.'
+        message += ' Preview only — original DDS and GLB export stay unchanged.'
+        if hasattr(self, 'normal_diagnostic_info'):
+            self.normal_diagnostic_info.setText(message)
+
     def _populate_material_slots(self,mesh,materials):
         from material_preview import diffuse_source_stats
         slots=sorted({part[2] for part in mesh.subsets}) if mesh.subsets else [0]
@@ -1159,6 +1458,7 @@ class QtGPUModelPanel(QWidget):
         self.canvas.set_visible_material_slot(None)
         if hasattr(self,'diffuse_source_info'):
             self._update_source_brightness()
+        self._update_normal_source_status()
 
     def show_uv_layout(self):
         from io import BytesIO
@@ -1257,14 +1557,8 @@ class QtGPUModelPanel(QWidget):
             heading.setCheckable(True)
             heading.setChecked(opened)
             heading.setToolButtonStyle(Qt.ToolButtonTextOnly)
-            heading.setMinimumHeight(31)
-            heading.setStyleSheet(
-                'QToolButton {text-align:left; padding:7px 10px;'
-                'background:#272932;color:#f0edf5;border:1px solid #3a3c48;'
-                'border-radius:7px;font-weight:600;}'
-                'QToolButton:checked {background:#302d43;'
-                'border:1px solid #635678;}'
-                'QToolButton:hover {background:#393543;}')
+            heading.setMinimumHeight(25)
+            heading.setObjectName('disclosureToggle')
             body = QWidget(self)
             inner = QVBoxLayout(body)
             inner.setSizeConstraint(QLayout.SetMinAndMaxSize)
@@ -1331,7 +1625,7 @@ class QtGPUModelPanel(QWidget):
         self.native_state_filter = QComboBox()
         self.native_state_filter.setObjectName('nativeAnimationStateFilter')
         self.native_state_filter.addItems((
-            'All availability', 'Ready in library', 'In PAK (extract on play)',
+            'All sources', 'Ready in library', 'In PAK (extract on play)',
             'Not found', 'Layered / additive', 'Graph / unavailable', 'DBA converter'))
         self.native_state_filter.currentIndexChanged.connect(self._filter_native_catalog)
         native_filters.addWidget(self.native_state_filter)
@@ -1345,7 +1639,8 @@ class QtGPUModelPanel(QWidget):
         catalog_layout.addLayout(native_filters)
         self.native_result_count = QLabel('No animation references loaded')
         self.native_result_count.setStyleSheet('color:#aeb1c1;font-size:11px;')
-        self.native_result_count.setWordWrap(True)
+        self.native_result_count.setWordWrap(False)
+        self.native_result_count.setToolTip('Showing filtered entries; other animations stay searchable.')
         catalog_layout.addWidget(self.native_result_count)
         self.native_capabilities = QLabel('')
         self.native_capabilities.setObjectName('historicalNativeCapabilityStatus')
@@ -1361,7 +1656,7 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.currentIndexChanged.connect(self._native_selection)
         self.play_native_button = QPushButton('▶  Play')
         self.play_native_button.setObjectName('playSelectedNativeAnimation')
-        self.play_native_button.setMinimumHeight(34)
+        self.play_native_button.setMinimumHeight(30)
         self.play_native_button.setStyleSheet(
             'QPushButton#playSelectedNativeAnimation {background:#4e3f73;'
             'color:#fff;font-weight:600;border-radius:7px;padding:6px 14px;}'
@@ -1659,7 +1954,7 @@ class QtGPUModelPanel(QWidget):
             shown = [chosen] + shown[:max_rows-1]
         self.native_clip_select.blockSignals(True)
         self.native_clip_select.clear()
-        self.native_clip_select.addItem('Select an animation…', -1)
+        self.native_clip_select.addItem('Choose a clip…', -1)
         suffixes = {
             'candidate': '  • Ready', 'extractable': '  • Packed',
             'missing': '  • Missing', 'layered': '  • Layered',

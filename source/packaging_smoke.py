@@ -44,6 +44,32 @@ assert (BUNDLE/"reference"/"RSAKeyData.bin").is_file()
 assert (BUNDLE/"reference"/"inject.dll").is_file()
 assert (BUNDLE/"reference"/"inject.dll").read_bytes()[0x870:0x8fc] == (BUNDLE/"reference"/"RSAKeyData.bin").read_bytes()
 assert Twofish(bytes(16)).decrypt(Twofish(bytes(16)).encrypt(bytes(16))) == bytes(16)
+# Test actual packaged DLL loading, not only source-tree crypto fallback.
+import os
+from evolve_video_pak_tool_fixed import Twofish as CryTwofish
+cipher = CryTwofish(bytes(16))
+try:
+    assert cipher.encrypt_blocks(bytes(16)).hex() == '9f589f5cf6122c32b6bfec2f2ae8c35a'
+    if os.environ.get('EVOLVE_REQUIRE_NATIVE_TWOFISH') == '1':
+        assert cipher.bulk is not None, 'Native bulk Twofish not loaded in packaged worker'
+        # This script is executed from the source checkout using runpy by the
+        # *packaged worker*. BUNDLE may identify the checkout in that case;
+        # the native runtime and redistributable notices must instead be
+        # validated beside the installed worker in its PyInstaller _internal.
+        import sys
+        from pathlib import Path
+        runtime_root = (Path(sys.executable).resolve().parent / '_internal'
+                        if getattr(sys, 'frozen', False) else BUNDLE)
+        for dll in ('libgcrypt-20.dll', 'libgpg-error-0.dll'):
+            assert (runtime_root / dll).is_file(), 'Native runtime DLL missing: ' + dll
+        license_root = runtime_root / 'Licenses' / 'Native-Twofish'
+        assert (license_root / 'NOTICE.txt').is_file(), 'Native crypto notice missing'
+        for provider in ('libgcrypt', 'libgpg-error'):
+            for notice in ('COPYING', 'COPYING.LIB'):
+                assert (license_root / provider / notice).is_file(), (
+                    'Missing LGPL/GPL redistribution notice: ' + provider + '/' + notice)
+finally:
+    cipher.close()
 assert rsa.generate_private_key(public_exponent=65537, key_size=2048).key_size == 2048
 assert Image and ImageTk and dds_texture.parse_dds and dds_png_import.encode_png_as_dds and dds_streaming.inspect_stream and model_asset.inspect_model and model_preview.read_preview_mesh
 assert frida.__version__ and numpy.__version__ and material_preview.render_textured_mesh

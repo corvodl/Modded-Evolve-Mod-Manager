@@ -63,7 +63,7 @@ class UnifiedExplorerTests(unittest.TestCase):
     def test_single_visible_file_tree_and_hidden_internal_tabs(self):
         editor = self.editor
         self.assertEqual(editor.explorer_count.text(), "3 files")
-        self.assertEqual(editor.tabs.count(), 4)
+        self.assertEqual(editor.tabs.count(), 5)
         self.assertTrue(editor.tabs.tabBar().isHidden())
         self.assertIs(editor.trees["files"], editor.trees["images"])
         self.assertIs(editor.trees["images"], editor.trees["models"])
@@ -88,7 +88,40 @@ class UnifiedExplorerTests(unittest.TestCase):
             self.assertFalse(item.icon(0).isNull())
             self.assertIn(name, item.toolTip(0))
         self.assertNotIn("#0000ff", tree.styleSheet().lower())
-        self.assertIn("#772b3d", tree.styleSheet().lower())
+        # Qt-wide semantic selection coloring replaces per-window red QSS.
+        self.assertNotIn("#772b3d", tree.styleSheet().lower())
+        self.assertIs(self.editor.editor_split.widget(0), self.editor.tabs)
+        self.assertIs(self.editor.editor_split.widget(1), self.editor.explorer)
+
+    def test_large_inventory_uses_virtual_tree_and_full_catalog_search(self):
+        editor = self.editor
+        for number in range(3500):
+            rel = f'configs/generated_{number:04d}.xml'
+            editor.records[rel] = {'path': rel, 'format': 'text'}
+        editor.populate()
+        self.assertTrue(editor._virtual_active)
+        self.assertTrue(editor.file_tree.isHidden())
+        self.assertEqual(editor.explorer_count.text(), '3503 files')
+        self.assertLessEqual(editor._virtual_model.rowCount(), 256)
+        editor.search.setText('configs/ability.xml')
+        editor.populate()
+        self.assertEqual(editor.explorer_count.text(), '1 files')
+        folder = editor._virtual_model.index(0, 0)
+        self.assertEqual(folder.data(Qt.UserRole + 1), 'configs')
+        child = editor._virtual_model.materialize_row(folder, 0)
+        self.assertEqual(child.data(Qt.UserRole), 'configs/ability.xml')
+        editor.virtual_file_tree.setCurrentIndex(child)
+        self.assertEqual(editor.selected(), 'configs/ability.xml')
+        self.assertEqual(editor.mode, 'files')
+        self.assertEqual(editor.views['files'].toPlainText(),
+                         "<Ability value='1' />")
+        # Data absent from the first 256 fetched rows must remain findable.
+        editor.search.setText('generated_3499')
+        editor.populate()
+        folder = editor._virtual_model.index(0, 0)
+        child = editor._virtual_model.materialize_row(folder, 0)
+        self.assertEqual(child.data(Qt.UserRole),
+                         'configs/generated_3499.xml')
 
     def test_click_selects_correct_editor_without_visible_tabs(self):
         editor = self.editor
@@ -132,12 +165,97 @@ class UnifiedExplorerTests(unittest.TestCase):
         self.assertEqual(source.read_bytes(), movie)
         self.assertFalse(self.editor.gfx_view.export.isEnabled())
 
+    def test_model_resolve_reuses_existing_library_index(self):
+        editor = self.editor
+        editor.read_only_library = True
+        editor.library_archive = {'id': 'synthetic-pak'}
+        original_index = {'characters/hero.skinm': []}
+        editor.preview_index = original_index
+        with patch.dict(os.environ, {'QT_QPA_PLATFORM': 'offscreen'}), \
+             patch('qt_workspace_editor.prepare_model_cached',
+                   return_value=({}, True, 1.0)) as prepare, \
+             patch('asset_library_preview.library_model_index') as build, \
+             patch('shared_pak_cache.start_character_catalog') as catalog, \
+             patch.object(editor, '_model_ready'):
+            editor._load_model_background('characters/hero.skinm')
+            build.assert_not_called()
+            self.assertIs(prepare.call_args.kwargs['index'], original_index)
+            catalog.assert_called_once_with(
+                editor.manager.stage_path, 'characters/hero.skinm')
+
+    def test_left_side_setting_controls_new_editor(self):
+        self.editor.manager.settings['file_explorer_side'] = 'Left'
+        other = QtWorkspaceEditor(self.editor.manager, self.editor.workspace)
+        self.addCleanup(other.close)
+        self.assertEqual(other._file_explorer_side, 'Left')
+        self.assertIs(other.editor_split.widget(0), other.explorer)
+        self.assertIs(other.editor_split.widget(1), other.tabs)
+
+    def test_side_change_keeps_splitter_widths_and_hidden_visibility(self):
+        editor = self.editor
+        editor.show()
+        self.app.processEvents()
+        editor.editor_split.setSizes([800, 310])
+        self.app.processEvents()
+        before = editor._logical_split_sizes()
+        editor.set_file_explorer_side('Left')
+        self.app.processEvents()
+        self.assertIs(editor.editor_split.widget(0), editor.explorer)
+        self.assertIs(editor.editor_split.widget(1), editor.tabs)
+        after = editor._logical_split_sizes()
+        self.assertLessEqual(abs(before[0] - after[0]), 30)
+        self.assertLessEqual(abs(before[1] - after[1]), 30)
+        editor.toggle_file_explorer(False)
+        editor.set_file_explorer_side('Right')
+        self.assertFalse(editor._explorer_visible)
+        editor.toggle_file_explorer(True)
+        self.app.processEvents()
+        self.assertIs(editor.editor_split.widget(0), editor.tabs)
+        self.assertIs(editor.editor_split.widget(1), editor.explorer)
+        self.assertGreater(editor._logical_split_sizes()[1], 0)
+
+    def test_layout_presets_remain_semantic_after_changing_sides(self):
+        editor = self.editor
+        editor.show()
+        self.app.processEvents()
+        for side in ('Left', 'Right'):
+            editor.set_file_explorer_side(side)
+            editor.set_workspace_layout('Model Focus')
+            preview, explorer = editor._logical_split_sizes()
+            self.assertGreater(preview, explorer)
+            editor.set_workspace_layout('Files First')
+            preview, explorer = editor._logical_split_sizes()
+            self.assertGreater(explorer, preview)
+        editor.set_file_explorer_side('Left')
+        editor.save_workspace_layout()
+        editor.set_workspace_layout('Model Focus')
+        editor._restore_workspace_layout()
+        preview, explorer = editor._logical_split_sizes()
+        self.assertGreater(explorer, preview)
+
+    def test_typing_search_coalesces_rebuilds(self):
+        editor = self.editor
+        old_count = editor.explorer_count.text()
+        editor.search.setText('c')
+        editor.search.setText('ch')
+        editor.search.setText('character')
+        self.assertTrue(editor._search_timer.isActive())
+        self.assertEqual(editor.explorer_count.text(), old_count)
+        editor._search_timer.stop()
+        # Qt retains the slot bound when the signal was connected; emitting
+        # the settled timeout verifies the actual populated result.
+        editor._search_timer.timeout.emit()
+        self.assertEqual(editor.explorer_count.text(), '1 files')
+
     def test_search_explorer_and_pak_selection_are_in_explorer(self):
         editor = self.editor
         self.assertIs(editor.search.parentWidget(), editor.explorer)
         editor.search.setText("eye")
+        self.assertTrue(editor._search_timer.isActive())
+        editor.populate()  # Settle the debounced query deterministically.
         self.assertEqual(editor.explorer_count.text(), "1 files")
         editor.search.clear()
+        editor.populate()
         self.assertEqual(editor.explorer_count.text(), "3 files")
         editor.toggle_file_explorer(False)
         self.assertFalse(editor._explorer_visible)

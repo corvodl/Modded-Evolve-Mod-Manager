@@ -24,6 +24,22 @@ int __cdecl EvolveBridge_RegisterVerifiedEvent(const char *name,
    const char *event_id, const char *schema_json,
    EvolveVerifiedEventHandler handler);
 
+/* OPTIONAL READ-ONLY SCALEFORM INSPECTOR:
+   Register exactly one trusted provider after a verified build-specific GFx
+   adapter has resolved the live movie hierarchy. Callback runs only on the
+   game thread during EvolveBridge_Pump; it writes at most capacity bytes of
+   UTF-8 JSON and returns the exact byte count (0 = unavailable). The bridge
+   validates the schema and never sends a pointer or permits memory writes.
+   No built-in game adapter or speculative memory offsets are provided.
+   JSON: {"schema":1,"movie":"Libs/UI/main_menu.gfx","frame":1,
+          "nodes":[{"id":"title","parent":null,"name":"Title",
+                    "kind":"textfield","text":"Example","x":0,"y":0,
+                    "width":100,"height":20,"visible":true}]}
+*/
+typedef int (__cdecl *EvolveUiSnapshotProvider)(unsigned char *output,
+                                                int capacity);
+int __cdecl EvolveBridge_RegisterUiSnapshot(EvolveUiSnapshotProvider provider);
+
 /* Call regularly from a verified game-thread callback; this is the ONLY
    place native event handlers execute. Returns events processed. */
 int __cdecl EvolveBridge_Pump(void);

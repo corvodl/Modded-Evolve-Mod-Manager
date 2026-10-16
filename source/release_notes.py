@@ -4,6 +4,48 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.2.4', (
+        "Import individually verified assembled CDF characters into Blender as one GLB, with compatible named CAF/DBA Actions bound to the correct original skeleton.",
+        "Expand native CAF conversion to as many as 256 verified clips per assembly within size and resource safety limits; report unsupported clips explicitly.",
+        "Preserve compatible 2012 CryTek master-skeleton DBA conversion and reject unsupported or mismatched rigs rather than inventing motion.",
+        "Show per-assembly Blender animation counts, clip names and skip reasons after export, while keeping the separate animation manifest for diagnostics.",
+        "Add Settings integration for installing the optional standalone Blender Animation Browser through Blender's own extension system, with safe version and package checks.",
+        "Review and install signed PAK or multi-PAK ZIP mods with validation, deduplication and conflict checks.",
+        "Manage installed mod profiles, installation history, undo, and Verify & Repair for matching source files.",
+        "Preview required disk space, choose mod storage locations, reuse verified setups, and safely clean up old setups.",
+        "Open Quick Commands with Ctrl+K and use streamlined Modding and Settings workflows.",
+        "View System Health diagnostics and launch/recovery safety checks.",
+        "Improve project filtering, editor lifecycle, and main-menu promotional visibility persistence.",
+    )),
+    ('1.2.3', (
+        "Patch 2: Add a collapsible, on-demand System Health dashboard for firewall rules, running processes, crash/support tools, storage and environment checks.",
+        "Patch 2: Strengthen offline launch safety with upfront Windows elevation, pre-launch verification, recovery guidance and privacy-reviewed support reporting.",
+        "Patch 2: Keep GFX Hide/Remove featured-promotion edits effective across menu video changes, and improve project browsing and workspace reuse.",
+        "Patch 1: Decode higher-resolution DDS, explicit gloss/AO channels, original normals/tangents, detail maps, independent UVs, and environment reflections.",
+        "Patch 1: Add optional GPU SSAO quality presets and smaller, expandable View, Materials, and Animation controls; show individual material and animation loading stages.",
+        "Patch 1: Export GLBs with editable PNGs in textures/ and verified rigged CAF/DBA clips in animations/, with source files and compatibility reports.",
+        "Pin Play with Mods, Play without Mods, and Settings at the bottom of the sidebar; add quick launch buttons to Home.",
+        "Restore original PAK files automatically after the game and client close, with journal-backed recovery in Settings.",
+        "Show installed client version separately without an unverified update checker.",
+    )),
+    ('1.2.2', (
+        "Speed up Modding and Asset Library navigation with background inventory, virtualized large asset trees, and demand-driven file metadata.",
+        "Show verified model and map geometry earlier, retain unchanged map textures, and invalidate prepared caches when source assets change.",
+        "Stream RSA-verified signed PAK entries in bounded chunks with native Twofish acceleration, cancellation, and preserved CRC checks.",
+    )),
+    ('1.2.1', (
+        "Patch 1: introduce Home as the launch dashboard, with workspace shortcuts, quick setup status and a persistent outlined-icon navigation rail.",
+        "Patch 1: let the application logo return to Home while preserving restricted-page access controls.",
+        "Patch 1: rebuild modified PAK workspaces using an exact SHA-verified retained original, when available, without overwriting edited files or swap journals.",
+        "Refresh every Qt workspace with a cohesive charcoal interface, muted panels, restrained red accents, and reusable controls.",
+        "Improve Modding and Asset Library navigation with resizable project lists, contextual actions, and collapsible advanced tools.",
+        "Modernize File, GFX, GPU Model, and Level editors with clearer inspectors, shared toolbars, and more room for previews.",
+        "Simplify Settings and dialogs with consistent light/dark appearances, custom theme options, and compact-density support.",
+        "Improve main-menu GFX authoring, static UI symbol visibility, and separate featured title, TRY, and BUY edits.",
+        "Introduce an experimental read-only UI inspection interface for future verified offline game-side integration.",
+        "Keep the release milestone visible in editor footers without patch-revision clutter and preserve safer update handling.",
+        "Retain console-free Windows startup and defer expensive inventory scans until their workspace opens.",
+    )),
     ('1.2.0', (
         "Modernize the Qt interface with contextual tools, cleaner Settings, Flaticon navigation icons, and improved workspace layouts.",
         "Manage Stage 2 PAKs through build-scoped Asset Library browsing, dependencies, bulk imports, isolated edits, and safer mod staging.",
