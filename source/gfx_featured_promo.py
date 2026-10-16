@@ -115,7 +115,7 @@ def _preset_code(mode: str, target: str, custom: str, layout=None) -> str:
     elif custom:
         raise GfxError("Custom text is only valid for the Custom text action.")
 
-    lines = [f"    var {_MARKER} = true;"]
+    lines = [f"    var {_MARKER}_{target} = true;"]
     if mode == "custom":
         # These known featured movie instances are real runtime targets.
         # Their internal TextField names depend on the game build; never
