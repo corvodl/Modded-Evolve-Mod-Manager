@@ -80,7 +80,7 @@ def _persistent_hide_guard(mode: str, target: str) -> list[str]:
     """
     if mode not in ("hide", "remove") or target not in TARGETS:
         raise GfxError("Persistent promo guard requires a valid Hide/Remove target.")
-    guard = "__evolveFeaturedPromoVisibilityGuard"
+    guard = "__evolveFeaturedPromoVisibilityGuard" + ("" if target == "all" else "_" + target)
     lines = [
         "    // Keep the featured offer hidden when native menu callbacks re-show it.",
         f"    if (_root.{guard} == undefined &&",
@@ -133,7 +133,7 @@ def _preset_code(mode: str, target: str, custom: str, layout=None) -> str:
         names = {"title": ("mcFeatureTitle",),
                  "try": ("mcFeatureTry", "mcFeatureButtonTry"),
                  "buy": ("mcFeatureBuy", "mcFeatureButtonBuy")}[target]
-        lines = [f"    var {_MARKER} = true;"]
+        lines = [f"    var {_MARKER}_{target} = true;"]
         for name in names:
             lines += [
                 f"    if (_root.{name} != undefined) {{",
@@ -151,30 +151,45 @@ def _preset_code(mode: str, target: str, custom: str, layout=None) -> str:
     if mode not in MODES or target not in TARGETS:
         raise GfxError("Choose Hide, Remove, Custom text, or Layout override.")
     if mode == "custom":
-        if target != "title":
-            raise GfxError("Custom text applies only to the featured title.")
-        if (not isinstance(custom, str) or not 1 <= len(custom) <= 72
+        if target not in ("title", "try", "buy"):
+            raise GfxError("Custom text requires the featured title, TRY or BUY control.")
+        if (not isinstance(custom, str) or not 1 <= len(custom) <= 160
                 or custom != custom.strip() or
-                any(ord(c) < 32 or ord(c) == 127 for c in custom)):
-            raise GfxError("Enter 1–72 printable characters for the featured title.")
+                any(not c.isprintable() for c in custom)):
+            raise GfxError("Enter 1–160 printable characters for the selected text.")
     elif custom:
         raise GfxError("Custom text is only valid for the Custom text action.")
 
-    lines = [f"    var {_MARKER} = true;"]
+    lines = [f"    var {_MARKER}_{target} = true;"]
     if mode == "custom":
+        # These known featured movie instances are real runtime targets.
+        # Their internal TextField names depend on the game build; never
+        # create a synthetic text field or replace unrelated button labels.
         quoted = json.dumps(custom, ensure_ascii=True)
-        lines += [
-            "    if (_root.mcFeatureTitle != undefined) {",
-            "        _root.mcFeatureTitle._visible = true;",
-            f"        _root.mcFeatureTitle.text = {quoted};",
-            "        if (_root.mcFeatureTitle.txtTitle != undefined) {",
-            f"            _root.mcFeatureTitle.txtTitle.text = {quoted};",
-            "        }",
-            "        if (_root.mcFeatureTitle.txtText != undefined) {",
-            f"            _root.mcFeatureTitle.txtText.text = {quoted};",
-            "        }",
-            "    }",
-        ]
+        child_fields = ("txtTitle", "txtText", "txtLabel", "txtTry",
+                        "txtBuy", "label", "textField")
+        for name in _TARGET_NAMES[target]:
+            lines.extend((
+                f"    if (_root.{name} != undefined) {{",
+                f"        _root.{name}._visible = true;",
+            ))
+            # Retain compatibility with existing direct title text targets.
+            if target == "title":
+                lines.append(f"        _root.{name}.text = {quoted};")
+            else:
+                lines.extend((
+                    f"        if (_root.{name}.text != undefined) {{",
+                    f"            _root.{name}.text = {quoted};",
+                    "        }",
+                ))
+            for field in child_fields:
+                lines.extend((
+                    f"        if (_root.{name}.{field} != undefined && "
+                    f"_root.{name}.{field}.text != undefined) {{",
+                    f"            _root.{name}.{field}.text = {quoted};",
+                    "        }",
+                ))
+            lines.append("    }")
     else:
         for name in _TARGET_NAMES[target]:
             lines.extend((
@@ -194,9 +209,7 @@ def _preset_code(mode: str, target: str, custom: str, layout=None) -> str:
                     "        }",
                 ]
             lines.append("    }")
-        # Later carousel/video callbacks can reassign title visibility and
-        # button state after setFeatured. Enforce Hide/Remove for the lifetime
-        # of this menu instance instead of only once per setFeatured call.
+    if mode in ('hide', 'remove'):
         lines += _persistent_hide_guard(mode, target)
     return "\n".join(lines) + "\n"
 
@@ -206,9 +219,25 @@ def patch_featured_actionscript(source: str, mode: str, target: str = "all",
     """Patch one identified setFeatured function without guessing UI strings."""
     if not isinstance(source, str) or len(source) > MAX_XML:
         raise GfxError("Invalid or oversized exported ActionScript.")
-    if _MARKER in source:
-        raise GfxError("A featured promo preset is already in this script. Undo first.")
     injection = _preset_code(mode, target, custom, layout)
+    # A different control can be edited in the same session. Each preset is
+    # explicitly scoped so hiding TRY/BUY never forces a reset of the title.
+    # The older single-marker preset has unknown targets: fail closed.
+    if re.search(r"\bvar\s+" + _MARKER + r"\s*=", source):
+        raise GfxError(
+            "An older, unscoped promo preset is present. Undo it before "
+            "using independent title, TRY and BUY edits.")
+    if re.search(r"\bvar\s+" + _MARKER + "_" + target + r"\s*=", source):
+        raise GfxError(
+            "A featured edit for this control is already staged. "
+            "Undo that edit before changing the same control again.")
+    if (target == "all" and
+            any(re.search(r"\bvar\s+" + _MARKER + "_" + item + r"\s*=", source)
+                for item in ("title", "try", "buy"))):
+        raise GfxError("Individual title/TRY/BUY edits are staged. Undo before editing the entire promotion.")
+    if target != "all" and re.search(
+            r"\bvar\s+" + _MARKER + r"_all\s*=", source):
+        raise GfxError("An entire-promotion edit is staged. Undo before editing individual controls.")
     hits = list(_FUNCTION.finditer(source))
     if len(hits) != 1:
         raise GfxError("Expected one setFeatured function in exported ActionScript.")

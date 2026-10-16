@@ -201,17 +201,19 @@ class GfxEditorDialog(QDialog):
             self.promo_mode.setObjectName("gfxFeaturedPromoMode")
             self.promo_mode.addItem("Hide", "hide")
             self.promo_mode.addItem("Remove / disable", "remove")
-            self.promo_mode.addItem("Custom title text", "custom")
+            self.promo_mode.addItem("Replace selected text (experimental)", "custom")
             promo_row.addWidget(self.promo_mode)
             self.promo_target = QComboBox()
             self.promo_target.setObjectName("gfxFeaturedPromoTarget")
             self.promo_target.addItem("Entire promotion", "all")
             self.promo_target.addItem("Title only", "title")
+            self.promo_target.addItem("TRY button", "try")
+            self.promo_target.addItem("BUY button", "buy")
             promo_row.addWidget(self.promo_target)
             self.promo_text = QLineEdit()
             self.promo_text.setObjectName("gfxFeaturedPromoText")
-            self.promo_text.setMaxLength(72)
-            self.promo_text.setPlaceholderText("Replacement featured title")
+            self.promo_text.setMaxLength(160)
+            self.promo_text.setPlaceholderText("Enter custom title or button text")
             promo_row.addWidget(self.promo_text, 2)
             self.promo_stage = QPushButton("Stage promo edit")
             self.promo_stage.setObjectName("gfxFeaturedPromoStage")
@@ -226,7 +228,7 @@ class GfxEditorDialog(QDialog):
                 "Test offline before publishing.")
             self.promo_note.setWordWrap(True)
             promo_layout.addWidget(self.promo_note)
-            self.promo_mode.currentIndexChanged.connect(self._promo_options_changed)
+            self.promo_mode.currentIndexChanged.connect(self._promo_mode_changed)
             self.promo_target.currentIndexChanged.connect(self._promo_options_changed)
             self.promo_text.textChanged.connect(self._promo_options_changed)
             self._promo_options_changed()
@@ -269,20 +271,32 @@ class GfxEditorDialog(QDialog):
             self.promo_disclosure.toggle.setChecked(True)
             self.promo_mode.setFocus()
 
+    def _promo_mode_changed(self, *_):
+        if (self.promo_mode.currentData() == "custom"
+                and self.promo_target.currentData() == "all"):
+            self.promo_target.setCurrentIndex(1)
+        self._promo_options_changed()
+
     def _promo_options_changed(self, *_):
         if self.promo_group is None:
             return
         custom = self.promo_mode.currentData() == "custom"
-        self.promo_target.setEnabled(not custom)
+        target = self.promo_target.currentData()
+        self.promo_target.setEnabled(True)
         self.promo_text.setEnabled(custom)
+        self.promo_text.setPlaceholderText(
+            {"title": "Replacement featured title",
+             "try": "Replacement TRY button label",
+             "buy": "Replacement BUY button label"}.get(target, "Select a text target"))
         self.promo_stage.setEnabled(
-            not custom or bool(self.promo_text.text().strip()))
+            not custom or (target in ("title", "try", "buy")
+                           and bool(self.promo_text.text().strip())))
 
     def _stage_featured_promo(self):
         if self.promo_group is None:
             return
         mode = self.promo_mode.currentData()
-        target = "title" if mode == "custom" else self.promo_target.currentData()
+        target = self.promo_target.currentData()
         text = self.promo_text.text() if mode == "custom" else ""
         self._run("featured promotion", lambda: stage_featured_promo(
             self.owner.workspace, self.snapshot.session, mode,
