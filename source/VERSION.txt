@@ -1,1 +1,1 @@
-1.2.4 - Stable Release
+1.2.5 - Stable Release

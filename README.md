@@ -1,29 +1,17 @@
-# Evolve Stage 2 Mod Manager — v1.2.4
+# Evolve Stage 2 Mod Manager — v1.2.5
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.2.4 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.2.5 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.4
+## Latest Stable — v1.2.5
 
-- Import individually verified assembled CDF characters into Blender as one GLB, with compatible named CAF/DBA Actions bound to the correct original skeleton.
-- Expand native CAF conversion to as many as 256 verified clips per assembly within size and resource safety limits; report unsupported clips explicitly.
-- Preserve compatible 2012 CryTek master-skeleton DBA conversion and reject unsupported or mismatched rigs rather than inventing motion.
-- Show per-assembly Blender animation counts, clip names and skip reasons after export, while keeping the separate animation manifest for diagnostics.
-- Add Settings integration for installing the optional standalone Blender Animation Browser through Blender's own extension system, with safe version and package checks.
-
-- Export character-named rigged GLBs with compatible animations and embedded textures, plus categorized animations/, textures/ and models/ assets including equipment.
-- Install the optional verified Evolve Animation Browser through Settings → Blender Integration.
-- Silence auto-restore watchdog console flashes during game process monitoring.
-
-- Review and install signed PAK or multi-PAK ZIP mods with validation, deduplication and conflict checks.
-- Manage installed mod profiles, installation history, undo, and Verify & Repair for matching source files.
-- Preview required disk space, choose mod storage locations, reuse verified setups, and safely clean up old setups.
-- Open Quick Commands with Ctrl+K and use streamlined Modding and Settings workflows.
-- View System Health diagnostics and launch/recovery safety checks.
-- Improve project filtering, editor lifecycle, and main-menu promotional visibility persistence.
+- Use the same complete character-folder exporter from File Editor and Modding Tools, instead of scattering standalone model GLBs across the export root.
+- Create a character-named main GLB and categorized animations, textures, and models directories containing additional verified assemblies and equipment.
+- Preserve Emet's canonical complete 3P body when selecting the primary GLB, with explicit rig and animation compatibility reports instead of fabricated skeletons.
+- Handle empty-name, zero-byte CryPAK placeholders in read-only Asset Library and workspace indexes while continuing to reject unsafe names and entries with data.
 
 ## Download and install
 

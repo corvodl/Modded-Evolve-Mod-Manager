@@ -285,6 +285,9 @@ def extracted_index(root=None, *, archive_ids=None):
             manifest = _load_manifest(folder)
             base = (folder / "files").resolve()
             for entry in manifest["entries"]:
+                if entry.get("path") == "" and entry.get("bytes") == 0:
+                    # Legacy nameless zero-byte placeholder is not an asset.
+                    continue
                 virtual = normalized_name(entry["path"])
                 if entry.get("bytes", -1) < 0:
                     continue
