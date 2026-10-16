@@ -78,6 +78,31 @@ def blender_candidates(*, environment=None):
     return tuple(found)
 
 
+
+def installed_versions(*, appdata=None):
+    """Read exact user-default extension manifests; do not infer from ZIP files."""
+    appdata = appdata if appdata is not None else os.environ.get("APPDATA")
+    if not appdata:
+        return ()
+    root = Path(appdata) / "Blender Foundation" / "Blender"
+    found = []
+    if not root.is_dir():
+        return ()
+    for version in root.iterdir():
+        manifest = (version / "extensions" / "user_default" / PACKAGE_ID
+                    / "blender_manifest.toml")
+        if not manifest.is_file() or manifest.is_symlink():
+            continue
+        try:
+            parsed = tomllib.loads(manifest.read_text(encoding="utf-8"))
+            if parsed.get("id") == PACKAGE_ID:
+                found.append((version.name, str(parsed.get("version", "unknown"))))
+        except (ValueError, OSError):
+            continue
+    return tuple(sorted(found))
+
+
+
 def validate_package(package):
     """Pin the exact distributed ZIP; forbid tampered or substituted code."""
     path = Path(package)
