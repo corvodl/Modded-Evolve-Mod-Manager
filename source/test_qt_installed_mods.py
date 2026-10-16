@@ -95,6 +95,23 @@ class InstalledModsTableTests(unittest.TestCase):
             dialog.refresh()
             self.assertEqual(dialog.table.item(0, 4).text(), "Staged")
 
+    def test_verify_button_only_scans_on_explicit_click(self):
+        with patch("qt_mod_profiles.allowed_paks", return_value={
+                "game/libs.pak": "Game/libs.pak"}), \
+                patch("qt_mod_profiles.begin_file_operation") as operation, \
+                patch("qt_mod_profiles.exports_busy", return_value=False), \
+                patch("qt_mod_profiles.QMessageBox.information"):
+            dialog = ModProfilesDialog(
+                self.parent, self.catalog, self.stage, lambda x: None)
+            self.addCleanup(dialog.close)
+            self.assertEqual(dialog.verify_button.objectName(), "verifyInstalledMods")
+            operation.assert_not_called()
+            dialog.verify_and_repair()
+            operation.assert_called_once()
+            self.assertFalse(dialog.verify_button.isEnabled())
+            operation.call_args.kwargs["on_success"](())
+            self.assertTrue(dialog.verify_button.isEnabled())
+
     def test_missing_source_and_unknown_target_are_visible(self):
         self.mod.unlink()
         with patch("qt_mod_profiles.allowed_paks", return_value={}):
