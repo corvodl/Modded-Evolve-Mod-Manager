@@ -36,6 +36,8 @@ def _pack_vertices(mesh):
 
 def glb_bytes(mesh, *, name='CryEngine Mesh'):
     """Build spec-conforming GLB with POSITION, indices and optional TEXCOORD_0."""
+    from model_export_repair import prepare_export_mesh
+    mesh, repair_report = prepare_export_mesh(mesh)
     vertices = len(mesh.vertices)
     triangles = len(mesh.triangles)
     if not 3 <= vertices <= 250000 or not 1 <= triangles <= 500000:
@@ -129,7 +131,14 @@ def glb_bytes(mesh, *, name='CryEngine Mesh'):
         'materials': materials,
         'buffers': [{'byteLength': len(binary)}],
         'bufferViews': views, 'accessors': accessors,
-        'extras': {'note': 'Render-mesh geometry and UVs only; no skeleton, animation, DDS or game re-import support.'}
+        'extras': {'note': 'Render-mesh geometry and UVs only; no skeleton, animation, DDS or game re-import support.',
+                   'modelRepair': {'degenerateTrianglesRemoved': repair_report.degenerate_faces,
+                                   'unusedVerticesRetained': repair_report.unused_vertices,
+                                   'tinyHolesClosed': repair_report.tiny_holes_closed,
+                                   'openBoundaryEdges': repair_report.boundary_edges,
+                                   'disconnectedTinyPartsRetained': repair_report.disconnected_triangles,
+                                   'uvCoordinatesSnapped': repair_report.uv_coordinates_snapped,
+                                   'notes': list(repair_report.notes)}}
     }
     payload = json.dumps(document, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     while len(payload) % 4:
