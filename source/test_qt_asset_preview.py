@@ -192,48 +192,92 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         target.write_bytes(blob)
         return target, {'textures':1,'animation_clips':0}
 
-    def test_export_folder_uses_current_selected_directory(self):
-        folder_item = None
+    def test_asset_library_character_folder_routes_to_canonical_export(self):
+        """Reproduce the Emet menu route, not the obsolete GLB-per-file loop."""
+        from types import SimpleNamespace
+        from model_blender_export import glb_bytes
+        character = 'characters/hunters/merc_emet'
+        model = character + '/emet_3p.skinm'
+        texture = character + '/textures/emet_diff.dds'
+        for rel, payload in ((model, b'synthetic mesh'),
+                             (texture, b'DDS source')):
+            source = self.folder / 'files' / rel
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(payload)
+        manifest_file = self.folder / 'asset-library.json'
+        manifest = json.loads(manifest_file.read_text('utf-8'))
+        manifest['entries'].extend([
+            {'path': path, 'bytes': (self.folder / 'files' / path).stat().st_size}
+            for path in (model, texture)])
+        manifest_file.write_text(json.dumps(manifest), encoding='utf-8')
+        self.window.refresh()
+
+        selected = None
         iterator = QTreeWidgetItemIterator(self.window.file_tree)
         while iterator.value():
             item = iterator.value()
-            if item.data(0, Qt.UserRole + 1) == 'characters/scrap':
-                folder_item = item
+            if item.data(0, Qt.UserRole + 1) == character:
+                selected = item
                 break
             iterator += 1
-        self.assertIsNotNone(folder_item)
-        self.window.file_tree.setCurrentItem(folder_item)
-        self.assertEqual(
-            self.window._current_model_folder_relative(), 'characters/scrap')
+        self.assertIsNotNone(selected)
+        self.window.file_tree.setCurrentItem(selected)
+        self.assertEqual(self.window._current_model_folder_relative(), character)
         self.assertTrue(same_directory(
             self.window._current_model_source_folder(),
-            self.folder / 'files' / 'characters' / 'scrap'))
-        output = Path(self.temp.name) / 'BlenderExports'
-        output.mkdir()
-        # Run the queued worker body in-process for this source-selection
-        # test; thread lifecycle is exercised in test_beta15_export_progress.
+            self.folder / 'files' / character))
+
+        destination = Path(self.temp.name) / 'BlenderExports'
+        destination.mkdir()
+        mesh = SimpleNamespace(
+            vertices=[(0,0,0),(1,0,0),(0,1,0)],
+            triangles=[(0,1,2)], uvs=[(0,0),(1,0),(0,1)], subsets=())
+        blob = glb_bytes(mesh)
+        body = (blob, {'cdf': character + '/emet_3p.cdf',
+                       'preferred_full_character': True, 'bone_count':3,
+                       'part_count':2, 'embedded_animations':0})
+        cannon = (blob, {'cdf': character + '/emetcannon.cdf',
+                         'bone_count':0, 'part_count':1,
+                         'embedded_animations':0})
+
         def run_inline(_parent, _title, _label, work, **callbacks):
             result = work(lambda *_: None, lambda: False)
             callbacks['on_success'](result)
-        with patch('qt_asset_preview.QFileDialog.getExistingDirectory',
-                   return_value=str(output)) as choose_destination, \
-             patch('qt_background_exports.begin_file_operation',
-                   side_effect=run_inline), \
-             patch('qt_asset_preview.export_glb',
-                   side_effect=self._fake_export_glb) as exported:
+
+        def fake_animations(root, *_args, **_kwargs):
+            directory = Path(root) / 'animations'
+            directory.mkdir()
+            (directory / 'animation_manifest.json').write_text(
+                json.dumps({'converted_clips':[], 'raw_sources':[]}),
+                encoding='utf-8')
+            return {'animations': 0, 'sources': 0}
+
+        with (patch('qt_workspace_editor.QFileDialog.getExistingDirectory',
+                    return_value=str(destination)) as picker,
+              patch('qt_background_exports.begin_file_operation',
+                    side_effect=run_inline),
+              patch('character_export_command.build_cdf_folder_glbs',
+                    return_value=({
+                        'Assemblies/emet_3p.glb': body,
+                        'Assemblies/emetcannon.glb': cannon}, ())),
+              patch('character_animation_export.export_character_animation_folder',
+                    side_effect=fake_animations),
+              patch('qt_asset_preview.export_glb') as old_export):
             self.window.export_blender_folder()
-        choose_destination.assert_called_once()
-        self.assertEqual(exported.call_count, 3)
-        self.assertEqual(
-            {call.args[1] for call in exported.call_args_list}, set(self.models))
-        root=output/'scrap'
-        self.assertEqual(len(list((root/'textures').glob('*.png'))),3)
-        self.assertEqual(len(list((root/'textures').glob('*_texture_manifest.json'))),3)
-        self.assertTrue((root/'animations'/'animation_manifest.json').is_file())
-        animation=json.loads((root/'animations'/'animation_manifest.json').read_text())
-        self.assertEqual(animation['converted_clips'],[])
-        self.assertEqual(animation['raw_sources'],[])
-        self.assertFalse((root/'characters').exists())
+        picker.assert_called_once()
+        old_export.assert_not_called()
+        root = destination / 'Emet'
+        self.assertTrue((root / 'Emet.glb').is_file())
+        self.assertEqual((root / 'textures' / 'emet_diff.dds').read_bytes(),
+                         b'DDS source')
+        self.assertTrue((root / 'animations' / 'animation_manifest.json').exists())
+        self.assertTrue((root / 'models' / 'emetcannon.glb').is_file())
+        self.assertTrue((root / 'models' / 'emet_3p.skinm').is_file())
+        self.assertFalse((root / 'Assemblies').exists())
+        self.assertFalse((root / 'CDF_assembly_report.json').exists())
+        self.assertFalse((root / 'models' / 'emet_3p.glb').exists())
+        self.assertFalse((destination / 'merc_emet').exists())
+        self.assertFalse(any(destination.glob('*.glb')))
 
     def test_export_folder_uses_selected_model_parent_without_source_dialog(self):
         iterator = QTreeWidgetItemIterator(self.window.file_tree)
