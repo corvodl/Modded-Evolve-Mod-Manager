@@ -249,9 +249,9 @@ def export_character_asset_folder(workspace, character_folder, destination,
     Never overwrite an existing export, mutate source game assets, or silently
     resolve virtual-path conflicts to arbitrarily chosen texture bytes.
 
-    full_model: optional (GLB bytes, report) for Full_Character.glb.
+    full_model: optional (GLB bytes, report) for <character>.glb.
     assemblies: mapping of Assemblies/<cdf relative>.glb to (bytes, report).
-    Original CDFs and all raw assets stay alongside the Blender GLBs.
+    Source models (including equipment), animations, and textures are categorized.
     """
     home = Path(workspace).resolve()
     destination = Path(destination).resolve()
@@ -300,13 +300,23 @@ def export_character_asset_folder(workspace, character_folder, destination,
             local_parts = PurePosixPath(local).parts
             if not local_parts or any(p in ('', '.', '..') for p in local_parts):
                 raise ValueError('Unsafe character asset filename.')
-            output = staging.joinpath(*local_parts)
+            lower = local.casefold()
+            if lower.endswith(('.dds', '.dds.0', '.png', '.tif', '.tiff',
+                               '.tga', '.jpg', '.jpeg', '.bmp', '.ktx', '.hdr')):
+                category = 'textures'
+            elif lower.endswith(('.caf', '.dba', '.adb', '.bspace', '.animevents')):
+                category = 'animations'
+            else:
+                category = 'models'
+            output = staging.joinpath(category, *local_parts)
             if not output.resolve().is_relative_to(staging.resolve()):
                 raise ValueError('Unsafe output asset path.')
             output.parent.mkdir(parents=True, exist_ok=True)
             with source.open('rb') as inp, output.open('xb') as dst:
                 shutil.copyfileobj(inp, dst, 1024 * 1024)
-            manifest_rows.append({'file': local, 'virtual': game_path, 'source': archive})
+            manifest_rows.append({'file': output.relative_to(staging).as_posix(),
+                                  'original_relative': local, 'virtual': game_path,
+                                  'source': archive})
             if progress:
                 progress('Copying character assets', i, count)
         info = None
@@ -314,11 +324,12 @@ def export_character_asset_folder(workspace, character_folder, destination,
             if cancelled and cancelled():
                 raise InterruptedError('Character export cancelled.')
             payload, info = full_model
-            (staging / 'Full_Character.glb').write_bytes(payload)
+            primary_glb = staging / (short_name + '.glb')
+            primary_glb.write_bytes(payload)
             from blender_texture_folder import write_texture_folder
-            write_texture_folder(payload, staging / 'Full_Character.glb',
+            write_texture_folder(payload, primary_glb,
                                  texture_root=staging / 'textures',
-                                 model_namespace='Full_Character')
+                                 model_namespace=short_name)
             if progress:
                 progress('Writing full character model', count, count)
         assembly_rows = []
@@ -326,7 +337,10 @@ def export_character_asset_folder(workspace, character_folder, destination,
             if cancelled and cancelled():
                 raise InterruptedError('Character export cancelled.')
             payload, report = pair
-            out = staging.joinpath(*PurePosixPath(location).parts)
+            # Keep all CDF variants and equipment in models/, never beside
+            # the canonical character GLB.
+            relative_assembly = PurePosixPath(*PurePosixPath(location).parts[1:])
+            out = staging.joinpath('models', *relative_assembly.parts)
             if not out.resolve().is_relative_to(staging.resolve()):
                 raise ValueError('CDF assembly output escapes destination.')
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -335,8 +349,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
             from blender_texture_folder import write_texture_folder
             write_texture_folder(
                 payload, out, texture_root=staging / 'textures',
-                model_namespace='__'.join(PurePosixPath(location).with_suffix('').parts))
-            assembly_rows.append({'glb': location, **report})
+                model_namespace='models__' + '__'.join(relative_assembly.with_suffix('').parts))
+            assembly_rows.append({'glb': out.relative_to(staging).as_posix(), **report})
             if progress:
                 progress('Writing CDF Blender assemblies',
                          len(records) + int(full_model is not None) + position, count)
