@@ -1,0 +1,78 @@
+name: Promote existing stable patch as GitHub Latest
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Keep backfill independent of Windows builds, which can take much longer.
+concurrency:
+  group: stable-patch-promotion
+  cancel-in-progress: false
+
+jobs:
+  # Recover an already-published rolling patch (notably v1.2.5-p1) as an
+  # immutable versioned release, without rebuilding or changing its artifacts.
+  # This runs independently of the slower Windows build for the next patch.
+  promote-existing-patch:
+    name: Promote existing stable patch to latest release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify and publish existing Main patch under a versioned tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! gh release view Main >/dev/null 2>&1; then
+            echo 'No rolling Main release exists yet.'
+            exit 0
+          fi
+          mkdir -p promotion
+          gh release download Main --pattern update-manifest.json --dir promotion
+          manifest=promotion/update-manifest.json
+          version=$(jq -er '.version' "$manifest")
+          revision=$(jq -er '.revision' "$manifest")
+          if [[ "$revision" == "0" ]]; then
+            echo 'Milestone has no patch to promote.'
+            exit 0
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || { echo 'Invalid stable version'; exit 1; }
+          [[ "$revision" =~ ^[1-9][0-9]{0,4}$ ]] || { echo 'Invalid patch revision'; exit 1; }
+          patchTag="v${version}-p${revision}"
+          if gh release view "$patchTag" >/dev/null 2>&1; then
+            echo "$patchTag already exists; retaining its original assets."
+            exit 0
+          fi
+          setupName=$(jq -er '.installer' "$manifest")
+          zipName=$(jq -er '.asset' "$manifest")
+          commit=$(jq -er '.commit' "$manifest")
+          [[ "$setupName" == "EvolveModManager-Setup-${version}-p${revision}.exe" ]] || exit 1
+          [[ "$zipName" == "EvolveModManager-Windows-${version}-p${revision}.zip" ]] || exit 1
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          gh release download Main --pattern "$setupName" --pattern "$zipName" --dir promotion
+          for pair in "setup:$setupName:installer_sha256:installer_bytes" "zip:$zipName:sha256:bytes"; do
+            IFS=: read -r kind filename shaField bytesField <<< "$pair"
+            wantedSha=$(jq -er --arg name "$shaField" '.[$name]' "$manifest")
+            wantedBytes=$(jq -er --arg name "$bytesField" '.[$name]' "$manifest")
+            actualSha=$(sha256sum "promotion/$filename" | cut -d' ' -f1)
+            actualBytes=$(stat -c%s "promotion/$filename")
+            [[ "$actualSha" == "$wantedSha" && "$actualBytes" == "$wantedBytes" ]] || {
+              echo "Rolling Main $kind checksum/size mismatch; refusing promotion."
+              exit 1
+            }
+          done
+          gh api "repos/${{ github.repository }}/commits/$commit" --silent
+          gh release view Main --json body --jq '.body' > promotion/release-notes.md
+          gh release create "$patchTag" "promotion/$setupName" "promotion/$zipName" "$manifest" \
+            --target "$commit" --title "Evolve Mod Manager $version · Patch $revision" \
+            --notes-file promotion/release-notes.md --latest
+          gh release view "$patchTag" --json tagName,assets --jq '{tag: .tagName, assets: [.assets[].name]}'
+          actualLatest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq '.tag_name')
+          [[ "$actualLatest" == "$patchTag" ]] || { echo "Latest release is $actualLatest, not $patchTag"; exit 1; }
+
