@@ -1,12 +1,22 @@
-# Evolve Stage 2 Mod Manager — v1.3.0
+# Evolve Stage 2 Mod Manager — v1.2.4
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.3.0 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.2.4 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.3.0
+## Latest Stable — v1.2.4
+
+- Import individually verified assembled CDF characters into Blender as one GLB, with compatible named CAF/DBA Actions bound to the correct original skeleton.
+- Expand native CAF conversion to as many as 256 verified clips per assembly within size and resource safety limits; report unsupported clips explicitly.
+- Preserve compatible 2012 CryTek master-skeleton DBA conversion and reject unsupported or mismatched rigs rather than inventing motion.
+- Show per-assembly Blender animation counts, clip names and skip reasons after export, while keeping the separate animation manifest for diagnostics.
+- Add Settings integration for installing the optional standalone Blender Animation Browser through Blender's own extension system, with safe version and package checks.
+
+- Export character-named rigged GLBs with compatible animations and embedded textures, plus categorized animations/, textures/ and models/ assets including equipment.
+- Install the optional verified Evolve Animation Browser through Settings → Blender Integration.
+- Silence auto-restore watchdog console flashes during game process monitoring.
 
 - Review and install signed PAK or multi-PAK ZIP mods with validation, deduplication and conflict checks.
 - Manage installed mod profiles, installation history, undo, and Verify & Repair for matching source files.
@@ -161,3 +171,5 @@ Version **1.0.1** marks the application's first official release, **not** a clai
 ## Credits
 
 Project by **@CorvoDL**. [Source repository](https://github.com/corvodl/Modded-Evolve-Mod-Manager) · [Required Modded Evolve client](https://modded-evolve.com/).
+
+**Optional Blender Animation Browser:** Use Settings → Blender Integration to install the verified v1.1.0 ZIP in Blender 4.2+.

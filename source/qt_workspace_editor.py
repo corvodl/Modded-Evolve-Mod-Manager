@@ -1396,10 +1396,15 @@ class QtWorkspaceEditor(QMainWindow):
                 item.setData(0, Qt.UserRole, primary)
                 item.setData(0, Qt.UserRole + 2, 'full-character')
                 item.setIcon(0, navigation_icon('layers', size=16))
-                item.setToolTip(0,
-                    'Full character assembled from ' + full.definition +
-                    '\\nThe CDF selects the body and compatible equipment. ' +
-                    'Original meshes remain independently selectable.')
+                item.setToolTip(0, (
+                    ('Complete original Emet 3P skin and matching native rig: '
+                     if full.definition.casefold().endswith('.skin') else
+                     'Full character assembled from ') + full.definition +
+                    ('\\nOriginal arm-complete model; no unrelated CDF '
+                     'equipment geometry is substituted.'
+                     if full.definition.casefold().endswith('.skin') else
+                     '\\nThe CDF selects the body and compatible equipment. ') +
+                    'Original meshes remain independently selectable.'))
                 parent.insertChild(0, item)
                 if primary == previous and self.full_character_active:
                     restored = item
@@ -2797,13 +2802,17 @@ class QtWorkspaceEditor(QMainWindow):
                 texture_folder=textures, projects_root=projects, stage_root=stage,
                 progress=progress, cancelled=cancelled)
             full_model = None
-            # Preserve the familiar Full_Character.glb entry. Prefer the
-            # currently open CDF; otherwise use the first verified assembly.
+            # Emet's canonical 3P remote-cannon mesh contains his arm.
+            # Prefer it for Full_Character even when a healing/beacon CDF
+            # happens to be selected; retain all CDFs under Assemblies/.
             preferred_cdf = (selected_character.cdf.casefold()
                              if selected_character is not None else None)
             chosen = next((pair for pair in assemblies.values()
-                           if preferred_cdf and
-                           pair[1]['cdf'].casefold() == preferred_cdf), None)
+                           if pair[1].get('preferred_full_character')), None)
+            if chosen is None:
+                chosen = next((pair for pair in assemblies.values()
+                               if preferred_cdf and
+                               pair[1]['cdf'].casefold() == preferred_cdf), None)
             if chosen is None and assemblies:
                 chosen = next(iter(assemblies.values()))
             if chosen is not None:
@@ -2835,7 +2844,34 @@ class QtWorkspaceEditor(QMainWindow):
             if report['unresolved']:
                 note += ' • %d ambiguous companion paths skipped' % len(
                     report['unresolved'])
+            # Report verified embedded Actions *per CDF* rather than implying
+            # every model is animated or displaying an unbounded clip list.
+            assembly_rows = report['cdf_assemblies']
+            animated_rows = [row for row in assembly_rows
+                             if row.get('embedded_animations', 0) > 0]
+            total_clips = sum(int(row.get('embedded_animations', 0))
+                              for row in animated_rows)
+            note += ' • %d verified animation clip(s) across %d CDF assembly(s)' % (
+                total_clips, len(animated_rows))
+            lines = []
+            for row in assembly_rows[:12]:
+                clips = tuple(row.get('embedded_animation_clips', ()))
+                location = row['glb']
+                if clips:
+                    listing = ', '.join(str(name) for name in clips[:8])
+                    if len(clips) > 8:
+                        listing += ' (+%d more)' % (len(clips) - 8)
+                    lines.append('%s: %d animations — %s' % (
+                        location, len(clips), listing))
+                else:
+                    lines.append('%s: none — %s' % (
+                        location, str(row.get('animation_note', 'No verified motion'))[:110]))
+            if len(assembly_rows) > 12:
+                lines.append('%d more assemblies in asset_sources.json' %
+                             (len(assembly_rows) - 12))
             self.status.setText(note)
+            if lines:
+                note += '\\n\\nAssembly animation details:\\n' + '\\n'.join(lines)
             QMessageBox.information(self, 'Model folder exported', note)
 
         begin_file_operation(

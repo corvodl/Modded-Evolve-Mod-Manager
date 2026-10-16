@@ -13,9 +13,10 @@ import json
 from pathlib import Path
 import re
 import shutil
+from tempfile import TemporaryDirectory
 
 MAX_ANIMATION_REFERENCES = 512
-MAX_NATIVE_CLIPS = 16
+MAX_NATIVE_CLIPS = 256
 MAX_RAW_SOURCES = 32
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_RAW_TOTAL_BYTES = 256 * 1024 * 1024
@@ -29,7 +30,7 @@ def _safe(value):
 def export_character_animation_folder(
         root, model_blob, relative, index, workspace, *,
         character=None, model_name=None, cancelled=None, progress=None,
-        convert_database=True, references=None):
+        convert_database=True, references=None, copy_sources=True):
     """Create <root>/animations/{<rig>_animations.glb,sources/,manifest.json}.
 
     Model payload must already be a *verified* CDF Blender GLB; conversion
@@ -87,7 +88,7 @@ def export_character_animation_folder(
         row = {'name': ref.name, 'virtual': ref.virtual_path,
                'kind': ref.kind, 'availability': status}
         path = Path(ref.file) if ref.available and ref.file is not None else None
-        if path is not None and ref.kind in ('caf', 'dba'):
+        if copy_sources and path is not None and ref.kind in ('caf', 'dba'):
             try:
                 if path.is_symlink() or not path.is_file():
                     raise ValueError('Source not a regular file')
@@ -117,7 +118,7 @@ def export_character_animation_folder(
             if not rigged:
                 row['conversion'] = 'Skipped: exported model has no single verified rig'
             elif len(accepted) >= MAX_NATIVE_CLIPS:
-                row['conversion'] = 'Skipped: 16 native motion export limit'
+                row['conversion'] = 'Skipped: 256 verified native CAF clip safety limit'
             else:
                 try:
                     if not caf_header(path):
@@ -217,3 +218,65 @@ def export_character_animation_folder(
     return {'animations': len(converted), 'sources': len(sources),
             'manifest': str(folder / 'animation_manifest.json'),
             'animated_glb': report['animated_glb']}
+
+
+
+def embed_verified_assembly_animations(model_blob, character, index, workspace, *,
+                                       relative=None, cancelled=None, progress=None,
+                                       references=None):
+    """Return (animated GLB, report) for this exact assembled CDF skeleton.
+
+    Reuse the *same* verified CAF/DBA pathway as the standalone animations/
+    export. Each CDF is evaluated independently; never retarget tracks merely
+    because two models have similar names. Temporary conversion files are
+    deleted, and raw CAF/DBA sources are not copied into each assembly.
+    An unrigged model is left unmodified with an explicit reason.
+    """
+    from model_textured_export import _unpack_glb
+
+    if character is None or not getattr(character, 'cdf', None):
+        raise ValueError('Assembly needs an exact verified CDF.')
+    if cancelled is not None and cancelled():
+        raise InterruptedError('Assembly animation export cancelled.')
+    relative = relative or character.cdf
+    if str(relative).casefold() != str(character.cdf).casefold():
+        raise ValueError('Animation CDF and assembled model do not match.')
+    document, _binary = _unpack_glb(model_blob)
+    if len(document.get('skins', ())) != 1:
+        return model_blob, {
+            'animations': 0, 'converted_clips': [],
+            'note': 'This assembly has no single verified armature; animations not embedded.'
+        }
+    # The standalone exporter already validates each CAF controller against
+    # this precise GLB and uses original CDF/CHRParams for packed DBA (including
+    # CryTek 2012/0x745 rigs). Use it, not a second independent decoder.
+    with TemporaryDirectory(prefix='evolve-assembly-motion-') as tmp:
+        temp_root = Path(tmp)
+        status = export_character_animation_folder(
+            temp_root, model_blob, relative, index, workspace,
+            character=character, model_name=Path(relative).stem,
+            cancelled=cancelled, progress=progress,
+            references=references, copy_sources=False)
+        manifest = temp_root / 'animations' / 'animation_manifest.json'
+        report = json.loads(manifest.read_text(encoding='utf-8'))
+        names = report.get('converted_clips', [])
+        result = {
+            'animations': status['animations'],
+            'converted_clips': names,
+            'note': report['note'],
+            'catalog_note': report.get('catalog_note', '')
+        }
+        if not status['animations'] or not status['animated_glb']:
+            return model_blob, result
+        candidate = temp_root / 'animations' / status['animated_glb']
+        if (not candidate.is_file() or candidate.is_symlink()
+                or candidate.stat().st_size > MAX_ANIMATED_GLB_BYTES):
+            raise ValueError('Validated animated CDF assembly output is missing or too large.')
+        animated = candidate.read_bytes()
+        animated_doc, _ = _unpack_glb(animated)
+        if (len(animated_doc.get('skins', ())) != 1
+                or len(animated_doc.get('animations', ())) != len(names)
+                or not names):
+            raise ValueError('Embedded GLB lost the exact rig or verified animation clips.')
+        result['animated_glb_embedded'] = True
+        return animated, result

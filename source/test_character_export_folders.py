@@ -93,6 +93,41 @@ class CharacterAnimationFolderTests(unittest.TestCase):
             self.assertEqual(result['skins'],[{'joints':[0]}])
             self.assertEqual(len(list((root/'animations'/'sources').glob('*.caf'))),2)
 
+    def test_more_than_old_sixteen_clip_limit_can_be_embedded(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            refs = []
+            for index in range(18):
+                path = root / ('motion_%02d.caf' % index)
+                path.write_bytes(synthetic_caf())
+                refs.append(AnimationReference(
+                    'motion_%02d' % index,
+                    'animations/actor/motion_%02d.caf' % index,
+                    'caf', True, path))
+            doc, binary = _unpack_glb(test_glb())
+            doc['skins'] = [{'joints': [0]}]
+            source = _pack_glb(doc, binary)
+            def validated(blob, tracks):
+                modified, data = _unpack_glb(blob)
+                modified.setdefault('animations', []).append({
+                    'name': tracks[0][0],
+                    'channels': [{'sampler': 0,
+                                  'target': {'node': 0, 'path': 'rotation'}}],
+                    'samplers': [{'input': 0, 'output': 0}]})
+                return _pack_glb(modified, data), {
+                    'clips': 1, 'bone_channels': 1}
+            with patch('native_caf.append_caf_animations',
+                       side_effect=validated):
+                report = export_character_animation_folder(
+                    root, source, 'characters/monsters/actor/actor.cdf',
+                    {}, root, references=tuple(refs),
+                    convert_database=False, copy_sources=False)
+            self.assertEqual(report['animations'], 18)
+            self.assertEqual(report['sources'], 0)
+            output = root / 'animations' / 'actor_animations.glb'
+            clips, _ = _unpack_glb(output.read_bytes())
+            self.assertEqual(len(clips['animations']), 18)
+
     def test_original_animation_directory_is_kept_without_overwriting(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)
