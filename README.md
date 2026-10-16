@@ -9,7 +9,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 ## Latest Stable — v1.2.6
 
 - Restore verified CryEngine emissive materials and glow masks in model previews and Blender GLB exports.
-- Add a GPU emissive intensity control while preserving distinct transparency and glow mask handling.
+- Add GPU emissive intensity and optional soft bloom while preserving distinct transparency and glow mask handling.
 - Validate exported geometry, remove degenerate faces, and repair only small verified holes without disturbing skin vertex IDs.
 - Clean up nearly identical UV coordinates without joining intentional UV seams or hard edges.
 - Record geometry repair diagnostics in exported GLBs and preserve stable diffuse, normal, gloss, AO, detail and reflection support.
