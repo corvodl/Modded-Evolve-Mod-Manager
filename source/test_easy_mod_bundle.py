@@ -122,6 +122,14 @@ class BundleInstallTests(unittest.TestCase):
             with self.subTest(name=name), zipfile.ZipFile(self.package) as archive:
                 with self.assertRaisesRegex(ValueError, "unsafe"):
                     _members(archive)
+        # Central name can be safe while the local header contains an unsafe
+        # Windows separator. Reject before zipfile normalizes/extracts either.
+        self.make_zip((("Game/libs.pak", b"one"),))
+        self.package.write_bytes(self.package.read_bytes().replace(
+            b"Game/libs.pak", b"Game\\libs.pak", 1))
+        with zipfile.ZipFile(self.package) as archive:
+            with self.assertRaisesRegex(ValueError, "unsafe"):
+                _members(archive)
         self.make_zip((("Game/libs.pak", b"x"), ("Game/libs.pak", b"y")))
         with zipfile.ZipFile(self.package) as archive:
             with self.assertRaisesRegex(ValueError, "duplicate"):
