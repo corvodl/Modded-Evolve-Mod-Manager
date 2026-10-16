@@ -150,8 +150,16 @@ class ModProfilesDialog(QDialog):
                 except (OSError, ValueError, RuntimeError):
                     verified_targets, current_fingerprint, signing_ready = set(), None, False
                 state = self.store.status()
-                active = (state['profile_id'] == profile['id']
-                          and not state['in_progress'] and not state['pending'])
+                applied_mod_ids = set()
+                if (state['profile_id'] == profile['id']
+                        and not state['in_progress'] and not state['pending']
+                        and self.store.applied_path.is_file()):
+                    import json
+                    applied = json.loads(
+                        self.store.applied_path.read_text(encoding='utf-8'))
+                    if Path(applied.get('stage', '')).resolve() == self.stage_path.resolve():
+                        applied_mod_ids = {entry.get('mod_id')
+                                           for entry in applied.get('entries', [])}
                 for i, mod in enumerate(mods):
                     checked = QTableWidgetItem()
                     checked.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
@@ -172,8 +180,8 @@ class ModProfilesDialog(QDialog):
                         compatibility = 'Review this build'
                     else:
                         compatibility = 'Target recognized'
-                    status = ('Staged' if active and mod['enabled'] else
-                              'Enabled' if mod['enabled'] else 'Disabled')
+                    status = ('Staged' if mod['enabled'] and mod['id'] in applied_mod_ids
+                              else 'Enabled' if mod['enabled'] else 'Disabled')
                     title = mod.get('display_name') or source.stem
                     values = (title, mod['relative'], compatibility, status)
                     for col, value in enumerate(values, 1):
