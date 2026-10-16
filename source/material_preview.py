@@ -598,8 +598,21 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             try:
                 slot_transform, animated = parse_transform(texture_node)
                 if animated:
-                    issues.append(name + ': animated ' + role +
-                                  ' texture modifiers require verification; only static tiling/offset is used')
+                    mod = texture_node.find('TexMod') if texture_node is not None else None
+                    numeric = []
+                    if mod is not None:
+                        for axis in ('U','V'):
+                            raw = (mod.get('TexMod_' + axis + 'OscillatorType') or '').strip()
+                            if raw and raw.lstrip('+-').isdigit() and int(raw) != 0:
+                                numeric.append(axis + '=' + raw)
+                        raw = (mod.get('TexMod_RotateType') or '').strip()
+                        if raw and raw.lstrip('+-').isdigit() and int(raw) != 0:
+                            numeric.append('Rotate=' + raw)
+                    issue = (('unsupported numeric ' + role + ' oscillator type(s) ' +
+                              ', '.join(numeric)) if numeric else
+                             'animated ' + role + ' texture modifiers require verification')
+                    issues.append(name + ': ' + issue +
+                                  '; static tiling/offset retained, no oscillator motion guessed')
             except ValueError as error:
                 slot_transform = IDENTITY
                 issues.append(name + ': ' + str(error))
