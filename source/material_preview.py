@@ -73,6 +73,10 @@ class PreviewMaterials:
     emissive_sources: tuple = ()
     emissive_black: tuple = ()  # computed once from baked pixels, not per frame
     emissive_masks: tuple = ()  # none, baked_diffuse_alpha, or diffuse_alpha (shader masked)
+    original_slot_ids: tuple = ()  # original MTL leaf index; distinct from CDF composite index
+    original_materials: tuple = ()  # the exact verified source MTL path for each leaf
+    emissive_references: tuple = ()  # the original Decal/Emittance File reference
+    emissive_status: tuple = ()  # independently checked emission load outcome per slot
 
     @property
     def count(self):
@@ -761,27 +765,20 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             issues.append(name + ': ' + str(error))
             result.append(None)
             sources.append(None)
+    # Do not discard a verified emissive-only MTL before the separate
+    # Decal/Emittance pass. Source material slots may intentionally have no
+    # Diffuse texture (or the diffuse stream may be missing while glow works).
     visible_diffuse = tuple(ref for ref, is_hidden in zip(references, hidden)
                             if ref and not is_hidden)
-    if visible_diffuse and not any(tex is not None for tex, is_hidden in
-                                   zip(result, hidden) if not is_hidden):
-        # Old CryTek MTLs often have several NoDraw skeleton slots preceding
-        # the real body material. They previously suppressed this error and
-        # silently produced a black/untextured GPU preview.
-        detail = '; '.join(issues[:3]) if issues else ', '.join(visible_diffuse[:3])
-        raise ValueError('No diffuse DDS textures found or decoded for visible material slots: ' + detail +
-                         '. Import the owning Legacy texture PAK for this build, '
-                         'then use Textures > Diagnose Texture Links.')
-    if not any(x is not None for x in result) and not any(hidden):
-        detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
-        raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
-                         ' (see Textures > Diagnose Texture Links).')
     from emissive_materials import emission_settings, emission_mode, emission_mask_source, bake_emission_map
     from texture_transform import transform_for, IDENTITY
     emissive_maps, emissive_strengths, emissive_sources, emissive_black, emissive_masks = [], [], [], [], []
+    emissive_references, emissive_status = [], []
     for slot, (item, diffuse_img, name) in enumerate(zip(subs, result, names)):
         amount, color, reference = emission_settings(item)
         glow, provenance, mask_policy = None, None, 'none'
+        status = ('NoDraw' if hidden[slot] else 'no positive emission declaration'
+                  if amount <= 0 else 'declared emission not decoded')
         if amount > 0 and not hidden[slot]:
             emission_img = None
             if reference:
@@ -794,6 +791,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                     provenance = (str(found.get('relative') or reference),
                                   str(found.get('archive') or 'extracted workspace'))
                 except (ValueError, OSError) as error:
+                    status = str(error)
                     issues.append(name + ': ' + str(error))
                     amount = 0.
             if amount > 0:
@@ -815,8 +813,13 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                     emission=emission_img,
                     diffuse_alpha_mask=use_diffuse_alpha and not defer_mask)
                 if glow is None:
-                    issues.append(name + ': emissive texture missing')
+                    status = ('declared emission has no usable texture or '
+                              'diffuse RGB source')
+                    issues.append(name + ': ' + status)
                     amount = 0.
+                else:
+                    status = ('decoded emission: ' + (str(reference)
+                              if reference else 'diffuse RGB/alpha'))
         black = bool(glow is not None and glow.getbbox() is None)
         if black:
             issues.append(name + ': baked emission is entirely black; '
@@ -826,6 +829,21 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         emissive_sources.append(provenance)
         emissive_black.append(black)
         emissive_masks.append(mask_policy)
+        emissive_references.append(reference or '')
+        emissive_status.append(status)
+    if not any(tex is not None for tex, is_hidden in
+               zip(result, hidden) if not is_hidden) and not any(
+                   glow is not None for glow, is_hidden in
+                   zip(emissive_maps, hidden) if not is_hidden):
+        if visible_diffuse:
+            detail = '; '.join(issues[:3]) if issues else ', '.join(visible_diffuse[:3])
+            raise ValueError('No diffuse DDS textures found or decoded for visible material slots: '
+                             + detail + '. Import the owning Legacy texture PAK for this build, '
+                             'then use Textures > Diagnose Texture Links.')
+        if not any(hidden):
+            detail = issues[0] if issues else 'Material defines no supported diffuse or emissive textures.'
+            raise ValueError('No diffuse or emissive DDS textures found or decoded: '
+                             + detail + ' (see Textures > Diagnose Texture Links).')
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
                             tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden), gloss_maps=tuple(glosses),
@@ -842,7 +860,11 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                              emissive_strengths=tuple(emissive_strengths),
                              emissive_sources=tuple(emissive_sources),
                              emissive_black=tuple(emissive_black),
-                             emissive_masks=tuple(emissive_masks))
+                             emissive_masks=tuple(emissive_masks),
+                             original_slot_ids=tuple(range(len(subs))),
+                             original_materials=(material['relative'],)*len(subs),
+                             emissive_references=tuple(emissive_references),
+                             emissive_status=tuple(emissive_status))
 
 
 
