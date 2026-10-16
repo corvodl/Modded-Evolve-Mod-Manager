@@ -138,7 +138,12 @@ def _workspace_index(workspace, projects_root=None, stage_root=None):
     # Build an index from the workspace manifest; avoid scanning arbitrary files.
     index = {}
     root = (workspace / 'files').resolve()
-    for entry in load_workspace(workspace)['entries']:
+    # An older extracted project's manifest may contain an empty-name,
+    # zero-byte archive placeholder. Never use it as an asset path. Keep
+    # load_workspace strict for rebuilding PAKs; sanitize this READ-ONLY
+    # texture/model lookup only, rejecting every other unsafe entry.
+    from evolve_pak_workspace import safe_index_entries
+    for entry in safe_index_entries(workspace):
         rel = normalized_name(entry['path'])
         path = (root / rel).resolve()
         if path.is_relative_to(root) and path.is_file() and not path.is_symlink():
