@@ -189,12 +189,14 @@ class FlatCharacterFolderTests(unittest.TestCase):
         dest = Path(report['folder'])
         self.assertEqual(dest.parent, self.output)
         self.assertEqual(dest.name, 'merc_parnelltank')
-        self.assertEqual((dest / 'parnelltank_3p.skinm').read_bytes(), b'MODEL')
+        self.assertEqual((dest / 'models/parnelltank_3p.skinm').read_bytes(), b'MODEL')
         self.assertEqual((dest / 'textures/body_diff.dds.0').read_bytes(),
                          b'DDS-sibling-TS')
-        self.assertEqual((dest / 'Full_Character.glb').read_bytes(), self._glb())
+        self.assertEqual((dest / 'merc_parnelltank.glb').read_bytes(), self._glb())
         self.assertFalse((dest / 'characters').exists())
         self.assertFalse((dest / 'merc_val').exists())
+        self.assertFalse((dest / 'Assemblies').exists())
+        self.assertFalse((dest / 'Full_Character.glb').exists())
         manifest = json.loads((dest / 'asset_sources.json').read_text('utf-8'))
         self.assertEqual(manifest['character_folder'], self.prefix)
         self.assertIn(self.dds, [x['virtual'] for x in manifest['files']])
@@ -203,6 +205,25 @@ class FlatCharacterFolderTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             export_character_asset_folder(
                 self.workspace, self.prefix, self.output, index=self.index)
+
+    def test_character_layout_collects_equipment_animations_and_texture_sources(self):
+        equipment = self.prefix + '/equipment/weapon.skin'
+        idle = self.prefix + '/motion/idle.caf'
+        self._add(equipment, b'WEAPON', self.workspace)
+        self._add(idle, b'CAF', self.workspace)
+        report = export_character_asset_folder(
+            self.workspace, self.prefix, self.output, index=self.index,
+            full_model=(self._glb(), {'rig_status': 'Synthetic test'}))
+        root = Path(report['folder'])
+        self.assertTrue((root / 'merc_parnelltank.glb').is_file())
+        self.assertEqual((root / 'models/equipment/weapon.skin').read_bytes(), b'WEAPON')
+        self.assertEqual((root / 'animations/motion/idle.caf').read_bytes(), b'CAF')
+        self.assertEqual((root / 'textures/textures/body_diff.dds.0').read_bytes(),
+                         b'DDS-sibling-TS')
+        self.assertFalse((root / 'Assemblies').exists())
+        manifest = json.loads((root / 'asset_sources.json').read_text('utf-8'))
+        self.assertIn('models/equipment/weapon.skin',
+                      [row['file'] for row in manifest['files']])
 
     def test_ambiguous_cross_pak_asset_is_reported_not_guessed(self):
         self._add(self.dds, b'DIFFERENT', self.root / 'ts2')
@@ -242,11 +263,11 @@ class FlatCharacterFolderTests(unittest.TestCase):
         target = Path(report['folder'])
         self.assertEqual(len(report['cdf_assemblies']), 3)
         for stage in (1,2,3):
-            output = target/'Assemblies'/('parnell'+str(stage)+'.glb')
+            output = target/'models'/('parnell'+str(stage)+'.glb')
             self.assertTrue(output.read_bytes().startswith(b'glTF'))
         manifest = json.loads((target/'asset_sources.json').read_text('utf-8'))
         self.assertEqual(len(manifest['cdf_assemblies']), 3)
-        self.assertFalse((target/'Assemblies'/'other.glb').exists())
+        self.assertFalse((target/'models'/'other.glb').exists())
 
     def test_unsafe_cdf_assembly_path_rejected_atomically(self):
         with self.assertRaisesRegex(ValueError,'Invalid CDF'):
