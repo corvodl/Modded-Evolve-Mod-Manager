@@ -59,6 +59,11 @@ class CharacterExportCommandTests(unittest.TestCase):
         self.assertEqual(validate_character_export_destination(
             self.base, self.destination), 'Emet')
         self.assertEqual((old / 'emet_3p.glb').read_bytes(), b'unchanged')
+        friendly = self.destination / 'Emet'
+        friendly.mkdir()
+        with self.assertRaisesRegex(ValueError, 'Select its PARENT'):
+            validate_character_export_destination(self.base, friendly)
+        self.assertEqual((old / 'emet_3p.glb').read_bytes(), b'unchanged')
 
     def test_unrelated_loose_folder_never_silently_uses_legacy_export(self):
         from character_export_command import character_export_source
