@@ -214,7 +214,11 @@ def subset_emission_coverage(mesh, materials, slot, max_samples=4096):
     if not mesh or slot < 0 or slot >= len(texture_maps):
         return None
     img = texture_maps[slot]
-    if img is None or len(getattr(mesh, 'uvs', ())) != len(getattr(mesh, 'vertices', ())):
+    if (img is None or not hasattr(mesh,'triangles') or
+            not hasattr(mesh,'vertices') or not hasattr(mesh,'uvs') or
+            len(mesh.uvs) != len(mesh.vertices)):
+        # The viewer may display partial/loading meshes and synthetic
+        # diagnostics before their triangle streams have arrived.
         return None
     uv_ids = set()
     for first, count, material_id in (getattr(mesh, 'subsets', ()) or
