@@ -107,8 +107,12 @@ def export_character_directory(source_folder, destination, *, projects_root=None
         raise ValueError(
             'No verified character assembly could be exported. '
             + (summary or 'Check the character CDF and its shared PAK dependencies.'))
+    # Do not emit the primary GLB again under models/. That directory is
+    # reserved for other CDF variants, attachments and native source models.
+    other_assemblies = {name: pair for name, pair in assemblies.items()
+                        if pair is not chosen}
     return export_character_asset_folder(
         workspace, virtual, destination, index=index,
-        full_model=chosen, assemblies=assemblies, assembly_errors=errors,
+        full_model=chosen, assemblies=other_assemblies, assembly_errors=errors,
         output_name=_character_name(virtual),
         progress=progress, cancelled=cancelled)
