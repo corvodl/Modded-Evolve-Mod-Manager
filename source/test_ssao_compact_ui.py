@@ -77,6 +77,14 @@ class CompactGpuModelUiTests(unittest.TestCase):
         self.assertEqual(bar.maximum(), 2)
         self.panel._update_texture_load_progress(0, 0)
         self.assertTrue(footer.isHidden())
+        self.panel.set_texture_resolution_pending(True)
+        self.assertFalse(footer.isHidden())
+        self.assertEqual((bar.minimum(), bar.maximum()), (0,0))
+        self.assertIn('Resolving textures', self.panel.texture_loading_label.text())
+        self.panel._update_texture_load_progress(1, 3)
+        self.assertEqual((bar.minimum(),bar.maximum()), (0,0))
+        self.panel.set_texture_resolution_pending(False)
+        self.assertTrue(footer.isHidden())
 
     def test_stage_status_explains_progress_without_blocking(self):
         status=QLabel()
