@@ -16,7 +16,7 @@ import shutil
 from tempfile import TemporaryDirectory
 
 MAX_ANIMATION_REFERENCES = 512
-MAX_NATIVE_CLIPS = 16
+MAX_NATIVE_CLIPS = 256
 MAX_RAW_SOURCES = 32
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_RAW_TOTAL_BYTES = 256 * 1024 * 1024
@@ -118,7 +118,7 @@ def export_character_animation_folder(
             if not rigged:
                 row['conversion'] = 'Skipped: exported model has no single verified rig'
             elif len(accepted) >= MAX_NATIVE_CLIPS:
-                row['conversion'] = 'Skipped: 16 native motion export limit'
+                row['conversion'] = 'Skipped: 256 verified native CAF clip safety limit'
             else:
                 try:
                     if not caf_header(path):
