@@ -2789,6 +2789,9 @@ class QtWorkspaceEditor(QMainWindow):
         folder = Path(destination)
         from character_export_command import validate_character_export_destination
         try:
+            if self.read_only_library:
+                from asset_library_preview import _outside_library
+                folder = _outside_library(folder)
             validate_character_export_destination(source, folder)
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, 'Complete character export', str(exc))
