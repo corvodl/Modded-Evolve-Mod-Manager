@@ -152,6 +152,39 @@ class MonsterRootExportTests(TestCase):
                 output_name='Emet',index={})
 
 
+
+class StageAssemblyTextureTests(TestCase):
+    def test_combining_monster_parts_preserves_emissive_masks(self):
+        from PIL import Image
+        from character_assembly import combine_meshes
+        from model_preview import PreviewMesh
+        from material_preview import PreviewMaterials
+        diffuse=Image.new('RGBA',(4,4),(25,90,180,255))
+        glow=Image.new('RGB',(4,4),(20,150,255))
+        mesh=PreviewMesh(
+            ((0.,0.,0.),(1.,0.,0.),(0.,1.,0.)), ((0,1,2),),
+            (0.5,0.5,0.), 1., 'monster part',
+            ((0.,0.),(1.,0.),(0.,1.)), ((0,3,0),))
+        material=PreviewMaterials((diffuse,), ('glow tubes',), 'goliath.mtl',
+            emissive_maps=(glow,),emissive_strengths=(2.5,),
+            emissive_sources=(('tubes_glow.dds','monster_shared.pak'),))
+        combined, mats=combine_meshes([
+            ('body',mesh,material),('arm',mesh,material)])
+        self.assertEqual(len(mats.emissive_maps),2)
+        self.assertEqual(mats.emissive_strengths,(2.5,2.5))
+        self.assertEqual(mats.emissive_sources[0],
+                         ('tubes_glow.dds','monster_shared.pak'))
+        output,_=__import__('model_textured_export').embed_diffuse_textures(
+            glb_bytes(combined),mats)
+        doc,_=_unpack_glb(output)
+        self.assertEqual(len(doc['materials']),2)
+        self.assertTrue(all('emissiveTexture' in item
+                            for item in doc['materials']))
+        self.assertEqual(
+            doc['materials'][1]['extensions']['KHR_materials_emissive_strength']
+            ['emissiveStrength'],2.5)
+
+
 if __name__ == '__main__':
     import unittest
     unittest.main()
