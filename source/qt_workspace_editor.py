@@ -2835,7 +2835,34 @@ class QtWorkspaceEditor(QMainWindow):
             if report['unresolved']:
                 note += ' • %d ambiguous companion paths skipped' % len(
                     report['unresolved'])
+            # Report verified embedded Actions *per CDF* rather than implying
+            # every model is animated or displaying an unbounded clip list.
+            assembly_rows = report['cdf_assemblies']
+            animated_rows = [row for row in assembly_rows
+                             if row.get('embedded_animations', 0) > 0]
+            total_clips = sum(int(row.get('embedded_animations', 0))
+                              for row in animated_rows)
+            note += ' • %d verified animation clip(s) across %d CDF assembly(s)' % (
+                total_clips, len(animated_rows))
+            lines = []
+            for row in assembly_rows[:12]:
+                clips = tuple(row.get('embedded_animation_clips', ()))
+                location = row['glb']
+                if clips:
+                    listing = ', '.join(str(name) for name in clips[:8])
+                    if len(clips) > 8:
+                        listing += ' (+%d more)' % (len(clips) - 8)
+                    lines.append('%s: %d animations — %s' % (
+                        location, len(clips), listing))
+                else:
+                    lines.append('%s: none — %s' % (
+                        location, str(row.get('animation_note', 'No verified motion'))[:110]))
+            if len(assembly_rows) > 12:
+                lines.append('%d more assemblies in asset_sources.json' %
+                             (len(assembly_rows) - 12))
             self.status.setText(note)
+            if lines:
+                note += '\\n\\nAssembly animation details:\\n' + '\\n'.join(lines)
             QMessageBox.information(self, 'Model folder exported', note)
 
         begin_file_operation(
