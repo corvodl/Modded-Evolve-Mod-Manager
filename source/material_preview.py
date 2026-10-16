@@ -68,6 +68,9 @@ class PreviewMaterials:
     refraction_indices: tuple = ()  # explicit source IOR only
     ao_maps: tuple = ()  # explicit ambient-occlusion map, or verified packed channel
     ao_strengths: tuple = ()  # per-material AO strength in [0, 1]
+    emissive_maps: tuple = ()
+    emissive_strengths: tuple = ()
+    emissive_sources: tuple = ()
 
     @property
     def count(self):
@@ -748,6 +751,35 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
+    from emissive_materials import emission_settings, bake_emission_map
+    emissive_maps, emissive_strengths, emissive_sources = [], [], []
+    for slot, (item, diffuse_img, name) in enumerate(zip(subs, result, names)):
+        amount, color, reference = emission_settings(item)
+        glow, provenance = None, None
+        if amount > 0 and not hidden[slot]:
+            emission_img = None
+            if reference:
+                try:
+                    found = find_texture(reference)
+                    if found is None:
+                        raise ValueError('Emissive DDS missing: ' + reference)
+                    emission_img = _decode_texture(found, index=index,
+                        max_dimension=decode_max, historical_2012=historical_2012)
+                    provenance = (str(found.get('relative') or reference),
+                                  str(found.get('archive') or 'extracted workspace'))
+                except (ValueError, OSError) as error:
+                    issues.append(name + ': ' + str(error))
+                    amount = 0.
+            if amount > 0:
+                glow = bake_emission_map(diffuse_img, color=color,
+                    emission=emission_img,
+                    diffuse_alpha_mask=(emission_img is None and not alpha_modes[slot]))
+                if glow is None:
+                    issues.append(name + ': emissive texture missing')
+                    amount = 0.
+        emissive_maps.append(glow)
+        emissive_strengths.append(amount)
+        emissive_sources.append(provenance)
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
                             tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden), gloss_maps=tuple(glosses),
@@ -759,7 +791,10 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                             reflection_strengths=tuple(reflections),
                             glass_materials=tuple(glasses),
                             refraction_indices=tuple(iors),
-                            ao_maps=tuple(ao_maps), ao_strengths=tuple(ao_strengths))
+                            ao_maps=tuple(ao_maps), ao_strengths=tuple(ao_strengths),
+                             emissive_maps=tuple(emissive_maps),
+                             emissive_strengths=tuple(emissive_strengths),
+                             emissive_sources=tuple(emissive_sources))
 
 
 

@@ -140,7 +140,8 @@ def embed_diffuse_textures(blob, materials):
                                  ('gloss', getattr(materials, 'gloss_maps', ())),
                                  ('detail', getattr(materials, 'detail_maps', ())),
                                  ('detail_normal', getattr(materials, 'detail_normal_maps', ())),
-                                 ('ao', getattr(materials, 'ao_maps', ()))):
+                                 ('ao', getattr(materials, 'ao_maps', ())),
+                                 ('emissive', getattr(materials, 'emissive_maps', ()))):
             if slot < 0 or slot >= len(collection) or collection[slot] is None:
                 continue
             if len(images) >= MAX_TEXTURES:
@@ -226,6 +227,26 @@ def embed_diffuse_textures(blob, materials):
                     'cryEngineTextureLayers', []).append({
                         'role': role, 'imageName': images[-1]['name'],
                         'uvTransform': list(transform)})
+            if role == 'emissive':
+                material['emissiveTexture'] = {'index': len(textures)-1}
+                material['emissiveFactor'] = [1., 1., 1.]
+                transform = transform_for(materials, slot)
+                if transform != IDENTITY:
+                    su, sv, ou, ov, angle = transform
+                    material['emissiveTexture']['extensions'] = {
+                        'KHR_texture_transform': {'scale':[su,sv], 'offset':[ou,ov],
+                                                  'rotation':angle}}
+                    used = doc.setdefault('extensionsUsed', [])
+                    if 'KHR_texture_transform' not in used:
+                        used.append('KHR_texture_transform')
+                strengths = getattr(materials, 'emissive_strengths', ())
+                strength = strengths[slot] if slot < len(strengths) else 1.
+                if strength > 1.:
+                    material.setdefault('extensions', {})['KHR_materials_emissive_strength'] = {
+                        'emissiveStrength': min(16., float(strength))}
+                    used = doc.setdefault('extensionsUsed', [])
+                    if 'KHR_materials_emissive_strength' not in used:
+                        used.append('KHR_materials_emissive_strength')
             # Specular maps remain named optional resources; CryEngine
             # specular tint cannot safely be guessed as glTF metalness.
         # Preserve six environment faces as separately editable named PNGs.
