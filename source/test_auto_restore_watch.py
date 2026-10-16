@@ -2,13 +2,31 @@
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "launcher_support"))
 import auto_restore_watch as watch
 
 
 class AutoRestoreWatchTests(unittest.TestCase):
+    def test_watchdog_tasklist_does_not_flash_windows_console(self):
+        # Simulate Windows process creation flags from Linux as well: avoids
+        # relying on a workstation having the real game or a visible console.
+        process = SimpleNamespace(
+            returncode=0,
+            stdout='"Evolve.exe","123"\n"ModdedEvolveLauncher.exe","456"\n')
+        run = Mock(return_value=process)
+        fake_subprocess = SimpleNamespace(
+            CREATE_NO_WINDOW=0x08000000, run=run)
+        with patch.object(watch.swap, 'os', SimpleNamespace(name='nt')), \
+             patch.object(watch.swap, 'subprocess', fake_subprocess):
+            names = watch.swap.task_names()
+        self.assertEqual(names, {'evolve.exe', 'moddedevolvelauncher.exe'})
+        run.assert_called_once_with(
+            ['tasklist', '/FO', 'CSV', '/NH'],
+            capture_output=True, text=True, creationflags=0x08000000)
+
     def test_only_restores_when_both_game_and_launcher_are_closed(self):
         self.assertFalse(watch.should_restore({"evolve.exe"}, True, 20, True, 999))
         self.assertFalse(watch.should_restore({"moddedevolvelauncher.exe"}, True, 20, True, 999))
