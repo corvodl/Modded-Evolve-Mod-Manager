@@ -59,8 +59,10 @@ class FullCharacterDiscoveryTests(unittest.TestCase):
         self.assertEqual(preferred_emet_source(files), original)
         self.assertEqual(choices[original].definition, original[:-1])
         self.assertEqual(choices[original].label, 'Emet • Full Character')
-        self.assertIn(base + 'emethealingtotemworld_3p.skinm', choices)
-        self.assertIn(base + 'emetdropshipbeaconworld_3p.skinm', choices)
+        self.assertNotIn(base + 'emethealingtotemworld_3p.skinm', choices)
+        self.assertNotIn(base + 'emetdropshipbeaconworld_3p.skinm', choices)
+        self.assertIn(base + 'emethealingtotemworld_3p.skinm', files)
+        self.assertIn(base + 'emetdropshipbeaconworld_3p.skinm', files)
         self.assertNotIn(base + 'emetremotecannon_fp.skinm', choices)
 
     def test_emet_requires_exact_native_skin_and_folder(self):
