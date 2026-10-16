@@ -61,6 +61,7 @@ for entry, name, console in (
     executables.append(EXE(
         pyz, scripts, [], exclude_binaries=True, name=name,
         debug=False, strip=False, upx=False, console=console,
+        uac_admin=(entry == 'qt_manager'),
         icon=str(root/'assets'/'hunt.ico')))
 coll = COLLECT(*executables, a.binaries, a.datas, strip=False,
                upx=False, name='EvolveModManagerQt')
