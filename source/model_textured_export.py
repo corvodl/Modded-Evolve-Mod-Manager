@@ -230,7 +230,7 @@ def embed_diffuse_textures(blob, materials):
             if role == 'emissive':
                 material['emissiveTexture'] = {'index': len(textures)-1}
                 material['emissiveFactor'] = [1., 1., 1.]
-                transform = transform_for(materials, slot)
+                transform = transform_for(materials, slot, 'emissive')
                 if transform != IDENTITY:
                     su, sv, ou, ov, angle = transform
                     material['emissiveTexture']['extensions'] = {
@@ -239,6 +239,19 @@ def embed_diffuse_textures(blob, materials):
                     used = doc.setdefault('extensionsUsed', [])
                     if 'KHR_texture_transform' not in used:
                         used.append('KHR_texture_transform')
+                mask_modes = getattr(materials,'emissive_masks',())
+                mask_mode = mask_modes[slot] if slot<len(mask_modes) else 'none'
+                if mask_mode=='diffuse_alpha':
+                    # glTF 2.0 cannot express an emissive texture multiplied
+                    # by a separately UV-transformed diffuse alpha sampler.
+                    # Preserve authoring provenance instead of silently
+                    # assigning the wrong mask to a different UV channel.
+                    material.setdefault('extras', {})['cryEngineEmissionMask'] = {
+                        'source': 'diffuse_alpha',
+                        'diffuseUvTransform': list(transform_for(materials,slot)),
+                        'emissiveUvTransform': list(transform),
+                        'requiresBakingForBlender': True,
+                    }
                 strengths = getattr(materials, 'emissive_strengths', ())
                 strength = strengths[slot] if slot < len(strengths) else 1.
                 if strength > 1.:
