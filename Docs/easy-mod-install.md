@@ -5,37 +5,39 @@ new sidebar page. Ctrl+K opens a small searchable list of ordinary actions.
 
 ## Review-first import
 
-1. Drop a custom-signed PAK or ZIP containing **exactly one** signed PAK into
-   Install Mod, or choose Browse. A first-time user may use the automatic
-   My Mods collection created only after confirming installation.
-2. Select Review Mod. The file is inspected off the UI thread:
-   - ZIP paths, compressed/uncompressed sizes and symlinks are checked,
-     extraction is bounded and the archive never writes outside temporary
-     storage.
-   - Only exact PAK basenames in the signed staged plan are considered.
-     Unknown or ambiguous PAKs are rejected, never guessed.
-   - The signing public key and original staged PAK are used to verify the
-     matching signed filename, archive entries, and changed-file records.
-     No changed entries or mismatched signatures are rejected.
-   - The user sees the target, changed asset list, size and SHA256 before
-     any import.
-3. Select **Confirm & Stage Mod**. The user sees a final confirmation with
-   target and changes; any *enabled* mod already targeting the same PAK is
-   explicitly described and disabled in the same collection only after
-   successful immutable import.
-4. The validated PAK is copied under the existing ModProfiles ImportedMods
-   folder using a content-hash-based path. Changing the selected download
-   between review and import is rejected. This retains an independent
-   user-owned source rather than pointing to downloads that may disappear.
-5. The manager calls the existing **ModProfiles** apply workflow, which
-   refuses active game/swap operations, checks the signed stage and mod
-   hashes, creates original staging backups, and journals each operation.
-   **No installed EvolveGame PAK is modified** by installing a profile.
+1. Drop a signed PAK or a ZIP containing **1–24 PAKs**, or click
+   **Import Older Mods…** to select a user-owned directory from an earlier
+   manager. The game installation and active signing stage are never scanned
+   as legacy sources.
+2. **Review Mod** validates *every* PAK before any catalog change: bounded ZIP
+   paths, sizes, compression ratios and symlinks; verified stage target (with
+   explicit stage-relative names for duplicate basenames); RSA-signed CDR
+   identity, modified asset list and SHA256. One invalid target rejects the
+   whole bundle.
+3. **Confirm & Stage** shows targets, asset counts and enabled conflicts. The
+   importer rechecks every source and signature, reuses identical full-SHA256
+   files already in the immutable library, and performs exactly one atomic
+   ModProfiles catalog update for the entire bundle. Matching previously
+   imported mods are re-enabled rather than copied again.
+4. Staging calls the existing profile worker, which journals backup/restore
+   **per signed target PAK**. An interrupted stage can require manual recovery;
+   it is never reported as successful without the worker and journal checks.
+   Installed game files are not changed by profile staging.
+5. An **Installation History…** panel records a privacy-minimal receipt with
+   target PAKs, changed-entry counts and SHA256. It is first marked
+   `imported_not_staged` and changes to `staged_verified` only after the
+   profile worker finishes and the expected journal entries are present.
 
-If a ZIP contains multiple PAKs, import them individually using the existing
-advanced Mod Profiles tools; silent multi-PAK replacement is not supported.
-ZIP imports can include README/documentation files but do not execute any
-embedded installer or scripts.
+The compact **Installed Mods** table shows the mod name, target PAK, whether
+that PAK exists in the configured signed stage, and its enabled/staged state.
+These are *target compatibility indicators*, not guarantees a mod will work
+at runtime. Controls for profile creation, sharing, reordering, restoring and
+installation history remain in the existing dialog, not another sidebar tab.
+
+ZIPs containing scripts are treated as untrusted data. They are never
+executed; only the validated PAK members are imported. Legacy imports require
+an explicit directory selection and signed archive validation before adding
+user-owned files to the library.
 
 ## Library, conflicts and undo
 
@@ -62,7 +64,7 @@ checks. No Developer or online-write shortcuts are exposed.
 
 Run the synthetic regression tests:
 
-    python -m unittest -v test_easy_mod_install test_qt_easy_mod_installer
+    python -m unittest -v test_easy_mod_install test_easy_mod_bundle test_qt_easy_mod_installer
 
 Windows CI must also pass Qt navigation, RSA/PAK verification, profile
 journaling, portable ZIP, installer and worker smoke tests. Real-game
