@@ -1,12 +1,18 @@
-# Evolve Stage 2 Mod Manager — v1.2.5
+# Evolve Stage 2 Mod Manager — v1.2.6
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.2.5 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.2.6 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.5
+## Latest Stable — v1.2.6
+
+- Restore CryEngine emissive glow materials, preserving dedicated emissive textures and authorized diffuse-alpha glow masks in the GPU viewer and Blender GLB exports.
+- Add an emission intensity control; keep translucent surfaces separate from glow masking.
+- Validate exported models, discard degenerate triangles, safely close tiny unambiguous holes, preserve UV seams, vertex IDs, rigging and hard edges, and include repair diagnostics in exported GLB files.
+- Preserve the existing stable material features (normal, gloss, detail, ambient occlusion, cubemap reflection, and SSAO).
+
 
 - Fix Asset Library's separate character export path so Emet and other characters use the single-GLB layout instead of loose meshes, Assemblies, and old CDF assembly reports.
 - Use the same complete character-folder exporter from File Editor and Modding Tools, instead of scattering standalone model GLBs across the export root.
