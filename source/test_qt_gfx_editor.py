@@ -237,7 +237,8 @@ class GfxQtEditorTests(unittest.TestCase):
 
         dialog.promo_mode.setCurrentIndex(2)
         self.assertEqual(dialog.promo_mode.currentData(), "custom")
-        self.assertFalse(dialog.promo_target.isEnabled())
+        self.assertTrue(dialog.promo_target.isEnabled())
+        self.assertEqual(dialog.promo_target.currentData(), "title")
         self.assertTrue(dialog.promo_text.isEnabled())
         self.assertFalse(dialog.promo_stage.isEnabled())
         dialog.promo_text.setText("GOLIATH")
