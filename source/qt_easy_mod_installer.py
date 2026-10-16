@@ -202,7 +202,8 @@ class EasyModInstaller(QDialog):
             self.space_label.setText(
                 f"Additional verified library data: {space.library_bytes / 1024**2:.0f} MiB. "
                 f"Recovery backups: {space.recovery_bytes / 1024**2:.0f} MiB. "
-                f"Staging temporary space: {space.stage_temp_bytes / 1024**2:.0f} MiB.\n"
+                f"Staging temporary space: {space.stage_temp_bytes / 1024**2:.0f} MiB. "
+                f"ZIP extraction: {space.scratch_bytes / 1024**2:.0f} MiB.\n"
                 + volumes + ("\n" + "\n".join(space.warnings) if space.warnings else
                              "\nSufficient estimated space."))
             self.install_button.setEnabled(space.enough)
