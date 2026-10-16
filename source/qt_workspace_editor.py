@@ -2791,39 +2791,12 @@ class QtWorkspaceEditor(QMainWindow):
         selected_character = self.character_preview
 
         def worker(progress, cancelled):
-            from character_asset_export import (
-                export_character_asset_folder, build_cdf_folder_glbs)
-            from material_preview import _workspace_index
-            index = current_index or _workspace_index(workspace, projects, stage)
-            # Export EVERY verified CDF in this selected character folder,
-            # including separate monster stages and hunter perspectives.
-            assemblies, errors = build_cdf_folder_glbs(
-                workspace, virtual_folder, index,
-                texture_folder=textures, projects_root=projects, stage_root=stage,
+            from character_export_command import export_character_directory
+            return export_character_directory(
+                source, folder, projects_root=projects, stage_root=stage,
+                texture_folder=textures, index=current_index,
+                selected_cdf=(selected_character.cdf if selected_character else None),
                 progress=progress, cancelled=cancelled)
-            full_model = None
-            # Emet's canonical 3P remote-cannon mesh contains his arm.
-            # Prefer it for Full_Character even when a healing/beacon CDF
-            # happens to be selected; retain all CDFs under Assemblies/.
-            preferred_cdf = (selected_character.cdf.casefold()
-                             if selected_character is not None else None)
-            chosen = next((pair for pair in assemblies.values()
-                           if pair[1].get('preferred_full_character')), None)
-            if chosen is None:
-                chosen = next((pair for pair in assemblies.values()
-                               if preferred_cdf and
-                               pair[1]['cdf'].casefold() == preferred_cdf), None)
-            if chosen is None and assemblies:
-                chosen = next(iter(assemblies.values()))
-            if chosen is not None:
-                blob, info = chosen
-                full_model = blob, info
-            if cancelled():
-                raise InterruptedError('Character export cancelled.')
-            return export_character_asset_folder(
-                workspace, virtual_folder, folder, index=index,
-                full_model=full_model, assemblies=assemblies,
-                assembly_errors=errors, progress=progress, cancelled=cancelled)
 
         # Capture the source model paths before the QThreadPool callback;
         # workers must never access live QWidget state.
@@ -2834,9 +2807,9 @@ class QtWorkspaceEditor(QMainWindow):
                     (report['files'], report['folder']))
             converted = len(report['cdf_assemblies'])
             skipped = len(report['cdf_assembly_errors'])
-            note += ' • %d CDF Blender GLB(s) in Assemblies/' % converted
+            note += ' • %d additional CDF Blender GLB(s) in models/' % converted
             if report['full_model'] is not None:
-                note += ' • Full_Character.glb included'
+                note += ' • ' + Path(report['folder']).name + '.glb included'
             else:
                 note += ' • no verified full CDF assembly'
             if skipped:

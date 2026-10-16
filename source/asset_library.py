@@ -285,6 +285,9 @@ def extracted_index(root=None, *, archive_ids=None):
             manifest = _load_manifest(folder)
             base = (folder / "files").resolve()
             for entry in manifest["entries"]:
+                if entry.get("path") == "" and entry.get("bytes") == 0:
+                    # Legacy nameless zero-byte placeholder is not an asset.
+                    continue
                 virtual = normalized_name(entry["path"])
                 if entry.get("bytes", -1) < 0:
                     continue
@@ -468,6 +471,12 @@ def import_pak(source, *, stage=None, root=None, extra_keys=(),
         for position, (name, meta) in enumerate(info["entries"].items(), 1):
             if cancelled and cancelled():
                 raise ImportCanceled("Import canceled.")
+            # A zero-length nameless central-directory placeholder is not
+            # a file. Ignore it only when it declares no content, while
+            # retaining strict rejection of nonempty or unsafe paths.
+            if name == '' and meta.get('original_size') == 0 and meta.get('compressed_size', 0) == 0:
+                skipped.append('ignored empty-name zero-byte archive placeholder')
+                continue
             virtual = normalized_name(name)
             token = virtual.casefold()
             if token in seen:

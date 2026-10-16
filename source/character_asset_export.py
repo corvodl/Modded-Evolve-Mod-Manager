@@ -242,7 +242,7 @@ def build_cdf_folder_glbs(workspace, character_folder, index, *,
 def export_character_asset_folder(workspace, character_folder, destination,
                                   *, index=None, full_model=None,
                                   assemblies=None, assembly_errors=(),
-                                  progress=None, cancelled=None):
+                                  output_name=None, progress=None, cancelled=None):
     """Export exact model-folder contents with no redundant virtual ancestors.
 
     A new <destination>/<character-folder> directory is created atomically.
@@ -264,7 +264,11 @@ def export_character_asset_folder(workspace, character_folder, destination,
         home, character_folder, index=index)
     if not records:
         raise ValueError('No character assets found to export.')
-    short_name = PurePosixPath(virtual).name
+    short_name = PurePosixPath(virtual).name if output_name is None else str(output_name)
+    # A friendly character name may replace the internal folder token, but
+    # must never become a nested or reserved Windows path.
+    if normalized_name(short_name) != short_name or '/' in short_name or '\\' in short_name:
+        raise ValueError('Unsafe character export folder name.')
     target = destination / short_name
     if target.exists():
         raise FileExistsError('Export folder already exists: ' + str(target))

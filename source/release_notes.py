@@ -4,6 +4,12 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.2.5', (
+        "Use the same complete character-folder exporter from File Editor and Modding Tools, instead of scattering standalone model GLBs across the export root.",
+        "Create a character-named main GLB and categorized animations, textures, and models directories containing additional verified assemblies and equipment.",
+        "Preserve Emet's canonical complete 3P body when selecting the primary GLB, with explicit rig and animation compatibility reports instead of fabricated skeletons.",
+        "Handle empty-name, zero-byte CryPAK placeholders in read-only Asset Library and workspace indexes while continuing to reject unsafe names and entries with data.",
+    )),
     ('1.2.4', (
         "Import individually verified assembled CDF characters into Blender as one GLB, with compatible named CAF/DBA Actions bound to the correct original skeleton.",
         "Expand native CAF conversion to as many as 256 verified clips per assembly within size and resource safety limits; report unsupported clips explicitly.",

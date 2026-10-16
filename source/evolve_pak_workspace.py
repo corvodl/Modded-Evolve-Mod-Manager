@@ -77,6 +77,33 @@ def load_workspace(wdir):
     return data
 
 
+def safe_index_entries(wdir):
+    """Read-only asset lookup over a verified workspace manifest.
+
+    Ignore only empty-name, zero-byte placeholder metadata from older CryPAKs.
+    Do not relax load_workspace/check_paths for rebuilds or extraction, and
+    never ignore traversal, absolute paths, duplicates or named corruption.
+    """
+    folder = Path(wdir)
+    try:
+        return load_workspace(folder)['entries']
+    except ValueError as exc:
+        if "Unsafe archive entry name: ''" not in str(exc):
+            raise
+    data = json.loads(manifest_path(folder).read_text(encoding='utf-8'))
+    if data.get('version') != VERSION or not isinstance(data.get('entries'), list):
+        raise ValueError('Unsupported or malformed workspace manifest')
+    good = []
+    for entry in data['entries']:
+        if isinstance(entry, dict) and entry.get('path') == '':
+            if entry.get('bytes') != 0:
+                raise ValueError('Empty archive entry contains data; cannot ignore.')
+            continue
+        good.append(entry)
+    list(check_paths(folder, good))
+    return good
+
+
 def optional_filter(name, patterns):
     if not patterns:return True
     needle=name.casefold()

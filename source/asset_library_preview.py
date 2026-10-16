@@ -41,6 +41,12 @@ def archive_entries(identifier, root=None, *, paths=None):
     records = {}
     wanted = None if paths is None else frozenset(normalized_name(p) for p in paths)
     for row in manifest['entries']:
+        # Historical CryPAK import metadata may contain a nameless, zero-byte
+        # directory placeholder. It cannot be opened as a file; skip only
+        # this exact sentinel. Named traversal and nonempty entries remain
+        # subject to the strict normalized_name validation below.
+        if row.get('path') == '' and row.get('bytes') == 0:
+            continue
         relative = normalized_name(row['path'])
         if wanted is not None and relative not in wanted:
             continue

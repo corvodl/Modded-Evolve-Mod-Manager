@@ -1348,6 +1348,7 @@ class QtManager(QMainWindow):
             ('Mod Profiles…', self.open_mod_profiles),
             ('Asset Library / Add PAKs…', self.open_asset_library),
             ('Export Model Folder…', self.export_model_folder),
+            ('Export Individual Models (.glb)…', self.export_individual_models),
             ('PAK Diff…', self.open_pak_diff),
             ('Task Manager…', self.open_task_manager),
             ('Offline Test…', self.build_offline_test),
@@ -2885,13 +2886,52 @@ class QtManager(QMainWindow):
         self.run_steps(steps, 'Apply Mod Profile', complete)
 
     def export_model_folder(self):
-        """Export native model files without blocking the application UI."""
+        """Use the same character-folder exporter as the File Editor."""
         input_folder = QFileDialog.getExistingDirectory(
-            self, 'Choose folder containing CryEngine models', self.projects_path)
+            self, 'Choose an extracted character folder', self.projects_path)
         if not input_folder:
             return
         output_folder = QFileDialog.getExistingDirectory(
-            self, 'Choose a separate Blender export folder', self.projects_path)
+            self, 'Choose where to create the character export', self.projects_path)
+        if not output_folder:
+            return
+        from qt_background_exports import begin_file_operation, exports_busy
+        if exports_busy(self):
+            self.info('Export in progress', 'Finish or cancel the current model export first.')
+            return
+        from character_export_command import export_character_directory
+        projects, stage = self.projects_path, self.stage_path
+
+        def work(progress, cancelled):
+            return export_character_directory(
+                input_folder, output_folder, projects_root=projects,
+                stage_root=stage, progress=progress, cancelled=cancelled)
+
+        def success(report):
+            animations = report.get('animations') or {}
+            self.info(
+                'Character folder exported',
+                'Exported to %s\\nMain character GLB: %s\\n'
+                '%d additional CDF models; %d converted animation clips.\\n'
+                'See asset_sources.json for unsupported rigs or clips.' %
+                (report['folder'], Path(report['folder']).name + '.glb',
+                 len(report['cdf_assemblies']), animations.get('animations', 0)))
+
+        begin_file_operation(
+            self, 'Export Model Folder',
+            'Assembling character, rig, animations, textures and equipment',
+            work, on_success=success,
+            on_error=lambda error: self.failure('Character export stopped: ' + error))
+
+    def export_individual_models(self):
+        """Explicit legacy batch export: one GLB per mesh, no shared character."""
+        input_folder = QFileDialog.getExistingDirectory(
+            self, 'Choose folder containing individual CryEngine models',
+            self.projects_path)
+        if not input_folder:
+            return
+        output_folder = QFileDialog.getExistingDirectory(
+            self, 'Choose folder for individual model GLBs', self.projects_path)
         if not output_folder:
             return
         from qt_background_exports import begin_file_operation, exports_busy
@@ -2899,8 +2939,7 @@ class QtManager(QMainWindow):
             self.info('Export in progress', 'Finish or cancel the current model export first.')
             return
         from model_textured_export import export_extracted_folder
-        source = Path(input_folder)
-        destination = Path(output_folder)
+        source, destination = Path(input_folder), Path(output_folder)
         projects, stage = self.projects_path, self.stage_path
 
         def work(progress, cancelled):
@@ -2910,23 +2949,19 @@ class QtManager(QMainWindow):
 
         def success(result):
             exported, skipped = result
-            textured = sum(bool(info['texture_count']) for _, _, _, info in exported)
-            rigged = sum(bool(info.get('bone_count')) for _, _, _, info in exported)
             if skipped:
                 (destination / 'Blender_export_report.txt').write_text(
-                    '\n'.join(name + ': ' + reason for name, reason in skipped),
+                    '\\n'.join(name + ': ' + reason for name, reason in skipped),
                     encoding='utf-8')
-            self.info(
-                'Blender export finished',
-                '%d models exported (%d textured, %d rigged), %d skipped.\\n%s' %
-                (len(exported), textured, rigged, len(skipped), output_folder))
-
-        def failed(error):
-            self.failure('Blender export stopped: ' + error)
+            self.info('Individual GLB export finished',
+                      '%d individual models exported; %d skipped.\\n%s' %
+                      (len(exported), len(skipped), output_folder))
 
         begin_file_operation(
-            self, 'Export Blender models', 'Preparing model folder export…',
-            work, on_success=success, on_error=failed)
+            self, 'Export Individual Models',
+            'Exporting individual meshes (not a combined character)',
+            work, on_success=success,
+            on_error=lambda error: self.failure('Individual export stopped: ' + error))
 
     def browse_external_pak(self):
         source, _ = QFileDialog.getOpenFileName(self, 'Choose custom-signed PAK',

@@ -48,6 +48,27 @@ class LibraryPreviewTests(unittest.TestCase):
             self.identifier, 'animations/config/character.xml', root=self.root),
             self.data['animations/config/character.xml'])
 
+    def test_legacy_empty_name_placeholder_does_not_break_character_library(self):
+        manifest = json.loads(self.manifest.read_text('utf-8'))
+        manifest['entries'].append({'path': '', 'bytes': 0})
+        self.manifest.write_text(json.dumps(manifest), encoding='utf-8')
+        self.assertEqual(set(archive_entries(self.identifier, self.root)), set(self.data))
+        from asset_library import extracted_index
+        self.assertEqual(set(extracted_index(self.root)), set(self.data))
+        with (patch('build_collections.build_index', return_value={}),
+              patch('build_collections.resolve_archive_build', return_value='test')):
+            self.assertEqual(len(library_model_index(self.identifier, self.root)),
+                             len(self.data))
+
+    def test_nonempty_unnamed_or_traversing_manifest_entry_is_rejected(self):
+        manifest = json.loads(self.manifest.read_text('utf-8'))
+        for path, size in (('', 1), ('../escape.txt', 0), ('C:/outside.txt', 0)):
+            manifest['entries'].append({'path': path, 'bytes': size})
+            self.manifest.write_text(json.dumps(manifest), encoding='utf-8')
+            with self.assertRaises(ValueError):
+                archive_entries(self.identifier, self.root)
+            manifest['entries'].pop()
+
     def test_copy_native_file_without_editing_original(self):
         original = 'characters/hunters/merc_maggie/maggie_3p.mtl'
         target = self.base / 'material.mtl'
