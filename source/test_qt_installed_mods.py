@@ -74,6 +74,27 @@ class InstalledModsTableTests(unittest.TestCase):
             dialog.refresh()
             self.assertEqual(dialog.table.item(0, 3).text(), "Review this build")
 
+    def test_staged_indicator_requires_matching_completed_journal_mod_id(self):
+        from mod_profiles import _atomic_json
+        row = self.store.list_profiles()[0]["mods"][0]
+        with patch("qt_mod_profiles.allowed_paks", return_value={
+                "game/libs.pak": "Game/libs.pak"}):
+            _atomic_json(self.store.applied_path, {
+                "schema": 1, "stage": str(self.stage), "swap": "/swap",
+                "profile_id": self.profile_id, "entries": [], "pending": None,
+                "in_progress": False})
+            dialog = ModProfilesDialog(
+                self.parent, self.catalog, self.stage, lambda x: None)
+            self.addCleanup(dialog.close)
+            self.assertEqual(dialog.table.item(0, 4).text(), "Enabled")
+            _atomic_json(self.store.applied_path, {
+                "schema": 1, "stage": str(self.stage), "swap": "/swap",
+                "profile_id": self.profile_id,
+                "entries": [{"mod_id": row["id"]}], "pending": None,
+                "in_progress": False})
+            dialog.refresh()
+            self.assertEqual(dialog.table.item(0, 4).text(), "Staged")
+
     def test_missing_source_and_unknown_target_are_visible(self):
         self.mod.unlink()
         with patch("qt_mod_profiles.allowed_paks", return_value={}):
