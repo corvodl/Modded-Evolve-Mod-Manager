@@ -195,7 +195,7 @@ class ModProfilesDialog(QDialog):
                     for col, value in enumerate(values, 1):
                         item = QTableWidgetItem(str(value))
                         item.setToolTip('Signed PAK: ' + str(source) +
-                                        '\nVerified hash: ' + mod['sha256'] +
+                                        '\nVerified SHA256: ' + mod['sha256'] +
                                         '\nCompatibility checks target identity, not runtime behavior.')
                         self.table.setItem(i, col, item)
                 self.table.resizeRowsToContents()
