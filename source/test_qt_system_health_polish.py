@@ -81,6 +81,29 @@ class SystemHealthPolishTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_health_cards_remain_compact_and_diagnostics_are_readable(self):
+        manager = MagicMock()
+        panel = SystemHealthPanel(manager)
+        scroll = panel.cards_scroll
+        self.assertLessEqual(scroll.maximumHeight(), 390)
+        self.assertEqual(scroll.widget().layout().columnCount(), 2)
+        self.assertEqual(len(panel.labels), 5)
+        for key, _title, _note in panel.LABELS:
+            card = panel.findChild(QFrame, "systemHealthCheck")
+            self.assertLessEqual(card.maximumHeight(), 170)
+            self.assertIsNotNone(panel.findChild(
+                QPushButton, "systemHealthDetails_" + key))
+        detail = "first line\\n" + ("Full diagnostics " * 100)
+        values = {key: ("Ready", detail) for key, *_ in panel.LABELS}
+        panel._finished("snapshot", values, "")
+        self.assertLess(len(panel.labels["firewall"].text()), 135)
+        with patch.object(panel, "_open_preview") as preview:
+            panel.findChild(
+                QPushButton, "systemHealthDetails_firewall").click()
+            preview.assert_called_once()
+            self.assertIn("Full diagnostics", preview.call_args.args[1])
+        panel.close()
+
     def test_recovery_only_for_unsafe_swap_and_navigation_only(self):
         manager = MagicMock()
         manager.pages = {"settings": MagicMock()}
