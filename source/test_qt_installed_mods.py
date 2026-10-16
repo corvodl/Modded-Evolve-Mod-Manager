@@ -55,6 +55,25 @@ class InstalledModsTableTests(unittest.TestCase):
             self.assertEqual(dialog.table.item(0, 0).checkState(), Qt.Checked)
             self.assertIn("SHA", dialog.table.item(0, 1).toolTip().upper())
 
+    def test_matching_and_changed_stage_fingerprint_uses_advisory_status(self):
+        from universal_stage import digest
+        plan = self.stage / 'rekey_plan.json'
+        plan.write_text('{"entries":[]}', encoding="utf-8")
+        from mod_profiles import _atomic_json
+        data = self.store._catalog()
+        record = data["profiles"][0]["mods"][0]
+        record["verified_stage_fingerprint"] = digest(plan)
+        _atomic_json(self.store.catalog_path, data)
+        with patch("qt_mod_profiles.allowed_paks", return_value={
+                "game/libs.pak": "Game/libs.pak"}):
+            dialog = ModProfilesDialog(
+                self.parent, self.catalog, self.stage, lambda x: None)
+            self.addCleanup(dialog.close)
+            self.assertEqual(dialog.table.item(0, 3).text(), "Verified for stage")
+            plan.write_text('{"entries":[{"changed":true}]}', encoding="utf-8")
+            dialog.refresh()
+            self.assertEqual(dialog.table.item(0, 3).text(), "Review this build")
+
     def test_missing_source_and_unknown_target_are_visible(self):
         self.mod.unlink()
         with patch("qt_mod_profiles.allowed_paks", return_value={}):
