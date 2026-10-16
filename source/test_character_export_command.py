@@ -25,7 +25,7 @@ class CharacterExportCommandTests(unittest.TestCase):
         self.assertEqual(workspace, self.workspace)
         self.assertEqual(virtual, 'characters/hunters/merc_emet')
 
-    def test_selects_rigged_assembly_and_friendly_name(self):
+    def test_preserves_canonical_complete_body_and_friendly_name(self):
         from character_export_command import export_character_directory
         rig = (b'glTF-rig', {'cdf': 'characters/hunters/merc_emet/full.cdf',
                             'bone_count': 27, 'embedded_animations': 2,
@@ -40,12 +40,12 @@ class CharacterExportCommandTests(unittest.TestCase):
             report = export_character_directory(
                 self.base, self.destination, index={})
         self.assertEqual(Path(report['folder']).name, 'Emet')
-        self.assertIs(export.call_args.kwargs['full_model'], rig)
+        self.assertIs(export.call_args.kwargs['full_model'], other)
         self.assertEqual(export.call_args.kwargs['output_name'], 'Emet')
         self.assertEqual(len(export.call_args.kwargs['assemblies']), 1)
-        self.assertIn('Assemblies/cannon.glb',
+        self.assertIn('Assemblies/full.glb',
                       export.call_args.kwargs['assemblies'])
-        self.assertNotIn('Assemblies/full.glb',
+        self.assertNotIn('Assemblies/cannon.glb',
                          export.call_args.kwargs['assemblies'])
 
     def test_unrelated_loose_folder_never_silently_uses_legacy_export(self):
