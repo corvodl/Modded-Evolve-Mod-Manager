@@ -1409,8 +1409,13 @@ class QtGPUModelPanel(QWidget):
         strip.addWidget(self.texture_loading_label)
         strip.addWidget(self.texture_loading_progress, 1)
         self.texture_loading_footer.hide()
+        self._texture_resolution_pending = False
         layout.addWidget(self.texture_loading_footer)
-        self.canvas.textureUploadProgress.connect(self._update_texture_load_progress)
+        # Queue UI layout changes until after paintGL has released its OpenGL
+        # framebuffer; directly showing/hiding widgets within paintGL can
+        # resize QOpenGLWidget mid-frame on Windows.
+        self.canvas.textureUploadProgress.connect(
+            self._update_texture_load_progress, Qt.QueuedConnection)
         # In case the context was initialized before the signal was connected.
         total = getattr(self.canvas, '_texture_upload_total', 0)
         if total:
@@ -1419,10 +1424,29 @@ class QtGPUModelPanel(QWidget):
         self._build_compact_timeline(layout)
         QTimer.singleShot(0,self._position_overlay)
 
+    def set_texture_resolution_pending(self, pending):
+        """Show indeterminate DDS resolution before GPU upload totals exist.
+
+        Only model-loading workers call this; it is never a fabricated count
+        of DDS already decoded. Once the material resolver finishes the
+        determinate GPU texture submission counter takes over.
+        """
+        self._texture_resolution_pending = bool(pending)
+        if pending:
+            self.texture_loading_label.setText('Resolving textures from Asset Library…')
+            self.texture_loading_progress.setRange(0, 0)
+            self.texture_loading_footer.show()
+        else:
+            total = getattr(self.canvas, '_texture_upload_total', 0)
+            remaining = len(getattr(self.canvas, '_pending_texture_uploads', ()))
+            self._update_texture_load_progress(total - remaining, total)
+
     def _update_texture_load_progress(self, completed, total):
         """Report actual textures submitted to GPU; hide on completion."""
         total = max(0, int(total))
         completed = max(0, min(int(completed), total))
+        if self._texture_resolution_pending:
+            return
         if not total or completed >= total:
             self.texture_loading_footer.hide()
             return
