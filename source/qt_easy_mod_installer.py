@@ -161,7 +161,7 @@ class EasyModInstaller(QDialog):
             lines.extend("    " + name for name in entry.changed_entries[:4])
             if len(entry.changed_entries) > 4:
                 lines.append(f"    … {len(entry.changed_entries)-4} more asset(s)")
-        return "\\n".join(lines)
+        return "\n".join(lines)
 
     def inspect(self):
         if not self.selected_path:
@@ -216,12 +216,12 @@ class EasyModInstaller(QDialog):
             return
         changes = sum(len(x.changed_entries) for x in bundle.entries)
         note = (f"{len(conflicts)} enabled conflicting mod(s) will be disabled "
-                "in this collection, not removed.\\n\\n" if conflicts else "")
-        targets = "\\n".join("• " + x.target for x in bundle.entries)
+                "in this collection, not removed.\n\n" if conflicts else "")
+        targets = "\n".join("• " + x.target for x in bundle.entries)
         if QMessageBox.question(
                 self, "Review & Stage Mod Bundle",
-                f"{note}Verified PAKs: {len(bundle.entries)}\\n"
-                f"Changed entries: {changes}\\n{targets}\\n\\n"
+                f"{note}Verified PAKs: {len(bundle.entries)}\n"
+                f"Changed entries: {changes}\n{targets}\n\n"
                 "Import verified files to this collection, then stage using "
                 "the existing recoverable PAK backup journal? "
                 "Installed game files are not changed.",
@@ -246,7 +246,7 @@ class EasyModInstaller(QDialog):
                 self.install_button.setEnabled(True)
                 QMessageBox.warning(
                     self, "Imported, but staging is not confirmed",
-                    str(exc) + "\\nThe package remains in the Mods Collection. "
+                    str(exc) + "\nThe package remains in the Mods Collection. "
                     "Review it before staging again.")
         def failed(message):
             self.install_button.setEnabled(True)
