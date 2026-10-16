@@ -1710,10 +1710,23 @@ class QtGPUModelPanel(QWidget):
                         slot < len(masks) and masks[slot] is not None and
                         slot < len(strengths) and strengths[slot] > 0]
             message = '%d/%d selected material slot(s) contain verified emissive glow.' % (len(resolved),len(slots))
+            if selected is not None:
+                origin_slots = getattr(materials, 'original_slot_ids', ())
+                origin_mtls = getattr(materials, 'original_materials', ())
+                original = origin_slots[selected] if selected < len(origin_slots) else selected
+                mtl = origin_mtls[selected] if selected < len(origin_mtls) else materials.source
+                message += ' Assembly slot %d → MTL leaf %d (%s).' % (
+                    selected, original, mtl)
+                refs = getattr(materials, 'emissive_references', ())
+                if selected < len(refs) and refs[selected]:
+                    message += ' Declared emission texture: %s.' % refs[selected]
+                statuses = getattr(materials, 'emissive_status', ())
+                if selected < len(statuses):
+                    message += ' Load status: %s.' % statuses[selected]
             if not resolved:
-                message += (' No positive material GlowAmount/Emittance or resolved emission map. '
-                            'Check the original MTL, its shader parameters and the owning PAK; '
-                            'a purple diffuse texture alone does not authorize glow.')
+                message += (' No verified emission map in the selected slot; '
+                            'inspect source MTL mapping and the exact DDS load status above. '
+                            'Additional glow intensity cannot illuminate a missing mask.')
             elif selected is not None:
                 strength = strengths[selected]
                 origin = (materials.emissive_sources[selected]
@@ -1792,6 +1805,16 @@ class QtGPUModelPanel(QWidget):
                     '%d%% near-black source pixels' % data))
             if source:
                 tip += '\nLoaded: %s\nPAK: %s' % source
+            if materials:
+                original = getattr(materials,'original_slot_ids',())
+                original_mtls = getattr(materials,'original_materials',())
+                if slot < len(original):
+                    tip += '\nSource MTL leaf index: %d' % original[slot]
+                if slot < len(original_mtls):
+                    tip += '\nSource MTL: %s' % original_mtls[slot]
+                state = getattr(materials,'emissive_status',())
+                if slot < len(state):
+                    tip += '\nEmission loading: %s' % state[slot]
             if materials and slot < len(getattr(materials, 'emissive_strengths', ())):
                 value = materials.emissive_strengths[slot]
                 if value > 0 and slot < len(getattr(materials, 'emissive_maps', ())) and materials.emissive_maps[slot] is not None:
