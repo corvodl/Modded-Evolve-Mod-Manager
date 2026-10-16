@@ -590,6 +590,11 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             if role == 'emissive':
                 from emissive_materials import emission_texture_node
                 texture_node = emission_texture_node(item)
+                if texture_node is None:
+                    # Legacy alpha glow samples diffuse RGB/alpha and must
+                    # inherit the diffuse TexMod if no separate emitting
+                    # texture is declared.
+                    texture_node = diffuse_node
             if role == 'ao' and texture_node is None:
                 # A packed AO channel inherits its actual source texture's
                 # TexMod rather than erroneously sampling diffuse UVs.
