@@ -112,3 +112,36 @@ Backups & Recovery preference. Live game swap backups remain mandatory.
 
 Regression tests: test_game_storage.py and test_qt_game_storage.py, included
 in Windows Qt, installer and portable ZIP CI test lists.
+
+
+## Disk-space preflight, Verify & Repair and post-stage checks (PR #82)
+
+- **Installation space preview** is calculated only on demand after signing
+  verification. It reports how much storage is needed for new SHA256-addressed
+  library PAKs (existing identical files need no new copy), checked staging
+  temporaries, mandatory recovery backups, and ZIP extraction scratch space.
+  The estimate groups allocations by filesystem volume, accounts for the
+  prepared swap's additional ready PAK, includes conservative filesystem
+  overhead and compares with actual free space. Insufficient space disables
+  installation. Space is checked again immediately before confirmation.
+  Estimates are conservative, not a guarantee of future free space.
+- **Verify & Repair…** on the existing Installed Mods dialog is opt-in and
+  read-only by default. It scans source existence, original SHA256, signed
+  stage targets, enabled-target collisions and signing-plan fingerprint.
+  A user may explicitly select **Repair Selected Source…**, supply an exact
+  replacement, and approve its SHA256 / RSA verification and copy to the
+  content-addressed local library. Sources with different bytes are rejected.
+  Repair does not write staged or live game PAKs or automatically enable mods.
+- **Post-install verification** runs after the journalled profile staging
+  worker reports success. For each enabled target, it verifies stage SHA256,
+  the source PAK SHA256, exact applied mod IDs, backup ownership, metadata
+  state and the saved original PAK hash. A prepared swap also requires
+  a matching ready-to-swap PAK, current journal and matching original-ready
+  backup. A mismatch blocks the normal success message and causes a receipt
+  (if present) to be marked \`recovery_needed\`; recovery files remain intact.
+  No automatic repair is attempted while running the game.
+
+The safety tests are in \`source/test_mod_install_safety.py\`, plus additional
+Qt smoke coverage in \`source/test_qt_easy_mod_installer.py\` and
+\`source/test_qt_installed_mods.py\`. Windows native Qt and Windows installer
+and portable ZIP suites include all of them.
