@@ -9,6 +9,8 @@ on:
       - 'source/test_game_storage.py'
       - 'source/easy_mod_bundle.py'
       - 'source/mod_install_receipts.py'
+      - 'source/mod_install_safety.py'
+      - 'source/test_mod_install_safety.py'
       - 'source/test_easy_mod_bundle.py'
       - 'source/test_qt_installed_mods.py'
       - 'source/easy_mod_install.py'
@@ -47,7 +49,7 @@ jobs:
       - name: Exercise design system, workspaces and protected navigation
         shell: pwsh
         run: |
-          python -m unittest -v test_easy_mod_bundle test_qt_installed_mods test_game_storage test_qt_game_storage test_easy_mod_install test_qt_easy_mod_installer test_auto_restore_watch test_qt_quick_launch test_qt_design_system test_version_info test_qt_migration test_qt_modern_navigation test_qt_unified_explorer test_qt_gfx_editor test_qt_level_editor test_developer_console_windows test_unmodded_launch test_model_cancellation test_performance_trace test_model_progressive_uploads test_pak_streaming test_native_twofish_bulk test_level_residency_performance test_level_working_set test_performance_benchmarks test_level_early_publication test_qt_virtual_tree test_model_dependency_fingerprint test_model_geometry_stage test_model_deep_cancellation test_background_warmups
+          python -m unittest -v test_mod_install_safety test_easy_mod_bundle test_qt_installed_mods test_game_storage test_qt_game_storage test_easy_mod_install test_qt_easy_mod_installer test_auto_restore_watch test_qt_quick_launch test_qt_design_system test_version_info test_qt_migration test_qt_modern_navigation test_qt_unified_explorer test_qt_gfx_editor test_qt_level_editor test_developer_console_windows test_unmodded_launch test_model_cancellation test_performance_trace test_model_progressive_uploads test_pak_streaming test_native_twofish_bulk test_level_residency_performance test_level_working_set test_performance_benchmarks test_level_early_publication test_qt_virtual_tree test_model_dependency_fingerprint test_model_geometry_stage test_model_deep_cancellation test_background_warmups
           if ($LASTEXITCODE -ne 0) { throw 'Native GUI regression suite failed.' }
       - name: Capture actual Qt Windows widgets at four major pages
         shell: pwsh
