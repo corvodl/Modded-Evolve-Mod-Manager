@@ -378,14 +378,21 @@ def download_and_prepare(update: Update, scratch: Path | None = None,
 
 
 
-def report_startup_ready(app_home: Path) -> None:
+def report_startup_ready(app_home: Path, *, argv=None) -> None:
     """Acknowledge a responsive replacement GUI to the detached installer.
 
-    The path must reside in the updater's scratch area, never the game or
-    user-owned Data directory. A missing or invalid hint is ignored.
+    Elevated Windows executables must be launched through ShellExecute/runas,
+    which cannot inherit custom environment variables. Accept the one-time
+    --update-ack command-line path as well as the legacy environment hint.
+    Both are restricted to UpdateWork and cannot target user Data/game files.
     """
     cleanup_completed_update_work(app_home)
+    args = tuple(sys.argv[1:] if argv is None else argv)
     hint = os.environ.pop('EVOLVE_MANAGER_UPDATE_ACK', '')
+    if not hint and args.count('--update-ack') == 1:
+        at = args.index('--update-ack')
+        if at + 1 < len(args):
+            hint = args[at + 1]
     if not hint:
         return
     try:
@@ -568,9 +575,29 @@ try {
   $info = New-Object System.Diagnostics.ProcessStartInfo
   $info.FileName = Join-Path $TargetDir 'EvolveModManager.exe'
   $info.WorkingDirectory = $TargetDir
-  $info.UseShellExecute = $false
-  $info.EnvironmentVariables['EVOLVE_MANAGER_UPDATE_ACK'] = $AckPath
-  $script:NewManager = [System.Diagnostics.Process]::Start($info)
+  if ($Headless) {
+    # CI's invalid-EXE rollback test must not trigger an interactive UAC prompt.
+    $info.UseShellExecute = $false
+    $info.EnvironmentVariables['EVOLVE_MANAGER_UPDATE_ACK'] = $AckPath
+  } else {
+    # Patch 2's EXE requires administrator privileges. CreateProcess with
+    # UseShellExecute=false returns ERROR_ELEVATION_REQUIRED (740). The
+    # standard shell "runas" verb shows Windows UAC instead. Its child cannot
+    # inherit EnvironmentVariables, so pass the validated one-time ACK path
+    # as an argument; the manager checks it is inside UpdateWork.
+    $info.UseShellExecute = $true
+    $info.Verb = 'runas'
+    $info.Arguments = '--update-ack "' + $AckPath.Replace('"', '') + '"'
+    Set-UpdateProgress 'Approve the Windows administrator prompt to finish updating...' 95
+  }
+  try {
+    $script:NewManager = [System.Diagnostics.Process]::Start($info)
+  } catch [System.ComponentModel.Win32Exception] {
+    if ($_.Exception.NativeErrorCode -eq 1223) {
+      throw 'Administrator approval was canceled. Restoring the previous manager.'
+    }
+    throw
+  }
   if ($null -eq $script:NewManager) { throw 'Could not start updated manager.' }
   $timer = [System.Diagnostics.Stopwatch]::StartNew()
   $Acknowledged = $false
