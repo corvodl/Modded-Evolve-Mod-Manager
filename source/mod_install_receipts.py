@@ -155,3 +155,26 @@ def list_receipts(root, *, limit=40):
         except (ValueError, OSError):
             continue
     return tuple(found)
+
+
+
+def main(argv=None):
+    """Independent worker: fail with a nonzero exit on post-stage mismatch."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Verify staged signed PAKs and backup journals")
+    parser.add_argument("--root", required=True)
+    parser.add_argument("--stage", required=True)
+    parser.add_argument("--swap", required=True)
+    parser.add_argument("--profile", required=True)
+    parser.add_argument("--receipt")
+    args = parser.parse_args(argv)
+    if args.receipt:
+        count = mark_staged(args.root, args.receipt, args.stage, args.swap)
+    else:
+        count = verify_staged_profile(args.root, args.profile, args.stage, args.swap)
+    print(f"POST-STAGE VERIFIED: {count} mod PAKs and original recovery backups")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
