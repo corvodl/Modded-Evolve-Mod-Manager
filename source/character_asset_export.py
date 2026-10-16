@@ -297,8 +297,9 @@ def export_character_asset_folder(workspace, character_folder, destination,
             doc, _ = _unpack_glb(blob)
             declared = tuple(report.get('embedded_animation_clips', ()))
             embedded = tuple(clip.get('name') for clip in doc.get('animations', ()))
-            if int(report.get('embedded_animations') or 0) != len(embedded) or (
-                    declared and declared != embedded):
+            if (int(report.get('embedded_animations') or 0) != len(embedded)
+                    or declared != embedded
+                    or (embedded and len(doc.get('skins', ())) != 1)):
                 raise ValueError('Monster Stage %d GLB has mismatched CDF animations.' % stage)
             if any(not name for name in embedded):
                 raise ValueError('Monster Stage %d contains unnamed motion tracks.' % stage)
@@ -388,6 +389,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
                 'embedded_animations':report.get('embedded_animations', 0),
                 'embedded_animation_clips':list(report.get('embedded_animation_clips', ())),
                 'animation_note':report.get('animation_note', ''),
+                'animation_status':('verified' if report.get('embedded_animations', 0)
+                                    else 'unavailable; see animation_note'),
             }
             stage_rows.append(row)
             if progress:
