@@ -50,7 +50,7 @@ class InstalledModsTableTests(unittest.TestCase):
             self.assertEqual(dialog.table.columnCount(), 5)
             self.assertEqual(dialog.table.rowCount(), 1)
             self.assertEqual(dialog.table.item(0, 2).text(), "Game/libs.pak")
-            self.assertEqual(dialog.table.item(0, 3).text(), "Target compatible")
+            self.assertEqual(dialog.table.item(0, 3).text(), "Target recognized")
             self.assertEqual(dialog.table.item(0, 4).text(), "Enabled")
             self.assertEqual(dialog.table.item(0, 0).checkState(), Qt.Checked)
             self.assertIn("SHA", dialog.table.item(0, 1).toolTip().upper())
