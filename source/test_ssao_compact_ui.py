@@ -7,7 +7,7 @@ import unittest
 
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QLabel, QFrame, QProgressBar
 from model_preview import read_preview_mesh
 from test_material_preview import uv_mesh
 from qt_gpu_viewer import QtGPUModelPanel
@@ -85,6 +85,30 @@ class CompactGpuModelUiTests(unittest.TestCase):
         self.assertEqual((bar.minimum(),bar.maximum()), (0,0))
         self.panel.set_texture_resolution_pending(False)
         self.assertTrue(footer.isHidden())
+
+    def test_model_loading_footer_reports_work_before_geometry_ready(self):
+        footer = QFrame()
+        footer.setObjectName('modelLoadingFooter')
+        label = QLabel()
+        bar = QProgressBar()
+        footer.hide()
+        fake = SimpleNamespace(model_loading_footer=footer,
+                               model_loading_label=label,
+                               model_loading_progress=bar)
+        QtWorkspaceEditor._set_model_loading_phase(
+            fake, 'Loading model · reading geometry…')
+        self.assertFalse(footer.isHidden())
+        self.assertIn('reading geometry', label.text())
+        self.assertEqual((bar.minimum(), bar.maximum()), (0, 0))
+        QtWorkspaceEditor._set_model_loading_phase(
+            fake, 'Loading model · indexing animation references…')
+        self.assertIn('animation', label.text())
+        QtWorkspaceEditor._set_model_loading_phase(fake, '', False)
+        self.assertTrue(footer.isHidden())
+        QtWorkspaceEditor._set_model_loading_phase(
+            fake, 'Loading model · reading geometry…')
+        self.assertFalse(footer.isHidden())
+        self.assertEqual((bar.minimum(),bar.maximum()),(0,0))
 
     def test_stage_status_explains_progress_without_blocking(self):
         status=QLabel()
