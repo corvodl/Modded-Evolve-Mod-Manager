@@ -8,6 +8,12 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Stable — v1.2.4
 
+- Import individually verified assembled CDF characters into Blender as one GLB, with compatible named CAF/DBA Actions bound to the correct original skeleton.
+- Expand native CAF conversion to as many as 256 verified clips per assembly within size and resource safety limits; report unsupported clips explicitly.
+- Preserve compatible 2012 CryTek master-skeleton DBA conversion and reject unsupported or mismatched rigs rather than inventing motion.
+- Show per-assembly Blender animation counts, clip names and skip reasons after export, while keeping the separate animation manifest for diagnostics.
+- Add Settings integration for installing the optional standalone Blender Animation Browser through Blender's own extension system, with safe version and package checks.
+
 - Export character-named rigged GLBs with compatible animations and embedded textures, plus categorized animations/, textures/ and models/ assets including equipment.
 - Install the optional verified Evolve Animation Browser through Settings → Blender Integration.
 - Silence auto-restore watchdog console flashes during game process monitoring.
