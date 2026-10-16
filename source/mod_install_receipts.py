@@ -32,25 +32,94 @@ def write_import_receipt(root, profile_id, bundle, ids, *, existing=False):
     _atomic_json(folder / (ident + ".json"), record)
     return ident
 
-def mark_staged(root, ident, stage, swap):
-    """Called only after the journalled ModProfiles worker reports success."""
+def verify_staged_profile(root, profile_id, stage, swap, expected_ids=()):
+    """Read-only post-worker verification of real bytes and recovery metadata.
+
+    Both staged PAK hashes and their before.pak backups must agree with
+    the complete journal. Reject duplicate/extra/missing applied mod IDs.
+    """
     from mod_profiles import ModProfiles
+    from universal_stage import digest
+    from launch_integration import state_status
+    store = ModProfiles(root)
+    stage, swap = Path(stage).resolve(), Path(swap).resolve()
+    state = store.status()
+    if state["in_progress"] or state["pending"] or state["profile_id"] != profile_id:
+        raise RuntimeError("Profile staging is incomplete or belongs to another collection.")
+    phase = state_status(swap).phase
+    if phase not in ("missing", "restored", "prepared"):
+        raise RuntimeError("Game swap journal is not in a safe restored/prepared state.")
+    profile = next((p for p in store.list_profiles() if p["id"] == profile_id), None)
+    if profile is None:
+        raise RuntimeError("Applied Mods Collection no longer exists.")
+    enabled = {m["id"]: m for m in profile["mods"] if m["enabled"]}
+    applied = store._applied(stage, swap)
+    records = applied["entries"]
+    ids = [r["mod_id"] for r in records]
+    if (len(ids) != len(set(ids)) or set(ids) != set(enabled)
+            or not set(expected_ids).issubset(set(ids))):
+        raise RuntimeError("Applied journal and enabled PAKs do not match.")
+    if state["entry_count"] != len(records):
+        raise RuntimeError("Applied journal entry count mismatch.")
+    for item in records:
+        mod = enabled[item["mod_id"]]
+        if item.get("relative", "").casefold() != mod["relative"].casefold():
+            raise RuntimeError("Profile journal target PAK mismatch.")
+        target = stage / "paks" / Path(*mod["relative"].split("/"))
+        if not target.is_file() or digest(target) != mod["sha256"]:
+            raise RuntimeError("Staged PAK hash verification failed: " + mod["relative"])
+        source = Path(mod["source"])
+        if not source.is_file() or digest(source) != mod["sha256"]:
+            raise RuntimeError("Imported mod source was altered: " + mod["relative"])
+        backup = Path(item["backup"]).resolve()
+        if not backup.is_relative_to(store.root / "Backups"):
+            raise RuntimeError("Backup journal points outside manager recovery directory.")
+        meta_path = backup / "metadata.json"
+        if not meta_path.is_file():
+            raise RuntimeError("Required recovery metadata is missing: " + mod["relative"])
+        info = json.loads(meta_path.read_text(encoding="utf-8"))
+        if (info.get("status") != "installed"
+                or info.get("relative", "").casefold() != mod["relative"].casefold()
+                or Path(info.get("stage", "")).resolve() != stage
+                or Path(info.get("swap_dir", "")).resolve() != swap
+                or info.get("new_sha256") != mod["sha256"]):
+            raise RuntimeError("Recovery metadata disagrees with staged mod: " + mod["relative"])
+        before = backup / "before.pak"
+        if (not before.is_file() or
+                digest(before) != info.get("old_sha256")):
+            raise RuntimeError("Verified original PAK backup is missing or corrupt.")
+        if info.get("has_ready"):
+            ready_backup = backup / "ready-before.pak"
+            if (not ready_backup.is_file() or
+                    digest(ready_backup) != info.get("old_sha256")):
+                raise RuntimeError("Prepared swap recovery backup is missing or corrupt.")
+    return len(records)
+
+
+def mark_staged(root, ident, stage, swap):
+    """Only a complete, verified staged transaction earns a success receipt."""
     folder = _folder(root)
     path = folder / (ident + ".json")
     if not path.is_file():
         raise FileNotFoundError("Installation receipt missing.")
     doc = json.loads(path.read_text(encoding="utf-8"))
-    status = ModProfiles(root).status()
-    if (status["in_progress"] or status["pending"] or
-            status["profile_id"] != doc["profile_id"]):
-        raise RuntimeError("Cannot mark receipt staged: profile apply is incomplete.")
-    entries = ModProfiles(root)._applied(Path(stage).resolve(), Path(swap).resolve())["entries"]
-    applied_ids = {r["mod_id"] for r in entries}
-    if not all(item["mod_id"] in applied_ids for item in doc["entries"]):
-        raise RuntimeError("Cannot mark receipt staged: not all bundle PAKs are applied.")
+    if doc.get("schema") != 1 or not isinstance(doc.get("entries"), list):
+        raise RuntimeError("Installation receipt is damaged.")
+    try:
+        count = verify_staged_profile(
+            root, doc["profile_id"], stage, swap,
+            tuple(item["mod_id"] for item in doc["entries"]))
+    except Exception as exc:
+        doc["status"] = "recovery_needed"
+        doc["note"] = "Post-stage integrity check failed. Inspect staged PAKs and recovery backups."
+        _atomic_json(path, doc)
+        raise RuntimeError("Post-install verification failed; recovery may be needed: "
+                           + str(exc)) from exc
     doc["status"] = "staged_verified"
-    doc["note"] = "Profile worker completed; journal contains all bundle PAKs."
+    doc["note"] = f"Verified {count} staged PAKs, source SHA256 hashes and recovery journals."
     _atomic_json(path, doc)
+    return count
+
 
 def list_receipts(root, *, limit=40):
     folder = _folder(root)
