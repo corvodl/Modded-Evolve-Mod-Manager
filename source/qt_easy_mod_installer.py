@@ -12,6 +12,7 @@ from easy_mod_install import enabled_target_conflicts
 from easy_mod_bundle import (review_mod_bundle, review_legacy_folder,
                              import_reviewed_bundle)
 from mod_install_receipts import write_import_receipt
+from mod_install_safety import estimate_bundle_space
 from mod_profiles import ModProfiles
 from qt_background_exports import begin_file_operation, exports_busy
 
@@ -24,6 +25,7 @@ class EasyModInstaller(QDialog):
         self.profiles_root = Path(profiles_root)
         self.selected_path = None
         self.review = None
+        self.space_preview = None
         self.legacy_folder = False
         self.setWindowTitle("Install Mod — Review & Stage")
         self.setObjectName("easyModInstaller")
@@ -72,6 +74,10 @@ class EasyModInstaller(QDialog):
         details_scroll.setWidget(self.summary)
         details_scroll.setMinimumHeight(120)
         layout.addWidget(details_scroll, 1)
+        self.space_label = QLabel("Space needed: review a package first.")
+        self.space_label.setObjectName("modDiskSpacePreview")
+        self.space_label.setWordWrap(True)
+        layout.addWidget(self.space_label)
         actions = QHBoxLayout()
         self.preview_button = QPushButton("Review Mod")
         self.preview_button.setObjectName("easyModReviewButton")
@@ -146,7 +152,9 @@ class EasyModInstaller(QDialog):
         self.selected_path = Path(path)
         self.legacy_folder = legacy
         self.review = None
+        self.space_preview = None
         self.install_button.setEnabled(False)
+        self.space_label.setText("Space needed: review a package first.")
         self.summary.setText("Select Review Mod to validate the selected package.")
         self.selected_label.setText(self.selected_path.name)
 
@@ -180,25 +188,44 @@ class EasyModInstaller(QDialog):
         game = (getattr(self.manager, 'game_root', None) or
                 getattr(self.manager, '_find_game_root', lambda: '')())
         self.preview_button.setEnabled(False)
-        def complete(bundle):
+        def complete(result):
             self.preview_button.setEnabled(True)
             if source != self.selected_path or legacy != self.legacy_folder:
                 return
+            bundle, space = result
             self.review = bundle
+            self.space_preview = space
             self.summary.setText(self._review_summary(bundle))
-            self.install_button.setEnabled(True)
+            volumes = " · ".join(
+                f"{required / 1024**2:.0f} MiB needed / {free / 1024**2:.0f} MiB free"
+                for _, required, free in space.volumes)
+            self.space_label.setText(
+                f"Additional verified library data: {space.library_bytes / 1024**2:.0f} MiB. "
+                f"Recovery backups: {space.recovery_bytes / 1024**2:.0f} MiB. "
+                f"Staging temporary space: {space.stage_temp_bytes / 1024**2:.0f} MiB.\n"
+                + volumes + ("\n" + "\n".join(space.warnings) if space.warnings else
+                             "\nSufficient estimated space."))
+            self.install_button.setEnabled(space.enough)
         def failed(message):
             self.preview_button.setEnabled(True)
             self.review = None
+            self.space_preview = None
             self.install_button.setEnabled(False)
             QMessageBox.warning(self, "Cannot import this mod", message)
+        def review_and_estimate(_report, cancelled):
+            if cancelled():
+                raise InterruptedError("Cancelled")
+            bundle = (review_legacy_folder(source, stage, game)
+                      if legacy else review_mod_bundle(source, stage))
+            if cancelled():
+                raise InterruptedError("Cancelled")
+            estimate = estimate_bundle_space(
+                bundle, stage, self.manager.swap_path, self.profiles_root)
+            return bundle, estimate
         begin_file_operation(
             self, "Verify signed Evolve mod bundle",
             "Checking PAK signatures, target build and archive safety…",
-            lambda _report, cancelled: (
-                review_legacy_folder(source, stage, game)
-                if legacy else review_mod_bundle(source, stage))
-            if not cancelled() else (_ for _ in ()).throw(InterruptedError("Cancelled")),
+            review_and_estimate,
             on_success=complete, on_error=failed)
 
     def import_and_stage(self):
@@ -220,6 +247,20 @@ class EasyModInstaller(QDialog):
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Mod Installer", str(exc))
             return
+        # A second check catches low-space and stale-profile state after
+        # users leave the preview open; no files have been copied yet.
+        try:
+            space = estimate_bundle_space(
+                bundle, self.manager.stage_path, self.manager.swap_path,
+                self.profiles_root)
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, "Installation Preflight", str(exc))
+            return
+        if not space.enough:
+            QMessageBox.warning(self, "Not enough disk space",
+                                "\n".join(space.warnings))
+            self.install_button.setEnabled(False)
+            return
         changes = sum(len(x.changed_entries) for x in bundle.entries)
         note = (f"{len(conflicts)} enabled conflicting mod(s) will be disabled "
                 "in this collection, not removed.\n\n" if conflicts else "")
@@ -228,6 +269,8 @@ class EasyModInstaller(QDialog):
                 self, "Review & Stage Mod Bundle",
                 f"{note}Verified PAKs: {len(bundle.entries)}\n"
                 f"Changed entries: {changes}\n{targets}\n\n"
+                f"Additional library storage: {space.library_bytes / 1024**2:.0f} MiB; "
+                f"recovery backups: {space.recovery_bytes / 1024**2:.0f} MiB.\n"
                 "Import verified files to this collection, then stage using "
                 "the existing recoverable PAK backup journal? "
                 "Installed game files are not changed.",
