@@ -98,8 +98,10 @@ def emission_texture_node(material):
             explicit = node
         elif role == 'decal' and decal is None:
             decal = node
-    return explicit or (decal if (material.get('Shader') or '').casefold() == 'illum'
-                        and _legacy_glow(material) else None)
+    if explicit is not None:
+        return explicit
+    return (decal if (material.get('Shader') or '').casefold() == 'illum'
+            and _legacy_glow(material) else None)
 
 
 def _legacy_glow(material):
