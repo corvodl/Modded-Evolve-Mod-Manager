@@ -1836,6 +1836,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_panel.set_static_mesh(
                     mesh, None, prepared_geometry=geometry)
             view.setCurrentWidget(self.model_panel)
+            self.model_panel.set_texture_resolution_pending(True)
             self.status.setText(
                 self.current + ' | Verified geometry ready; '
                 'resolving materials and animations…')
@@ -1855,6 +1856,8 @@ class QtWorkspaceEditor(QMainWindow):
             return
         view = self.views['models']
         if error:
+            if self.model_panel is not None:
+                self.model_panel.set_texture_resolution_pending(False)
             self.model_fallback.setPixmap(QPixmap())
             self.model_fallback.setText(self.current + '\\n\\n3D preview unavailable: ' + error)
             view.setCurrentWidget(self.model_fallback)
@@ -1975,6 +1978,10 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_gpu = self.model_panel.canvas
                 self.model_gpu.setObjectName('defaultGpuModelPreview')
             else:
+                # DDS decode is complete. Switch the bottom progress strip
+                # from indeterminate Asset Library resolution to actual,
+                # per-frame GPU texture upload counts.
+                self.model_panel.set_texture_resolution_pending(False)
                 self.model_panel.set_static_mesh(mesh, materials,
                                                  prepared_geometry=self._prepared_geometry)
             view.setCurrentWidget(self.model_panel)
@@ -2821,7 +2828,16 @@ class QtWorkspaceEditor(QMainWindow):
             converted = len(report['cdf_assemblies'])
             skipped = len(report['cdf_assembly_errors'])
             note += ' • %d additional CDF Blender GLB(s) in models/' % converted
-            if report['full_model'] is not None:
+            monster_stages = report.get('monster_stages', ())
+            if monster_stages:
+                note += ' • 3 root monster stage GLBs with stage-specific rig/animation metadata'
+                for stage_row in monster_stages:
+                    clips = tuple(stage_row.get('embedded_animation_clips', ()))
+                    note += ' • Stage %d: %d verified animation(s)' % (
+                        stage_row['stage'], len(clips))
+                    if not clips:
+                        note += ' (see asset_sources.json for unavailable motion)'
+            elif report['full_model'] is not None:
                 note += ' • ' + Path(report['folder']).name + '.glb included'
             else:
                 note += ' • no verified full CDF assembly'

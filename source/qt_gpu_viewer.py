@@ -139,6 +139,10 @@ class _NativeConversion(QRunnable):
 class QtGLModelCanvas(QOpenGLWidget):
     """OpenGL 2.1 compatibility vertex arrays, depth and approximate materials."""
 
+    # Reports GPU texture submissions, not time spent decoding DDS in a worker.
+    # Signals keep Qt UI updates separate from the GL context's paint pass.
+    textureUploadProgress = Signal(int, int)
+
     def __init__(self, mesh, materials=None, parent=None, prepared_geometry=None):
         super().__init__(parent)
         format = QSurfaceFormat()
@@ -169,12 +173,15 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.emissive_textures = []
         self.emission_enabled = True
         self.glow_strength = 1.
-        self.bloom_enabled = False
+        # Keep glow visible by default. Unsupported FBOs fall back to the
+        # ordinary self-illuminated material shader without breaking preview.
+        self.bloom_enabled = True
         self._glow_buffer = None
         self._bloom_program = None
         self.bloom_error = None
         self.environment_textures = []
         self._pending_texture_uploads = []
+        self._texture_upload_total = 0
         self._gpu_upload_total_ms = 0.0
         self._frame_started_at = time.perf_counter()
         self._geometry_frame_seen = False
@@ -410,13 +417,15 @@ class QtGLModelCanvas(QOpenGLWidget):
         self._frame_drawn_with_full_quality = False
         groups = (
             ('textures', getattr(self.materials, 'textures', ()) if self.materials else ()),
+            # Prioritize glow masks before optional normal/gloss/detail/ao
+            # uploads; huge CDF assemblies otherwise look unlit for seconds.
+            ('emissive_textures', getattr(self.materials, 'emissive_maps', ()) if self.materials else ()),
             ('normal_textures', getattr(self.materials, 'normal_maps', ()) if self.materials else ()),
             ('specular_textures', getattr(self.materials, 'specular_maps', ()) if self.materials else ()),
             ('gloss_textures', getattr(self.materials, 'gloss_maps', ()) if self.materials else ()),
             ('detail_textures', getattr(self.materials, 'detail_maps', ()) if self.materials else ()),
             ('detail_normal_textures', getattr(self.materials, 'detail_normal_maps', ()) if self.materials else ()),
             ('ao_textures', getattr(self.materials, 'ao_maps', ()) if self.materials else ()),
-            ('emissive_textures', getattr(self.materials, 'emissive_maps', ()) if self.materials else ()),
             ('environment_textures', getattr(self.materials, 'environment_maps', ()) if self.materials else ()),
         )
         for target, images in groups:
@@ -424,6 +433,10 @@ class QtGLModelCanvas(QOpenGLWidget):
             for index, image in enumerate(images):
                 if image is not None:
                     self._pending_texture_uploads.append((target, index, image))
+        self._texture_upload_total = len(self._pending_texture_uploads)
+        signal = getattr(self, 'textureUploadProgress', None)
+        if signal is not None:
+            signal.emit(0, self._texture_upload_total)
 
     def _upload_textures(self, *, max_uploads=1):
         """Submit at most one verified full-resolution GL image per frame.
@@ -516,6 +529,10 @@ class QtGLModelCanvas(QOpenGLWidget):
         record('model', 'gl_texture_submitted', submitted=uploaded,
                remaining=len(self._pending_texture_uploads),
                elapsed_ms=elapsed)
+        signal = getattr(self, 'textureUploadProgress', None)
+        if signal is not None:
+            total = getattr(self, '_texture_upload_total', 0)
+            signal.emit(total - len(self._pending_texture_uploads), total)
         # Upload takes place after drawing the current frame; even the final
         # upload needs one *more* paint before the user can see the texture.
         if uploaded:
@@ -1279,7 +1296,7 @@ class QtGPUModelPanel(QWidget):
         glow_row.addWidget(self.glow_slider)
         self._overlay_sections['Materials'][1].addLayout(glow_row)
         self.bloom_checkbox = QCheckBox('Soft bloom halo')
-        self.bloom_checkbox.setChecked(False)
+        self.bloom_checkbox.setChecked(True)
         self.bloom_checkbox.setToolTip('Optional depth-tested soft halo for verified emissive surfaces.')
         self.bloom_checkbox.toggled.connect(lambda checked: (
             setattr(self.canvas, 'bloom_enabled', checked), self.canvas.update()))
@@ -1345,6 +1362,10 @@ class QtGPUModelPanel(QWidget):
                            self.canvas.update()))
         ambient_row.addWidget(self.studio_fill_slider, 1)
         self._material_advanced.addLayout(ambient_row)
+        self.emissive_source_info = QLabel('Emissive DDS diagnostics will appear here.')
+        self.emissive_source_info.setObjectName('modelEmissiveSourceInfo')
+        self.emissive_source_info.setWordWrap(True)
+        self._material_advanced.addWidget(self.emissive_source_info)
         self.diffuse_source_info = QLabel('Diffuse DDS diagnostics will appear here.')
         self.diffuse_source_info.setObjectName('modelDiffuseSourceInfo')
         self.diffuse_source_info.setWordWrap(True)
@@ -1352,7 +1373,8 @@ class QtGPUModelPanel(QWidget):
         self._material_advanced.addWidget(self.diffuse_source_info)
         self.part_select.currentIndexChanged.connect(
             lambda _index: (self._update_source_brightness(),
-                            self._update_normal_source_status()))
+                            self._update_normal_source_status(),
+                            self._update_emissive_source_status()))
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = _CompactDiagnosticText(self)
@@ -1369,8 +1391,71 @@ class QtGPUModelPanel(QWidget):
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
         self._view_advanced.addWidget(foot)
+        # A compact progress strip sits below the 3D canvas, above the
+        # animation timeline; no OpenGL blocking or fake percentage estimates.
+        self.texture_loading_footer = QFrame(self)
+        self.texture_loading_footer.setObjectName('modelTextureLoadingFooter')
+        strip = QHBoxLayout(self.texture_loading_footer)
+        strip.setContentsMargins(8, 2, 8, 2)
+        strip.setSpacing(8)
+        self.texture_loading_label = QLabel('Loading textures', self.texture_loading_footer)
+        self.texture_loading_label.setObjectName('modelTextureLoadingLabel')
+        self.texture_loading_progress = QProgressBar(self.texture_loading_footer)
+        self.texture_loading_progress.setObjectName('modelTextureLoadingProgress')
+        self.texture_loading_progress.setRange(0, 100)
+        self.texture_loading_progress.setValue(0)
+        self.texture_loading_progress.setTextVisible(True)
+        self.texture_loading_progress.setMaximumHeight(16)
+        strip.addWidget(self.texture_loading_label)
+        strip.addWidget(self.texture_loading_progress, 1)
+        self.texture_loading_footer.hide()
+        self._texture_resolution_pending = False
+        layout.addWidget(self.texture_loading_footer)
+        # Queue UI layout changes until after paintGL has released its OpenGL
+        # framebuffer; directly showing/hiding widgets within paintGL can
+        # resize QOpenGLWidget mid-frame on Windows.
+        self.canvas.textureUploadProgress.connect(
+            self._update_texture_load_progress, Qt.QueuedConnection)
+        # In case the context was initialized before the signal was connected.
+        total = getattr(self.canvas, '_texture_upload_total', 0)
+        if total:
+            self._update_texture_load_progress(
+                total - len(self.canvas._pending_texture_uploads), total)
         self._build_compact_timeline(layout)
         QTimer.singleShot(0,self._position_overlay)
+
+    def set_texture_resolution_pending(self, pending):
+        """Show indeterminate DDS resolution before GPU upload totals exist.
+
+        Only model-loading workers call this; it is never a fabricated count
+        of DDS already decoded. Once the material resolver finishes the
+        determinate GPU texture submission counter takes over.
+        """
+        self._texture_resolution_pending = bool(pending)
+        if pending:
+            self.texture_loading_label.setText('Resolving textures from Asset Library…')
+            self.texture_loading_progress.setRange(0, 0)
+            self.texture_loading_footer.show()
+        else:
+            total = getattr(self.canvas, '_texture_upload_total', 0)
+            remaining = len(getattr(self.canvas, '_pending_texture_uploads', ()))
+            self._update_texture_load_progress(total - remaining, total)
+
+    def _update_texture_load_progress(self, completed, total):
+        """Report actual textures submitted to GPU; hide on completion."""
+        total = max(0, int(total))
+        completed = max(0, min(int(completed), total))
+        if self._texture_resolution_pending:
+            return
+        if not total or completed >= total:
+            self.texture_loading_footer.hide()
+            return
+        self.texture_loading_progress.setRange(0, total)
+        self.texture_loading_progress.setValue(completed)
+        self.texture_loading_progress.setFormat('%v / %m')
+        self.texture_loading_label.setText(
+            'Loading textures (%d remaining)' % (total - completed))
+        self.texture_loading_footer.show()
 
     def _create_viewport_navigation(self):
         self._tool_rail = QFrame(self.canvas)
@@ -1594,6 +1679,42 @@ class QtGPUModelPanel(QWidget):
         if hasattr(self, 'normal_diagnostic_info'):
             self.normal_diagnostic_info.setText(message)
 
+    def _update_emissive_source_status(self):
+        """Distinguish missing emission declarations from delayed GPU uploads."""
+        if not hasattr(self, 'emissive_source_info'):
+            return
+        materials = self.canvas.materials
+        if materials is None:
+            message = 'No decoded material; emissive settings not available yet.'
+        else:
+            slots = sorted({part[2] for part in self.canvas.mesh.subsets}) if self.canvas.mesh.subsets else [0]
+            selected = self.part_select.currentData()
+            if selected is not None:
+                slots = [selected]
+            masks = getattr(materials, 'emissive_maps', ())
+            strengths = getattr(materials, 'emissive_strengths', ())
+            resolved = [slot for slot in slots if
+                        slot < len(masks) and masks[slot] is not None and
+                        slot < len(strengths) and strengths[slot] > 0]
+            message = '%d/%d selected material slot(s) contain verified emissive glow.' % (len(resolved),len(slots))
+            if not resolved:
+                message += (' No positive material GlowAmount/Emittance or resolved emission map. '
+                            'Check the original MTL, its shader parameters and the owning PAK; '
+                            'a purple diffuse texture alone does not authorize glow.')
+            elif selected is not None:
+                strength = strengths[selected]
+                origin = (materials.emissive_sources[selected]
+                          if selected < len(getattr(materials, 'emissive_sources', ())) else None)
+                message += ' Strength: %.2fx.' % strength
+                message += (' Source: %s (%s).' % origin) if origin else ' Mask: material-approved diffuse alpha.'
+            pending = sum(1 for target, idx, _ in getattr(self.canvas, '_pending_texture_uploads', ())
+                          if target == 'emissive_textures' and idx in slots)
+            if pending:
+                message += ' %d emission mask(s) still uploading to the GPU.' % pending
+            if getattr(self.canvas, 'bloom_error', None):
+                message += ' Soft halo unavailable: ' + self.canvas.bloom_error
+        self.emissive_source_info.setText(message)
+
     def _populate_material_slots(self,mesh,materials):
         from material_preview import diffuse_source_stats
         slots=sorted({part[2] for part in mesh.subsets}) if mesh.subsets else [0]
@@ -1615,6 +1736,16 @@ class QtGPUModelPanel(QWidget):
                     '%d%% near-black source pixels' % data))
             if source:
                 tip += '\nLoaded: %s\nPAK: %s' % source
+            if materials and slot < len(getattr(materials, 'emissive_strengths', ())):
+                value = materials.emissive_strengths[slot]
+                if value > 0 and slot < len(getattr(materials, 'emissive_maps', ())) and materials.emissive_maps[slot] is not None:
+                    tip += '\nEmissive glow: %.2fx' % value
+                    origin = (materials.emissive_sources[slot]
+                              if slot < len(getattr(materials, 'emissive_sources', ())) else None)
+                    if origin:
+                        tip += '\nEmissive DDS: %s\nPAK: %s' % origin
+                    else:
+                        tip += '\nEmissive mask: material-authorized diffuse alpha'
             elif expected:
                 tip += '\nMTL wants ' + expected
             if (materials and slot < len(materials.uv_available) and
@@ -1626,6 +1757,7 @@ class QtGPUModelPanel(QWidget):
         if hasattr(self,'diffuse_source_info'):
             self._update_source_brightness()
         self._update_normal_source_status()
+        self._update_emissive_source_status()
 
     def show_uv_layout(self):
         from io import BytesIO

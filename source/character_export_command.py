@@ -125,10 +125,11 @@ def _preferred_full_assembly(assemblies, selected_cdf=None):
 def export_character_directory(source_folder, destination, *, projects_root=None,
                                stage_root=None, texture_folder=None, index=None,
                                selected_cdf=None, progress=None, cancelled=None):
-    """Export <Character>/<Character>.glb + animations/, textures/, models/.
+    """Export three root monster Stage GLBs, or one hunter/wildlife root GLB.
 
-    The top-level GLB is the best VERIFIED assembly. The exporter does not
-    invent a rig or retarget incompatible animations; failures are reported.
+    Monsters require three distinct verified CDFs; each root GLB retains only
+    animations validated against that exact stage rig. Other classes retain
+    the original single-primary model layout.
     """
     workspace, virtual = character_export_source(source_folder)
     display_name = validate_character_export_destination(source_folder, destination)
@@ -142,6 +143,20 @@ def export_character_directory(source_folder, destination, *, projects_root=None
         texture_folder=texture_folder, projects_root=projects_root,
         stage_root=stage_root, selected_cdf=selected_cdf,
         progress=progress, cancelled=cancelled)
+    from monster_stage_export import is_monster_character, select_monster_stage_models
+    if is_monster_character(virtual):
+        # Unlike hunters and wildlife, monsters have three independent
+        # evolution rigs. Each assembly has already had its exact CDF's
+        # playable CAF/DBA clips embedded by build_cdf_folder_glbs.
+        stages, selected_paths = select_monster_stage_models(assemblies, virtual)
+        other_assemblies = {
+            name: pair for name, pair in assemblies.items()
+            if name not in selected_paths}
+        return export_character_asset_folder(
+            workspace, virtual, destination, index=index,
+            stage_models=stages, full_model=None, assemblies=other_assemblies,
+            assembly_errors=errors, output_name=display_name,
+            progress=progress, cancelled=cancelled)
     chosen = _preferred_full_assembly(assemblies, selected_cdf)
     if chosen is None:
         summary = '; '.join(str(reason) for _, reason in errors[:3])

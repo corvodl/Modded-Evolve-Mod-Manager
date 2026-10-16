@@ -8,6 +8,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Stable — v1.2.6
 
+- Patch 1: Export monsters as three separate Stage 1, 2 and 3 root GLBs, each carrying only animations verified against its own CDF/skeleton; keep hunters and wildlife unchanged.
 - Restore verified CryEngine emissive materials and glow masks in model previews and Blender GLB exports.
 - Add GPU emissive intensity and optional soft bloom while preserving distinct transparency and glow mask handling.
 - Validate exported geometry, remove degenerate faces, and repair only small verified holes without disturbing skin vertex IDs.
