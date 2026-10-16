@@ -5,6 +5,9 @@ never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
     ('1.2.6', (
+        "Patch 4: Preserve each source MTL submaterial identity, original slot, and resolved emissive reference when combining hunter, monster and wildlife character parts.",
+        "Patch 4: Allow verified Decal/Emittance glow to load even when a submaterial has no diffuse DDS; retain safe missing-material diagnostics.",
+        "Patch 4: Refresh scoped character, shared and global Asset Library textures before final assembly, and show precise glow decode status in the GPU viewer.",
         "Patch 3: Correct CryEngine ALPHAGLOW mask selection across all characters and models: independent Decal glow no longer inherits unrelated diffuse alpha.",
         "Patch 3: Preserve each emissive texture's own UV tiling and offsets in the GPU viewer, bloom pass, assembled character parts and Blender GLB export.",
         "Patch 3: Diagnose actual mesh-subset emission UV coverage, distinguish black sampled regions from nonblack atlases, and flag unsupported animated UV oscillators.",
