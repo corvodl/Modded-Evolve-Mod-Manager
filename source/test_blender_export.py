@@ -73,7 +73,7 @@ class BlenderExportTests(unittest.TestCase):
 
     def test_gpu_first_ui_and_native_actions_preserved(self):
         code = Path(__file__).with_name('qt_workspace_editor.py').read_text(encoding='utf-8')
-        for required in ('defaultGpuModelPreview', 'Export for Blender (.glb)',
+        for required in ('defaultGpuModelPreview', 'Export Current Model Only (.glb)…',
                          'Export Model Folder', 'Export Native Model',
                          'Import Same-Layout Model', '_software_model_preview',
                          'QtGPUModelPanel'):
