@@ -11,6 +11,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, replace, is_dataclass
 from copy import copy
 import math
+from numbers import Integral
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ def prepare_export_mesh(mesh, *, close_tiny_holes=True):
             raise ValueError('Invalid subset alignment.')
         begin = len(cleaned) * 3
         for tri in tris[first // 3:(first + count) // 3]:
-            if len(tri) != 3 or any(not isinstance(k, int) or k < 0 or k >= len(verts) for k in tri):
+            if len(tri) != 3 or any(not isinstance(k, Integral) or k < 0 or k >= len(verts) for k in tri):
                 raise ValueError('Out-of-bounds triangle index.')
             a, b, c = tri
             if len({a,b,c}) != 3:
