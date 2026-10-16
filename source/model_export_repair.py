@@ -133,13 +133,12 @@ def prepare_export_mesh(mesh, *, close_tiny_holes=True):
             if candidate_faces:
                 updated = []
                 updated_slots = []
-                for first, count, slot in cleaned_slots:
+                final_slot_indices = {entry[2]: i for i, entry in enumerate(cleaned_slots)}
+                for group_index, (first, count, slot) in enumerate(cleaned_slots):
                     begin = len(updated)*3
                     updated.extend(cleaned[first//3:(first+count)//3])
-                    # Attach to last primitive of this slot to avoid duplicate faces.
-                    last = next((j for j, entry in enumerate(cleaned_slots)
-                                 if entry[2] == slot and j > cleaned_slots.index((first,count,slot))), None)
-                    if last is None:
+                    # Fill only in the last existing batch for this material.
+                    if group_index == final_slot_indices[slot]:
                         added = candidate_faces.pop(slot, [])
                         updated.extend(added)
                         holes += len(added)
