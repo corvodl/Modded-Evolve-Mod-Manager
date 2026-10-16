@@ -51,9 +51,22 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
         assembly_error = str(exc)
     checkpoint()
     if require_assembly and character is None:
-        raise ValueError(
-            'Full Character needs a valid CDF with compatible body and '
-            'equipment meshes. ' + (assembly_error or 'No CDF assembly found.'))
+        # Emet's original remote-cannon 3P mesh already includes his arm;
+        # the healing-totem and dropship CDFs are separate equipment models.
+        # Use the exact .skinm/.skin pair, never invent a replacement CDF.
+        from character_full_models import is_emet_primary_model
+        from multi_pak_assets import _resolve
+        native_skin_verified = False
+        if is_emet_primary_model(relative):
+            hits, state = _resolve(
+                index, relative[:-1], preferred_workspace=workspace)
+            native_skin_verified = state == 'found'
+        if not native_skin_verified:
+            raise ValueError(
+                'Full Character needs a valid CDF with compatible body and '
+                'equipment meshes. ' + (assembly_error or 'No CDF assembly found.'))
+        report = 'Emet • Original remote-cannon 3P complete mesh (with arm)'
+
     with span('model', 'mesh_decode'):
         mesh = (character.mesh if character else
                 find_preview_mesh(workspace, relative, raw,
