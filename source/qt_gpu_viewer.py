@@ -139,6 +139,10 @@ class _NativeConversion(QRunnable):
 class QtGLModelCanvas(QOpenGLWidget):
     """OpenGL 2.1 compatibility vertex arrays, depth and approximate materials."""
 
+    # Reports GPU texture submissions, not time spent decoding DDS in a worker.
+    # Signals keep Qt UI updates separate from the GL context's paint pass.
+    textureUploadProgress = Signal(int, int)
+
     def __init__(self, mesh, materials=None, parent=None, prepared_geometry=None):
         super().__init__(parent)
         format = QSurfaceFormat()
@@ -177,6 +181,7 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.bloom_error = None
         self.environment_textures = []
         self._pending_texture_uploads = []
+        self._texture_upload_total = 0
         self._gpu_upload_total_ms = 0.0
         self._frame_started_at = time.perf_counter()
         self._geometry_frame_seen = False
@@ -428,6 +433,10 @@ class QtGLModelCanvas(QOpenGLWidget):
             for index, image in enumerate(images):
                 if image is not None:
                     self._pending_texture_uploads.append((target, index, image))
+        self._texture_upload_total = len(self._pending_texture_uploads)
+        signal = getattr(self, 'textureUploadProgress', None)
+        if signal is not None:
+            signal.emit(0, self._texture_upload_total)
 
     def _upload_textures(self, *, max_uploads=1):
         """Submit at most one verified full-resolution GL image per frame.
@@ -520,6 +529,10 @@ class QtGLModelCanvas(QOpenGLWidget):
         record('model', 'gl_texture_submitted', submitted=uploaded,
                remaining=len(self._pending_texture_uploads),
                elapsed_ms=elapsed)
+        signal = getattr(self, 'textureUploadProgress', None)
+        if signal is not None:
+            total = getattr(self, '_texture_upload_total', 0)
+            signal.emit(total - len(self._pending_texture_uploads), total)
         # Upload takes place after drawing the current frame; even the final
         # upload needs one *more* paint before the user can see the texture.
         if uploaded:
@@ -1378,8 +1391,47 @@ class QtGPUModelPanel(QWidget):
                     'Faceted shading keeps hard edges; smooth shading is optional.')
         foot.setWordWrap(True)
         self._view_advanced.addWidget(foot)
+        # A compact progress strip sits below the 3D canvas, above the
+        # animation timeline; no OpenGL blocking or fake percentage estimates.
+        self.texture_loading_footer = QFrame(self)
+        self.texture_loading_footer.setObjectName('modelTextureLoadingFooter')
+        strip = QHBoxLayout(self.texture_loading_footer)
+        strip.setContentsMargins(8, 2, 8, 2)
+        strip.setSpacing(8)
+        self.texture_loading_label = QLabel('Loading textures', self.texture_loading_footer)
+        self.texture_loading_label.setObjectName('modelTextureLoadingLabel')
+        self.texture_loading_progress = QProgressBar(self.texture_loading_footer)
+        self.texture_loading_progress.setObjectName('modelTextureLoadingProgress')
+        self.texture_loading_progress.setRange(0, 100)
+        self.texture_loading_progress.setValue(0)
+        self.texture_loading_progress.setTextVisible(True)
+        self.texture_loading_progress.setMaximumHeight(16)
+        strip.addWidget(self.texture_loading_label)
+        strip.addWidget(self.texture_loading_progress, 1)
+        self.texture_loading_footer.hide()
+        layout.addWidget(self.texture_loading_footer)
+        self.canvas.textureUploadProgress.connect(self._update_texture_load_progress)
+        # In case the context was initialized before the signal was connected.
+        total = getattr(self.canvas, '_texture_upload_total', 0)
+        if total:
+            self._update_texture_load_progress(
+                total - len(self.canvas._pending_texture_uploads), total)
         self._build_compact_timeline(layout)
         QTimer.singleShot(0,self._position_overlay)
+
+    def _update_texture_load_progress(self, completed, total):
+        """Report actual textures submitted to GPU; hide on completion."""
+        total = max(0, int(total))
+        completed = max(0, min(int(completed), total))
+        if not total or completed >= total:
+            self.texture_loading_footer.hide()
+            return
+        self.texture_loading_progress.setRange(0, total)
+        self.texture_loading_progress.setValue(completed)
+        self.texture_loading_progress.setFormat('%v / %m')
+        self.texture_loading_label.setText(
+            'Loading textures (%d remaining)' % (total - completed))
+        self.texture_loading_footer.show()
 
     def _create_viewport_navigation(self):
         self._tool_rail = QFrame(self.canvas)
