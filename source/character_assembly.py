@@ -108,6 +108,7 @@ def combine_meshes(items):
     # remapping; otherwise Stage GLBs silently lose the glowing Kala/Goliath
     # material slots even though the standalone texture loader decoded them.
     emissive_maps, emissive_strengths, emissive_sources, emissive_black, emissive_masks = [], [], [], [], []
+    source_slot_ids, source_mtls, emission_refs, emission_statuses = [], [], [], []
     uv_roles = ('normal','specular','gloss','detail','detail_normal','ao','emissive')
     role_transforms = {role: [] for role in uv_roles}
     role_motions = {role: [] for role in uv_roles}
@@ -131,6 +132,19 @@ def combine_meshes(items):
         remap = {}
         for slot in slots:
             remap[slot] = len(textures)
+            # Source subset IDs are the authority. Never use the composite
+            # position to index the original MTL table (e.g. 11 -> 7 for Kala).
+            source_slot_ids.append(
+                materials.original_slot_ids[slot]
+                if materials and slot < len(materials.original_slot_ids)
+                else slot)
+            source_mtls.append(
+                materials.original_materials[slot]
+                if materials and slot < len(materials.original_materials)
+                else materials.source if materials else '')
+            emission_refs.append(
+                materials.emissive_references[slot]
+                if materials and slot < len(materials.emissive_references) else '')
             hidden.append(bool(materials and slot < len(materials.hidden) and materials.hidden[slot]))
             tex = (materials.textures[slot] if has_uv and materials and
                    slot < len(materials.textures) else None)
@@ -176,6 +190,11 @@ def combine_meshes(items):
             emissive_masks.append(materials.emissive_masks[slot] if materials
                                   and slot<len(getattr(materials,'emissive_masks',()))
                                   else 'none')
+            emission_statuses.append(
+                ('source mesh lacks UV coordinates; emission cannot be sampled'
+                 if not has_uv else materials.emissive_status[slot])
+                if materials and slot < len(materials.emissive_status)
+                else 'no resolved source MTL material at slot %d' % slot)
             names.append(name + ': ' + label)
         vertices.extend(mesh.vertices)
         triangles.extend(tuple(v + base_vertex for v in tri) for tri in mesh.triangles)
@@ -203,6 +222,10 @@ def combine_meshes(items):
                                 emissive_sources=tuple(emissive_sources),
                                 emissive_black=tuple(emissive_black),
                                 emissive_masks=tuple(emissive_masks),
+                                original_slot_ids=tuple(source_slot_ids),
+                                original_materials=tuple(source_mtls),
+                                emissive_references=tuple(emission_refs),
+                                emissive_status=tuple(emission_statuses),
                                 map_uv_transforms=tuple((role,tuple(values))
                                     for role,values in role_transforms.items()),
                                 map_uv_motions=tuple((role,tuple(values))
