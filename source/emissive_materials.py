@@ -16,12 +16,14 @@ from PIL import Image, ImageChops
 def _parameter(material, *names):
     wanted = {name.casefold() for name in names}
     nodes = [material]
-    nodes.extend(node for node in material.iter()
-                 if node is not material and node.tag.casefold() in
-                 ('publicparams', 'shaderparams', 'materialparams'))
+    nodes.extend(node for node in material.iter() if node is not material)
     for node in nodes:
         for key, value in node.attrib.items():
             if key.casefold() in wanted:
+                return value
+        if (node.get('Name') or node.get('name') or '').casefold() in wanted:
+            value = node.get('Value') or node.get('value')
+            if value is not None:
                 return value
     return None
 
