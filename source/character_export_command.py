@@ -62,7 +62,7 @@ def _character_name(virtual):
 
 
 def _preferred_full_assembly(assemblies, selected_cdf=None):
-    """Never sacrifice verified skinning to choose an unrigged equipment mesh."""
+    """Prefer a complete verified body; never promote a rigged accessory as main."""
     entries = list(assemblies.values())
     if not entries:
         return None
@@ -71,12 +71,18 @@ def _preferred_full_assembly(assemblies, selected_cdf=None):
     def score(pair):
         _, info = pair
         bones = int(info.get('bone_count') or 0)
+        # A designated canonical complete body (Emet's original 3P arm)
+        # must not be replaced with a rigged but incomplete equipment CDF.
+        # When no canonical source exists, favor verified multi-part bodies
+        # and rigging over stand-alone accessory meshes.
+        parts = int(info.get('part_count') or 0)
         return (
-            bones > 0,
             bool(info.get('preferred_full_character')),
+            parts > 1,
+            bones > 0,
+            parts,
             bool(selected and str(info.get('cdf', '')).casefold() == selected),
             int(info.get('embedded_animations') or 0),
-            int(info.get('part_count') or 0),
         )
 
     return max(entries, key=score)
