@@ -21,6 +21,65 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Recover an already-published rolling patch (notably v1.2.5-p1) as an
+  # immutable versioned release, without rebuilding or changing its artifacts.
+  # This runs independently of the slower Windows build for the next patch.
+  promote-existing-patch:
+    name: Promote existing stable patch to latest release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify and publish existing Main patch under a versioned tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view Main >/dev/null 2>&1; then
+            echo 'No rolling Main release exists yet.'
+            exit 0
+          fi
+          mkdir -p promotion
+          gh release download Main --pattern update-manifest.json --dir promotion
+          manifest=promotion/update-manifest.json
+          version=$(jq -er '.version' "$manifest")
+          revision=$(jq -er '.revision' "$manifest")
+          if [[ "$revision" == "0" ]]; then
+            echo 'Milestone has no patch to promote.'
+            exit 0
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || { echo 'Invalid stable version'; exit 1; }
+          [[ "$revision" =~ ^[1-9][0-9]{0,4}$ ]] || { echo 'Invalid patch revision'; exit 1; }
+          patchTag="v${version}-p${revision}"
+          if gh release view "$patchTag" >/dev/null 2>&1; then
+            echo "$patchTag already exists; retaining its original assets."
+            exit 0
+          fi
+          setupName=$(jq -er '.installer' "$manifest")
+          zipName=$(jq -er '.asset' "$manifest")
+          commit=$(jq -er '.commit' "$manifest")
+          [[ "$setupName" == "EvolveModManager-Setup-${version}-p${revision}.exe" ]] || exit 1
+          [[ "$zipName" == "EvolveModManager-Windows-${version}-p${revision}.zip" ]] || exit 1
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          gh release download Main --pattern "$setupName" --pattern "$zipName" --dir promotion
+          for pair in "setup:$setupName:installer_sha256:installer_bytes" "zip:$zipName:sha256:bytes"; do
+            IFS=: read -r kind filename shaField bytesField <<< "$pair"
+            wantedSha=$(jq -er --arg name "$shaField" '.[$name]' "$manifest")
+            wantedBytes=$(jq -er --arg name "$bytesField" '.[$name]' "$manifest")
+            actualSha=$(sha256sum "promotion/$filename" | cut -d' ' -f1)
+            actualBytes=$(stat -c%s "promotion/$filename")
+            [[ "$actualSha" == "$wantedSha" && "$actualBytes" == "$wantedBytes" ]] || {
+              echo "Rolling Main $kind checksum/size mismatch; refusing promotion."
+              exit 1
+            }
+          done
+          gh api "repos/${{ github.repository }}/commits/$commit" --silent
+          gh release view Main --json body --jq '.body' > promotion/release-notes.md
+          gh release create "$patchTag" "promotion/$setupName" "promotion/$zipName" "$manifest" \
+            --target "$commit" --title "Evolve Mod Manager $version · Patch $revision" \
+            --notes-file promotion/release-notes.md --latest
+          gh release view "$patchTag" --json tagName,assets,isLatest --jq '{tag: .tagName, latest: .isLatest, assets: [.assets[].name]}'
+
   build-windows:
     name: Build portable Windows app
     runs-on: windows-2022
@@ -249,6 +308,21 @@ jobs:
               gh release delete-asset Main $name --yes
               if ($LASTEXITCODE -ne 0) { throw "Failed to remove outdated Main asset $name." }
             }
+          }
+          # Keep Main as the rolling update feed, but publish every verified
+          # stable patch as its own immutable release. GitHub's Latest badge
+          # must point to the newest version/revision, not the old Main tag.
+          if ($revision -gt 0) {
+            $patchTag="v$version-p$revision"
+            gh release view $patchTag *> $null
+            if ($LASTEXITCODE -eq 0) {
+              throw "Patch $patchTag already exists; refusing to replace immutable release."
+            }
+            gh release create $patchTag "dist/$setupName" "dist/$zipName" 'dist/update-manifest.json' --target '${{ github.sha }}' --title "Evolve Mod Manager $version · Patch $revision" --notes-file 'dist/release-notes.md' --latest
+            if ($LASTEXITCODE -ne 0) { throw "Could not publish latest patch release $patchTag." }
+          } else {
+            gh release edit $versionTag --latest
+            if ($LASTEXITCODE -ne 0) { throw "Could not mark milestone $versionTag as latest." }
           }
       - name: Remove obsolete source-only release ZIP
         shell: pwsh

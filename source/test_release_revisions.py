@@ -145,6 +145,13 @@ class PatchRevisionTests(unittest.TestCase):
             self.assertLess(text.index('gh release upload ' + channel + ' "dist/$file"'),
                             text.index('gh release upload ' + channel + " 'dist/update-manifest.json'"))
             self.assertIn('schema=2', text)
+        stable = (root / '.github/workflows/windows-release.yml').read_text('utf-8')
+        self.assertIn('promote-existing-patch:', stable)
+        self.assertIn('gh release download Main --pattern "$setupName" --pattern "$zipName"', stable)
+        self.assertIn('gh release create "$patchTag"', stable)
+        self.assertIn('gh release create $patchTag', stable)
+        self.assertIn('--latest', stable)
+        self.assertIn('gh release edit $versionTag --latest', stable)
         build = (root / 'Build-Windows-EXE.cmd').read_text('utf-8')
         self.assertIn('BUILD_REVISION.txt', build)
         installer = (root / 'installer/EvolveModManager.iss').read_text('utf-8')
