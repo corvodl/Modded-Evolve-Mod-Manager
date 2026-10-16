@@ -4,6 +4,20 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.3.0', (
+        "Review and import signed PAKs or multi-PAK ZIP bundles with bounded extraction, target matching and conflict confirmation.",
+        "Reuse verified mod sources, manage Installed Mods and inspect installation history.",
+        "Preview disk requirements and use Verify & Repair for missing or changed sources with explicit approval.",
+        "Verify staged mod integrity and preserve journal-backed recovery when checks fail.",
+        "Manage Game Storage with measured breakdowns, setup reuse and guarded cleanup of unused setups.",
+        "Open Quick Commands with Ctrl+K and use streamlined Modding and Settings workflows.",
+        "Check System Health on demand, review redacted support reports and verify launch and restore safety.",
+        "Keep promotional Hide/Remove edits persistent across menu video rotations and improve workspace lifecycle.",
+        "Export verified CDF character assemblies with compatible CAF/DBA animations for Blender.",
+        "Install the optional Blender Animation Browser through Settings with package and version validation.",
+        "Preserve Emet's complete 3P body and organize exported models, textures and animations.",
+        "Improve CryPAK placeholder handling, GFX editing and GPU normal-map diagnostics.",
+    )),
     ('1.2.5', (
         "Use the same complete character-folder exporter from File Editor and Modding Tools, instead of scattering standalone model GLBs across the export root.",
         "Create a character-named main GLB and categorized animations, textures, and models directories containing additional verified assemblies and equipment.",
