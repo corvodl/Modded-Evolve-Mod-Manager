@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
     QFrame, QMessageBox, QFileDialog, QDialog, QPlainTextEdit, QToolButton,
-    QMenu, QApplication
+    QMenu, QApplication, QScrollArea, QGridLayout, QSizePolicy
 )
 
 from qt_ui_components import DisclosurePanel
@@ -99,13 +99,33 @@ class SystemHealthPanel(QWidget):
         refresh_row.addStretch(1)
         self.disclosure.addLayout(refresh_row)
 
+        # Five *bounded* widgets, not five full-width expandable panels.
+        # Keep Home navigation visible even when the health section is open.
+        self.cards_scroll = QScrollArea(self)
+        self.cards_scroll.setObjectName("systemHealthCardsScroll")
+        self.cards_scroll.setFrameShape(QFrame.NoFrame)
+        self.cards_scroll.setWidgetResizable(True)
+        self.cards_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.cards_scroll.setMaximumHeight(370)
+        self.cards_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        cards = QWidget(self.cards_scroll)
+        cards.setObjectName("systemHealthCards")
+        grid = QGridLayout(cards)
+        grid.setContentsMargins(0, 0, 5, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+
         self.labels = {}
-        for key, name, subtitle in self.LABELS:
-            card = QFrame()
+        for position, (key, name, subtitle) in enumerate(self.LABELS):
+            card = QFrame(cards)
+            card.setMinimumHeight(146)
+            card.setMaximumHeight(165)
             card.setObjectName("systemHealthCheck")
             layout = QVBoxLayout(card)
-            layout.setContentsMargins(9, 7, 9, 7)
-            layout.setSpacing(4)
+            layout.setContentsMargins(9, 6, 9, 6)
+            layout.setSpacing(3)
             title = QLabel(name)
             title.setObjectName("panelTitle")
             layout.addWidget(title)
@@ -117,6 +137,8 @@ class SystemHealthPanel(QWidget):
             output.setObjectName("systemHealthResult_" + key)
             output.setTextInteractionFlags(Qt.TextSelectableByMouse)
             output.setWordWrap(True)
+            output.setMaximumHeight(43)
+            output.setToolTip("Select Details to view the full check output.")
             layout.addWidget(output)
             self.labels[key] = output
 
@@ -146,12 +168,17 @@ class SystemHealthPanel(QWidget):
                         action.setEnabled(False)
                 actions.addWidget(menu_button)
             if key == "crash":
-                actions.addWidget(self._button(
-                    "Crash History…", self._crash_history, "systemHealthCrashHistory"))
-                actions.addWidget(self._button(
-                    "Support Report…", self._report, "systemHealthSupportReport"))
-                actions.addWidget(self._button(
-                    "Support ZIP…", self._support_zip, "systemHealthSupportZip"))
+                # Long rows of action buttons forced this card to take an
+                # entire screen width. Keep all actions in one compact menu.
+                crash_menu = menu_button.menu()
+                crash_menu.addSeparator()
+                crash_menu.addAction("Crash History…").triggered.connect(
+                    lambda _checked=False: self._crash_history())
+                crash_menu.addAction("Support Report…").triggered.connect(
+                    lambda _checked=False: self._report())
+                crash_menu.addAction("Support ZIP…").triggered.connect(
+                    lambda _checked=False: self._support_zip())
+                self.crash_history_action = crash_menu.actions()[-3]
             if key == "storage":
                 self.recovery_button = self._button(
                     "Open Recovery", self._open_recovery, "systemHealthRecovery")
@@ -159,9 +186,15 @@ class SystemHealthPanel(QWidget):
                 actions.addWidget(self.recovery_button)
                 actions.addWidget(self._button(
                     "Clean Stale Temp Files", self._cleanup, "systemHealthCleanTemp"))
+            details = self._button(
+                "Details…", lambda k=key: self._show_check_details(k),
+                "systemHealthDetails_" + key)
+            actions.addWidget(details)
             actions.addStretch(1)
             layout.addLayout(actions)
-            self.disclosure.addWidget(card)
+            grid.addWidget(card, position // 2, position % 2)
+        self.cards_scroll.setWidget(cards)
+        self.disclosure.addWidget(self.cards_scroll)
         foot = QLabel("Offline play protection remains fail-closed. Dumps and support logs "
                       "may contain private information; review them before sharing.")
         foot.setObjectName("muted")
@@ -169,7 +202,7 @@ class SystemHealthPanel(QWidget):
         self.disclosure.addWidget(foot)
 
         if os.name != "nt":
-            self.findChild(QPushButton, "systemHealthCrashHistory").setEnabled(False)
+            self.crash_history_action.setEnabled(False)
 
     @staticmethod
     def _button(title, callback, object_name):
@@ -184,6 +217,13 @@ class SystemHealthPanel(QWidget):
         from app_runtime import DATA_HOME
         return (str(game or ""), str(DATA_HOME), str(manager.projects_path),
                 str(manager.stage_path), str(manager.swap_path))
+
+    def _show_check_details(self, key):
+        entry = self._last.get(key, ("Not checked", "Run Check System Health first."))
+        label = next((title for code, title, _ in self.LABELS if code == key), key)
+        state, details = entry
+        self._open_preview(label + " details",
+                           str(state) + "\n" + str(details))
 
     def _expanded(self, expanded):
         if expanded and not self._scanned:
@@ -217,8 +257,11 @@ class SystemHealthPanel(QWidget):
             states = []
             for key, _name, _subtitle in self.LABELS:
                 state, detail = result.get(key, ("Unavailable", "No result returned"))
-                self.labels[key].setText(state + "\n" + detail)
-                states.append(state.casefold())
+                summary = next((line.strip() for line in str(detail).splitlines()
+                                if line.strip()), "No details")
+                self.labels[key].setText(str(state) + "\n" + summary[:115])
+                self.labels[key].setToolTip(str(state) + "\n" + str(detail)[:2000])
+                states.append(str(state).casefold())
             issues = sum(state in ("attention needed", "unavailable", "unknown")
                          for state in states)
             self.toggle.setText(
