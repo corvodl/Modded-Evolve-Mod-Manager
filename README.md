@@ -8,6 +8,9 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Stable — v1.2.6
 
+- Patch 4: Preserve original CryEngine material-to-mesh mapping and emissive metadata across all character assemblies.
+- Patch 4: Decode emissive-only materials without requiring diffuse DDS, and refresh verified character/shared/global Asset Library references.
+- Patch 4: Show original MTL slot, emission source and decode status in the model viewer to diagnose missing glow.
 - Patch 3: Correct CryEngine ALPHAGLOW mask selection across all characters and models: independent Decal glow no longer inherits unrelated diffuse alpha.
 - Patch 3: Preserve each emissive texture's own UV tiling and offsets in the GPU viewer, bloom pass, assembled character parts and Blender GLB export.
 - Patch 3: Diagnose actual mesh-subset emission UV coverage, distinguish black sampled regions from nonblack atlases, and flag unsupported animated UV oscillators.
