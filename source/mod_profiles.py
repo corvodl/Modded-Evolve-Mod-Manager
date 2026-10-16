@@ -182,7 +182,8 @@ class ModProfiles:
         for path, target, sha in incoming:
             for mod in profile['mods']:
                 if (mod['relative'].casefold() == target.casefold()
-                        and mod['sha256'] == sha):
+                        and mod['sha256'] == sha
+                        and Path(mod['source']).resolve() == path):
                     from_existing.append((mod, path, target, sha))
                     break
         collisions = [m for m in profile['mods']
