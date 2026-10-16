@@ -104,6 +104,10 @@ def combine_meshes(items):
     normals, speculars, opacities, alpha_modes = [], [], [], []
     transforms, sources, references, uv_available = [], [], [], []
     cutoffs = []; hidden = []
+    # All verified emissive per-submaterial settings must survive assembly
+    # remapping; otherwise Stage GLBs silently lose the glowing Kala/Goliath
+    # material slots even though the standalone texture loader decoded them.
+    emissive_maps, emissive_strengths, emissive_sources = [], [], []
     included = []
     for name, mesh, materials in items:
         if len(vertices) + len(mesh.vertices) > MAX_VERTICES or len(triangles) + len(mesh.triangles) > MAX_TRIANGLES:
@@ -152,6 +156,12 @@ def combine_meshes(items):
                                slot < len(materials.alpha_modes) else False)
             cutoffs.append(materials.alpha_cutoffs[slot] if materials and
                            slot < len(materials.alpha_cutoffs) else 0.)
+            emissive_maps.append(materials.emissive_maps[slot] if has_uv and materials
+                                 and slot < len(materials.emissive_maps) else None)
+            emissive_strengths.append(materials.emissive_strengths[slot] if materials
+                                      and slot < len(materials.emissive_strengths) else 0.)
+            emissive_sources.append(materials.emissive_sources[slot] if materials
+                                    and slot < len(materials.emissive_sources) else None)
             names.append(name + ': ' + label)
         vertices.extend(mesh.vertices)
         triangles.extend(tuple(v + base_vertex for v in tri) for tri in mesh.triangles)
@@ -173,7 +183,10 @@ def combine_meshes(items):
                                 'CDF character assembly', tuple(issues),
                                 tuple(normals), tuple(speculars),
                                 tuple(opacities), tuple(alpha_modes), tuple(transforms),
-                                tuple(sources), tuple(references), tuple(uv_available), tuple(cutoffs), hidden=tuple(hidden))
+                                tuple(sources), tuple(references), tuple(uv_available), tuple(cutoffs),
+                                hidden=tuple(hidden), emissive_maps=tuple(emissive_maps),
+                                emissive_strengths=tuple(emissive_strengths),
+                                emissive_sources=tuple(emissive_sources))
     return mesh, material
 
 
