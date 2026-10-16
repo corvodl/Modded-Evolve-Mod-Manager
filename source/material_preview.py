@@ -53,6 +53,9 @@ class PreviewMaterials:
     alpha_cutoffs: tuple = ()  # Explicit CryEngine AlphaTest thresholds
 
     hidden: tuple = ()  # Explicit NoDraw slots; never inferred from missing DDS.
+    emissive_maps: tuple = ()  # Baked RGB glow mask per CryEngine material slot.
+    emissive_strengths: tuple = ()  # Non-negative light-independent intensity.
+    emissive_sources: tuple = ()  # Explicit material references for diagnostics.
 
     @property
     def count(self):
@@ -574,9 +577,43 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         detail = issues[0] if issues else 'Material defines no supported diffuse textures.'
         raise ValueError('No diffuse DDS textures found or decoded: ' + detail +
                          ' (see Textures > Diagnose Texture Links).')
+    # Glow must come from a verified MTL setting or emission map. An ordinary
+    # DDS alpha channel is frequently specular or auxiliary data, NOT glow.
+    from emissive_materials import emission_settings, bake_emission_map
+    emission_maps, emission_strengths, emission_sources = [], [], []
+    for slot, (item, diffuse_img, name) in enumerate(zip(subs, result, names)):
+        amount, color, explicit_ref = emission_settings(item)
+        glow, actual_source = None, None
+        if amount > 0 and not hidden[slot]:
+            emission_img = None
+            if explicit_ref:
+                try:
+                    hit = find_texture(explicit_ref)
+                    if hit is None:
+                        raise ValueError('emissive DDS not found: ' + explicit_ref)
+                    emission_img = _decode_texture(
+                        hit, index=index, max_dimension=decode_max,
+                        historical_2012=historical_2012)
+                    actual_source = (str(hit.get('relative') or explicit_ref),
+                                     str(hit.get('archive') or 'extracted workspace'))
+                except (OSError, ValueError) as error:
+                    issues.append(name + ': ' + str(error))
+                    amount = 0.
+            if amount > 0:
+                glow = bake_emission_map(
+                    diffuse_img, color=color, emission=emission_img,
+                    diffuse_alpha_mask=(emission_img is None and not alpha_modes[slot]))
+                if glow is None:
+                    issues.append(name + ': glow declared but no verified glow/diffuse DDS available')
+                    amount = 0.
+        emission_maps.append(glow)
+        emission_strengths.append(amount)
+        emission_sources.append(actual_source)
     return PreviewMaterials(tuple(result),tuple(names),material['relative'],
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
-                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden))
+                            tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden),
+                            emissive_maps=tuple(emission_maps), emissive_strengths=tuple(emission_strengths),
+                            emissive_sources=tuple(emission_sources))
 
 
 
