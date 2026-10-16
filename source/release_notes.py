@@ -4,6 +4,13 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.2.6', (
+        "Restore verified CryEngine emissive materials and glow masks in model previews and Blender GLB exports.",
+        "Add a GPU emissive intensity control while preserving distinct transparency and glow mask handling.",
+        "Validate exported geometry, remove degenerate faces, and repair only small verified holes without disturbing skin vertex IDs.",
+        "Clean up nearly identical UV coordinates without joining intentional UV seams or hard edges.",
+        "Record geometry repair diagnostics in exported GLBs and preserve stable diffuse, normal, gloss, AO, detail and reflection support.",
+    )),
     ('1.2.5', (
         "Fix Asset Library's separate character export path so Emet and other characters use the single-GLB layout instead of loose meshes, Assemblies, and old CDF assembly reports.",
         "Use the same complete character-folder exporter from File Editor and Modding Tools, instead of scattering standalone model GLBs across the export root.",
