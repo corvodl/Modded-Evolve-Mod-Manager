@@ -31,7 +31,7 @@ def is_emet_primary_model(virtual):
     parts = tuple(part.casefold() for part in path.parts)
     return (len(parts) >= 4 and parts[0] == 'characters'
             and parts[1] == 'hunters'
-            and parts[2] in ('emet', 'merc_emet')
+            and (parts[2] == 'emet' or parts[2].endswith('_emet'))
             and parts[-1] == EMET_MAIN_SKIN)
 
 
