@@ -143,9 +143,12 @@ class ModProfilesDialog(QDialog):
                 self.table.setRowCount(len(mods))
                 try:
                     verified_targets = set(allowed_paks(self.stage_path))
+                    from universal_stage import digest
+                    plan_path = self.stage_path / 'rekey_plan.json'
+                    current_fingerprint = digest(plan_path) if plan_path.is_file() else None
                     signing_ready = True
                 except (OSError, ValueError, RuntimeError):
-                    verified_targets, signing_ready = set(), False
+                    verified_targets, current_fingerprint, signing_ready = set(), None, False
                 state = self.store.status()
                 active = (state['profile_id'] == profile['id']
                           and not state['in_progress'] and not state['pending'])
@@ -162,8 +165,13 @@ class ModProfilesDialog(QDialog):
                         compatibility = 'Check stage'
                     elif mod['relative'].casefold() not in verified_targets:
                         compatibility = 'Incompatible target'
+                    elif (current_fingerprint and
+                          mod.get('verified_stage_fingerprint') == current_fingerprint):
+                        compatibility = 'Verified for stage'
+                    elif mod.get('verified_stage_fingerprint') and current_fingerprint:
+                        compatibility = 'Review this build'
                     else:
-                        compatibility = 'Target compatible'
+                        compatibility = 'Target recognized'
                     status = ('Staged' if active and mod['enabled'] else
                               'Enabled' if mod['enabled'] else 'Disabled')
                     title = mod.get('display_name') or source.stem
