@@ -65,12 +65,14 @@ def select_monster_stage_models(assemblies, character_folder):
             continue
         # The builder must have independently checked this CDF and not
         # inferred it from a similarly named asset.
-        if str(cdf).casefold() not in str(location).casefold():
-            # Paths under Assemblies/ use .glb instead of .cdf.
-            from pathlib import PurePosixPath as P
-            expected = P(str(cdf).replace('\\','/')).stem.casefold()
-            if P(location).stem.casefold() != expected:
-                continue
+        # The original CDF's relative virtual path must match the exact
+        # Assemblies/<relative>.glb emitted by the verified assembly builder.
+        # Equal basenames in different equipment folders are not equivalent.
+        relative = PurePosixPath(str(cdf).replace('\\', '/')).relative_to(
+            PurePosixPath(str(character_folder).replace('\\', '/')))
+        expected = PurePosixPath('Assemblies', *relative.with_suffix('.glb').parts)
+        if str(PurePosixPath(location)).casefold() != str(expected).casefold():
+            continue
         score = (bool(info.get('preferred_full_character')),
                  int(info.get('part_count') or 0) > 1,
                  int(info.get('bone_count') or 0) > 0,
