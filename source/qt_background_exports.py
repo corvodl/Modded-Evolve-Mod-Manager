@@ -31,7 +31,19 @@ class _FileWorker(QThread):
             result = self._action(self.report, self._cancel.is_set)
             self.completed.emit(result, None)
         except Exception as exc:
-            self.completed.emit(None, str(exc))
+            detail = str(exc)
+            if "Unsafe archive entry name: ''" in detail:
+                # Report the caller, not only the shared path validator.
+                # This distinguishes bad manifest, CDF and material lookups.
+                import traceback
+                frames = traceback.extract_tb(exc.__traceback__)
+                caller = next((frame for frame in reversed(frames)
+                               if frame.name != 'normalized_name'), None)
+                if caller is not None:
+                    from pathlib import Path
+                    detail += ' [source: %s:%d %s]' % (
+                        Path(caller.filename).name, caller.lineno, caller.name)
+            self.completed.emit(None, detail)
 
     def report(self, label, completed, total):
         self.progress.emit(str(label), int(completed), int(total))

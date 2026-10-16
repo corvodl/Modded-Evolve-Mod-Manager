@@ -72,6 +72,36 @@ class AssetBatchTests(unittest.TestCase):
             load_collection(self.batch)
         self.assertEqual(self.before,{p:p.read_bytes() for p in (self.first,self.second)})
 
+    def test_read_only_batch_indexes_zero_byte_nameless_placeholder(self):
+        from multi_pak_assets import related_asset_index
+        self.extract()
+        data = load_collection(self.batch)
+        ws = self.batch / data['archives'][0]['workspace']
+        manifest_file = ws / '.evolve-pak-workspace.json'
+        raw = json.loads(manifest_file.read_text('utf-8'))
+        raw['entries'].append({'path': '', 'bytes': 0})
+        manifest_file.write_text(json.dumps(raw), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'Unsafe archive entry name'):
+            load_collection(self.batch)
+        read_only = load_collection(self.batch, read_only=True)
+        self.assertEqual(len(read_only['archives']), 2)
+        self.assertIn('libs/abilities/test.xml', _asset_index(self.batch, read_only))
+        self.assertIsNotNone(related_asset_index(ws))
+
+    def test_read_only_batch_rejects_nonempty_or_traversing_placeholders(self):
+        self.extract()
+        data = load_collection(self.batch)
+        ws = self.batch / data['archives'][0]['workspace']
+        manifest_file = ws / '.evolve-pak-workspace.json'
+        original = json.loads(manifest_file.read_text('utf-8'))
+        for bad in ({'path': '', 'bytes': 4},
+                    {'path': '../outside.txt', 'bytes': 0}):
+            manifest_file.write_text(json.dumps(
+                dict(original, entries=[*original['entries'], bad])),
+                encoding='utf-8')
+            with self.assertRaises(ValueError):
+                load_collection(self.batch, read_only=True)
+
     def test_tif_refs_resolve_to_cooked_dds_across_archives(self):
         self.extract()
         data=load_collection(self.batch)
