@@ -203,7 +203,8 @@ def import_reviewed_bundle(bundle, stage, catalog_root, profile_id,
                         temp_path.unlink(missing_ok=True)
                 chosen.append((destination, entry.target, entry.sha256))
             ids, already = store.add_verified_bundle(
-                profile_id, chosen, stage, replace_conflicts=replace_conflicts)
+                profile_id, chosen, stage, replace_conflicts=replace_conflicts,
+                display_name=bundle.source.stem[:70])
         except BaseException:
             # Remove only newly imported copies. Existing shared library data stays.
             for destination in new_files:
