@@ -197,6 +197,55 @@ class CharacterStageTests(unittest.TestCase):
             self.assertEqual(c.equipment_options,(skins[2],))
 
 
+    def test_hunter_arm_skin_is_permanent_body_not_optional_weapon(self):
+        from character_assembly import assemble_character, _hunter_anatomical_skin
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        cdf = 'characters/hunters/medic_emet/medic_emet.cdf'
+        skins = (
+            ('Body', 'characters/hunters/medic_emet/emet_body.skin'),
+            ('Emet_RightArm', 'characters/hunters/medic_emet/emet_right_arm.skin'),
+            ('LeftHand', 'characters/hunters/medic_emet/emet_lhand.skin'),
+            ('Rifle', 'characters/hunters/medic_emet/emet_weapon.skin'))
+        self.assertTrue(_hunter_anatomical_skin(skins[1][0], skins[1][1], cdf))
+        self.assertFalse(_hunter_anatomical_skin('armgun', 'weapons/armgun.skin', cdf))
+        with TemporaryDirectory() as tmp:
+            mesh = Path(tmp) / 'mesh'
+            mesh.write_bytes(tiny_mesh())
+            with patch('character_assembly._character_definition',
+                       return_value=(cdf, 'emet.chr', skins, {})), \
+                 patch('character_assembly._resolve_file', return_value=mesh), \
+                 patch('character_assembly.load_preview_materials',
+                       return_value=None):
+                body = assemble_character(None, cdf, {}, equipment='body')
+                equipped = assemble_character(None, cdf, {})
+            self.assertEqual(body.included, ('Body', 'Emet_RightArm', 'LeftHand'))
+            self.assertEqual(equipped.included,
+                             ('Body', 'Emet_RightArm', 'LeftHand', 'Rifle'))
+
+    def test_assembly_does_not_silently_drop_part_nine(self):
+        from character_assembly import assemble_character
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        skins = tuple((label, 'characters/hunters/h/h_3p_%s.skin' % label)
+                      for label in ('body', 'leftarm', 'rightarm', 'hand',
+                                    'lefthand', 'righthand', 'larm', 'rarm',
+                                    'arm', 'rifle'))
+        with TemporaryDirectory() as tmp:
+            mesh = Path(tmp) / 'mesh'
+            mesh.write_bytes(tiny_mesh())
+            with patch('character_assembly._character_definition',
+                       return_value=('characters/hunters/h/h.cdf', 'h.chr',
+                                     skins, {})), \
+                 patch('character_assembly._resolve_file', return_value=mesh), \
+                 patch('character_assembly.load_preview_materials',
+                       return_value=None):
+                model = assemble_character(
+                    None, 'characters/hunters/h/h.cdf', {}, equipment='body')
+            self.assertIn('arm', model.included)
+            self.assertEqual(len(model.included), 9)
+            self.assertNotIn('rifle', model.included)
+
     def test_additive_motion_flags_override_a_standalone_looking_name(self):
         from tempfile import TemporaryDirectory
         from pathlib import Path

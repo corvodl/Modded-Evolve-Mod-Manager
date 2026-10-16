@@ -20,7 +20,7 @@ def main(argv=None):
     parser.add_argument('--isolate-module', action='append', default=[],
                         help='Run each unittest case in its own process to isolate Qt native state')
     parser.add_argument('modules', nargs='+')
-    args = parser.parse_args(argv)
+    args = parser.parse_intermixed_args(argv)
     if args.timeout_seconds <= 0:
         parser.error('--timeout-seconds must be positive')
     env = os.environ.copy()

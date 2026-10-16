@@ -54,6 +54,32 @@ class FeaturedPromoTests(unittest.TestCase):
         self.assertNotIn("mcFeatureBuy._visible", replaced)
         self.assertIn('var message = "{not a code brace}"', replaced)
 
+    def test_persistent_hide_across_carousel_video_transitions(self):
+        # Real game callbacks can make a promo visible after setFeatured.
+        # The guard must rerun without overwriting menu root callbacks.
+        hidden = patch_featured_actionscript(self.SCRIPT, "hide", "all")
+        self.assertIn('createEmptyMovieClip("__evolveFeaturedPromoVisibilityGuard"', hidden)
+        self.assertIn('guardClip.onEnterFrame = function()', hidden)
+        self.assertIn('menu.mcFeatureTitle._visible = false', hidden)
+        self.assertIn('menu.mcFeatureButtonTry._visible = false', hidden)
+        self.assertIn('menu.mcFeatureButtonBuy._visible = false', hidden)
+        self.assertNotIn('_root.onEnterFrame =', hidden)
+        self.assertNotIn('setInterval(', hidden)
+        title = patch_featured_actionscript(self.SCRIPT, "hide", "title")
+        self.assertIn('menu.mcFeatureTitle._visible = false', title)
+        self.assertNotIn('menu.mcFeatureButtonTry._visible = false', title)
+        removed = patch_featured_actionscript(self.SCRIPT, "remove", "all")
+        self.assertIn('menu.mcFeatureTitle.text = ""', removed)
+        self.assertIn('menu.mcFeatureBuy.removeMovieClip()', removed)
+        custom = patch_featured_actionscript(
+            self.SCRIPT, "custom", "title", "NEW NAME")
+        self.assertNotIn('guardClip.onEnterFrame', custom)
+        layout = patch_featured_actionscript(
+            self.SCRIPT, "layout", "title", layout=(10, 20, 1, 1, 0, True))
+        self.assertNotIn('guardClip.onEnterFrame', layout)
+        with self.assertRaisesRegex(GfxError, "already"):
+            patch_featured_actionscript(hidden, "hide", "all")
+
     def test_input_guard_and_duplicate_injection(self):
         with self.assertRaisesRegex(GfxError, "72 printable"):
             patch_featured_actionscript(self.SCRIPT, "custom", "title", "\n")
@@ -90,6 +116,7 @@ class FeaturedPromoTests(unittest.TestCase):
                 path = Path(args[-1]) / "scripts/frame_1.as"
                 updated = path.read_text()
                 self.assertIn("mcFeatureTitle._visible = false", updated)
+                self.assertIn('guardClip.onEnterFrame', updated)
                 Path(args[2]).write_bytes(modified)
             else:
                 self.fail("Unexpected FFDec invocation")

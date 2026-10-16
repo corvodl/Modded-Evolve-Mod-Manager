@@ -5,12 +5,14 @@ The **GFX editor** exposes a **Featured promotional UI** section for
 
 ## Actions
 
-- **Hide** title or whole promotion: insert ActionScript visibility changes.
+- **Hide** title or whole promotion: hide immediately and repeatedly after video/featured-offer transitions through a menu-scoped ActionScript display-frame guard.
 - **Remove / disable** title or whole promotion: set visibility false,
   disable referenced clips, blank text fields if present, and call
   \`removeMovieClip\` on dynamically attached clips. Static timeline
   clips that cannot be removed are still hidden; this does *not*
-  physically delete static movie resource tags.
+  physically delete static movie resource tags. The new persistent guard
+  repeats the hide/disable on the menu's own invisible child clip, without
+  replacing root onEnterFrame callbacks or registering a global timer.
 - **Custom title text**: replace the runtime-populated featured title
   at the tail of \`setFeatured\` where a compatible text field exists.
   Bounded printable text is escaped as an ActionScript string.
@@ -20,7 +22,11 @@ placeholder-label replacement. Evolve's featured character/offer callback
 (\`GetCharacterOfferInfo\`, \`setFeatured\`) may dynamically reassign
 visibility/text after the injected function executes. Depending on game
 build and scene state, an ActionScript edit can fail to take effect.
-Always test the resulting mod offline in game before distributing it.
+The Hide/Remove presets now repeat their visibility/disable changes on
+each display frame after a video/offer transition, rather than only at the
+end of setFeatured. Whole-root movie replacement or an unknown native
+UI layer may still evade this mechanism. Test in-game, offline, across
+multiple featured videos before distributing it.
 
 ## Safety / behavior
 
@@ -48,6 +54,9 @@ texture would not change it. This feature targets the likely ActionScript
 update path; exact in-game behavior is unconfirmed without an offline
 test of the matching Stage 2 build. Failure diagnostics offer editing the
 \`setFeatured\` source manually using the full FFDec editor.
+
+Persistent updates apply only to Hide/Remove; Custom text and Layout
+overrides remain one-time operations. Hide Title does not disable TRY/BUY.
 
 The first implementation does **not** register new custom promotions,
 replace the 3D monster model, or modify the native feature-offer system.

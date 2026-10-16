@@ -359,6 +359,7 @@ class QtManager(QMainWindow):
         self.stage_path = self.settings.get('stage', str(DATA_HOME/'Setup'/'staged'))
         self.swap_path = self.settings.get('swap', str(DATA_HOME/'Setup'/'swap'))
         self.projects_path = self.settings.get('projects', str(DATA_HOME/'Projects'))
+        self.game_storage_root = self.settings.get('game_storage_root', str(DATA_HOME/'GameSets'))
         self.current_workspace = self.settings.get('current_workspace', '')
         self.output_pak = self.settings.get('output_pak', '')
         self.batch_root = self.settings.get('batch_root', '')
@@ -563,6 +564,10 @@ class QtManager(QMainWindow):
         self.navigation_shortcut.setShortcut('Ctrl+B')
         self.navigation_shortcut.triggered.connect(lambda: self.toggle_menu())
         self.addAction(self.navigation_shortcut)
+        self.command_palette_action = QAction('Quick Commands', self)
+        self.command_palette_action.setShortcut('Ctrl+K')
+        self.command_palette_action.triggered.connect(self.open_command_palette)
+        self.addAction(self.command_palette_action)
         self.menu_animation = QPropertyAnimation(self.drawer, b'geometry', self)
         self.menu_animation.setDuration(205)
         self.menu_animation.setEasingCurve(QEasingCurve.OutCubic)
@@ -747,6 +752,8 @@ class QtManager(QMainWindow):
         else:
             self._last_public_page = index
         self.stack.setCurrentIndex(index)
+        if SECTIONS[index] == 'Settings' and not self.game_storage_panel._scanned:
+            self.game_storage_panel.refresh()
         if SECTIONS[index] == 'Asset Library':
             self.refresh_library_table()
         elif SECTIONS[index] == 'Modding' and self._startup_inventory_pending:
@@ -1307,6 +1314,8 @@ class QtManager(QMainWindow):
                     act = menu.addAction(title)
                     act.triggered.connect(lambda _checked=False, cb=callback: cb())
         menu_commands('File', (
+            ('Install Mod…', self.open_easy_mod_installer),
+            ('Installed Mods / Profiles…', self.open_mod_profiles),
             ('Unpack PAK + known dependencies', self.extract),
             ('Unpack selected PAKs + dependencies', self.extract_batch),
             ('Import External PAK…', self.browse_external_pak),
@@ -1334,6 +1343,8 @@ class QtManager(QMainWindow):
             ('Show original PAK location', lambda: self.reveal_pak(original=True)),
         ))
         menu_commands('Tools', (
+            ('Undo Applied Mods…', self.undo_mod_profile),
+            ('Quick Commands  Ctrl+K', self.open_command_palette),
             ('Mod Profiles…', self.open_mod_profiles),
             ('Asset Library / Add PAKs…', self.open_asset_library),
             ('Export Model Folder…', self.export_model_folder),
@@ -1346,6 +1357,22 @@ class QtManager(QMainWindow):
         root.addWidget(_label(
             'Projects contain your editable copies. The Asset Library keeps the original PAKs.',
             muted=True))
+        # Lightweight project grouping/filtering operates on the last loaded
+        # catalog result, never rescans a large Asset Library while typing.
+        project_filters = QHBoxLayout()
+        self.project_filter = QLineEdit()
+        self.project_filter.setObjectName('projectQuickFilter')
+        self.project_filter.setPlaceholderText('Find workspace, target PAK or build…')
+        self.project_filter.textChanged.connect(self._render_project_table)
+        project_filters.addWidget(self.project_filter, 1)
+        self.project_group_toggle = QCheckBox('Group by target PAK')
+        self.project_group_toggle.setObjectName('projectGroupToggle')
+        self.project_group_toggle.setChecked(True)
+        self.project_group_toggle.toggled.connect(self._render_project_table)
+        project_filters.addWidget(self.project_group_toggle)
+        root.addLayout(project_filters)
+        self._project_all_rows = ()
+        self._project_group_expanded = {}
         self.project_table = QTableWidget(0, 6)
         self.project_table.setObjectName('moddingProjectTable')
         self.project_table.setHorizontalHeaderLabels(
@@ -1358,7 +1385,10 @@ class QtManager(QMainWindow):
         self.project_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.project_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.project_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
-        self.project_table.itemDoubleClicked.connect(lambda _: self.open_active_project())
+        self.project_table.itemDoubleClicked.connect(
+            lambda _: self.open_active_project()
+            if self.selected_project_context() is not None else None)
+        self.project_table.cellClicked.connect(self._project_row_clicked)
         self.project_table.itemSelectionChanged.connect(self.refresh_project_changes)
         self.project_split = configure_splitter(QSplitter(Qt.Vertical))
         self.project_split.setObjectName('moddingProjectSplitter')
@@ -1390,6 +1420,8 @@ class QtManager(QMainWindow):
         project_actions = QHBoxLayout()
         self.project_quick = {}
         for title, handler in (
+            ('Install Mod…', self.open_easy_mod_installer),
+            ('Installed Mods…', self.open_mod_profiles),
             ('Refresh Projects', self.refresh_project_list),
             ('Continue Editing', self.open_active_project),
             ('Review Changes', self.diff),
@@ -1398,7 +1430,8 @@ class QtManager(QMainWindow):
         ):
             button = _button(title, handler)
             self.project_quick[title] = button
-            if title in ('Continue Editing', 'Build Mod'):
+            if title in ('Install Mod…', 'Installed Mods…',
+                         'Continue Editing', 'Build Mod'):
                 project_actions.addWidget(button)
             else:
                 button.setParent(page)
@@ -1530,33 +1563,98 @@ class QtManager(QMainWindow):
             except (OSError, ValueError, KeyError) as exc:
                 self._log('Project list: ' + str(exc)[:240])
                 rows = ()
-        current = self.current_workspace
+        self._project_all_rows = tuple(rows)
         self._project_rows = {record['workspace']: record for record in rows}
+        self._render_project_table(skip_changes=skip_changes)
+
+    def _project_row_clicked(self, row, _column):
+        item = self.project_table.item(row, 0)
+        group = item.data(Qt.UserRole + 1) if item else None
+        if not group:
+            return
+        self._project_group_expanded[group] = not self._project_group_expanded.get(group, True)
+        self._render_project_table(skip_changes=True)
+
+    def _render_project_table(self, *_unused, skip_changes=False):
+        """Display target groups with collapsible headers and exact folder names."""
+        from collections import defaultdict
+        records = tuple(getattr(self, '_project_all_rows', ()))
+        term = self.project_filter.text().casefold().strip()
+        records = [r for r in records if not term or term in
+                   (' '.join((str(r.get('label', '')), str(r['workspace']),
+                              str(r.get('target_archive', '')),
+                              str(r.get('source_build_id') or '')))).casefold()]
+        grouped = self.project_group_toggle.isChecked()
+        if grouped:
+            by_target = defaultdict(list)
+            for record in records:
+                by_target[str(record.get('target_archive') or 'Unknown target')].append(record)
+            entries = []
+            for target in sorted(by_target, key=str.casefold):
+                key = target.casefold()
+                members = sorted(by_target[target],
+                                 key=lambda r: (Path(r['workspace']).name.casefold(),
+                                                r['workspace'].casefold()))
+                expanded = self._project_group_expanded.get(key, True)
+                entries.append(('group', target, key, len(members), expanded))
+                if expanded:
+                    entries.extend(('project', row) for row in members)
+        else:
+            entries = [('project', row) for row in sorted(
+                records, key=lambda r: (str(r.get('target_archive', '')).casefold(),
+                                        Path(r['workspace']).name.casefold()))]
         table = self.project_table
-        # During bulk population Qt emits selection changes that trigger
-        # expensive per-project diff verification; only validate on an
-        # explicit user selection (or a normal manual Refresh).
-        previously_blocked = table.blockSignals(True)
+        selected = self.selected_project_context()
+        current = selected['workspace'] if selected else self.current_workspace
+        blocked = table.blockSignals(True)
         table.setSortingEnabled(False)
-        table.setRowCount(len(rows))
-        for i, item in enumerate(rows):
-            values = (item.get('label', ''), item.get('target_archive', 'unknown'),
+        table.clearSpans()
+        table.setRowCount(len(entries))
+        table.clearSelection()
+        table.setCurrentCell(-1, -1)
+        selection_row = None
+        for row, entry in enumerate(entries):
+            if entry[0] == 'group':
+                _, name, key, count, expanded = entry
+                heading = QTableWidgetItem(
+                    ('▾  ' if expanded else '▸  ') + name + f'  ·  {count} project(s)')
+                heading.setData(Qt.UserRole + 1, key)
+                heading.setFlags(Qt.ItemIsEnabled)
+                font = heading.font()
+                font.setBold(True)
+                heading.setFont(font)
+                heading.setToolTip('Click to ' +
+                                   ('collapse' if expanded else 'expand') +
+                                   ' projects for this target PAK')
+                for col in range(6):
+                    table.setItem(row, col, heading if col == 0 else QTableWidgetItem(''))
+                continue
+            item = entry[1]
+            workspace = Path(item['workspace'])
+            try:
+                updated = datetime.fromtimestamp(workspace.stat().st_mtime).strftime('%Y-%m-%d')
+            except OSError:
+                updated = 'Unknown'
+            details = item.get('details') or 'Ready'
+            values = (workspace.name, item.get('target_archive', 'unknown'),
                       str(item['changed']), item.get('source_build_id') or 'Unassigned',
-                      item['status'], item.get('details') or 'Ready')
-            for j, value in enumerate(values):
-                cell = QTableWidgetItem(value)
-                if j == 0:
+                      item['status'], f'Edited {updated} · {details}')
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                if col == 0:
                     cell.setData(Qt.UserRole, item['workspace'])
-                table.setItem(i, j, cell)
-        table.setSortingEnabled(True)
-        for i in range(table.rowCount()):
-            if table.item(i, 0).data(Qt.UserRole) == current:
-                table.selectRow(i)
-                break
-        table.blockSignals(previously_blocked)
+                    cell.setToolTip('Workspace: ' + str(workspace) +
+                                    '\nProject label: ' + str(item.get('label', workspace.name)))
+                table.setItem(row, col, cell)
+            if item['workspace'] == current:
+                selection_row = row
+        # Sorting while grouped scatters headers and breaks identity, so
+        # only the ungrouped view allows Qt column sorting.
+        table.setSortingEnabled(not grouped)
+        if selection_row is not None:
+            table.selectRow(selection_row)
+        table.blockSignals(blocked)
         if skip_changes:
-            # Diff/asset validation can be just as expensive as discovery.
-            # It runs only if the user selects an actual workspace row.
             self.project_changes_table.setRowCount(0)
             self._sync_project_quick_actions()
         else:
@@ -1597,17 +1695,7 @@ class QtManager(QMainWindow):
             self.output_pak = ''
             self.output_input.setText('')
             self.persist()
-            from qt_workspace_editor import QtWorkspaceEditor
-            for existing in self.editors:
-                if existing.isVisible() and getattr(existing, 'workspace', None) == workspace:
-                    existing.raise_()
-                    existing.activateWindow()
-                    return
-            editor = QtWorkspaceEditor(self, workspace)
-            editor.setAttribute(Qt.WA_DeleteOnClose, False)
-            self.editors.append(editor)
-            editor.show()
-            editor.raise_()
+            self._open_project_workspace(workspace)
         except (OSError, ValueError, RuntimeError) as exc:
             self.failure(exc)
 
@@ -1759,21 +1847,20 @@ class QtManager(QMainWindow):
         general_row.addWidget(self.motion_checkbox)
         general_row.addWidget(_button('Create Desktop Shortcut', self.create_shortcut))
 
-        _settings_heading(lay, 'GAME & FILES',
-                          'Connected installation, signing stage, projects, and workspace paths.')
-        folders, inside = _card('FOLDERS',
-                                 'Folders are stored in Data/Settings and are preserved during updates.')
+        _settings_heading(lay, 'GAME STORAGE',
+                          'One location for new setups, with storage breakdown and advanced paths.')
+        folders, inside = _card('GAME STORAGE',
+                                'Review disk usage without moving active signing or recovery files.')
         lay.addWidget(folders)
         self.fields = {}
-        for label, name in (('Signing stage', 'stage'), ('Launch/swap folder', 'swap'), ('Projects', 'projects')):
-            line = QHBoxLayout()
-            line.addWidget(_label(label))
+        for name in ('stage', 'swap', 'projects'):
             inp = QLineEdit()
             inp.setText(getattr(self, name + '_path'))
+            inp.setObjectName('advanced' + name.title() + 'Path')
             self.fields[name] = inp
-            line.addWidget(inp, 1)
-            line.addWidget(_button('Browse…', lambda k=name: self.browse_folder(k)))
-            inside.addLayout(line)
+        from qt_game_storage import GameStorageSettings
+        self.game_storage_panel = GameStorageSettings(self, self.fields, folders)
+        inside.addWidget(self.game_storage_panel)
         btns = QWidget()
         btns.setLayout(_row(_button('Set Up Manager', self.initial_setup, primary=True),
                              _button('Check Setup', self.check_setup),
@@ -1798,6 +1885,25 @@ class QtManager(QMainWindow):
             'Add one or multiple PAKs; verify extracted assets, remove imported '
             'packages, or re-import the standard shared/animation collection. '
             'This never edits your game installation.', muted=True))
+
+        _settings_heading(lay, 'BLENDER INTEGRATION',
+                          'Install the optional standalone animation browser once for Blender 4.2+.') 
+        blender_card, blender_row = _card('EVOLVE ANIMATION BROWSER',
+            'Search and preview converted Evolve CAF/DBA animations on any compatible '
+            'rigged Blender model, including supported 2012 converter-backed clips.')
+        lay.addWidget(blender_card)
+        self.blender_addon_status = _label(
+            self._blender_addon_install_status(), muted=True)
+        blender_row.addWidget(self.blender_addon_status)
+        self.blender_addon_install_button = _button(
+            'Install / Update Blender Add-on…', self.install_blender_animation_browser)
+        self.blender_addon_install_button.setObjectName('blenderAddonInstallButton')
+        blender_row.addWidget(self.blender_addon_install_button)
+        blender_row.addWidget(_label(
+            'Uses Blender\'s own User Default extension installer and an exact v1.1.0 ZIP. '
+            'Place Evolve_Animation_Browser_v1.1.0.zip in Downloads or choose it when '
+            'prompted. This does not change your game files. Restart open Blender '
+            'windows after installing.', muted=True))
 
         _settings_heading(lay, 'BACKUPS & RECOVERY',
                           'Save disk space safely without sacrificing quick local restoration.')
@@ -1878,9 +1984,80 @@ class QtManager(QMainWindow):
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['settings'] = scroll
-        self.settings_sections = ('UPDATES', 'GENERAL', 'GAME & FILES', 'ASSET LIBRARY',
-                                  'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
+        self.settings_sections = ('UPDATES', 'GENERAL', 'GAME STORAGE', 'ASSET LIBRARY',
+                                  'BLENDER INTEGRATION', 'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
                                   'ADVANCED & MAINTENANCE')
+
+    def _blender_addon_install_status(self):
+        from blender_addon_installer import installed_versions
+        installed = installed_versions()
+        if not installed:
+            return 'Evolve Animation Browser: not detected in Blender user extensions.'
+        return 'Detected installation(s): ' + ', '.join(
+            'Blender ' + version + ' (add-on v' + addon + ')'
+            for version, addon in installed)
+
+    def install_blender_animation_browser(self):
+        """Install an explicitly verified ZIP using Blender's own extension CLI."""
+        try:
+            if self.busy:
+                self.failure('Wait for the current manager operation to finish.')
+                return
+            from blender_addon_installer import (
+                blender_candidates, find_addon_package, validate_package,
+                PACKAGE_NAME, PACKAGE_VERSION)
+            candidates = blender_candidates()
+            if len(candidates) > 1:
+                chosen, ok = QInputDialog.getItem(
+                    self, 'Select Blender installation',
+                    'Install to which Blender executable?',
+                    [str(path) for path in candidates], 0, False)
+                if not ok:
+                    return
+                blender = Path(chosen)
+            elif candidates:
+                blender = candidates[0]
+            else:
+                chosen, _ = QFileDialog.getOpenFileName(
+                    self, 'Locate Blender 4.2+ executable',
+                    str(Path(os.environ.get('PROGRAMFILES', Path.home()))),
+                    'Blender (blender.exe)')
+                if not chosen:
+                    return
+                blender = Path(chosen)
+            package = find_addon_package(application=ROOT)
+            if package is None:
+                selected, _ = QFileDialog.getOpenFileName(
+                    self, 'Select Evolve Animation Browser v' + PACKAGE_VERSION,
+                    str(Path.home() / 'Downloads' / PACKAGE_NAME),
+                    'Blender extension ZIP (*.zip)')
+                if not selected:
+                    return
+                package = Path(selected)
+            validate_package(package)
+            if not self.confirm(
+                    'Install Evolve Animation Browser?',
+                    'Blender: ' + str(blender) + '\\n'
+                    'Extension: ' + str(package) + '\\n\\n'
+                    'Install and enable this verified extension in your Blender '
+                    'User Default repository? Blender preferences will be updated.'):
+                return
+            cmd = [sys.executable, '-u', str(ROOT / 'blender_addon_installer.py'),
+                   '--blender', str(blender), '--package', str(package)]
+            def installed():
+                self.blender_addon_status.setText(
+                    'Evolve Animation Browser v' + PACKAGE_VERSION +
+                    ' installed. Restart open Blender windows to see the Evolve tab.')
+                self.info('Blender extension installed',
+                          'Evolve Animation Browser v' + PACKAGE_VERSION +
+                          ' was installed through Blender. Restart any open '
+                          'Blender window; then press N in the 3D Viewport '
+                          'and select the Evolve tab.')
+            self.run_steps(
+                [('Installing and enabling Blender animation extension', cmd)],
+                'Install Blender Animation Browser', installed)
+        except (ValueError, OSError, RuntimeError) as exc:
+            self.failure(exc)
 
     def _update_appearance_labels(self):
         colors = palette(self.appearance_mode, self.appearance_overrides)
@@ -2574,6 +2751,7 @@ class QtManager(QMainWindow):
             'stage': self.stage_path,
             'swap': self.swap_path,
             'projects': self.projects_path,
+            'game_storage_root': self.game_storage_root,
             'current_workspace': self.current_workspace,
             'output_pak': self.output_pak,
             'archive_label': self.archive_label,
@@ -2590,6 +2768,15 @@ class QtManager(QMainWindow):
         save_settings(self.settings)
 
     def save_settings(self):
+        from game_storage import validate_storage_root
+        try:
+            selected = validate_storage_root(
+                self.game_storage_panel.root_input.text().strip(),
+                game=self.game_root or self._find_game_root())
+        except (OSError, ValueError) as exc:
+            self.failure(exc)
+            return
+        self.game_storage_root = str(selected)
         self.stage_path = self.fields['stage'].text().strip()
         self.swap_path = self.fields['swap'].text().strip()
         self.projects_path = self.fields['projects'].text().strip()
@@ -2599,7 +2786,9 @@ class QtManager(QMainWindow):
             self.persist()
             self.refresh_archives()
             self.refresh_swap_status()
-            self.info('Saved', 'Manager folder settings saved.')
+            self.info('Saved', 'Manager folder settings saved. '
+                      'Changing Mod Data Location affects new setups only; '
+                      'active signing and swap folders have not been moved.')
         except Exception as exc:
             self.failure(exc)
 
@@ -2608,6 +2797,44 @@ class QtManager(QMainWindow):
         if selected:
             self.fields[key].setText(selected)
             self.save_settings()
+
+    def open_easy_mod_installer(self):
+        """One user-initiated drag-drop mod review; no automatic staging."""
+        try:
+            if self.busy:
+                raise RuntimeError('Wait for current operation to finish first.')
+            from qt_easy_mod_installer import EasyModInstaller
+            dialog = EasyModInstaller(self, DATA_HOME / 'Profiles')
+            dialog.exec()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def undo_mod_profile(self):
+        """Restore profile-managed staging via its saved transaction journals."""
+        try:
+            from mod_profiles import ModProfiles
+            store = ModProfiles(DATA_HOME / 'Profiles')
+            status = store.status()
+            if status['in_progress'] or status['pending']:
+                raise RuntimeError(
+                    'A prior profile transaction is interrupted. '
+                    'Open Installed Mods and resolve recovery before undoing.')
+            if not status['profile_id'] and not status['entry_count']:
+                self.info('Mod Profiles', 'No applied mod profile needs undoing.')
+                return
+            if not self.confirm('Undo applied mod profile?',
+                    'Restore the previous staged PAK versions from the '
+                    'profile rollback journal? Installed game files will '
+                    'not be modified. Close the game and client first.'):
+                return
+            self.apply_mod_profile(None)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def open_command_palette(self):
+        from qt_quick_commands import QuickCommandPalette
+        dialog = QuickCommandPalette(self)
+        dialog.exec()
 
     def open_mod_profiles(self):
         """Open the profile library without changing the installed game."""
@@ -2623,8 +2850,8 @@ class QtManager(QMainWindow):
         except Exception as exc:
             self.failure(exc)
 
-    def apply_mod_profile(self, profile_id):
-        """Queue signed PAK staging in a worker, not the Qt thread."""
+    def apply_mod_profile(self, profile_id, *, receipt_id=None):
+        """Queue signed PAK staging; mark a receipt only after the worker succeeds."""
         if self.busy:
             raise RuntimeError('Wait for the current operation to finish.')
         if not self.flush_editors():
@@ -2638,14 +2865,24 @@ class QtManager(QMainWindow):
                    '--stage', str(Path(self.stage_path)),
                    '--swap', str(Path(self.swap_path)),
                    '--profile', profile_id if profile_id is not None else 'baseline']
+        steps = [('Applying signed Mod Profile', command)]
+        if profile_id is not None:
+            verification = [
+                sys.executable, '-u', str(ROOT / 'mod_install_receipts.py'),
+                '--root', str(DATA_HOME / 'Profiles'),
+                '--stage', str(Path(self.stage_path)),
+                '--swap', str(Path(self.swap_path)),
+                '--profile', profile_id]
+            if receipt_id is not None:
+                verification.extend(('--receipt', receipt_id))
+            steps.append(('Verifying staged PAKs and recovery backups', verification))
         def complete():
             self.refresh_archives()
             self.refresh_swap_status()
             self.info('Mod profile staged',
-                      'The selected profile was applied to the signing stage. '
-                      'No installed game files were changed.')
-        self.run_steps([('Applying signed Mod Profile', command)],
-                       'Apply Mod Profile', complete)
+                      'Signed PAK staging and post-install integrity checks '
+                      'completed. Game installation files were not changed.')
+        self.run_steps(steps, 'Apply Mod Profile', complete)
 
     def export_model_folder(self):
         """Export native model files without blocking the application UI."""
@@ -2835,24 +3072,32 @@ class QtManager(QMainWindow):
         else:
             self._open_project_workspace(folder)
 
-    def _open_project_workspace(self, folder):
+    def _open_project_workspace(self, folder, *, archive_map=None):
+        """Reopen the live editor; never retain or reuse deleted Qt wrappers."""
+        from shiboken6 import isValid
         from qt_workspace_editor import QtWorkspaceEditor
         workspace = Path(folder).resolve(strict=True)
-        for editor in self.editors:
-            if (isinstance(editor, QtWorkspaceEditor) and editor.isVisible()
-                    and editor.workspace == workspace):
-                editor.raise_()
-                editor.activateWindow()
-                return
-        editor = QtWorkspaceEditor(self, workspace)
-        editor.setAttribute(Qt.WA_DeleteOnClose, False)
-        self.editors.append(editor)
+        # Qt can delete a child even while Python retains its wrapper.
+        self.editors[:] = [editor for editor in self.editors if isValid(editor)]
+        editor = next((
+            existing for existing in reversed(self.editors)
+            if isinstance(existing, QtWorkspaceEditor)
+            and not existing.read_only_library and existing.workspace == workspace
+        ), None)
+        if editor is None:
+            editor = QtWorkspaceEditor(self, workspace, archive_map=archive_map)
+            editor.setAttribute(Qt.WA_DeleteOnClose, False)
+            self.editors.append(editor)
+        else:
+            editor.resume_project_editor()
         editor.show()
         virtual = getattr(self, '_pending_library_virtual', None)
         self._pending_library_virtual = None
         if virtual and virtual in editor.records:
             editor.load(virtual)
         editor.raise_()
+        editor.activateWindow()
+        return editor
 
     def _foreground_assets_active(self):
         if self.busy or self.asset_library_controller.busy:
@@ -3708,17 +3953,11 @@ class QtManager(QMainWindow):
                         'The selected PAK has no matching extracted project. '
                         'Double-click it to unpack a fresh project.')
                 self.current_workspace = str(ws)
-                for editor in self.editors:
-                    if (isinstance(editor, QtWorkspaceEditor) and editor.isVisible()
-                            and editor.workspace == ws):
-                        editor.raise_()
-                        editor.activateWindow()
-                        return
                 from project_selection import editor_collection_for_workspace
                 archive_map = editor_collection_for_workspace(
                     ws, self._editor_collection())
-                editor = QtWorkspaceEditor(
-                    self, ws, archive_map=archive_map)
+                self._open_project_workspace(ws, archive_map=archive_map)
+                return
             editor.setAttribute(Qt.WA_DeleteOnClose, False)
             self.editors.append(editor)
             editor.show()
@@ -4013,7 +4252,16 @@ class QtManager(QMainWindow):
             commands = launcher_commands(Path(self.swap_path),Path(self.stage_path),st.phase)
             if self.confirm('Play with Mods?',
                              'Mods are intended for private/offline testing.\nClose game/launcher first, then wait for the launcher-ready message before pressing Play.'):
+                # Check just before any privileged firewall write or PAK swap.
+                # The existing launcher still verifies exact staged ownership.
+                self._prelaunch_safety_check(modded=True, game=self._developer_game())
                 set_offline(self._developer_game(), not self._developer_allow_online)
+                if not self._developer_allow_online:
+                    from online_guard import offline_rule_active
+                    if not offline_rule_active(self._developer_game()):
+                        raise RuntimeError(
+                            'Offline outbound firewall protection cannot be verified. '
+                            'Modded launch cancelled. Open System Health for details.')
                 self.run_steps(commands,'Play with Mods',self._after_modded_launch,
                                cwd=Path(self.swap_path))
         except Exception as exc:
@@ -4030,6 +4278,19 @@ class QtManager(QMainWindow):
         else:
             self._log('No active mod swap; no restoration monitor required.')
 
+    def _prelaunch_safety_check(self, *, modded, game):
+        """Block unsafe launch conditions without changing any Windows state."""
+        from system_health_extras import prelaunch_check
+        errors, notes = prelaunch_check(
+            swap_root=self.swap_path, game_root=game, modded=modded,
+            status=self.refresh_swap_status())
+        if errors:
+            raise RuntimeError("Pre-launch safety check blocked the game:\n" +
+                               "\n".join("• " + item for item in errors) +
+                               "\nOpen System Health or Settings to investigate.")
+        for item in notes:
+            self._log("Pre-launch: " + item)
+
     def _launch_unmodded_client(self):
         """Launch only after a fresh journal, backup and injector check.
 
@@ -4040,6 +4301,7 @@ class QtManager(QMainWindow):
             Path(self.swap_path), self.game_root or self._find_game_root())
         from orphaned_swap_recovery import ensure_game_closed
         ensure_game_closed()
+        self._prelaunch_safety_check(modded=False, game=game)
         # An earlier modded session may have left our firewall rule enabled.
         # For normal play, failure to remove it is an error, not a success.
         set_offline(game, False)
@@ -4169,6 +4431,16 @@ class QtManager(QMainWindow):
             pending = scan_prepared(Path(game))
             if pending['backups'] or pending['partial']:
                 raise RuntimeError('Unfinished original-file backups exist. Use Restore Game Files first.')
+            from game_storage import validate_storage_root, reusable_setup
+            root = validate_storage_root(
+                self.game_storage_panel.root_input.text().strip(), game=game)
+            # Check existing signed setup before asking to make additional
+            # original-PAK snapshots or generate another expensive signing set.
+            if reusable_setup(self.stage_path, self.swap_path, game, launcher):
+                self.info('Existing setup reused',
+                          'Signing PAKs and launcher recovery are already configured '
+                          'for this game and client. No new PAK copies were created.')
+                return
             preserve = True
             if pending['ready']:
                 if not self.confirm('Existing prepared files',
@@ -4178,7 +4450,7 @@ class QtManager(QMainWindow):
                                'Choose setup storage mode. The live launch still protects original game files.')
             if storage is None:
                 return
-            dest = DATA_HOME/'GameSets'/('Setup_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
+            dest = root/('Setup_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
             if not self.confirm('Confirm setup',
                 f'Close game and launcher. Verify PAKs and prepare a private signed set in:\n{dest}\n\nContinue?'):
                 return
@@ -4189,6 +4461,7 @@ class QtManager(QMainWindow):
                 cmd.append('--preserve-old-prepared')
             if not storage:
                 cmd.append('--skip-original-snapshots')
+            self.game_storage_root = str(root)
             self.run_steps([('Creating local mod setup',cmd)],'Set up from game',
                            lambda: self._after_setup(dest))
         except Exception as exc:
@@ -4202,6 +4475,8 @@ class QtManager(QMainWindow):
         self.swap_path = result['swap']
         self.fields['stage'].setText(self.stage_path)
         self.fields['swap'].setText(self.swap_path)
+        self.game_storage_panel.active_label.setText(
+            'Active setup: ' + str(Path(self.stage_path).parent))
         self.persist()
         self.refresh_archives()
         self.info('Setup finished', 'Your local mod signing setup is ready.')
@@ -4215,10 +4490,9 @@ class QtManager(QMainWindow):
             game = QFileDialog.getExistingDirectory(self,'Select updated installed EvolveGame')
             if not game:
                 return
-            folder = QFileDialog.getExistingDirectory(self,'Choose new setup storage folder',
-                                                       str(DATA_HOME/'GameSets'))
-            if not folder:
-                return
+            from game_storage import validate_storage_root
+            folder = validate_storage_root(
+                self.game_storage_panel.root_input.text().strip(), game=game)
             keep = self.confirm_storage('Keep original snapshots?',
                                         'Choose whether the refreshed setup stores original PAK snapshots.')
             if keep is None:
@@ -4232,6 +4506,7 @@ class QtManager(QMainWindow):
                    '--destination',str(dest)]
             if not keep:
                 cmd.append('--skip-original-snapshots')
+            self.game_storage_root = str(folder)
             self.run_steps([('Refreshing originals',cmd)],'Refresh Original PAKs',
                            lambda: self._after_setup(dest))
         except Exception as exc:
@@ -4267,6 +4542,8 @@ class QtManager(QMainWindow):
         self.projects_path = settings.get('projects',self.projects_path)
         for key in ('stage','swap','projects'):
             self.fields[key].setText(getattr(self,key+'_path'))
+        self.game_storage_panel.active_label.setText(
+            'Active setup: ' + str(Path(self.stage_path).parent))
         self.refresh_archives()
         self.refresh_swap_status()
         self.info('Bundle ready', 'Configured your existing exported complete setup.')
@@ -4553,6 +4830,11 @@ class QtManager(QMainWindow):
 
 
 def main():
+    from windows_admin_launch import ensure_manager_administrator
+    # Executables request elevation through the manifest; direct source runs
+    # request the same UAC permission before creating any Qt windows.
+    if not ensure_manager_administrator():
+        return 0
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     capture_mode = next((flag for flag in

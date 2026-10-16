@@ -95,30 +95,27 @@ jobs:
           if ($gui -ne 2) { throw "Manager must use Windows GUI subsystem (2); got $gui." }
           if ($worker -ne 3) { throw "Worker must retain Windows console subsystem (3); got $worker." }
           Write-Host 'Verified GUI process has no dependent command prompt; worker remains console-capable.'
-      - name: Capture real compiled app window (Windows)
+      - name: Capture native Windows Qt UI without bypassing packaged GUI UAC
         shell: pwsh
         run: |
-          # Capture genuine Qt widgets rendered by the compiled Windows executable.
-          # Offscreen Qt previously rendered square replacement glyphs.
-          # Use the real Windows platform/font backend instead.
+          # EvolveModManager.exe explicitly requires UAC. A headless CI runner
+          # cannot consent to that prompt. Capture native Windows Qt widgets
+          # from the exact checked-out source used to build the package; keep
+          # the compiled PE subsystem and distribution checks in other steps.
           $env:QT_QPA_PLATFORM = "windows"
-          # Start-Process -Wait is required for a Windows GUI-subsystem EXE;
-          # direct PowerShell invocation may return before the screenshot exists.
-          $manager = (Resolve-Path '.build/app-dist/EvolveModManager/EvolveModManager.exe').Path
-          $shot = Start-Process -FilePath $manager -PassThru -Wait `
-            -ArgumentList @('--capture-screenshot', 'dist/EvolveModManager-compiled-screenshot.png')
-          if ($shot.ExitCode -ne 0) {
-            throw "Could not capture the actual compiled Qt manager window. Exit: $($shot.ExitCode)."
+          $spec = Get-Content 'source/EvolveModManager.spec' -Raw
+          if (!$spec.Contains("uac_admin=(entry == 'qt_manager')")) {
+            throw "Packaged manager must request administrator permission."
+          }
+          & '.build/venv/Scripts/python.exe' 'source/qt_manager.py' '--capture-screenshot' 'dist/EvolveModManager-compiled-screenshot.png'
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path 'dist/EvolveModManager-compiled-screenshot.png')) {
+            throw 'Native Windows Qt Home capture failed.'
           }
           & ".build/venv/Scripts/python.exe" -c "from PIL import Image,ImageStat; p=Image.open('dist/EvolveModManager-compiled-screenshot.png').convert('RGB'); assert p.width>=850 and p.height>=600; assert max(ImageStat.Stat(p).stddev)>14"
-          if ($LASTEXITCODE -ne 0) { throw "Compiled Qt screenshot was blank or invalid." }
-          if (!(Test-Path "dist/EvolveModManager-compiled-screenshot.png")) {
-            throw "Real manager screenshot was not created."
-          }
-          $modding = Start-Process -FilePath $manager -PassThru -Wait `
-            -ArgumentList @('--capture-modding-screenshot', 'dist/EvolveModManager-Modding-screenshot.png')
-          if ($modding.ExitCode -ne 0 -or !(Test-Path "dist/EvolveModManager-Modding-screenshot.png")) {
-            throw "Real Modding page screenshot failed. Exit: $($modding.ExitCode)."
+          if ($LASTEXITCODE -ne 0) { throw 'Native Qt screenshot was blank or invalid.' }
+          & '.build/venv/Scripts/python.exe' 'source/qt_manager.py' '--capture-modding-screenshot' 'dist/EvolveModManager-Modding-screenshot.png'
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path 'dist/EvolveModManager-Modding-screenshot.png')) {
+            throw 'Native Windows Qt Modding capture failed.'
           }
       - name: Publish real compiled UI screenshot artifact
         uses: actions/upload-artifact@v4

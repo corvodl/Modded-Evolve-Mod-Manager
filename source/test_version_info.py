@@ -35,12 +35,12 @@ class VersionManifestTests(unittest.TestCase):
             revision.write_text('0', encoding='ascii')
             self.assertEqual(footer_version(path), 'v1.1.18-beta.50')
 
-    def test_stable_12_notes_are_consolidated_and_hide_beta_history(self):
+    def test_stable_notes_match_current_release_and_hide_beta_history(self):
         from release_notes import RELEASE_NOTES, markdown
-        self.assertEqual(('1.2.3',), tuple(v for v, _ in RELEASE_NOTES[:1]))
+        self.assertEqual(('1.2.4',), tuple(v for v, _ in RELEASE_NOTES[:1]))
         self.assertEqual('v' + RELEASE_NOTES[0][0], app_version())
         for version, notes in RELEASE_NOTES:
-            self.assertTrue(1 <= len(notes) <= (12 if version.startswith('1.2.') else 3), version)
+            self.assertTrue(1 <= len(notes) <= (12 if version.startswith(('1.2.', '1.3.')) else 3), version)
             self.assertTrue(all(len(note) <= 185 for note in notes), version)
             self.assertNotIn('-beta.', version)
         root = Path(__file__).resolve().parent.parent

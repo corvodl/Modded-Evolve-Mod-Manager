@@ -69,6 +69,51 @@ def _skip_block(source: str, brace: int) -> int:
     raise GfxError("Cannot determine the end of setFeatured in exported ActionScript.")
 
 
+def _persistent_hide_guard(mode: str, target: str) -> list[str]:
+    """Repeat Hide/Remove on menu video transitions without replacing root events.
+
+    The original setFeatured tail suppresses the initial offer. CryEngine can
+    subsequently reset its visibility/text when a featured video rotates.
+    A child MovieClip owns its own onEnterFrame handler and disappears with
+    the main-menu GFx instance; do not replace _root.onEnterFrame or use a
+    global setInterval that could survive menu destruction.
+    """
+    if mode not in ("hide", "remove") or target not in TARGETS:
+        raise GfxError("Persistent promo guard requires a valid Hide/Remove target.")
+    guard = "__evolveFeaturedPromoVisibilityGuard"
+    lines = [
+        "    // Keep the featured offer hidden when native menu callbacks re-show it.",
+        f"    if (_root.{guard} == undefined &&",
+        "        _root.createEmptyMovieClip != undefined &&",
+        "        _root.getNextHighestDepth != undefined) {",
+        f'        var guardClip = _root.createEmptyMovieClip("{guard}", _root.getNextHighestDepth());',
+        "        if (guardClip != undefined) {",
+        "            guardClip.onEnterFrame = function() {",
+        "                var menu = this._parent;",
+        "                if (menu == undefined) return;",
+    ]
+    for name in _TARGET_NAMES[target]:
+        lines += [
+            f"                if (menu.{name} != undefined) {{",
+            f"                    menu.{name}._visible = false;",
+        ]
+        if mode == "remove":
+            lines += [
+                f"                    menu.{name}.enabled = false;",
+                f'                    if (menu.{name}.text != undefined) menu.{name}.text = "";',
+                f"                    if (menu.{name}.removeMovieClip != undefined) {{",
+                f"                        menu.{name}.removeMovieClip();",
+                "                    }",
+            ]
+        lines.append("                }")
+    lines += [
+        "            };",
+        "        }",
+        "    }",
+    ]
+    return lines
+
+
 def _preset_code(mode: str, target: str, custom: str, layout=None) -> str:
     if mode == "layout":
         if target not in ("title", "try", "buy") or custom:
@@ -149,6 +194,10 @@ def _preset_code(mode: str, target: str, custom: str, layout=None) -> str:
                     "        }",
                 ]
             lines.append("    }")
+        # Later carousel/video callbacks can reassign title visibility and
+        # button state after setFeatured. Enforce Hide/Remove for the lifetime
+        # of this menu instance instead of only once per setFeatured call.
+        lines += _persistent_hide_guard(mode, target)
     return "\n".join(lines) + "\n"
 
 

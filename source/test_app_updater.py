@@ -171,6 +171,43 @@ class UpdateTests(unittest.TestCase):
         self.assertNotIn("'Data'", script)
         self.assertIn('CREATE_NO_WINDOW', Path(u.__file__).read_text(encoding='utf-8'))
 
+    def test_admin_restart_requests_uac_and_keeps_rollback_watchdog(self):
+        script = u.APPLY_PS1
+        self.assertIn("$info.UseShellExecute = $true", script)
+        self.assertIn("$info.Verb = 'runas'", script)
+        self.assertIn("$info.Arguments = '--update-ack ", script)
+        self.assertIn("if ($Headless)", script)
+        self.assertIn("NativeErrorCode -eq 1223", script)
+        self.assertIn("Administrator approval was canceled", script)
+        self.assertIn("while ($timer.Elapsed.TotalSeconds -lt 120)", script)
+        self.assertIn("Get-Content -LiteralPath $AckPath -Raw", script)
+        self.assertIn("if (-not $Acknowledged) { throw", script)
+        self.assertIn("ROLLBACK COMPLETE", script)
+
+    def test_elevated_startup_ack_from_command_line_is_scratch_restricted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app = Path(temp) / 'app'
+            app.mkdir()
+            (app / 'BUILD_COMMIT.txt').write_text(COMMIT, encoding='ascii')
+            scratch = app / 'UpdateWork' / 'transaction'
+            scratch.mkdir(parents=True)
+            ack = scratch / 'startup-ok-verified.txt'
+            with patch.dict(os.environ, {}, clear=True):
+                u.report_startup_ready(app, argv=['--update-ack', str(ack)])
+            self.assertEqual(ack.read_text(encoding='ascii').strip(), COMMIT)
+
+            external = Path(temp) / 'Data' / 'do-not-write.txt'
+            with patch.dict(os.environ, {}, clear=True):
+                u.report_startup_ready(app, argv=['--update-ack', str(external)])
+            self.assertFalse(external.exists())
+
+            duplicate = scratch / 'startup-ok-duplicate.txt'
+            with patch.dict(os.environ, {}, clear=True):
+                u.report_startup_ready(app, argv=[
+                    '--update-ack', str(duplicate),
+                    '--update-ack', str(duplicate)])
+            self.assertFalse(duplicate.exists())
+
     def test_zip_path_traversal_and_sensitive_files_refused(self):
         for bad in ('EvolveModManager/../../Data/key.pem',
                     'EvolveModManager/Data/Projects/file.pak',
