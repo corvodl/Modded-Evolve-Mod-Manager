@@ -33,6 +33,7 @@ uniform int has_normal;
 uniform int has_specular;
 uniform int has_emissive;
 uniform int emission_enabled;
+uniform int bloom_pass;
 uniform float emissive_strength;
 uniform float opacity;
 uniform float alpha_cutoff;
@@ -56,6 +57,14 @@ void main() {
     // should remain dark here; an unbound slot remains neutral gray.
     if (unlit_diffuse == 1) {
         gl_FragColor = vec4(surface.rgb,alpha);
+        return;
+    }
+    if (bloom_pass == 1) {
+        if (emission_enabled == 0 || has_emissive == 0) discard;
+        vec3 emission = pow(texture2D(emissive_map, diffuse_coord).rgb,
+                            vec3(2.2)) * max(0.0, emissive_strength);
+        if (max(max(emission.r, emission.g), emission.b) < 0.002) discard;
+        gl_FragColor = vec4(clamp(emission, 0.0, 1.0), 1.0);
         return;
     }
     // glTF/CryEngine double-sided materials must flip their backface normal.
@@ -119,19 +128,21 @@ class Renderer3:
         glUseProgram(self.program)
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
             'diffuse_map','normal_map','specular_map','has_diffuse','has_normal',
-            'has_specular','has_emissive','emission_enabled','emissive_strength','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
+            'has_specular','has_emissive','emission_enabled','bloom_pass','emissive_strength','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
         for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2),('emissive_map',3)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
              alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02,
-             emissive=False, emissive_strength=0., emission_enabled=True):
+             emissive=False, emissive_strength=0., emission_enabled=True,
+             bloom_pass=False):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f
         glUseProgram(self.program)
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
                            ('has_specular',specular), ('has_emissive',emissive),
                            ('emission_enabled',emission_enabled),
+                           ('bloom_pass',bloom_pass),
                            ('use_alpha_texture',alpha_texture),
                            ('unlit_diffuse',unlit)):
             glUniform1i(self.uniforms[name],int(bool(value)))
@@ -179,3 +190,76 @@ def ordered_transparency_batches(draws, indices, vertices, translucent_slots,
         transparent.append((depth,row))
     transparent.sort(key=lambda item:item[0])
     return opaque+[row for _,row in transparent]
+
+
+BLOOM_VERTEX = """
+#version 120
+varying vec2 uv;
+void main() {
+    uv = gl_MultiTexCoord0.st;
+    gl_Position = gl_Vertex;
+}
+"""
+
+BLOOM_FRAGMENT = """
+#version 120
+uniform sampler2D mask_texture;
+uniform vec2 pixel_step;
+uniform float halo_strength;
+varying vec2 uv;
+void main() {
+    // Quarter resolution offscreen glow, softened with a small
+    // separable-style 13-tap radial kernel; blend additively with the scene.
+    vec3 sum = texture2D(mask_texture,uv).rgb * 0.16;
+    sum += (texture2D(mask_texture,uv+vec2(pixel_step.x,0.0)).rgb
+          + texture2D(mask_texture,uv-vec2(pixel_step.x,0.0)).rgb
+          + texture2D(mask_texture,uv+vec2(0.0,pixel_step.y)).rgb
+          + texture2D(mask_texture,uv-vec2(0.0,pixel_step.y)).rgb) * 0.10;
+    sum += (texture2D(mask_texture,uv+pixel_step).rgb
+          + texture2D(mask_texture,uv-pixel_step).rgb
+          + texture2D(mask_texture,uv+vec2(pixel_step.x,-pixel_step.y)).rgb
+          + texture2D(mask_texture,uv+vec2(-pixel_step.x,pixel_step.y)).rgb) * 0.065;
+    sum += (texture2D(mask_texture,uv+pixel_step*2.0).rgb
+          + texture2D(mask_texture,uv-pixel_step*2.0).rgb
+          + texture2D(mask_texture,uv+vec2(pixel_step.x,-pixel_step.y)*2.0).rgb
+          + texture2D(mask_texture,uv+vec2(-pixel_step.x,pixel_step.y)*2.0).rgb) * 0.045;
+    gl_FragColor = vec4(sum * halo_strength, 1.0);
+}
+"""
+
+
+class EmissiveBloom:
+    """Shader-only fullscreen composite; Qt owns the glow framebuffer."""
+    def __init__(self):
+        from OpenGL.GL import shaders, GL_VERTEX_SHADER, GL_FRAGMENT_SHADER
+        from OpenGL.GL import glUseProgram, glUniform1i, glGetUniformLocation
+        self.program = shaders.compileProgram(
+            shaders.compileShader(BLOOM_VERTEX, GL_VERTEX_SHADER),
+            shaders.compileShader(BLOOM_FRAGMENT, GL_FRAGMENT_SHADER))
+        self.sampler = glGetUniformLocation(self.program, 'mask_texture')
+        self.step = glGetUniformLocation(self.program, 'pixel_step')
+        self.strength = glGetUniformLocation(self.program, 'halo_strength')
+        glUseProgram(self.program)
+        glUniform1i(self.sampler, 0)
+        glUseProgram(0)
+
+    def draw(self, width, height, strength=.55):
+        from OpenGL.GL import (glUseProgram, glUniform2f, glUniform1f,
+                               glBegin, glEnd, glTexCoord2f, glVertex2f,
+                               GL_TRIANGLE_STRIP)
+        glUseProgram(self.program)
+        glUniform2f(self.step, 1.0/max(1,width), 1.0/max(1,height))
+        glUniform1f(self.strength, float(strength))
+        glBegin(GL_TRIANGLE_STRIP)
+        for x,y,u,v in ((-1.,-1.,0.,0.),(1.,-1.,1.,0.),
+                        (-1.,1.,0.,1.),(1.,1.,1.,1.)):
+            glTexCoord2f(u,v)
+            glVertex2f(x,y)
+        glEnd()
+        glUseProgram(0)
+
+    def close(self):
+        from OpenGL.GL import glDeleteProgram
+        if self.program:
+            glDeleteProgram(self.program)
+            self.program = 0
