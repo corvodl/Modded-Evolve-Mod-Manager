@@ -67,9 +67,30 @@ class EasyModQtTests(unittest.TestCase):
             dialog.inspect()
             self.assertFalse(dialog.install_button.isEnabled())
             self.assertTrue(work.called)
-            work.call_args.kwargs["on_success"](fake_review)
+            from mod_install_safety import DiskSpacePreview
+            estimate = DiskSpacePreview(4, 4, 4, (("C:\\\\", 1000, 2000),), ())
+            work.call_args.kwargs["on_success"]((fake_review, estimate))
             self.assertTrue(dialog.install_button.isEnabled())
             self.assertIn("Game/libs.pak", dialog.summary.text())
+
+    def test_space_shortfall_refuses_enable_stage_button(self):
+        dialog = EasyModInstaller(self.manager, Path(self.temp.name) / "Profiles")
+        self.addCleanup(dialog.close)
+        from easy_mod_install import ModReview
+        from easy_mod_bundle import BundleReview
+        from mod_install_safety import DiskSpacePreview
+        source = Path(self.temp.name) / "libs.pak"
+        source.write_bytes(b"test")
+        bundle = BundleReview(source, (ModReview(
+            source, "Game/libs.pak", "libs.pak", 4, "a"*64, ("asset",)),))
+        with patch("qt_easy_mod_installer.begin_file_operation") as work:
+            dialog.choose(source)
+            dialog.inspect()
+            preview = DiskSpacePreview(4, 4, 4, (("disk", 2000, 1),),
+                                       ("Insufficient space",))
+            work.call_args.kwargs["on_success"]((bundle, preview))
+        self.assertFalse(dialog.install_button.isEnabled())
+        self.assertIn("Insufficient", dialog.space_label.text())
 
     def test_ctrl_k_palette_only_public_commands_and_search(self):
         palette = QuickCommandPalette(self.manager)
