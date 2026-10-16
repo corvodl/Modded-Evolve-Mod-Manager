@@ -5,6 +5,9 @@ never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
     ('1.2.6', (
+        "Patch 4: Preserve each source MTL submaterial identity, original slot, and resolved emissive reference when combining hunter, monster and wildlife character parts.",
+        "Patch 4: Allow verified Decal/Emittance glow to load even when a submaterial has no diffuse DDS; retain safe missing-material diagnostics.",
+        "Patch 4: Refresh scoped character, shared and global Asset Library textures before final assembly, and show precise glow decode status in the GPU viewer.",
         "Patch 3: Correct CryEngine ALPHAGLOW mask selection across all characters and models: independent Decal glow no longer inherits unrelated diffuse alpha.",
         "Patch 3: Preserve each emissive texture's own UV tiling and offsets in the GPU viewer, bloom pass, assembled character parts and Blender GLB export.",
         "Patch 3: Diagnose actual mesh-subset emission UV coverage, distinguish black sampled regions from nonblack atlases, and flag unsupported animated UV oscillators.",
@@ -12,11 +15,8 @@ RELEASE_NOTES = (
         "Patch 2: Show model-loading progress from geometry preparation until the existing bottom texture-loading bar takes over.",
         "Patch 2: Report unavailable GPU emissive shading and black baked glow maps without changing original textures.",
         "Patch 1: Export monsters as three separate Stage 1, 2 and 3 root GLBs, each carrying only animations verified against its own CDF/skeleton; keep hunters and wildlife unchanged.",
-        "Restore verified CryEngine emissive materials and glow masks in model previews and Blender GLB exports.",
-        "Add GPU emissive intensity and optional soft bloom while preserving distinct transparency and glow mask handling.",
         "Validate exported geometry, remove degenerate faces, and repair only small verified holes without disturbing skin vertex IDs.",
         "Clean up nearly identical UV coordinates without joining intentional UV seams or hard edges.",
-        "Record geometry repair diagnostics in exported GLBs and preserve stable diffuse, normal, gloss, AO, detail and reflection support.",
     )),
     ('1.2.5', (
         "Fix Asset Library's separate character export path so Emet and other characters use the single-GLB layout instead of loose meshes, Assemblies, and old CDF assembly reports.",
