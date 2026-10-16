@@ -213,8 +213,8 @@ class CharacterStageTests(unittest.TestCase):
             mesh = Path(tmp) / 'mesh'
             mesh.write_bytes(tiny_mesh())
             with patch('character_assembly._character_definition',
-                       return_value=(cdf, 'emet.chr', skins, {})), \\
-                 patch('character_assembly._resolve_file', return_value=mesh), \\
+                       return_value=(cdf, 'emet.chr', skins, {})), \
+                 patch('character_assembly._resolve_file', return_value=mesh), \
                  patch('character_assembly.load_preview_materials',
                        return_value=None):
                 body = assemble_character(None, cdf, {}, equipment='body')
@@ -236,8 +236,8 @@ class CharacterStageTests(unittest.TestCase):
             mesh.write_bytes(tiny_mesh())
             with patch('character_assembly._character_definition',
                        return_value=('characters/hunters/h/h.cdf', 'h.chr',
-                                     skins, {})), \\
-                 patch('character_assembly._resolve_file', return_value=mesh), \\
+                                     skins, {})), \
+                 patch('character_assembly._resolve_file', return_value=mesh), \
                  patch('character_assembly.load_preview_materials',
                        return_value=None):
                 model = assemble_character(
