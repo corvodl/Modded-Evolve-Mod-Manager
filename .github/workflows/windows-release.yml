@@ -33,6 +33,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if ! gh release view Main >/dev/null 2>&1; then
@@ -78,7 +79,9 @@ jobs:
           gh release create "$patchTag" "promotion/$setupName" "promotion/$zipName" "$manifest" \
             --target "$commit" --title "Evolve Mod Manager $version · Patch $revision" \
             --notes-file promotion/release-notes.md --latest
-          gh release view "$patchTag" --json tagName,assets,isLatest --jq '{tag: .tagName, latest: .isLatest, assets: [.assets[].name]}'
+          gh release view "$patchTag" --json tagName,assets --jq '{tag: .tagName, assets: [.assets[].name]}'
+          actualLatest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq '.tag_name')
+          [[ "$actualLatest" == "$patchTag" ]] || { echo "Latest release is $actualLatest, not $patchTag"; exit 1; }
 
   build-windows:
     name: Build portable Windows app
