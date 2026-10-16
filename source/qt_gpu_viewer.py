@@ -166,6 +166,9 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.detail_textures = []
         self.detail_normal_textures = []
         self.ao_textures = []
+        self.emissive_textures = []
+        self.emission_enabled = True
+        self.glow_strength = 1.
         self.environment_textures = []
         self._pending_texture_uploads = []
         self._gpu_upload_total_ms = 0.0
@@ -380,7 +383,7 @@ class QtGLModelCanvas(QOpenGLWidget):
 
     def _release_textures(self):
         from OpenGL.GL import glDeleteTextures
-        for name in ('textures','normal_textures','specular_textures','gloss_textures','detail_textures','detail_normal_textures','ao_textures','environment_textures'):
+        for name in ('textures','normal_textures','specular_textures','gloss_textures','detail_textures','detail_normal_textures','ao_textures','emissive_textures','environment_textures'):
             handles = getattr(self,name,[])
             if handles:
                 try:
@@ -409,6 +412,7 @@ class QtGLModelCanvas(QOpenGLWidget):
             ('detail_textures', getattr(self.materials, 'detail_maps', ()) if self.materials else ()),
             ('detail_normal_textures', getattr(self.materials, 'detail_normal_maps', ()) if self.materials else ()),
             ('ao_textures', getattr(self.materials, 'ao_maps', ()) if self.materials else ()),
+            ('emissive_textures', getattr(self.materials, 'emissive_maps', ()) if self.materials else ()),
             ('environment_textures', getattr(self.materials, 'environment_maps', ()) if self.materials else ()),
         )
         for target, images in groups:
@@ -714,7 +718,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                     for unit,group in ((0,self.textures),(1,self.normal_textures),
                                        (2,self.specular_textures),(3,self.gloss_textures),
                                        (4,self.detail_textures),(5,self.detail_normal_textures),
-                                       (7,self.ao_textures)):
+                                       (7,self.ao_textures),(8,self.emissive_textures)):
                         handle = group[slot] if use_uv and slot<len(group) else 0
                         glActiveTexture(GL_TEXTURE0+unit)
                         glBindTexture(GL_TEXTURE_2D,handle)
@@ -745,7 +749,10 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 uv_matrices={role: transform_for(self.materials,slot,role,seconds)
                                              for role in ('normal','specular','gloss','detail','detail_normal','ao')},
                                 alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
-                                unlit=self.unlit_diffuse,fill=self.studio_fill)
+                                unlit=self.unlit_diffuse,fill=self.studio_fill,
+                                emissive=slot<len(self.emissive_textures) and bool(self.emissive_textures[slot]),
+                                emissive_strength=self.glow_strength * (self.materials.emissive_strengths[slot] if self.materials and slot<len(getattr(self.materials,'emissive_strengths',())) else 0.),
+                                emission_enabled=self.emission_enabled)
                 if tex:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D,tex)
@@ -778,7 +785,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                 from OpenGL.GL import GL_TEXTURE_CUBE_MAP
                 glActiveTexture(GL_TEXTURE0+6)
                 glBindTexture(GL_TEXTURE_CUBE_MAP,0)
-                for unit in (7,5,4,3,2,1,0):
+                for unit in (8,7,5,4,3,2,1,0):
                     glActiveTexture(GL_TEXTURE0+unit)
                     glBindTexture(GL_TEXTURE_2D,0)
                 glEnable(GL_LIGHTING)
@@ -1117,6 +1124,20 @@ class QtGPUModelPanel(QWidget):
         self._view_advanced.addLayout(view_projection)
         inspector_secondary = QHBoxLayout()
         inspector_secondary.addWidget(QLabel('Gloss'))
+        self.emission_toggle = QCheckBox('Emissive glow')
+        self.emission_toggle.setChecked(True)
+        self.emission_toggle.toggled.connect(lambda checked: (
+            setattr(self.canvas, 'emission_enabled', checked), self.canvas.update()))
+        self._overlay_sections['Materials'][1].addWidget(self.emission_toggle)
+        self.glow_slider = QSlider(Qt.Horizontal)
+        self.glow_slider.setRange(0,300)
+        self.glow_slider.setValue(100)
+        self.glow_slider.valueChanged.connect(lambda value: (
+            setattr(self.canvas, 'glow_strength', value/100.), self.canvas.update()))
+        glow_row=QHBoxLayout()
+        glow_row.addWidget(QLabel('Glow intensity'))
+        glow_row.addWidget(self.glow_slider)
+        self._overlay_sections['Materials'][1].addLayout(glow_row)
         self.gloss_slider=QSlider(Qt.Horizontal)
         self.gloss_slider.setRange(0,100)
         self.gloss_slider.setValue(35)
