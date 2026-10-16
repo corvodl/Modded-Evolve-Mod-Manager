@@ -17,6 +17,46 @@ from workspace_file_actions import checked_path
 from performance_trace import span
 
 
+
+def refresh_character_material_index(index, relative, stage_root=None):
+    """Supplement an editor's possibly stale index with current verified assets.
+
+    The Qt explorer builds its preview index when the archive is opened; later
+    Asset Library imports and asynchronously warmed character/shared PAK
+    catalogs otherwise remain invisible to the final material decode even
+    though the texture diagnostic can see them. Include only exact virtual
+    paths from the selected actor, its category-shared assets and the game's
+    explicit global textures/ tree; never guess by matching another actor's
+    texture basename. The renderer and assembly share this same snapshot.
+    """
+    from asset_library import extracted_index
+    from evolve_pak_workspace import normalized_name
+    parts = normalized_name(relative).casefold().split('/')
+    if len(parts) < 4 or parts[:2] not in (
+            ['characters','hunters'], ['characters','monsters'],
+            ['characters','creatures']):
+        return index
+    actor = '/'.join(parts[:3]) + '/'
+    category_shared = '/'.join(parts[:2]) + '/shared/'
+    from shared_pak_cache import shared_asset_index
+    supplementary = (shared_asset_index(stage_root) if stage_root is not None
+                     else extracted_index())
+    if not supplementary:
+        return index
+    merged = {key:list(values) for key, values in index.items()}
+    for key, records in supplementary.items():
+        virtual = key.casefold()
+        if not virtual.startswith((actor, category_shared, 'textures/')):
+            continue
+        existing = merged.setdefault(key, [])
+        known = {str(item.get('file')) for item in existing}
+        for item in records:
+            filename = str(item.get('file'))
+            if filename not in known:
+                existing.append(item)
+                known.add(filename)
+    return merged
+
 def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                   texture_folder=None, animation_index=None, equipment=None,
                   index=None, require_assembly=False, cancel=None,
@@ -38,6 +78,9 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
             report = str(exc)
     if index is None:
         index = _workspace_index(workspace, projects_root, stage_root)
+    # Refresh AFTER the editor snapshot was captured. This is a read-only,
+    # scoped lookup: no mutations to the source index or game PAKs.
+    index = refresh_character_material_index(index, relative, stage_root)
     checkpoint()
     downstream_cancel = {'cancel': cancel} if cancel is not None else {}
     character = None
