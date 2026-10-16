@@ -77,7 +77,7 @@ def load_workspace(wdir):
     return data
 
 
-def safe_index_entries(wdir):
+def safe_index_manifest(wdir):
     """Read-only asset lookup over a verified workspace manifest.
 
     Ignore only empty-name, zero-byte placeholder metadata from older CryPAKs.
@@ -86,7 +86,7 @@ def safe_index_entries(wdir):
     """
     folder = Path(wdir)
     try:
-        return load_workspace(folder)['entries']
+        return load_workspace(folder)
     except ValueError as exc:
         if "Unsafe archive entry name: ''" not in str(exc):
             raise
@@ -100,8 +100,15 @@ def safe_index_entries(wdir):
                 raise ValueError('Empty archive entry contains data; cannot ignore.')
             continue
         good.append(entry)
+    if not good:
+        raise ValueError('Workspace manifest has no named data files.')
     list(check_paths(folder, good))
-    return good
+    return dict(data, entries=good)
+
+
+def safe_index_entries(wdir):
+    """Read-only safe named files; do not use for PAK rebuilds."""
+    return safe_index_manifest(wdir)['entries']
 
 
 def optional_filter(name, patterns):
