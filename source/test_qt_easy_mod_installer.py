@@ -56,10 +56,12 @@ class EasyModQtTests(unittest.TestCase):
         dialog = EasyModInstaller(self.manager, Path(self.temp.name) / "Profiles")
         self.addCleanup(dialog.close)
         from easy_mod_install import ModReview
+        from easy_mod_bundle import BundleReview
         file = Path(self.temp.name) / "libs.pak"
         file.write_bytes(b"test")
-        fake_review = ModReview(file, "Game/libs.pak", "libs.pak", 4,
-                                "a" * 64, ("Game/test.xml",))
+        entry = ModReview(file, "Game/libs.pak", "libs.pak", 4,
+                          "a" * 64, ("Game/test.xml",))
+        fake_review = BundleReview(file, (entry,))
         with patch("qt_easy_mod_installer.begin_file_operation") as work:
             dialog.choose(file)
             dialog.inspect()
