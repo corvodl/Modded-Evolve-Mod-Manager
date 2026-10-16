@@ -153,10 +153,33 @@ def build_cdf_folder_glbs(workspace, character_folder, index, *,
                 stage_root=stage_root)
             if not blob.startswith(b'glTF'):
                 raise ValueError('CDF assembly did not produce Blender-compatible GLB.')
+            info = dict(info)
+            # Put animations in the SAME Assemblies/<CDF>.glb as the mesh.
+            # Each variant is validated against its own CDF skeleton; importing
+            # one GLB into Blender now exposes its named Actions immediately.
+            # The separate animations/ sources and manifest remain supported.
+            try:
+                from character_animation_export import embed_verified_assembly_animations
+                blob, motion = embed_verified_assembly_animations(
+                    blob, character, index, workspace,
+                    relative=name, cancelled=cancelled, progress=progress)
+                info['embedded_animations'] = motion['animations']
+                info['embedded_animation_clips'] = tuple(motion['converted_clips'])
+                info['animation_note'] = motion['note']
+            except InterruptedError:
+                raise
+            except (ValueError, OSError, RuntimeError, TimeoutError) as exc:
+                # Missing/unsupported or mismatched CAF/DBA data never turns a
+                # valid assembled model into a failed export or invented motion.
+                info['embedded_animations'] = 0
+                info['embedded_animation_clips'] = ()
+                info['animation_note'] = 'Animation embedding unavailable: ' + str(exc)[:180]
             if total + len(blob) > max_total:
                 raise ValueError('Assembled GLB output exceeds 512 MiB safety budget.')
             total += len(blob)
             results[output.as_posix()] = (blob, dict(info, cdf=name))
+        except InterruptedError:
+            raise
         except (ValueError, OSError) as exc:
             skipped.append((name, str(exc)[:220]))
         if progress:
