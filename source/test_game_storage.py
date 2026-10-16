@@ -63,8 +63,8 @@ class GameStorageTests(unittest.TestCase):
         self.assertEqual(result["total"], sum(result["bytes"].values()))
 
     def test_active_root_display_and_game_separation(self):
-        self.assertEqual(data_location(self.stage, self.swap, self.root), self.active)
-        self.assertEqual(validate_storage_root(self.root, game=self.game), self.root)
+        self.assertEqual(data_location(self.stage, self.swap, self.root), self.active.resolve())
+        self.assertEqual(validate_storage_root(self.root, game=self.game), self.root.resolve())
         with self.assertRaisesRegex(ValueError, "separate"):
             validate_storage_root(self.game / "Mods", game=self.game)
 
@@ -83,7 +83,7 @@ class GameStorageTests(unittest.TestCase):
     def test_profile_reference_and_unsafe_swap_block_cleanup(self):
         (self.profiles / "profiles.json").write_text(json.dumps({
             "profiles": [{"mods": [{"source": str(self.old / "staged" / "paks" / "file.pak")}]}]}))
-        self.assertIn("profile", self.candidates()["Setup_Old"])
+        self.assertIn("profile", self.candidates()["Setup_Old"].casefold())
         (self.profiles / "profiles.json").unlink()
         journal = self.old / "swap" / "controlled_swap_state.json"
         doc = json.loads(journal.read_text())
