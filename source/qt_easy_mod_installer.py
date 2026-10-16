@@ -154,6 +154,11 @@ class EasyModInstaller(QDialog):
         lines = ["Package: " + bundle.source.name,
                  f"Verified signed PAKs: {len(bundle.entries)}",
                  f"Modified assets: {sum(len(x.changed_entries) for x in bundle.entries)}"]
+        reused = sum(
+            (self.profiles_root / "ImportedMods" / entry.sha256 /
+             entry.pak_filename).is_file() for entry in bundle.entries)
+        if reused:
+            lines.append(f"Existing library matches: {reused}  ·  hashes rechecked on import")
         for entry in bundle.entries:
             lines.append(
                 f"Compatible target: {entry.target}  ·  {entry.size / 1048576:.1f} MiB"
