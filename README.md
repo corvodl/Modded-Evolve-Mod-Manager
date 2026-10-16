@@ -6,13 +6,18 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 **Version:** 1.2.4 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.4 (Release candidate — pending validation)
+## Latest Stable — v1.2.4
 
-- Import individually verified assembled CDF characters into Blender as one GLB, with compatible named CAF/DBA Actions bound to the correct original skeleton.
-- Expand native CAF conversion to as many as 256 verified clips per assembly within size and resource safety limits; report unsupported clips explicitly.
-- Preserve compatible 2012 CryTek master-skeleton DBA conversion and reject unsupported or mismatched rigs rather than inventing motion.
-- Show per-assembly Blender animation counts, clip names and skip reasons after export, while keeping the separate animation manifest for diagnostics.
-- Add Settings integration for installing the optional standalone Blender Animation Browser through Blender's own extension system, with safe version and package checks.
+- Export character-named rigged GLBs with compatible animations and embedded textures, plus categorized animations/, textures/ and models/ assets including equipment.
+- Install the optional verified Evolve Animation Browser through Settings → Blender Integration.
+- Silence auto-restore watchdog console flashes during game process monitoring.
+
+- Review and install signed PAK or multi-PAK ZIP mods with validation, deduplication and conflict checks.
+- Manage installed mod profiles, installation history, undo, and Verify & Repair for matching source files.
+- Preview required disk space, choose mod storage locations, reuse verified setups, and safely clean up old setups.
+- Open Quick Commands with Ctrl+K and use streamlined Modding and Settings workflows.
+- View System Health diagnostics and launch/recovery safety checks.
+- Improve project filtering, editor lifecycle, and main-menu promotional visibility persistence.
 
 ## Download and install
 
@@ -48,10 +53,6 @@ On Windows with a working OpenGL driver, the model pane now tries the embedded G
 The **Data** archive generally contains meshes, skeleton files and animation configuration references; the **TS** archive supplies texture streams and may include other companion animation assets depending on its actual contents. Sunny's provided texture archive contains DDS fragments but **no** CAF or DBA animation tracks. The bspace/comb definitions are not animated joint keyframes.
 
 GLB export now also includes the original **bone hierarchy, inverse-bind matrices, and per-vertex skin weights** when a compatible character **.skin** or **.chr** file accompanies the matching render-mesh **.skinm** or **.chrm**. The converter resolves per-subset local bone palettes, verifies joint transforms and refuses inconsistent skinning data. In **Edit Files → Models**, the export result explicitly says whether the model was rigged and gives a reason when not.
-
-**Install the optional Blender Animation Browser from Settings:** In the manager, open **Settings → Blender Integration → Install / Update Blender Add-on…**. The button looks for the standalone `Evolve_Animation_Browser_v1.1.0.zip` in Downloads or the app folder; you can also browse to the official ZIP. Select Blender 4.2 or newer if multiple installations are present. The manager validates the exact ZIP before asking Blender to install and enable the extension in its **User Default** repository. Close or restart any currently open Blender window after installation, press **N** in the 3D Viewport, and open the **Evolve** tab. This feature is optional, requires no game installation, and does not attach the add-on to every export. Offline installation needs the ZIP to be already downloaded; the manager does not download unverified code.
-
-**Assembly GLB animation embedding (proposed update):** When exporting a character folder, each verified `Assemblies/<CDF>.glb` now includes its *own compatible converted Actions* alongside the mesh, materials and armature. In Blender, import that one GLB and use **Dope Sheet → Action Editor** (or the optional Evolve Animation Browser add-on) to select and preview clips. There is no need to import an extra animated GLB. Every CDF's skeleton is checked independently; unrigged or incompatible variants remain ordinary models and report `embedded_animations: 0` and an explanation under `cdf_assemblies` in `asset_sources.json`. The manager still writes the existing `animations/` source/compatibility manifest for inspection. The supported 2012 0x745/0x905 DBA pathway continues using the manager's verified external Cryengine Converter and original master rig; raw CAF/DBA files are **not** automatically made playable without successful conversion. This change is pending its own Windows validation and is not part of already published v1.2.3.
 
 **Animation conversion is selective:** the exporter only attaches verified CAF/DBA keyframes that match the selected character rig. The `animations/` folder contains a rigged animated GLB when supported, original resolved motion sources in `sources/`, and a compatibility manifest even when no motion can be exported. BSPACE/COMB graphs and an arbitrary CAF/DBA filename are not themselves Blender actions. Edited Blender meshes still cannot be repackaged automatically into native Evolve model files.
 
@@ -164,3 +165,5 @@ Version **1.0.1** marks the application's first official release, **not** a clai
 ## Credits
 
 Project by **@CorvoDL**. [Source repository](https://github.com/corvodl/Modded-Evolve-Mod-Manager) · [Required Modded Evolve client](https://modded-evolve.com/).
+
+**Optional Blender Animation Browser:** Use Settings → Blender Integration to install the verified v1.1.0 ZIP in Blender 4.2+.

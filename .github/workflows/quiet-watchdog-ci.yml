@@ -1,0 +1,22 @@
+name: Verify quiet Windows game restore watchdog
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  watchdog:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify process polling is console-free on Windows
+        run: python -m unittest discover -s source -p test_auto_restore_watch.py -v

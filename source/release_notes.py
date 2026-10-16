@@ -10,6 +10,12 @@ RELEASE_NOTES = (
         "Preserve compatible 2012 CryTek master-skeleton DBA conversion and reject unsupported or mismatched rigs rather than inventing motion.",
         "Show per-assembly Blender animation counts, clip names and skip reasons after export, while keeping the separate animation manifest for diagnostics.",
         "Add Settings integration for installing the optional standalone Blender Animation Browser through Blender's own extension system, with safe version and package checks.",
+        "Review and install signed PAK or multi-PAK ZIP mods with validation, deduplication and conflict checks.",
+        "Manage installed mod profiles, installation history, undo, and Verify & Repair for matching source files.",
+        "Preview required disk space, choose mod storage locations, reuse verified setups, and safely clean up old setups.",
+        "Open Quick Commands with Ctrl+K and use streamlined Modding and Settings workflows.",
+        "View System Health diagnostics and launch/recovery safety checks.",
+        "Improve project filtering, editor lifecycle, and main-menu promotional visibility persistence.",
     )),
     ('1.2.3', (
         "Patch 2: Add a collapsible, on-demand System Health dashboard for firewall rules, running processes, crash/support tools, storage and environment checks.",

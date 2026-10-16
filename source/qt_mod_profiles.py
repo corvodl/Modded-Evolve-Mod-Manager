@@ -11,11 +11,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton,
     QFileDialog, QInputDialog, QMessageBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QCheckBox
+    QHeaderView, QAbstractItemView, QCheckBox, QPlainTextEdit,
+    QApplication
 )
 
 from mod_profiles import ModProfiles
 from universal_stage import allowed_paks
+from mod_install_receipts import list_receipts
+from mod_install_safety import verify_collection, repair_mod_source
+from qt_background_exports import begin_file_operation, exports_busy
 
 
 class ModProfilesDialog(QDialog):
@@ -26,7 +30,7 @@ class ModProfilesDialog(QDialog):
         self.on_apply = on_apply
         self.suggested_pak = suggested_pak
         self._filling = False
-        self.setWindowTitle('Mod Profiles 2.0 — Library and Sharing')
+        self.setWindowTitle('Installed Mods — Library and Collections')
         self.resize(910, 625)
         self.setMinimumSize(690, 480)
         root_layout = QVBoxLayout(self)
@@ -49,12 +53,17 @@ class ModProfilesDialog(QDialog):
                 ('Import Shared Profile…', self.import_shared),
                 ('Export Profile…', self.export_shared)):
             tools.addWidget(self._button(label,callback))
+        self.verify_button = self._button('Verify & Repair…', self.verify_and_repair)
+        self.verify_button.setObjectName('verifyInstalledMods')
+        tools.addWidget(self.verify_button)
+        tools.addWidget(self._button('Installation History…', self.show_receipts))
         tools.addStretch()
         root_layout.addLayout(tools)
 
-        self.table = QTableWidget(0, 4)
+        self.table = QTableWidget(0, 5)
+        self.table.setObjectName("installedModsTable")
         self.table.setHorizontalHeaderLabels(
-            ('Enabled', 'PAK target', 'Mod file', 'Verified SHA256'))
+            ('Enabled', 'Mod', 'Target PAK', 'Compatibility', 'State'))
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -64,11 +73,15 @@ class ModProfilesDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.table.itemChanged.connect(self._toggled)
         root_layout.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
         actions.addWidget(self._button('Add signed PAK…', self.add_mod))
+        repair_button = self._button('Repair Selected Source…', self.repair_selected_source)
+        repair_button.setObjectName('repairSelectedModSource')
+        actions.addWidget(repair_button)
         actions.addWidget(self._button('Remove selected', self.remove_mod))
         actions.addWidget(self._button('Move Up', lambda: self.move_selected(-1)))
         actions.addWidget(self._button('Move Down', lambda: self.move_selected(1)))
@@ -136,40 +149,194 @@ class ModProfilesDialog(QDialog):
             if profile:
                 mods = profile['mods']
                 self.table.setRowCount(len(mods))
+                try:
+                    verified_targets = set(allowed_paks(self.stage_path))
+                    from universal_stage import digest
+                    plan_path = self.stage_path / 'rekey_plan.json'
+                    current_fingerprint = digest(plan_path) if plan_path.is_file() else None
+                    signing_ready = True
+                except (OSError, ValueError, RuntimeError):
+                    verified_targets, current_fingerprint, signing_ready = set(), None, False
+                state = self.store.status()
+                applied_mod_ids = set()
+                if (state['profile_id'] == profile['id']
+                        and not state['in_progress'] and not state['pending']
+                        and self.store.applied_path.is_file()):
+                    import json
+                    applied = json.loads(
+                        self.store.applied_path.read_text(encoding='utf-8'))
+                    if Path(applied.get('stage', '')).resolve() == self.stage_path.resolve():
+                        applied_mod_ids = {entry.get('mod_id')
+                                           for entry in applied.get('entries', [])}
                 for i, mod in enumerate(mods):
                     checked = QTableWidgetItem()
                     checked.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
                     checked.setCheckState(Qt.Checked if mod['enabled'] else Qt.Unchecked)
                     checked.setData(Qt.UserRole, mod['id'])
                     self.table.setItem(i, 0, checked)
-                    values = (mod['relative'], Path(mod['source']).name,
-                              mod['sha256'][:16] + '…')
-                    for j, value in enumerate(values, 1):
-                        item = QTableWidgetItem(value)
-                        item.setToolTip(mod['source'] if j == 2 else mod['sha256'])
-                        self.table.setItem(i, j, item)
+                    source = Path(mod['source'])
+                    if not source.is_file():
+                        compatibility = 'Missing source'
+                    elif not signing_ready:
+                        compatibility = 'Check stage'
+                    elif mod['relative'].casefold() not in verified_targets:
+                        compatibility = 'Incompatible target'
+                    elif (current_fingerprint and
+                          mod.get('verified_stage_fingerprint') == current_fingerprint):
+                        compatibility = 'Verified for stage'
+                    elif mod.get('verified_stage_fingerprint') and current_fingerprint:
+                        compatibility = 'Review this build'
+                    else:
+                        compatibility = 'Target recognized'
+                    status = ('Staged' if mod['enabled'] and mod['id'] in applied_mod_ids
+                              else 'Enabled' if mod['enabled'] else 'Disabled')
+                    title = mod.get('display_name') or source.stem
+                    values = (title, mod['relative'], compatibility, status)
+                    for col, value in enumerate(values, 1):
+                        item = QTableWidgetItem(str(value))
+                        item.setToolTip('Signed PAK: ' + str(source) +
+                                        '\nVerified SHA256: ' + mod['sha256'] +
+                                        '\nCompatibility checks target identity, not runtime behavior.')
+                        self.table.setItem(i, col, item)
                 self.table.resizeRowsToContents()
-                _, problems = self.store.plan(profile['id'], self.stage_path,
-                                               verify_files=False)
+                _, problems = self.store.plan(profile['id'], self.stage_path, verify_files=False)
                 self.status.setText(
                     '%d mods, %d enabled. %s' %
                     (len(mods), sum(bool(m['enabled']) for m in mods),
                      'Conflict: ' + '; '.join(problems[:3]) if problems
                      else 'No enabled-target conflicts detected.'))
             else:
-                self.status.setText('Create a profile to organize your modified PAKs.')
+                self.status.setText('Create a collection to organize installed mods.')
             state = self.store.status()
             if state['in_progress'] or state['pending']:
                 self.status.setText(self.status.text() +
-                                    ' Previous apply was interrupted; restore or resume before changing profiles.')
+                                    ' A profile operation is interrupted; inspect recovery before changing mods.')
             elif state['profile_id']:
                 active = next((p['name'] for p in self.store.list_profiles()
                                if p['id'] == state['profile_id']), 'Earlier profile')
-                self.status.setText(self.status.text() + ' Applied: ' + active + '.')
+                self.status.setText(self.status.text() + ' Staged: ' + active + '.')
         except Exception as exc:
-            self.status.setText('Profile status unavailable: ' + str(exc))
+            self.status.setText('Mod library status unavailable: ' + str(exc))
         finally:
             self._filling = False
+
+    def verify_and_repair(self):
+        """Read-only, explicitly requested collection verification."""
+        try:
+            profile_id = self._selected()
+            if exports_busy(self):
+                return
+            self.verify_button.setEnabled(False)
+            def completed(issues):
+                self.verify_button.setEnabled(True)
+                if not issues:
+                    QMessageBox.information(
+                        self, 'Mod Verification',
+                        'All tracked mod sources match their SHA256 hashes, '
+                        'PAK targets are recognized, and there are no enabled-target '
+                        'collisions. This does not guarantee runtime compatibility.')
+                    self.refresh()
+                    return
+                lines = [f'{x.target}: {x.problem}' for x in issues]
+                QMessageBox.warning(
+                    self, 'Mod Verification — attention needed',
+                    '\n'.join(lines[:16]) +
+                    ('\n…More issues exist.' if len(lines) > 16 else '') +
+                    '\n\nTo relink a missing or altered source, select that mod '
+                    'and choose Repair Selected Source… below. No data was changed.')
+                self.refresh()
+            def failed(error):
+                self.verify_button.setEnabled(True)
+                QMessageBox.warning(self, 'Mod Verification failed', str(error))
+            begin_file_operation(
+                self, 'Verify installed mods',
+                'Reading signed mod hashes and conflicts (no writes)…',
+                lambda _progress, cancelled:
+                verify_collection(self.store.root, profile_id, self.stage_path)
+                if not cancelled() else (_ for _ in ()).throw(
+                    InterruptedError('Cancelled')),
+                on_success=completed, on_error=failed)
+        except Exception as exc:
+            self.verify_button.setEnabled(True)
+            self._error(exc)
+
+    def repair_selected_source(self):
+        """Only relink after the user identifies and approves a byte-identical PAK."""
+        try:
+            profile_id = self._selected()
+            mod_id = self._selected_mod_id()
+            source, _ = QFileDialog.getOpenFileName(
+                self, 'Locate exact replacement for missing/changed PAK',
+                '', 'Signed PAK files (*.pak)')
+            if not source:
+                return
+            if QMessageBox.question(
+                    self, 'Confirm mod source repair',
+                    'Verify the selected replacement against the saved SHA256, '
+                    'current signed stage and RSA archive layout, then register '
+                    'a durable local copy? This will not stage or modify game PAKs.',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No) != QMessageBox.Yes:
+                return
+            if exports_busy(self):
+                return
+            self.verify_button.setEnabled(False)
+            def completed(destination):
+                self.verify_button.setEnabled(True)
+                self.reload(select=profile_id)
+                QMessageBox.information(
+                    self, 'Source repaired',
+                    'The exact verified mod has been relinked to the local library. '
+                    'No signing-stage or installed game files were changed.')
+            def failed(error):
+                self.verify_button.setEnabled(True)
+                QMessageBox.warning(self, 'Mod repair refused', str(error))
+            begin_file_operation(
+                self, 'Repair verified mod source',
+                'Verifying exact SHA256 and signed PAK before relinking…',
+                lambda _progress, cancelled:
+                repair_mod_source(self.store.root, profile_id, mod_id,
+                                  source, self.stage_path)
+                if not cancelled() else (_ for _ in ()).throw(
+                    InterruptedError('Cancelled')),
+                on_success=completed, on_error=failed)
+        except Exception as exc:
+            self._error(exc)
+
+    def show_receipts(self):
+        """On-demand, copyable installation history with status from journals."""
+        rows = list_receipts(self.store.root)
+        if not rows:
+            QMessageBox.information(self, 'Installation History',
+                                    'No verified mod imports recorded yet.')
+            return
+        dialog = QDialog(self)
+        dialog.setObjectName('modInstallationHistory')
+        dialog.setWindowTitle('Installation History')
+        dialog.resize(690, 410)
+        layout = QVBoxLayout(dialog)
+        summary = QPlainTextEdit(dialog)
+        summary.setObjectName('modInstallationHistoryText')
+        summary.setReadOnly(True)
+        lines = []
+        for receipt in rows:
+            lines.append(receipt.get('created_utc', '?') +
+                         '  ·  ' + receipt.get('status', 'unknown'))
+            lines.extend('    ' + record.get('target', 'Unknown') +
+                         ' · ' + str(record.get('changed_assets', '?')) + ' assets'
+                         for record in receipt.get('entries', []))
+            lines.append('    ' + receipt.get('note', ''))
+            lines.append('')
+        summary.setPlainText('\n'.join(lines))
+        layout.addWidget(summary)
+        actions = QHBoxLayout()
+        copy = self._button('Copy Summary', lambda: QApplication.clipboard().setText(
+            summary.toPlainText()))
+        actions.addWidget(copy)
+        actions.addStretch()
+        actions.addWidget(self._button('Close', dialog.accept))
+        layout.addLayout(actions)
+        dialog.exec()
 
     def duplicate_profile(self):
         try:

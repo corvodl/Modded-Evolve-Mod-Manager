@@ -53,7 +53,14 @@ def write_state(state):
 def task_names():
     if os.name != 'nt':
         return set()
-    result = subprocess.run(['tasklist', '/FO', 'CSV', '/NH'], capture_output=True, text=True)
+    # The detached auto-restore watchdog calls this every 2 seconds while
+    # the game is running. From a GUI/console-free PyInstaller worker, Windows
+    # otherwise flashes a new tasklist console for each poll. Do not hide
+    # the watchdog itself: it must still monitor and restore original files.
+    result = subprocess.run(
+        ['tasklist', '/FO', 'CSV', '/NH'],
+        capture_output=True, text=True,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     if result.returncode:
         stop('Could not query processes (tasklist).')
     names = set()

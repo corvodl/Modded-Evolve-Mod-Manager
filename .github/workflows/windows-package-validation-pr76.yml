@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build-and-install:
-    if: github.event_name != 'pull_request' || github.event.pull_request.number == 76 || github.event.pull_request.number == 77 || github.event.pull_request.number == 78 || github.event.pull_request.number == 81 || github.head_ref == 'feature/embedded-assembly-animations'
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 76 || github.event.pull_request.number == 77 || github.event.pull_request.number == 78 || github.event.pull_request.number == 81 || github.event.pull_request.number == 82 || github.event.pull_request.number == 83
     runs-on: windows-2022
     timeout-minutes: 120
     env:
@@ -55,15 +55,13 @@ jobs:
         run: |
           $exe = (Resolve-Path '.build/app-dist/EvolveModManager/EvolveModManager.exe').Path
           $image = (Join-Path (Get-Location) 'dist/PR76-actual-Windows-window.png')
-          if ('${{ github.event.pull_request.number }}' -eq '81') {
-            # The PR81 packaged GUI has a requireAdministrator UAC manifest.
-            # Headless CI must not auto-consent to UAC or hang on the consent UI.
-            # Validate its packaged EXE existence and capture real Windows Qt
-            # widgets from the same tested source in non-elevating capture mode.
-            if ((Get-Item $exe).Length -lt 1048576) { throw 'Packaged GUI is unexpectedly small' }
+          # The PR82 branch may inherit PR81's requireAdministrator
+          # manifest when rebased. Never auto-consent to elevation on CI.
+          $manifestSpec = Get-Content 'source/EvolveModManager.spec' -Raw
+          if ($manifestSpec.Contains('uac_admin=')) {
             & '.build/venv/Scripts/python.exe' 'source/qt_manager.py' '--capture-screenshot' $image
             if ($LASTEXITCODE -ne 0 -or !(Test-Path $image)) {
-              throw 'Native Windows Qt screenshot failed'
+              throw 'Source Qt Windows capture failed; UAC cannot be bypassed in CI'
             }
           } else {
             $proc = Start-Process -FilePath $exe -ArgumentList @('--capture-screenshot', $image) -PassThru
