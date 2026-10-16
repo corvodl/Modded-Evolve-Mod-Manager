@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QTableWidget
 from PySide6.QtTest import QSignalSpy
 from qt_manager import QtManager, SECTIONS
@@ -108,12 +109,21 @@ class Beta35QtIntegrationTests(unittest.TestCase):
                 self.assertTrue(ready.count() or ready.wait(5000),
                                 'Background inventory did not finish')
                 self.app.processEvents()
-                # Changes are intentionally deferred until an explicit row
-                # selection; first paint must not perform an asset diff.
-                restored.project_table.selectRow(0)
+                # Grouped project views add a non-project target header.
+                # Select the actual workspace record, not the header, before
+                # requesting on-demand validation of edited assets.
+                table = restored.project_table
+                project_rows = [
+                    i for i in range(table.rowCount())
+                    if table.item(i, 0) is not None
+                    and table.item(i, 0).data(Qt.UserRole) == row["workspace"]
+                ]
+                self.assertEqual(project_rows, [1])
+                table.selectRow(project_rows[0])
                 restored.refresh_project_changes()
             try:
-                self.assertEqual(restored.project_table.rowCount(), 1)
+                self.assertEqual(restored.project_table.rowCount(), 2)
+                self.assertIsNone(restored.project_table.item(0, 0).data(Qt.UserRole))
                 self.assertIn("old project needs review", restored.status.toolTip())
             finally:
                 restored.close()

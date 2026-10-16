@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build-and-install:
-    if: github.event_name != 'pull_request' || github.event.pull_request.number == 76 || github.event.pull_request.number == 77 || github.event.pull_request.number == 78
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 76 || github.event.pull_request.number == 77 || github.event.pull_request.number == 78 || github.event.pull_request.number == 81
     runs-on: windows-2022
     timeout-minutes: 120
     env:
@@ -55,11 +55,23 @@ jobs:
         run: |
           $exe = (Resolve-Path '.build/app-dist/EvolveModManager/EvolveModManager.exe').Path
           $image = (Join-Path (Get-Location) 'dist/PR76-actual-Windows-window.png')
-          $proc = Start-Process -FilePath $exe -ArgumentList @('--capture-screenshot', $image) -PassThru
-          try {
-            if (-not $proc.WaitForExit(90000)) { $proc.Kill(); throw 'Compiled GUI screenshot timed out' }
-            if ($proc.ExitCode -ne 0 -or !(Test-Path $image)) { throw 'Compiled Windows GUI did not render' }
-          } finally { $proc.Dispose() }
+          if ('${{ github.event.pull_request.number }}' -eq '81') {
+            # The PR81 packaged GUI has a requireAdministrator UAC manifest.
+            # Headless CI must not auto-consent to UAC or hang on the consent UI.
+            # Validate its packaged EXE existence and capture real Windows Qt
+            # widgets from the same tested source in non-elevating capture mode.
+            if ((Get-Item $exe).Length -lt 1048576) { throw 'Packaged GUI is unexpectedly small' }
+            & '.build/venv/Scripts/python.exe' 'source/qt_manager.py' '--capture-screenshot' $image
+            if ($LASTEXITCODE -ne 0 -or !(Test-Path $image)) {
+              throw 'Native Windows Qt screenshot failed'
+            }
+          } else {
+            $proc = Start-Process -FilePath $exe -ArgumentList @('--capture-screenshot', $image) -PassThru
+            try {
+              if (-not $proc.WaitForExit(90000)) { $proc.Kill(); throw 'Compiled GUI screenshot timed out' }
+              if ($proc.ExitCode -ne 0 -or !(Test-Path $image)) { throw 'Compiled Windows GUI did not render' }
+            } finally { $proc.Dispose() }
+          }
       - name: Verify portable ZIP, exact build SHA and native crypto licenses
         shell: pwsh
         run: |

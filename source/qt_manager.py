@@ -1346,6 +1346,22 @@ class QtManager(QMainWindow):
         root.addWidget(_label(
             'Projects contain your editable copies. The Asset Library keeps the original PAKs.',
             muted=True))
+        # Lightweight project grouping/filtering operates on the last loaded
+        # catalog result, never rescans a large Asset Library while typing.
+        project_filters = QHBoxLayout()
+        self.project_filter = QLineEdit()
+        self.project_filter.setObjectName('projectQuickFilter')
+        self.project_filter.setPlaceholderText('Find workspace, target PAK or build…')
+        self.project_filter.textChanged.connect(self._render_project_table)
+        project_filters.addWidget(self.project_filter, 1)
+        self.project_group_toggle = QCheckBox('Group by target PAK')
+        self.project_group_toggle.setObjectName('projectGroupToggle')
+        self.project_group_toggle.setChecked(True)
+        self.project_group_toggle.toggled.connect(self._render_project_table)
+        project_filters.addWidget(self.project_group_toggle)
+        root.addLayout(project_filters)
+        self._project_all_rows = ()
+        self._project_group_expanded = {}
         self.project_table = QTableWidget(0, 6)
         self.project_table.setObjectName('moddingProjectTable')
         self.project_table.setHorizontalHeaderLabels(
@@ -1358,7 +1374,10 @@ class QtManager(QMainWindow):
         self.project_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.project_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.project_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
-        self.project_table.itemDoubleClicked.connect(lambda _: self.open_active_project())
+        self.project_table.itemDoubleClicked.connect(
+            lambda _: self.open_active_project()
+            if self.selected_project_context() is not None else None)
+        self.project_table.cellClicked.connect(self._project_row_clicked)
         self.project_table.itemSelectionChanged.connect(self.refresh_project_changes)
         self.project_split = configure_splitter(QSplitter(Qt.Vertical))
         self.project_split.setObjectName('moddingProjectSplitter')
@@ -1530,33 +1549,98 @@ class QtManager(QMainWindow):
             except (OSError, ValueError, KeyError) as exc:
                 self._log('Project list: ' + str(exc)[:240])
                 rows = ()
-        current = self.current_workspace
+        self._project_all_rows = tuple(rows)
         self._project_rows = {record['workspace']: record for record in rows}
+        self._render_project_table(skip_changes=skip_changes)
+
+    def _project_row_clicked(self, row, _column):
+        item = self.project_table.item(row, 0)
+        group = item.data(Qt.UserRole + 1) if item else None
+        if not group:
+            return
+        self._project_group_expanded[group] = not self._project_group_expanded.get(group, True)
+        self._render_project_table(skip_changes=True)
+
+    def _render_project_table(self, *_unused, skip_changes=False):
+        """Display target groups with collapsible headers and exact folder names."""
+        from collections import defaultdict
+        records = tuple(getattr(self, '_project_all_rows', ()))
+        term = self.project_filter.text().casefold().strip()
+        records = [r for r in records if not term or term in
+                   (' '.join((str(r.get('label', '')), str(r['workspace']),
+                              str(r.get('target_archive', '')),
+                              str(r.get('source_build_id') or '')))).casefold()]
+        grouped = self.project_group_toggle.isChecked()
+        if grouped:
+            by_target = defaultdict(list)
+            for record in records:
+                by_target[str(record.get('target_archive') or 'Unknown target')].append(record)
+            entries = []
+            for target in sorted(by_target, key=str.casefold):
+                key = target.casefold()
+                members = sorted(by_target[target],
+                                 key=lambda r: (Path(r['workspace']).name.casefold(),
+                                                r['workspace'].casefold()))
+                expanded = self._project_group_expanded.get(key, True)
+                entries.append(('group', target, key, len(members), expanded))
+                if expanded:
+                    entries.extend(('project', row) for row in members)
+        else:
+            entries = [('project', row) for row in sorted(
+                records, key=lambda r: (str(r.get('target_archive', '')).casefold(),
+                                        Path(r['workspace']).name.casefold()))]
         table = self.project_table
-        # During bulk population Qt emits selection changes that trigger
-        # expensive per-project diff verification; only validate on an
-        # explicit user selection (or a normal manual Refresh).
-        previously_blocked = table.blockSignals(True)
+        selected = self.selected_project_context()
+        current = selected['workspace'] if selected else self.current_workspace
+        blocked = table.blockSignals(True)
         table.setSortingEnabled(False)
-        table.setRowCount(len(rows))
-        for i, item in enumerate(rows):
-            values = (item.get('label', ''), item.get('target_archive', 'unknown'),
+        table.clearSpans()
+        table.setRowCount(len(entries))
+        table.clearSelection()
+        table.setCurrentCell(-1, -1)
+        selection_row = None
+        for row, entry in enumerate(entries):
+            if entry[0] == 'group':
+                _, name, key, count, expanded = entry
+                heading = QTableWidgetItem(
+                    ('▾  ' if expanded else '▸  ') + name + f'  ·  {count} project(s)')
+                heading.setData(Qt.UserRole + 1, key)
+                heading.setFlags(Qt.ItemIsEnabled)
+                font = heading.font()
+                font.setBold(True)
+                heading.setFont(font)
+                heading.setToolTip('Click to ' +
+                                   ('collapse' if expanded else 'expand') +
+                                   ' projects for this target PAK')
+                for col in range(6):
+                    table.setItem(row, col, heading if col == 0 else QTableWidgetItem(''))
+                continue
+            item = entry[1]
+            workspace = Path(item['workspace'])
+            try:
+                updated = datetime.fromtimestamp(workspace.stat().st_mtime).strftime('%Y-%m-%d')
+            except OSError:
+                updated = 'Unknown'
+            details = item.get('details') or 'Ready'
+            values = (workspace.name, item.get('target_archive', 'unknown'),
                       str(item['changed']), item.get('source_build_id') or 'Unassigned',
-                      item['status'], item.get('details') or 'Ready')
-            for j, value in enumerate(values):
-                cell = QTableWidgetItem(value)
-                if j == 0:
+                      item['status'], f'Edited {updated} · {details}')
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                if col == 0:
                     cell.setData(Qt.UserRole, item['workspace'])
-                table.setItem(i, j, cell)
-        table.setSortingEnabled(True)
-        for i in range(table.rowCount()):
-            if table.item(i, 0).data(Qt.UserRole) == current:
-                table.selectRow(i)
-                break
-        table.blockSignals(previously_blocked)
+                    cell.setToolTip('Workspace: ' + str(workspace) +
+                                    '\nProject label: ' + str(item.get('label', workspace.name)))
+                table.setItem(row, col, cell)
+            if item['workspace'] == current:
+                selection_row = row
+        # Sorting while grouped scatters headers and breaks identity, so
+        # only the ungrouped view allows Qt column sorting.
+        table.setSortingEnabled(not grouped)
+        if selection_row is not None:
+            table.selectRow(selection_row)
+        table.blockSignals(blocked)
         if skip_changes:
-            # Diff/asset validation can be just as expensive as discovery.
-            # It runs only if the user selects an actual workspace row.
             self.project_changes_table.setRowCount(0)
             self._sync_project_quick_actions()
         else:
@@ -1597,17 +1681,7 @@ class QtManager(QMainWindow):
             self.output_pak = ''
             self.output_input.setText('')
             self.persist()
-            from qt_workspace_editor import QtWorkspaceEditor
-            for existing in self.editors:
-                if existing.isVisible() and getattr(existing, 'workspace', None) == workspace:
-                    existing.raise_()
-                    existing.activateWindow()
-                    return
-            editor = QtWorkspaceEditor(self, workspace)
-            editor.setAttribute(Qt.WA_DeleteOnClose, False)
-            self.editors.append(editor)
-            editor.show()
-            editor.raise_()
+            self._open_project_workspace(workspace)
         except (OSError, ValueError, RuntimeError) as exc:
             self.failure(exc)
 
@@ -2835,24 +2909,32 @@ class QtManager(QMainWindow):
         else:
             self._open_project_workspace(folder)
 
-    def _open_project_workspace(self, folder):
+    def _open_project_workspace(self, folder, *, archive_map=None):
+        """Reopen the live editor; never retain or reuse deleted Qt wrappers."""
+        from shiboken6 import isValid
         from qt_workspace_editor import QtWorkspaceEditor
         workspace = Path(folder).resolve(strict=True)
-        for editor in self.editors:
-            if (isinstance(editor, QtWorkspaceEditor) and editor.isVisible()
-                    and editor.workspace == workspace):
-                editor.raise_()
-                editor.activateWindow()
-                return
-        editor = QtWorkspaceEditor(self, workspace)
-        editor.setAttribute(Qt.WA_DeleteOnClose, False)
-        self.editors.append(editor)
+        # Qt can delete a child even while Python retains its wrapper.
+        self.editors[:] = [editor for editor in self.editors if isValid(editor)]
+        editor = next((
+            existing for existing in reversed(self.editors)
+            if isinstance(existing, QtWorkspaceEditor)
+            and not existing.read_only_library and existing.workspace == workspace
+        ), None)
+        if editor is None:
+            editor = QtWorkspaceEditor(self, workspace, archive_map=archive_map)
+            editor.setAttribute(Qt.WA_DeleteOnClose, False)
+            self.editors.append(editor)
+        else:
+            editor.resume_project_editor()
         editor.show()
         virtual = getattr(self, '_pending_library_virtual', None)
         self._pending_library_virtual = None
         if virtual and virtual in editor.records:
             editor.load(virtual)
         editor.raise_()
+        editor.activateWindow()
+        return editor
 
     def _foreground_assets_active(self):
         if self.busy or self.asset_library_controller.busy:
@@ -3708,17 +3790,11 @@ class QtManager(QMainWindow):
                         'The selected PAK has no matching extracted project. '
                         'Double-click it to unpack a fresh project.')
                 self.current_workspace = str(ws)
-                for editor in self.editors:
-                    if (isinstance(editor, QtWorkspaceEditor) and editor.isVisible()
-                            and editor.workspace == ws):
-                        editor.raise_()
-                        editor.activateWindow()
-                        return
                 from project_selection import editor_collection_for_workspace
                 archive_map = editor_collection_for_workspace(
                     ws, self._editor_collection())
-                editor = QtWorkspaceEditor(
-                    self, ws, archive_map=archive_map)
+                self._open_project_workspace(ws, archive_map=archive_map)
+                return
             editor.setAttribute(Qt.WA_DeleteOnClose, False)
             self.editors.append(editor)
             editor.show()
@@ -4013,7 +4089,16 @@ class QtManager(QMainWindow):
             commands = launcher_commands(Path(self.swap_path),Path(self.stage_path),st.phase)
             if self.confirm('Play with Mods?',
                              'Mods are intended for private/offline testing.\nClose game/launcher first, then wait for the launcher-ready message before pressing Play.'):
+                # Check just before any privileged firewall write or PAK swap.
+                # The existing launcher still verifies exact staged ownership.
+                self._prelaunch_safety_check(modded=True, game=self._developer_game())
                 set_offline(self._developer_game(), not self._developer_allow_online)
+                if not self._developer_allow_online:
+                    from online_guard import offline_rule_active
+                    if not offline_rule_active(self._developer_game()):
+                        raise RuntimeError(
+                            'Offline outbound firewall protection cannot be verified. '
+                            'Modded launch cancelled. Open System Health for details.')
                 self.run_steps(commands,'Play with Mods',self._after_modded_launch,
                                cwd=Path(self.swap_path))
         except Exception as exc:
@@ -4030,6 +4115,19 @@ class QtManager(QMainWindow):
         else:
             self._log('No active mod swap; no restoration monitor required.')
 
+    def _prelaunch_safety_check(self, *, modded, game):
+        """Block unsafe launch conditions without changing any Windows state."""
+        from system_health_extras import prelaunch_check
+        errors, notes = prelaunch_check(
+            swap_root=self.swap_path, game_root=game, modded=modded,
+            status=self.refresh_swap_status())
+        if errors:
+            raise RuntimeError("Pre-launch safety check blocked the game:\n" +
+                               "\n".join("• " + item for item in errors) +
+                               "\nOpen System Health or Settings to investigate.")
+        for item in notes:
+            self._log("Pre-launch: " + item)
+
     def _launch_unmodded_client(self):
         """Launch only after a fresh journal, backup and injector check.
 
@@ -4040,6 +4138,7 @@ class QtManager(QMainWindow):
             Path(self.swap_path), self.game_root or self._find_game_root())
         from orphaned_swap_recovery import ensure_game_closed
         ensure_game_closed()
+        self._prelaunch_safety_check(modded=False, game=game)
         # An earlier modded session may have left our firewall rule enabled.
         # For normal play, failure to remove it is an error, not a success.
         set_offline(game, False)
@@ -4553,6 +4652,11 @@ class QtManager(QMainWindow):
 
 
 def main():
+    from windows_admin_launch import ensure_manager_administrator
+    # Executables request elevation through the manifest; direct source runs
+    # request the same UAC permission before creating any Qt windows.
+    if not ensure_manager_administrator():
+        return 0
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     capture_mode = next((flag for flag in

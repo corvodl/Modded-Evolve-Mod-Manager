@@ -2098,7 +2098,9 @@ class QtWorkspaceEditor(QMainWindow):
         view = self.views['models']
         if self.model_panel is not None:
             view.setCurrentWidget(self.model_cpu)
-            self.model_panel.anim_timer.stop()
+            from shiboken6 import isValid
+            if isValid(self.model_panel.anim_timer):
+                self.model_panel.anim_timer.stop()
             self.model_panel.anim_playing = False
             self.model_panel.hide()
             self.model_panel.deleteLater()
@@ -3147,6 +3149,20 @@ class QtWorkspaceEditor(QMainWindow):
             'Original CAF/DBA clips can be converted by a separately installed '
             'CryEngine converter, then imported as animated GLB files.')
 
+    def resume_project_editor(self):
+        """Reactivate a hidden editor without stale searches or autosave callbacks."""
+        from shiboken6 import isValid
+        if not isValid(self):
+            raise RuntimeError('Cannot resume a deleted workspace editor.')
+        if self._model_cancel.is_set():
+            self._model_cancel = Event()
+        if not self.read_only_library and isValid(self.recovery_timer):
+            self.recovery_timer.start()
+        if self._diagnostics_timer is not None and isValid(self._diagnostics_timer):
+            if self._diagnostics_dock is not None and isValid(self._diagnostics_dock):
+                if self._diagnostics_dock.isVisible():
+                    self._diagnostics_timer.start()
+
     def closeEvent(self, event):
         from qt_background_exports import exports_busy
         if exports_busy(self):
@@ -3164,7 +3180,14 @@ class QtWorkspaceEditor(QMainWindow):
         self._model_generation += 1
         self.gfx_view.cancel_pending()
         self._close_gfx_editor()
-        if self.model_panel is not None and not self.model_panel.close():
-            event.ignore()
-            return
+        if self.model_panel is not None:
+            from shiboken6 import isValid
+            if isValid(self.model_panel) and not self.model_panel.close():
+                event.ignore()
+                return
+        for timer in (self.recovery_timer, self._search_timer, self._diagnostics_timer):
+            if timer is not None:
+                from shiboken6 import isValid
+                if isValid(timer):
+                    timer.stop()
         super().closeEvent(event)
