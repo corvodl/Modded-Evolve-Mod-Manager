@@ -178,7 +178,7 @@ class BundleInstallTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "incomplete"):
             mark_staged(self.catalog, receipt, self.stage, self.root / "swap")
         self.assertEqual(list_receipts(self.catalog)[0]["status"],
-                         "imported_not_staged")
+                         "recovery_needed")
 
 
 if __name__ == "__main__":
