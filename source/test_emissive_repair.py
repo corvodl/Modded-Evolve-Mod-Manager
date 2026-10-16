@@ -9,7 +9,9 @@ from xml.etree import ElementTree as ET
 
 from PIL import Image
 
-from emissive_materials import bake_emission_map, emission_settings, emission_mode
+from emissive_materials import (bake_emission_map, emission_settings, emission_mode,
+                                shader_flags, emission_mask_source,
+                                emission_texture_node, subset_emission_coverage)
 from material_preview import PreviewMaterials
 from model_preview import read_preview_mesh
 from model_blender_export import glb_bytes
@@ -151,6 +153,107 @@ class KalaLegacyGlowTests(unittest.TestCase):
             <PublicParams EmissiveColor="0,1,0"/></Material>''')
         self.assertEqual(_parameter(mtl, 'EmissiveColor', 'Emissive'),
                          '0.25,0.5,1')
+
+
+class GenericCryEngineEmissionPolicyTests(unittest.TestCase):
+    """Every character and map material uses the same flag/UV path."""
+
+    BODY = ET.fromstring('''<Material Shader="Illum" Name="Body"
+        GlowAmount="3" Emissive="0,0,0" StringGenMask="%ALPHAGLOW%BUMP_MAP%">
+        <Textures><Texture Map="Diffuse" File="body.tif"/></Textures></Material>''')
+    GLOW = ET.fromstring('''<Material Shader="Illum" Name="Glow"
+        GlowAmount="3" Emissive="0,0,0" Diffuse="0.07,0.14,0.42"
+        StringGenMask="%SUBSURFACE_SCATTERING">
+        <Textures><Texture Map="Diffuse" File="body.tif"/>
+        <Texture Map="Decal" File="chroma_fan.tif">
+        <TexMod TileU="3" TileV="4" TexMod_UOscillatorType="2"
+                TexMod_UOscillatorRate="1"/>
+        </Texture></Textures></Material>''')
+
+    def test_alpha_glow_is_exact_flag_not_substring(self):
+        self.assertIn('ALPHAGLOW',shader_flags(self.BODY))
+        self.assertEqual(emission_mask_source(self.BODY),'diffuse_alpha')
+        self.assertEqual(emission_mode(self.GLOW),'legacy_decal')
+        self.assertEqual(emission_mask_source(self.GLOW),'none')
+        near=ET.fromstring('''<Material Shader="Illum" GlowAmount="3"
+            StringGenMask="%ALPHAGLOW_CUSTOM%">
+            <Textures><Texture Map="Decal" File="glow.tif"/></Textures>
+            </Material>''')
+        self.assertEqual(emission_mask_source(near),'none')
+        exact=ET.fromstring('''<Material Shader="Illum" GlowAmount="3"
+            StringGenMask="%ALPHAGLOW%">
+            <Textures><Texture Map="Decal" File="glow.tif"/></Textures>
+            </Material>''')
+        self.assertEqual(emission_mask_source(exact),'diffuse_alpha')
+        self.assertEqual(emission_mask_source(ET.fromstring(
+            '<Material Shader="Illum" GlowAmount="0" StringGenMask="%ALPHAGLOW%" />')),
+            'none')
+
+    def test_independent_decal_uv_and_unknown_numeric_oscillator(self):
+        from texture_transform import parse_transform, parse_motion, transform_uv
+        node=emission_texture_node(self.GLOW)
+        self.assertIsNotNone(node)
+        static,dynamic=parse_transform(node)
+        self.assertEqual(static,(3.,4.,0.,0.,0.))
+        self.assertTrue(dynamic)
+        self.assertEqual(parse_motion(node),(0.,0.,0.))
+        self.assertAlmostEqual(transform_uv(0.05,0.20,static)[0],0.15)
+        self.assertAlmostEqual(transform_uv(0.05,0.20,static)[1],0.80)
+
+    def test_nonzero_decal_survives_zero_diffuse_alpha_when_flag_absent(self):
+        diffuse=Image.new('RGBA',(2,1),(200,100,80,0))
+        decal=Image.new('RGB',(2,1),(160,180,200))
+        glow=bake_emission_map(diffuse, emission=decal,
+             diffuse_alpha_mask=emission_mask_source(self.GLOW)=='diffuse_alpha')
+        self.assertEqual(glow.getpixel((0,0)),(160,180,200))
+        body=bake_emission_map(diffuse,
+             diffuse_alpha_mask=emission_mask_source(self.BODY)=='diffuse_alpha')
+        self.assertIsNone(body.getbbox())
+
+    def test_atlas_can_be_nonblack_but_dark_on_actual_mesh_subset(self):
+        from model_preview import PreviewMesh
+        mask=Image.new('RGB',(8,8),'black')
+        mask.putpixel((7,7),(200,100,60))
+        self.assertIsNotNone(mask.getbbox())
+        diffuse=Image.new('RGB',(8,8),'white')
+        mesh=PreviewMesh(((0.,0.,0.),(1.,0.,0.),(0.,1.,0.)),
+            ((0,1,2),),(0.,0.,0.),1.,'generic test',
+            ((0.05,0.05),(0.06,0.05),(0.05,0.06)),((0,3,0),))
+        materials=PreviewMaterials((diffuse,),('Glow',),'material.mtl',
+            emissive_maps=(mask,),emissive_strengths=(3.,))
+        self.assertEqual(subset_emission_coverage(mesh,materials,0),(0,3))
+        mask.putpixel((0,0),(200,100,60))
+        self.assertEqual(subset_emission_coverage(mesh,materials,0),(3,3))
+
+    def test_emission_uv_independent_in_export_and_two_gpu_passes(self):
+        from renderer_3 import FRAGMENT, MATERIAL_UNIFORMS
+        self.assertIn('emissive_uv',MATERIAL_UNIFORMS)
+        self.assertEqual(FRAGMENT.count('(emissive_uv * vec3(texcoord,1.0)).xy'),2)
+        self.assertEqual(FRAGMENT.count('if (emissive_alpha_mask == 1)'),2)
+        mesh=read_preview_mesh(test_mesh(),'generic.skinm')
+        image=Image.new('RGB',(2,2),'white')
+        materials=PreviewMaterials((image,),('Generic',''), 'generic.mtl',
+            emissive_maps=(image,),emissive_strengths=(3.,),
+            map_uv_transforms=(('emissive',((3.,4.,0.,0.,0.),)),))
+        blob,_=embed_diffuse_textures(glb_bytes(mesh),materials)
+        doc,_=_unpack_glb(blob)
+        texture=doc['materials'][0]['emissiveTexture']
+        self.assertEqual(texture['extensions']['KHR_texture_transform']['scale'],[3.,4.])
+        self.assertNotIn('KHR_texture_transform',
+                         doc['materials'][0]['pbrMetallicRoughness']
+                         ['baseColorTexture'].get('extensions',{}))
+
+    def test_distinct_uv_mask_preserves_explanatory_glb_provenance(self):
+        mesh=read_preview_mesh(test_mesh(),'generic.skinm')
+        image=Image.new('RGB',(2,2),'white')
+        materials=PreviewMaterials((image,),('Generic',),'generic.mtl',
+            emissive_maps=(image,),emissive_strengths=(3.,),
+            emissive_masks=('diffuse_alpha',),
+            map_uv_transforms=(('emissive',((3.,4.,0.,0.,0.),)),))
+        doc,_=_unpack_glb(embed_diffuse_textures(glb_bytes(mesh),materials)[0])
+        info=doc['materials'][0]['extras']['cryEngineEmissionMask']
+        self.assertEqual(info['source'],'diffuse_alpha')
+        self.assertTrue(info['requiresBakingForBlender'])
 
 
 class EmissiveRendererInitializationTests(unittest.TestCase):

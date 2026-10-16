@@ -5,6 +5,9 @@ never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
     ('1.2.6', (
+        "Patch 3: Correct CryEngine ALPHAGLOW mask selection across all characters and models: independent Decal glow no longer inherits unrelated diffuse alpha.",
+        "Patch 3: Preserve each emissive texture's own UV tiling and offsets in the GPU viewer, bloom pass, assembled character parts and Blender GLB export.",
+        "Patch 3: Diagnose actual mesh-subset emission UV coverage, distinguish black sampled regions from nonblack atlases, and flag unsupported animated UV oscillators.",
         "Patch 2: Fix missing Kala emissive glow by correcting Renderer 3 sampler registration and legacy CryEngine GlowAmount masking.",
         "Patch 2: Show model-loading progress from geometry preparation until the existing bottom texture-loading bar takes over.",
         "Patch 2: Report unavailable GPU emissive shading and black baked glow maps without changing original textures.",

@@ -39,8 +39,10 @@ uniform mat3 gloss_uv;
 uniform mat3 detail_uv;
 uniform mat3 detail_normal_uv;
 uniform mat3 ao_uv;
+uniform mat3 emissive_uv;
 uniform int has_diffuse;
 uniform int has_emissive;
+uniform int emissive_alpha_mask;
 uniform float emissive_strength;
 uniform int emission_enabled;
 uniform int bloom_pass;
@@ -81,8 +83,12 @@ void main() {
     }
     if (bloom_pass == 1) {
         if (emission_enabled == 0 || has_emissive == 0) discard;
-        vec3 emission = pow(texture2D(emissive_map, diffuse_coord).rgb,
-                            vec3(2.2)) * max(0.0, emissive_strength);
+        vec2 emission_coord = (emissive_uv * vec3(texcoord,1.0)).xy;
+        vec3 emission = pow(texture2D(emissive_map, emission_coord).rgb,
+                            vec3(2.2));
+        if (emissive_alpha_mask == 1)
+            emission *= texture2D(diffuse_map, diffuse_coord).a;
+        emission *= max(0.0, emissive_strength);
         if (max(max(emission.r, emission.g), emission.b) < 0.002) discard;
         gl_FragColor = vec4(clamp(emission, 0.0, 1.0), 1.0);
         return;
@@ -170,8 +176,13 @@ void main() {
         litLinear += reflected*reflection_strength*
                      mix(0.08, 0.85, fresnel)*(is_glass == 1 ? 1.2 : 1.0);
     }
-    if (has_emissive == 1 && emission_enabled == 1)
-        litLinear += pow(texture2D(emissive_map,diffuse_coord).rgb,vec3(2.2)) * max(0.0,emissive_strength);
+    if (has_emissive == 1 && emission_enabled == 1) {
+        vec2 emission_coord = (emissive_uv * vec3(texcoord,1.0)).xy;
+        vec3 emission = pow(texture2D(emissive_map,emission_coord).rgb,vec3(2.2));
+        if (emissive_alpha_mask == 1)
+            emission *= texture2D(diffuse_map,diffuse_coord).a;
+        litLinear += emission * max(0.0,emissive_strength);
+    }
     vec3 lit = pow(clamp(litLinear,0.0,1.0),vec3(1.0/2.2));
     gl_FragColor = vec4(lit,alpha);
 }
@@ -186,8 +197,8 @@ SAMPLER_UNITS = (
     ('environment_map', 6), ('ao_map', 7), ('emissive_map', 8),
 )
 MATERIAL_UNIFORMS = (
-    'normal_uv', 'specular_uv', 'gloss_uv', 'detail_uv', 'detail_normal_uv', 'ao_uv',
-    'has_emissive', 'emissive_strength', 'emission_enabled', 'bloom_pass',
+    'normal_uv', 'specular_uv', 'gloss_uv', 'detail_uv', 'detail_normal_uv', 'ao_uv', 'emissive_uv',
+    'has_emissive', 'emissive_alpha_mask', 'emissive_strength', 'emission_enabled', 'bloom_pass',
     'has_diffuse', 'has_normal', 'has_specular', 'has_gloss', 'has_detail',
     'has_detail_normal', 'normal_y_flip', 'has_environment', 'reflection_strength',
     'is_glass', 'has_ao', 'ao_strength', 'opacity', 'alpha_cutoff',
@@ -230,10 +241,11 @@ class Renderer3:
              ao=False, ao_strength=1.,
              alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02,
              emissive=False, emissive_strength=0., emission_enabled=True,
-             bloom_pass=False):
+             emissive_alpha_mask=False, bloom_pass=False):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f, glUniformMatrix3fv, GL_FALSE
         glUseProgram(self.program)
-        for name,value in (('has_emissive',emissive),('emission_enabled',emission_enabled),
+        for name,value in (('has_emissive',emissive),('emissive_alpha_mask',emissive_alpha_mask),
+                           ('emission_enabled',emission_enabled),
                            ('bloom_pass',bloom_pass),
                            ('has_diffuse',diffuse),('has_normal',normal),
                            ('has_specular',specular), ('has_gloss',gloss_texture),
@@ -245,7 +257,7 @@ class Renderer3:
             glUniform1i(self.uniforms[name],int(bool(value)))
         from texture_transform import gl_matrix3, IDENTITY
         matrices = uv_matrices or {}
-        for role in ('normal','specular','gloss','detail','detail_normal','ao'):
+        for role in ('normal','specular','gloss','detail','detail_normal','ao','emissive'):
             glUniformMatrix3fv(self.uniforms[role + '_uv'],1,GL_FALSE,
                                gl_matrix3(matrices.get(role,IDENTITY)))
         for name,value in (('ao_strength',ao_strength),('reflection_strength',reflection_strength),('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),

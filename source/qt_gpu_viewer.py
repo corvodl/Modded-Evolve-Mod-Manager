@@ -702,12 +702,22 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glMatrixMode(GL_TEXTURE)
                 glLoadMatrixf(gl_matrix(transform_for(self.materials, slot)))
                 glMatrixMode(GL_MODELVIEW)
+                mask_sources = getattr(self.materials,'emissive_masks',())
+                needs_alpha = slot<len(mask_sources) and mask_sources[slot]=='diffuse_alpha'
                 glActiveTexture(GL_TEXTURE0 + 8)
                 glBindTexture(GL_TEXTURE_2D, handle)
                 glActiveTexture(GL_TEXTURE0)
+                if needs_alpha:
+                    diffuse_handle = self.textures[slot] if slot<len(self.textures) else 0
+                    glBindTexture(GL_TEXTURE_2D,diffuse_handle)
+                    if not diffuse_handle:
+                        continue
                 shader.bind(opacity=1., gloss=0., illumination=0.,
                             diffuse=False, normal=False, specular=False,
                             emissive=True, emissive_strength=amount*self.glow_strength,
+                            emissive_alpha_mask=needs_alpha,
+                            uv_matrices={'emissive': transform_for(self.materials,slot,'emissive',
+                                seconds=time.monotonic()-self._uv_motion_started)},
                             emission_enabled=True, bloom_pass=True)
                 glDrawElements(GL_TRIANGLES, int(count), GL_UNSIGNED_INT,
                                arrays.indices[first:first+count])
@@ -886,10 +896,12 @@ class QtGLModelCanvas(QOpenGLWidget):
                                                slot<len(self.detail_normal_textures) and bool(self.detail_normal_textures[slot])),
                                 invert_normal_y=self.normal_diagnostic == 'Flip green (DX to GL)',
                                 uv_matrices={role: transform_for(self.materials,slot,role,seconds)
-                                             for role in ('normal','specular','gloss','detail','detail_normal','ao')},
+                                             for role in ('normal','specular','gloss','detail','detail_normal','ao','emissive')},
                                 alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
                                 unlit=self.unlit_diffuse,fill=self.studio_fill,
                                 emissive=slot<len(self.emissive_textures) and bool(self.emissive_textures[slot]),
+                                emissive_alpha_mask=(slot<len(getattr(self.materials,'emissive_masks',()))
+                                  and self.materials.emissive_masks[slot]=='diffuse_alpha'),
                                 emissive_strength=self.glow_strength * (self.materials.emissive_strengths[slot] if self.materials and slot<len(getattr(self.materials,'emissive_strengths',())) else 0.),
                                 emission_enabled=self.emission_enabled)
                 if tex:
@@ -1708,6 +1720,32 @@ class QtGPUModelPanel(QWidget):
                           if selected < len(getattr(materials, 'emissive_sources', ())) else None)
                 message += ' Strength: %.2fx.' % strength
                 message += (' Source: %s (%s).' % origin) if origin else ' Mask: material-approved diffuse alpha.'
+            masks = getattr(materials, 'emissive_masks', ())
+            if selected is not None and selected in resolved:
+                from texture_transform import transform_for, IDENTITY
+                mask_mode = masks[selected] if selected<len(masks) else 'none'
+                mask_label = ('diffuse alpha, sampled independently' if mask_mode=='diffuse_alpha'
+                              else 'diffuse alpha baked into emission atlas' if mask_mode=='baked_diffuse_alpha'
+                              else 'none')
+                message += ' Emission mask: %s.' % mask_label
+                uv_transform = transform_for(materials,selected,'emissive')
+                if uv_transform != IDENTITY:
+                    message += ' Emission UV scale: %.3g×%.3g, offset: %.3g, %.3g.' % uv_transform[:4]
+                from emissive_materials import subset_emission_coverage
+                mesh = getattr(self.canvas, 'mesh', None)
+                cache = getattr(self, '_emissive_coverage_cache', {})
+                key = (id(mesh), id(materials), selected)
+                if key not in cache:
+                    if len(cache) > 24:
+                        cache.clear()
+                    cache[key] = subset_emission_coverage(mesh,materials,selected)
+                    self._emissive_coverage_cache = cache
+                coverage = cache[key]
+                if coverage is not None:
+                    lit,total = coverage
+                    message += ' Approximate mesh UV emission samples: %d/%d nonzero.' % (lit,total)
+                    if total and not lit:
+                        message += ' Warning: emission is dark everywhere sampled by this mesh subset.'
             black = getattr(materials, 'emissive_black', ())
             dark_slots = [slot for slot in resolved
                           if slot < len(black) and black[slot]]

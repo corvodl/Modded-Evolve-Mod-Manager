@@ -107,7 +107,10 @@ def combine_meshes(items):
     # All verified emissive per-submaterial settings must survive assembly
     # remapping; otherwise Stage GLBs silently lose the glowing Kala/Goliath
     # material slots even though the standalone texture loader decoded them.
-    emissive_maps, emissive_strengths, emissive_sources, emissive_black = [], [], [], []
+    emissive_maps, emissive_strengths, emissive_sources, emissive_black, emissive_masks = [], [], [], [], []
+    uv_roles = ('normal','specular','gloss','detail','detail_normal','ao','emissive')
+    role_transforms = {role: [] for role in uv_roles}
+    role_motions = {role: [] for role in uv_roles}
     included = []
     for name, mesh, materials in items:
         if len(vertices) + len(mesh.vertices) > MAX_VERTICES or len(triangles) + len(mesh.triangles) > MAX_TRIANGLES:
@@ -143,6 +146,11 @@ def combine_meshes(items):
             references.append(reference)
             from texture_transform import transform_for
             transforms.append(transform_for(materials, slot))
+            for role in uv_roles:
+                role_transforms[role].append(transform_for(materials,slot,role))
+                motions = next((values for name,values in
+                    getattr(materials,'map_uv_motions',()) if name==role),())
+                role_motions[role].append(motions[slot] if slot<len(motions) else (0.,0.,0.))
             # Preserve per-part material settings when combining CDF skins.
             # Dropping alpha/material mode made opaque character body geometry
             # appear transparent when its diffuse DDS carried auxiliary alpha.
@@ -165,6 +173,9 @@ def combine_meshes(items):
             emissive_black.append(bool(materials.emissive_black[slot]) if materials
                                   and slot < len(getattr(materials, 'emissive_black', ()))
                                   else False)
+            emissive_masks.append(materials.emissive_masks[slot] if materials
+                                  and slot<len(getattr(materials,'emissive_masks',()))
+                                  else 'none')
             names.append(name + ': ' + label)
         vertices.extend(mesh.vertices)
         triangles.extend(tuple(v + base_vertex for v in tri) for tri in mesh.triangles)
@@ -190,7 +201,12 @@ def combine_meshes(items):
                                 hidden=tuple(hidden), emissive_maps=tuple(emissive_maps),
                                 emissive_strengths=tuple(emissive_strengths),
                                 emissive_sources=tuple(emissive_sources),
-                                emissive_black=tuple(emissive_black))
+                                emissive_black=tuple(emissive_black),
+                                emissive_masks=tuple(emissive_masks),
+                                map_uv_transforms=tuple((role,tuple(values))
+                                    for role,values in role_transforms.items()),
+                                map_uv_motions=tuple((role,tuple(values))
+                                    for role,values in role_motions.items()))
     return mesh, material
 
 

@@ -67,13 +67,50 @@ def _map_references(material):
     return explicit, decal
 
 
+def shader_flags(material):
+    """Parse exact CryEngine shader-generation flag tokens, never substrings."""
+    return frozenset(part.strip().upper()
+                     for part in (material.get('StringGenMask') or '').split('%')
+                     if part.strip())
+
+
+def emission_mask_source(material, mode=None):
+    """Select the source of the emission mask, independently from opacity.
+
+    Positive GlowAmount makes Illum/Cloth/HumanSkin emission available but
+    does not imply that a Decal is masked by diffuse alpha. ALPHAGLOW opts
+    into this extra behavior explicitly.
+    """
+    mode = emission_mode(material) if mode is None else mode
+    if mode == 'legacy_alpha':
+        return 'diffuse_alpha'
+    if mode == 'legacy_decal' and 'ALPHAGLOW' in shader_flags(material):
+        return 'diffuse_alpha'
+    return 'none'
+
+
+def emission_texture_node(material):
+    """Actual emitting map node, for role-specific TexMod provenance."""
+    explicit = decal = None
+    for node in material.findall('./Textures/Texture'):
+        role = (node.get('Map') or node.get('map') or '').casefold()
+        if role in ('emittance', 'emissive', 'emission', 'glow') and explicit is None:
+            explicit = node
+        elif role == 'decal' and decal is None:
+            decal = node
+    if explicit is not None:
+        return explicit
+    return (decal if (material.get('Shader') or '').casefold() == 'illum'
+            and _legacy_glow(material) else None)
+
+
 def _legacy_glow(material):
     shader = (material.get('Shader') or '').casefold()
-    mask = (material.get('StringGenMask') or '').casefold()
+    flags = shader_flags(material)
     raw = _parameter(material, 'GlowAmount')
     return (_positive_float(raw) > 0.0
             and (shader in ('illum', 'cloth', 'humanskin')
-                 or 'alphaglow' in mask))
+                 or 'ALPHAGLOW' in flags))
 
 
 def emission_mode(material):
@@ -162,3 +199,68 @@ def bake_emission_map(diffuse, *, color=None, emission=None,
         result = Image.merge('RGB', tuple(
             ImageChops.multiply(channel, mask) for channel in result.split()))
     return result
+
+
+def subset_emission_coverage(mesh, materials, slot, max_samples=4096):
+    """Approximate emissive vertex-UV coverage for a material subset.
+
+    Returns (nonzero_count, sampled_count) or None for absent UV/geometry.
+    Checks the *coordinates actually used* by the mesh, not whether some
+    unrelated region of a texture atlas has bright pixels. This is a
+    vertex-sampling diagnostic, not a rasterization/in-game shader oracle.
+    """
+    from texture_transform import transform_for, transform_uv
+    texture_maps = getattr(materials, 'emissive_maps', ())
+    if not mesh or slot < 0 or slot >= len(texture_maps):
+        return None
+    img = texture_maps[slot]
+    if (img is None or not hasattr(mesh,'triangles') or
+            not hasattr(mesh,'vertices') or not hasattr(mesh,'uvs') or
+            len(mesh.uvs) != len(mesh.vertices)):
+        # The viewer may display partial/loading meshes and synthetic
+        # diagnostics before their triangle streams have arrived.
+        return None
+    uv_ids = set()
+    for first, count, material_id in (getattr(mesh, 'subsets', ()) or
+                                      ((0, len(mesh.triangles) * 3, 0),)):
+        if material_id != slot:
+            continue
+        for triangle in mesh.triangles[first // 3:(first + count) // 3]:
+            uv_ids.update(int(v) for v in triangle)
+            if len(uv_ids) > max_samples * 8:
+                break
+    if not uv_ids:
+        return None
+    ids = sorted(uv_ids)
+    if len(ids) > max_samples:
+        stride = (len(ids) + max_samples - 1) // max_samples
+        ids = ids[::stride]
+    emission_transform = transform_for(materials, slot, 'emissive')
+    diffuse_transform = transform_for(materials, slot)
+    modes = getattr(materials, 'emissive_masks', ())
+    shader_mask = slot < len(modes) and modes[slot] == 'diffuse_alpha'
+    base = (getattr(materials, 'textures', ()) or ())
+    diffuse = base[slot] if shader_mask and slot < len(base) else None
+    if shader_mask and diffuse is None:
+        return None
+    w,h = img.size
+    mw,mh = diffuse.size if diffuse is not None else (0,0)
+    lit = 0
+    for index in ids:
+        if index < 0 or index >= len(mesh.uvs):
+            continue
+        u,v = mesh.uvs[index]
+        x,y = transform_uv(float(u),float(v),emission_transform)
+        try:
+            rgb = img.getpixel((int((x % 1.) * w) % w, int((y % 1.) * h) % h))
+            level = max(rgb[:3] if isinstance(rgb, tuple) else (rgb,))
+            if diffuse is not None:
+                du,dv = transform_uv(float(u),float(v),diffuse_transform)
+                alpha = diffuse.getpixel((int((du%1.)*mw)%mw, int((dv%1.)*mh)%mh))
+                alpha = alpha[3] if isinstance(alpha,tuple) and len(alpha)>=4 else 255
+                level = level * alpha / 255.
+            if level > 0:
+                lit += 1
+        except (ValueError, OverflowError, IndexError, TypeError):
+            continue
+    return lit, len(ids)
