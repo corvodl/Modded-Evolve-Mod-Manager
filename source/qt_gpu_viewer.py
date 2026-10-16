@@ -162,6 +162,10 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.emissive_textures = []
         self.emission_enabled = True
         self.glow_strength = 1.0
+        self.bloom_enabled = True
+        self._glow_buffer = None
+        self._bloom_program = None
+        self.bloom_error = None
         self.translucent_slots = set()
         self._batch_sort_cache = None
         self.enhanced_materials = True
@@ -451,6 +455,105 @@ class QtGLModelCanvas(QOpenGLWidget):
         glColor3f(1.0,1.0,1.0)
         glEnable(GL_LIGHTING)
 
+    def _render_emissive_bloom(self, arrays, batches, shader):
+        """Offscreen emissive-only pass and quarter-resolution glow halo.
+
+        A missing FBO/shader fails independently of ordinary self-illumination.
+        This path does not alter any source textures or model triangles.
+        """
+        from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
+        from OpenGL.GL import (
+            glPushAttrib, glPopAttrib, glGetIntegerv, glViewport,
+            glClearColor, glClear, glEnable, glDisable, glColorMask,
+            glDrawElements, glDepthMask, glDepthFunc, glBindFramebuffer,
+            glActiveTexture, glBindTexture, glBlendFunc,
+            GL_ALL_ATTRIB_BITS, GL_VIEWPORT, GL_COLOR_BUFFER_BIT,
+            GL_DEPTH_BUFFER_BIT, GL_DEPTH_TEST, GL_LEQUAL, GL_BLEND,
+            GL_LIGHTING, GL_TEXTURE_2D, GL_TEXTURE0, GL_TRIANGLES,
+            GL_UNSIGNED_INT, GL_FRAMEBUFFER, GL_ONE
+        )
+        from renderer_3 import EmissiveBloom
+        pixel_ratio = max(1., float(self.devicePixelRatioF()))
+        w = max(64, min(1024, int(self.width() * pixel_ratio / 4.)))
+        h = max(64, min(1024, int(self.height() * pixel_ratio / 4.)))
+        if (self._glow_buffer is None or
+                self._glow_buffer.size().width() != w or
+                self._glow_buffer.size().height() != h):
+            config = QOpenGLFramebufferObjectFormat()
+            config.setAttachment(QOpenGLFramebufferObject.CombinedDepthStencil)
+            self._glow_buffer = QOpenGLFramebufferObject(w, h, config)
+            if not self._glow_buffer.isValid():
+                raise RuntimeError('OpenGL glow framebuffer is not available.')
+        if self._bloom_program is None:
+            self._bloom_program = EmissiveBloom()
+        previous_view = tuple(int(v) for v in glGetIntegerv(GL_VIEWPORT))
+        original_framebuffer = int(self.defaultFramebufferObject())
+        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        try:
+            shader.unbind()
+            if not self._glow_buffer.bind():
+                raise RuntimeError('Could not bind glow framebuffer.')
+            glViewport(0, 0, w, h)
+            glClearColor(0., 0., 0., 0.)
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            glDisable(GL_BLEND)
+            glEnable(GL_DEPTH_TEST)
+            glDisable(GL_LIGHTING)
+            glDisable(GL_TEXTURE_2D)
+            # Depth-only geometry makes the glow respect opaque armor,
+            # instead of showing through unrelated body parts.
+            glColorMask(False, False, False, False)
+            for first, count, slot in batches:
+                if (slot < len(getattr(self.materials, 'hidden', ())) and
+                        self.materials.hidden[slot]):
+                    continue
+                if self.visible_material_slot is not None and slot != self.visible_material_slot:
+                    continue
+                glDrawElements(GL_TRIANGLES, int(count), GL_UNSIGNED_INT,
+                               arrays.indices[first:first+count])
+            glColorMask(True, True, True, True)
+            glDepthMask(False)
+            glDepthFunc(GL_LEQUAL)
+            for first, count, slot in batches:
+                if (self.visible_material_slot is not None and slot != self.visible_material_slot
+                        or slot >= len(self.emissive_textures)):
+                    continue
+                handle = self.emissive_textures[slot]
+                if not handle:
+                    continue
+                if slot < len(getattr(self.materials, 'hidden', ())) and self.materials.hidden[slot]:
+                    continue
+                amount = (self.materials.emissive_strengths[slot] if
+                          slot < len(getattr(self.materials, 'emissive_strengths', ())) else 0.)
+                if amount <= 0.:
+                    continue
+                glActiveTexture(GL_TEXTURE0 + 3)
+                glBindTexture(GL_TEXTURE_2D, handle)
+                glActiveTexture(GL_TEXTURE0)
+                shader.bind(opacity=1., gloss=0., illumination=0.,
+                            diffuse=False, normal=False, specular=False,
+                            emissive=True, emissive_strength=amount*self.glow_strength,
+                            emission_enabled=True, bloom_pass=True)
+                glDrawElements(GL_TRIANGLES, int(count), GL_UNSIGNED_INT,
+                               arrays.indices[first:first+count])
+            shader.unbind()
+            self._glow_buffer.release()
+            glBindFramebuffer(GL_FRAMEBUFFER, original_framebuffer)
+            glViewport(*previous_view)
+            glDisable(GL_DEPTH_TEST)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_ONE, GL_ONE)
+            glActiveTexture(GL_TEXTURE0)
+            glBindTexture(GL_TEXTURE_2D, int(self._glow_buffer.texture()))
+            self._bloom_program.draw(w, h)
+            glBindTexture(GL_TEXTURE_2D, 0)
+        finally:
+            shader.unbind()
+            # QOpenGLWidget's default target is its own FBO, not framebuffer 0.
+            glBindFramebuffer(GL_FRAMEBUFFER, original_framebuffer)
+            glViewport(*previous_view)
+            glPopAttrib()
+
     def paintGL(self):
         from OpenGL.GL import (
             glClear, glMatrixMode, glLoadIdentity, glOrtho,
@@ -600,6 +703,15 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glMaterialf(GL_FRONT_AND_BACK,GL_SHININESS,38.0)
                 glDrawElements(GL_TRIANGLES,int(count),GL_UNSIGNED_INT,
                                arrays.indices[first:first+count])
+            if (shader and self.bloom_enabled and self.emission_enabled and
+                    not self.unlit_diffuse and use_uv and
+                    any(self.emissive_textures) and self.glow_strength > 0.):
+                try:
+                    self._render_emissive_bloom(arrays, batches, shader)
+                except Exception as error:
+                    # Unsupported old GPUs keep the main preview/emissive shader.
+                    self.bloom_error = str(error)[:200]
+                    self.bloom_enabled = False
         finally:
             from OpenGL.GL import GL_TEXTURE, GL_ALPHA_TEST
             glDisable(GL_ALPHA_TEST)
@@ -666,6 +778,10 @@ class QtGLModelCanvas(QOpenGLWidget):
             self.makeCurrent()
             try:
                 self._release_textures()
+                self._glow_buffer = None
+                if self._bloom_program is not None:
+                    self._bloom_program.close()
+                    self._bloom_program = None
                 if self._renderer3 is not None:
                     self._renderer3.close()
                     self._renderer3 = None
@@ -936,6 +1052,16 @@ class QtGPUModelPanel(QWidget):
         glow_row.addWidget(self.glow_slider)
         glow_row.addStretch()
         self._overlay_sections['Materials'][1].addLayout(glow_row)
+        self.bloom_checkbox = QCheckBox('Soft bloom halo')
+        self.bloom_checkbox.setObjectName('modelEmissiveBloom')
+        self.bloom_checkbox.setChecked(True)
+        self.bloom_checkbox.setToolTip(
+            'Add a soft, depth-tested halo around verified emissive surfaces. '
+            'Falls back to emission-only shading if this GPU does not support offscreen buffers.')
+        self.bloom_checkbox.toggled.connect(
+            lambda checked: (setattr(self.canvas, 'bloom_enabled', checked),
+                             self.canvas.update()))
+        self._overlay_sections['Materials'][1].addWidget(self.bloom_checkbox)
         self.solid_geometry = QCheckBox('Show all character geometry (ignore alpha)')
         self.solid_geometry.setToolTip('Diagnostic view: shows every decoded part even if a CryEngine material uses unsupported transparency. Does not create absent mesh parts.')
         self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
