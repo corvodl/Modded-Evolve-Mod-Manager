@@ -159,6 +159,9 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.textures = []
         self.normal_textures = []
         self.specular_textures = []
+        self.emissive_textures = []
+        self.emission_enabled = True
+        self.glow_strength = 1.0
         self.translucent_slots = set()
         self._batch_sort_cache = None
         self.enhanced_materials = True
@@ -297,7 +300,7 @@ class QtGLModelCanvas(QOpenGLWidget):
 
     def _release_textures(self):
         from OpenGL.GL import glDeleteTextures
-        for name in ('textures','normal_textures','specular_textures'):
+        for name in ('textures','normal_textures','specular_textures','emissive_textures'):
             handles = getattr(self,name,[])
             if handles:
                 try:
@@ -324,7 +327,8 @@ class QtGLModelCanvas(QOpenGLWidget):
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
         sources = (('textures', self.materials.textures),
                    ('normal_textures',getattr(self.materials,'normal_maps',())),
-                   ('specular_textures',getattr(self.materials,'specular_maps',())))
+                   ('specular_textures',getattr(self.materials,'specular_maps',())),
+                   ('emissive_textures',getattr(self.materials,'emissive_maps',())))
         for target,images in sources:
             uploads=[]
             for index,im in enumerate(images):
@@ -560,7 +564,8 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glMatrixMode(GL_MODELVIEW)
                 tex = self.textures[slot] if use_uv and slot < len(self.textures) else 0
                 if shader:
-                    for unit,group in ((0,self.textures),(1,self.normal_textures),(2,self.specular_textures)):
+                    for unit,group in ((0,self.textures),(1,self.normal_textures),
+                                       (2,self.specular_textures),(3,self.emissive_textures)):
                         handle = group[slot] if use_uv and slot<len(group) else 0
                         glActiveTexture(GL_TEXTURE0+unit)
                         glBindTexture(GL_TEXTURE_2D,handle)
@@ -570,7 +575,13 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 normal=slot<len(self.normal_textures) and bool(self.normal_textures[slot]),
                                 specular=slot<len(self.specular_textures) and bool(self.specular_textures[slot]),
                                 alpha_texture=(not self.force_opaque_preview and slot<len(getattr(self.materials,'alpha_modes',())) and bool(self.materials.alpha_modes[slot])),
-                                unlit=self.unlit_diffuse,fill=self.studio_fill)
+                                unlit=self.unlit_diffuse,fill=self.studio_fill,
+                                emissive=slot<len(self.emissive_textures) and bool(self.emissive_textures[slot]),
+                                emissive_strength=self.glow_strength * (
+                                    self.materials.emissive_strengths[slot]
+                                    if self.materials and slot<len(getattr(self.materials,'emissive_strengths',()))
+                                    else 0.),
+                                emission_enabled=self.emission_enabled)
                 if tex:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D,tex)
@@ -600,7 +611,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                 glEnable(GL_LIGHTING)
             if shader:
                 shader.unbind()
-                for unit in (2,1,0):
+                for unit in (3,2,1,0):
                     glActiveTexture(GL_TEXTURE0+unit)
                     glBindTexture(GL_TEXTURE_2D,0)
                 glEnable(GL_LIGHTING)
@@ -904,6 +915,27 @@ class QtGPUModelPanel(QWidget):
         inspector_secondary.addStretch()
         self._overlay_sections['Materials'][1].addLayout(inspector)
         self._overlay_sections['Materials'][1].addLayout(inspector_secondary)
+        glow_row = QHBoxLayout()
+        self.emissive_checkbox = QCheckBox('Emissive glow')
+        self.emissive_checkbox.setObjectName('modelEmissiveGlow')
+        self.emissive_checkbox.setChecked(True)
+        self.emissive_checkbox.setToolTip(
+            'Illuminate verified CryEngine emissive material slots independently of lighting.')
+        self.emissive_checkbox.toggled.connect(
+            lambda checked: (setattr(self.canvas, 'emission_enabled', checked),
+                             self.canvas.update()))
+        glow_row.addWidget(self.emissive_checkbox)
+        glow_row.addWidget(QLabel('Intensity'))
+        self.glow_slider = QSlider(Qt.Horizontal)
+        self.glow_slider.setRange(0, 300)
+        self.glow_slider.setValue(100)
+        self.glow_slider.setMaximumWidth(125)
+        self.glow_slider.valueChanged.connect(
+            lambda value: (setattr(self.canvas, 'glow_strength', value / 100.),
+                           self.canvas.update()))
+        glow_row.addWidget(self.glow_slider)
+        glow_row.addStretch()
+        self._overlay_sections['Materials'][1].addLayout(glow_row)
         self.solid_geometry = QCheckBox('Show all character geometry (ignore alpha)')
         self.solid_geometry.setToolTip('Diagnostic view: shows every decoded part even if a CryEngine material uses unsupported transparency. Does not create absent mesh parts.')
         self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
@@ -1149,6 +1181,13 @@ class QtGPUModelPanel(QWidget):
                     '%d%% near-black source pixels' % data))
             if source:
                 tip += '\nLoaded: %s\nPAK: %s' % source
+            if (materials and slot < len(getattr(materials, 'emissive_strengths', ())) and
+                    materials.emissive_strengths[slot] > 0):
+                tip += '\nVerified emissive glow: %.2fx' % materials.emissive_strengths[slot]
+                emission_src = materials.emissive_sources[slot] if slot < len(
+                    getattr(materials, 'emissive_sources', ())) else None
+                if emission_src:
+                    tip += '\nEmissive source: %s\nPAK: %s' % emission_src
             elif expected:
                 tip += '\nMTL wants ' + expected
             if (materials and slot < len(materials.uv_available) and
