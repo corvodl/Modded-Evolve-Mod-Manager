@@ -8,7 +8,8 @@ deleting intentional floating equipment or closing character openings.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, is_dataclass
+from copy import copy
 import math
 
 
@@ -35,7 +36,14 @@ def prepare_export_mesh(mesh, *, close_tiny_holes=True):
     per-vertex basis (glTF does not serialize legacy smoothing-group IDs).
     """
     verts = mesh.vertices
-    radius = max(float(mesh.radius), 1e-8)
+    # Level-export and lightweight glTF tests use mesh-like namespaces without
+    # a cached radius. Derive a stable bound rather than requiring PreviewMesh.
+    radius = getattr(mesh, 'radius', None)
+    if radius is None:
+        extents = [max(float(v[axis]) for v in verts) -
+                   min(float(v[axis]) for v in verts) for axis in range(3)]
+        radius = math.sqrt(sum(x*x for x in extents)) / 2.
+    radius = max(float(radius), 1e-8)
     tiny = (radius * 1e-7) ** 2
     tris = list(mesh.triangles)
     slots = mesh.subsets or ((0, len(tris) * 3, 0),)
@@ -166,8 +174,15 @@ def prepare_export_mesh(mesh, *, close_tiny_holes=True):
                 snapped += 1
             out.append(saved)
         uvs = tuple(out)
-    return replace(mesh, triangles=tuple(cleaned), subsets=tuple(cleaned_slots),
-                   uvs=uvs), RepairReport(
+    if is_dataclass(mesh):
+        prepared = replace(mesh, triangles=tuple(cleaned),
+                           subsets=tuple(cleaned_slots), uvs=uvs)
+    else:
+        prepared = copy(mesh)
+        prepared.triangles = tuple(cleaned)
+        prepared.subsets = tuple(cleaned_slots)
+        prepared.uvs = uvs
+    return prepared, RepairReport(
         degenerate_faces=removed, unused_vertices=len(verts)-len(used),
         tiny_holes_closed=holes, boundary_edges=boundary_count,
         disconnected_triangles=isolated, uv_coordinates_snapped=snapped,
