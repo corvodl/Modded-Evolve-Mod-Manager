@@ -27,9 +27,13 @@ FRAGMENT = """
 uniform sampler2D diffuse_map;
 uniform sampler2D normal_map;
 uniform sampler2D specular_map;
+uniform sampler2D emissive_map;
 uniform int has_diffuse;
 uniform int has_normal;
 uniform int has_specular;
+uniform int has_emissive;
+uniform int emission_enabled;
+uniform float emissive_strength;
 uniform float opacity;
 uniform float alpha_cutoff;
 uniform int use_alpha_texture;
@@ -95,6 +99,10 @@ void main() {
                               + fill*(0.34+0.30*bounce),0.0,2.5);
     vec3 litLinear = albedoLinear*diffuseLight
                    + vec3(specular*specular_intensity*gloss*illumination);
+    // Glow is light-independent. Only verified emissive slots are bound.
+    if (emission_enabled == 1 && has_emissive == 1)
+        litLinear += pow(texture2D(emissive_map,diffuse_coord).rgb,
+                         vec3(2.2)) * max(0.0, emissive_strength);
     vec3 lit = pow(clamp(litLinear,0.0,1.0),vec3(1.0/2.2));
     gl_FragColor = vec4(lit,alpha);
 }
@@ -111,21 +119,25 @@ class Renderer3:
         glUseProgram(self.program)
         self.uniforms={name:glGetUniformLocation(self.program,name) for name in (
             'diffuse_map','normal_map','specular_map','has_diffuse','has_normal',
-            'has_specular','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
-        for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2)):
+            'has_specular','has_emissive','emission_enabled','emissive_strength','opacity','alpha_cutoff','use_alpha_texture','specular_intensity','illumination','studio_fill','unlit_diffuse')}
+        for name,unit in (('diffuse_map',0),('normal_map',1),('specular_map',2),('emissive_map',3)):
             glUniform1i(self.uniforms[name],unit)
         glUseProgram(0)
 
     def bind(self, *, opacity, gloss, illumination, diffuse, normal, specular,
-             alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02):
+             alpha_texture=False, unlit=False, fill=0.35, alpha_cutoff=.02,
+             emissive=False, emissive_strength=0., emission_enabled=True):
         from OpenGL.GL import glUseProgram, glUniform1i, glUniform1f
         glUseProgram(self.program)
         for name,value in (('has_diffuse',diffuse),('has_normal',normal),
-                           ('has_specular',specular), ('use_alpha_texture',alpha_texture),
+                           ('has_specular',specular), ('has_emissive',emissive),
+                           ('emission_enabled',emission_enabled),
+                           ('use_alpha_texture',alpha_texture),
                            ('unlit_diffuse',unlit)):
             glUniform1i(self.uniforms[name],int(bool(value)))
         for name,value in (('opacity',opacity),('alpha_cutoff',alpha_cutoff),('specular_intensity',gloss),
-                           ('illumination',illumination), ('studio_fill',fill)):
+                           ('illumination',illumination), ('studio_fill',fill),
+                           ('emissive_strength',emissive_strength)):
             glUniform1f(self.uniforms[name],float(value))
 
     def unbind(self):
