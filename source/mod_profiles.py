@@ -146,7 +146,8 @@ class ModProfiles:
         _atomic_json(self.catalog_path, data)
         return mod['id']
 
-    def add_verified_bundle(self, profile_id, files, stage, *, replace_conflicts=False):
+    def add_verified_bundle(self, profile_id, files, stage, *,
+                            replace_conflicts=False, display_name=None):
         """Register several independently signed PAKs in one catalog commit.
 
         Files are (source, stage-relative target, verified_sha256) tuples.
@@ -159,6 +160,9 @@ class ModProfiles:
             raise ValueError('Bundle is empty or the mod collection is full.')
         stage = Path(stage).resolve()
         allowed = allowed_paks(stage)
+        plan_file = stage / 'rekey_plan.json'
+        stage_fingerprint = digest(plan_file) if plan_file.is_file() else None
+        label = _clean_name(display_name) if display_name else None
         incoming = []
         seen = set()
         for source, relative, sha in files:
@@ -201,6 +205,10 @@ class ModProfiles:
             else:
                 record = {'id': _uuid(), 'relative': target,
                           'source': str(path), 'sha256': sha, 'enabled': True}
+                if label:
+                    record['display_name'] = (label + ' · ' + Path(target).stem)[:80]
+                if stage_fingerprint:
+                    record['verified_stage_fingerprint'] = stage_fingerprint
                 profile['mods'].append(record)
                 ids.append(record['id'])
         _atomic_json(self.catalog_path, data)
