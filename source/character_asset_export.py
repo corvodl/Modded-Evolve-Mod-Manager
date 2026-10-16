@@ -308,7 +308,11 @@ def export_character_asset_folder(workspace, character_folder, destination,
                 category = 'animations'
             else:
                 category = 'models'
-            output = staging.joinpath(category, *local_parts)
+            # Avoid duplicate textures/textures and animations/animations
+            # when source PAK paths already use the category directory.
+            organized_parts = (local_parts[1:] if local_parts[0].casefold() == category
+                               else local_parts)
+            output = staging.joinpath(category, *organized_parts)
             if not output.resolve().is_relative_to(staging.resolve()):
                 raise ValueError('Unsafe output asset path.')
             output.parent.mkdir(parents=True, exist_ok=True)
