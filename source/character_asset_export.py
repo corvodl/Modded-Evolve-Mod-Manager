@@ -241,7 +241,7 @@ def build_cdf_folder_glbs(workspace, character_folder, index, *,
 
 def export_character_asset_folder(workspace, character_folder, destination,
                                   *, index=None, full_model=None,
-                                  assemblies=None, assembly_errors=(),
+                                  stage_models=None, assemblies=None, assembly_errors=(),
                                   output_name=None, progress=None, cancelled=None):
     """Export exact model-folder contents with no redundant virtual ancestors.
 
@@ -250,6 +250,9 @@ def export_character_asset_folder(workspace, character_folder, destination,
     resolve virtual-path conflicts to arbitrarily chosen texture bytes.
 
     full_model: optional (GLB bytes, report) for <character>.glb.
+    stage_models: for monsters only, exactly three (GLB bytes, per-CDF report)
+        pairs keyed 1, 2, 3. All three are written beside models/ and must
+        contain only clips verified against that stage's original CDF rig.
     assemblies: mapping of Assemblies/<cdf relative>.glb to (bytes, report).
     Source models (including equipment), animations, and textures are categorized.
     """
@@ -277,6 +280,29 @@ def export_character_asset_folder(workspace, character_folder, destination,
         raise FileExistsError('An unfinished character export already exists.')
     limit = sum(int(source.stat().st_size) for source, _, _ in records)
     assemblies = dict(assemblies or {})
+    stage_models = dict(stage_models or {})
+    if stage_models:
+        from monster_stage_export import is_monster_character, stage_from_cdf
+        if not is_monster_character(virtual) or full_model is not None:
+            raise ValueError('Only monsters may have three root stage GLBs instead of one primary.')
+        if set(stage_models) != {1, 2, 3}:
+            raise ValueError('Monster export requires three separately verified stages.')
+        from model_textured_export import _unpack_glb
+        for stage, pair in stage_models.items():
+            blob, report = pair
+            if (not isinstance(blob, bytes) or not blob.startswith(b'glTF')
+                    or not isinstance(report, dict)
+                    or stage_from_cdf(report.get('cdf',''), virtual) != stage):
+                raise ValueError('Monster Stage %d source does not match its CDF.' % stage)
+            doc, _ = _unpack_glb(blob)
+            declared = tuple(report.get('embedded_animation_clips', ()))
+            embedded = tuple(clip.get('name') for clip in doc.get('animations', ()))
+            if int(report.get('embedded_animations') or 0) != len(embedded) or (
+                    declared and declared != embedded):
+                raise ValueError('Monster Stage %d GLB has mismatched CDF animations.' % stage)
+            if any(not name for name in embedded):
+                raise ValueError('Monster Stage %d contains unnamed motion tracks.' % stage)
+            limit += len(blob)
     if len(assemblies) > 48:
         raise ValueError('Too many CDF assembly exports.')
     if full_model is not None:
@@ -294,7 +320,7 @@ def export_character_asset_folder(workspace, character_folder, destination,
     manifest_rows = []
     try:
         prefix = virtual.casefold() + '/'
-        count = len(records) + int(full_model is not None) + len(assemblies)
+        count = len(records) + int(full_model is not None) + len(stage_models) + len(assemblies)
         for i, (source, game_path, archive) in enumerate(records, 1):
             if cancelled and cancelled():
                 raise InterruptedError('Character export cancelled.')
@@ -340,6 +366,33 @@ def export_character_asset_folder(workspace, character_folder, destination,
                                  model_namespace=short_name)
             if progress:
                 progress('Writing full character model', count, count)
+        stage_rows = []
+        for stage in (1, 2, 3):
+            if stage not in stage_models:
+                continue
+            if cancelled and cancelled():
+                raise InterruptedError('Monster stage export cancelled.')
+            payload, report = stage_models[stage]
+            filename = '%s_Stage%d.glb' % (short_name, stage)
+            output = staging / filename
+            with output.open('xb') as stream:
+                stream.write(payload)
+            from blender_texture_folder import write_texture_folder
+            write_texture_folder(
+                payload, output, texture_root=staging / 'textures',
+                model_namespace='%s__stage%d' % (short_name,stage))
+            row = {
+                'stage':stage, 'glb':filename, 'cdf':report['cdf'],
+                'rig_status':report.get('rig_status', 'unknown'),
+                'bone_count':report.get('bone_count', 0),
+                'embedded_animations':report.get('embedded_animations', 0),
+                'embedded_animation_clips':list(report.get('embedded_animation_clips', ())),
+                'animation_note':report.get('animation_note', ''),
+            }
+            stage_rows.append(row)
+            if progress:
+                progress('Writing verified monster Stage %d' % stage,
+                         len(records) + stage, count)
         assembly_rows = []
         for position, (location, pair) in enumerate(sorted(assemblies.items()), 1):
             if cancelled and cancelled():
@@ -366,7 +419,7 @@ def export_character_asset_folder(workspace, character_folder, destination,
         # references. Never claim raw database files are decoded Blender clips.
         from character_animation_export import export_character_animation_folder
         animation_report = None
-        representative = full_model
+        representative = full_model or stage_models.get(1)
         if representative is None and assemblies:
             representative = next(iter(assemblies.values()))
         if representative is not None:
@@ -402,6 +455,7 @@ def export_character_asset_folder(workspace, character_folder, destination,
                         'character_folder': virtual, 'files': manifest_rows,
                         'unresolved_companions': list(conflicts),
                         'full_model': info,
+                        'monster_stages': stage_rows,
                         'cdf_assemblies': assembly_rows,
                         'cdf_assembly_errors': list(assembly_errors),
                         'animations': animation_report}, indent=2, default=str),
@@ -410,6 +464,7 @@ def export_character_asset_folder(workspace, character_folder, destination,
         return {
             'folder': str(target), 'files': len(manifest_rows),
             'unresolved': tuple(conflicts), 'full_model': info,
+            'monster_stages': tuple(stage_rows),
             'cdf_assemblies': tuple(assembly_rows),
             'cdf_assembly_errors': tuple(assembly_errors),
             'animations': animation_report,
