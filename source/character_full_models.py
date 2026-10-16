@@ -76,6 +76,12 @@ def discover_full_characters(paths):
         if ('_fp' in stem.casefold() or '_lod' in stem.casefold()
                 or 'weapon' in stem.casefold()):
             continue
+        if (emet_main is not None and parent == PurePosixPath(emet_main).parent
+                and stem.casefold().startswith((
+                    'emethealingtotemworld', 'emetdropshipbeaconworld'))):
+            # These deployables remain original selectable game assets and
+            # separate CDF export variants, but are not Emet's Full Character.
+            continue
         mesh = by_lower.get((parent / (stem + '.skinm')).as_posix().casefold())
         if not mesh:
             continue
