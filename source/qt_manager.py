@@ -359,6 +359,7 @@ class QtManager(QMainWindow):
         self.stage_path = self.settings.get('stage', str(DATA_HOME/'Setup'/'staged'))
         self.swap_path = self.settings.get('swap', str(DATA_HOME/'Setup'/'swap'))
         self.projects_path = self.settings.get('projects', str(DATA_HOME/'Projects'))
+        self.game_storage_root = self.settings.get('game_storage_root', str(DATA_HOME/'GameSets'))
         self.current_workspace = self.settings.get('current_workspace', '')
         self.output_pak = self.settings.get('output_pak', '')
         self.batch_root = self.settings.get('batch_root', '')
@@ -563,6 +564,10 @@ class QtManager(QMainWindow):
         self.navigation_shortcut.setShortcut('Ctrl+B')
         self.navigation_shortcut.triggered.connect(lambda: self.toggle_menu())
         self.addAction(self.navigation_shortcut)
+        self.command_palette_action = QAction('Quick Commands', self)
+        self.command_palette_action.setShortcut('Ctrl+K')
+        self.command_palette_action.triggered.connect(self.open_command_palette)
+        self.addAction(self.command_palette_action)
         self.menu_animation = QPropertyAnimation(self.drawer, b'geometry', self)
         self.menu_animation.setDuration(205)
         self.menu_animation.setEasingCurve(QEasingCurve.OutCubic)
@@ -747,6 +752,8 @@ class QtManager(QMainWindow):
         else:
             self._last_public_page = index
         self.stack.setCurrentIndex(index)
+        if SECTIONS[index] == 'Settings' and not self.game_storage_panel._scanned:
+            self.game_storage_panel.refresh()
         if SECTIONS[index] == 'Asset Library':
             self.refresh_library_table()
         elif SECTIONS[index] == 'Modding' and self._startup_inventory_pending:
@@ -1307,6 +1314,8 @@ class QtManager(QMainWindow):
                     act = menu.addAction(title)
                     act.triggered.connect(lambda _checked=False, cb=callback: cb())
         menu_commands('File', (
+            ('Install Mod…', self.open_easy_mod_installer),
+            ('Installed Mods / Profiles…', self.open_mod_profiles),
             ('Unpack PAK + known dependencies', self.extract),
             ('Unpack selected PAKs + dependencies', self.extract_batch),
             ('Import External PAK…', self.browse_external_pak),
@@ -1334,6 +1343,8 @@ class QtManager(QMainWindow):
             ('Show original PAK location', lambda: self.reveal_pak(original=True)),
         ))
         menu_commands('Tools', (
+            ('Undo Applied Mods…', self.undo_mod_profile),
+            ('Quick Commands  Ctrl+K', self.open_command_palette),
             ('Mod Profiles…', self.open_mod_profiles),
             ('Asset Library / Add PAKs…', self.open_asset_library),
             ('Export Model Folder…', self.export_model_folder),
@@ -1409,6 +1420,8 @@ class QtManager(QMainWindow):
         project_actions = QHBoxLayout()
         self.project_quick = {}
         for title, handler in (
+            ('Install Mod…', self.open_easy_mod_installer),
+            ('Installed Mods…', self.open_mod_profiles),
             ('Refresh Projects', self.refresh_project_list),
             ('Continue Editing', self.open_active_project),
             ('Review Changes', self.diff),
@@ -1417,7 +1430,8 @@ class QtManager(QMainWindow):
         ):
             button = _button(title, handler)
             self.project_quick[title] = button
-            if title in ('Continue Editing', 'Build Mod'):
+            if title in ('Install Mod…', 'Installed Mods…',
+                         'Continue Editing', 'Build Mod'):
                 project_actions.addWidget(button)
             else:
                 button.setParent(page)
@@ -1833,21 +1847,20 @@ class QtManager(QMainWindow):
         general_row.addWidget(self.motion_checkbox)
         general_row.addWidget(_button('Create Desktop Shortcut', self.create_shortcut))
 
-        _settings_heading(lay, 'GAME & FILES',
-                          'Connected installation, signing stage, projects, and workspace paths.')
-        folders, inside = _card('FOLDERS',
-                                 'Folders are stored in Data/Settings and are preserved during updates.')
+        _settings_heading(lay, 'GAME STORAGE',
+                          'One location for new setups, with storage breakdown and advanced paths.')
+        folders, inside = _card('GAME STORAGE',
+                                'Review disk usage without moving active signing or recovery files.')
         lay.addWidget(folders)
         self.fields = {}
-        for label, name in (('Signing stage', 'stage'), ('Launch/swap folder', 'swap'), ('Projects', 'projects')):
-            line = QHBoxLayout()
-            line.addWidget(_label(label))
+        for name in ('stage', 'swap', 'projects'):
             inp = QLineEdit()
             inp.setText(getattr(self, name + '_path'))
+            inp.setObjectName('advanced' + name.title() + 'Path')
             self.fields[name] = inp
-            line.addWidget(inp, 1)
-            line.addWidget(_button('Browse…', lambda k=name: self.browse_folder(k)))
-            inside.addLayout(line)
+        from qt_game_storage import GameStorageSettings
+        self.game_storage_panel = GameStorageSettings(self, self.fields, folders)
+        inside.addWidget(self.game_storage_panel)
         btns = QWidget()
         btns.setLayout(_row(_button('Set Up Manager', self.initial_setup, primary=True),
                              _button('Check Setup', self.check_setup),
@@ -1952,7 +1965,7 @@ class QtManager(QMainWindow):
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['settings'] = scroll
-        self.settings_sections = ('UPDATES', 'GENERAL', 'GAME & FILES', 'ASSET LIBRARY',
+        self.settings_sections = ('UPDATES', 'GENERAL', 'GAME STORAGE', 'ASSET LIBRARY',
                                   'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
                                   'ADVANCED & MAINTENANCE')
 
@@ -2648,6 +2661,7 @@ class QtManager(QMainWindow):
             'stage': self.stage_path,
             'swap': self.swap_path,
             'projects': self.projects_path,
+            'game_storage_root': self.game_storage_root,
             'current_workspace': self.current_workspace,
             'output_pak': self.output_pak,
             'archive_label': self.archive_label,
@@ -2664,6 +2678,15 @@ class QtManager(QMainWindow):
         save_settings(self.settings)
 
     def save_settings(self):
+        from game_storage import validate_storage_root
+        try:
+            selected = validate_storage_root(
+                self.game_storage_panel.root_input.text().strip(),
+                game=self.game_root or self._find_game_root())
+        except (OSError, ValueError) as exc:
+            self.failure(exc)
+            return
+        self.game_storage_root = str(selected)
         self.stage_path = self.fields['stage'].text().strip()
         self.swap_path = self.fields['swap'].text().strip()
         self.projects_path = self.fields['projects'].text().strip()
@@ -2673,7 +2696,9 @@ class QtManager(QMainWindow):
             self.persist()
             self.refresh_archives()
             self.refresh_swap_status()
-            self.info('Saved', 'Manager folder settings saved.')
+            self.info('Saved', 'Manager folder settings saved. '
+                      'Changing Mod Data Location affects new setups only; '
+                      'active signing and swap folders have not been moved.')
         except Exception as exc:
             self.failure(exc)
 
@@ -2682,6 +2707,44 @@ class QtManager(QMainWindow):
         if selected:
             self.fields[key].setText(selected)
             self.save_settings()
+
+    def open_easy_mod_installer(self):
+        """One user-initiated drag-drop mod review; no automatic staging."""
+        try:
+            if self.busy:
+                raise RuntimeError('Wait for current operation to finish first.')
+            from qt_easy_mod_installer import EasyModInstaller
+            dialog = EasyModInstaller(self, DATA_HOME / 'Profiles')
+            dialog.exec()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def undo_mod_profile(self):
+        """Restore profile-managed staging via its saved transaction journals."""
+        try:
+            from mod_profiles import ModProfiles
+            store = ModProfiles(DATA_HOME / 'Profiles')
+            status = store.status()
+            if status['in_progress'] or status['pending']:
+                raise RuntimeError(
+                    'A prior profile transaction is interrupted. '
+                    'Open Installed Mods and resolve recovery before undoing.')
+            if not status['profile_id'] and not status['entry_count']:
+                self.info('Mod Profiles', 'No applied mod profile needs undoing.')
+                return
+            if not self.confirm('Undo applied mod profile?',
+                    'Restore the previous staged PAK versions from the '
+                    'profile rollback journal? Installed game files will '
+                    'not be modified. Close the game and client first.'):
+                return
+            self.apply_mod_profile(None)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.failure(exc)
+
+    def open_command_palette(self):
+        from qt_quick_commands import QuickCommandPalette
+        dialog = QuickCommandPalette(self)
+        dialog.exec()
 
     def open_mod_profiles(self):
         """Open the profile library without changing the installed game."""
@@ -2697,8 +2760,8 @@ class QtManager(QMainWindow):
         except Exception as exc:
             self.failure(exc)
 
-    def apply_mod_profile(self, profile_id):
-        """Queue signed PAK staging in a worker, not the Qt thread."""
+    def apply_mod_profile(self, profile_id, *, receipt_id=None):
+        """Queue signed PAK staging; mark a receipt only after the worker succeeds."""
         if self.busy:
             raise RuntimeError('Wait for the current operation to finish.')
         if not self.flush_editors():
@@ -2712,14 +2775,24 @@ class QtManager(QMainWindow):
                    '--stage', str(Path(self.stage_path)),
                    '--swap', str(Path(self.swap_path)),
                    '--profile', profile_id if profile_id is not None else 'baseline']
+        steps = [('Applying signed Mod Profile', command)]
+        if profile_id is not None:
+            verification = [
+                sys.executable, '-u', str(ROOT / 'mod_install_receipts.py'),
+                '--root', str(DATA_HOME / 'Profiles'),
+                '--stage', str(Path(self.stage_path)),
+                '--swap', str(Path(self.swap_path)),
+                '--profile', profile_id]
+            if receipt_id is not None:
+                verification.extend(('--receipt', receipt_id))
+            steps.append(('Verifying staged PAKs and recovery backups', verification))
         def complete():
             self.refresh_archives()
             self.refresh_swap_status()
             self.info('Mod profile staged',
-                      'The selected profile was applied to the signing stage. '
-                      'No installed game files were changed.')
-        self.run_steps([('Applying signed Mod Profile', command)],
-                       'Apply Mod Profile', complete)
+                      'Signed PAK staging and post-install integrity checks '
+                      'completed. Game installation files were not changed.')
+        self.run_steps(steps, 'Apply Mod Profile', complete)
 
     def export_model_folder(self):
         """Export native model files without blocking the application UI."""
@@ -4268,6 +4341,16 @@ class QtManager(QMainWindow):
             pending = scan_prepared(Path(game))
             if pending['backups'] or pending['partial']:
                 raise RuntimeError('Unfinished original-file backups exist. Use Restore Game Files first.')
+            from game_storage import validate_storage_root, reusable_setup
+            root = validate_storage_root(
+                self.game_storage_panel.root_input.text().strip(), game=game)
+            # Check existing signed setup before asking to make additional
+            # original-PAK snapshots or generate another expensive signing set.
+            if reusable_setup(self.stage_path, self.swap_path, game, launcher):
+                self.info('Existing setup reused',
+                          'Signing PAKs and launcher recovery are already configured '
+                          'for this game and client. No new PAK copies were created.')
+                return
             preserve = True
             if pending['ready']:
                 if not self.confirm('Existing prepared files',
@@ -4277,7 +4360,7 @@ class QtManager(QMainWindow):
                                'Choose setup storage mode. The live launch still protects original game files.')
             if storage is None:
                 return
-            dest = DATA_HOME/'GameSets'/('Setup_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
+            dest = root/('Setup_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
             if not self.confirm('Confirm setup',
                 f'Close game and launcher. Verify PAKs and prepare a private signed set in:\n{dest}\n\nContinue?'):
                 return
@@ -4288,6 +4371,7 @@ class QtManager(QMainWindow):
                 cmd.append('--preserve-old-prepared')
             if not storage:
                 cmd.append('--skip-original-snapshots')
+            self.game_storage_root = str(root)
             self.run_steps([('Creating local mod setup',cmd)],'Set up from game',
                            lambda: self._after_setup(dest))
         except Exception as exc:
@@ -4301,6 +4385,8 @@ class QtManager(QMainWindow):
         self.swap_path = result['swap']
         self.fields['stage'].setText(self.stage_path)
         self.fields['swap'].setText(self.swap_path)
+        self.game_storage_panel.active_label.setText(
+            'Active setup: ' + str(Path(self.stage_path).parent))
         self.persist()
         self.refresh_archives()
         self.info('Setup finished', 'Your local mod signing setup is ready.')
@@ -4314,10 +4400,9 @@ class QtManager(QMainWindow):
             game = QFileDialog.getExistingDirectory(self,'Select updated installed EvolveGame')
             if not game:
                 return
-            folder = QFileDialog.getExistingDirectory(self,'Choose new setup storage folder',
-                                                       str(DATA_HOME/'GameSets'))
-            if not folder:
-                return
+            from game_storage import validate_storage_root
+            folder = validate_storage_root(
+                self.game_storage_panel.root_input.text().strip(), game=game)
             keep = self.confirm_storage('Keep original snapshots?',
                                         'Choose whether the refreshed setup stores original PAK snapshots.')
             if keep is None:
@@ -4331,6 +4416,7 @@ class QtManager(QMainWindow):
                    '--destination',str(dest)]
             if not keep:
                 cmd.append('--skip-original-snapshots')
+            self.game_storage_root = str(folder)
             self.run_steps([('Refreshing originals',cmd)],'Refresh Original PAKs',
                            lambda: self._after_setup(dest))
         except Exception as exc:
@@ -4366,6 +4452,8 @@ class QtManager(QMainWindow):
         self.projects_path = settings.get('projects',self.projects_path)
         for key in ('stage','swap','projects'):
             self.fields[key].setText(getattr(self,key+'_path'))
+        self.game_storage_panel.active_label.setText(
+            'Active setup: ' + str(Path(self.stage_path).parent))
         self.refresh_archives()
         self.refresh_swap_status()
         self.info('Bundle ready', 'Configured your existing exported complete setup.')

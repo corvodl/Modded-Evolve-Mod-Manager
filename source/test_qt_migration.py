@@ -371,7 +371,7 @@ class QtMigrationTests(unittest.TestCase):
 
     def test_settings_sections_stay_inside_settings_page(self):
         self.assertEqual(self.win.settings_sections, (
-            'UPDATES', 'GENERAL', 'GAME & FILES', 'ASSET LIBRARY',
+            'UPDATES', 'GENERAL', 'GAME STORAGE', 'ASSET LIBRARY',
             'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
             'ADVANCED & MAINTENANCE'))
         self.assertEqual(len(self.win.nav_buttons), len(SECTIONS))
