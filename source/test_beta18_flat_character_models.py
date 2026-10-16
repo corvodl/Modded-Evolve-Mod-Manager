@@ -218,7 +218,7 @@ class FlatCharacterFolderTests(unittest.TestCase):
         self.assertTrue((root / 'merc_parnelltank.glb').is_file())
         self.assertEqual((root / 'models/equipment/weapon.skin').read_bytes(), b'WEAPON')
         self.assertEqual((root / 'animations/motion/idle.caf').read_bytes(), b'CAF')
-        self.assertEqual((root / 'textures/textures/body_diff.dds.0').read_bytes(),
+        self.assertEqual((root / 'textures/body_diff.dds.0').read_bytes(),
                          b'DDS-sibling-TS')
         self.assertFalse((root / 'Assemblies').exists())
         manifest = json.loads((root / 'asset_sources.json').read_text('utf-8'))
