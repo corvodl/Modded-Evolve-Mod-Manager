@@ -244,7 +244,10 @@ def patch_featured_actionscript(source: str, mode: str, target: str = "all",
     begin = hits[0].end() - 1
     end = _skip_block(source, begin)
     body = source[begin + 1:end]
-    if re.search(r"\breturn\b", body):
+    # Already staged presets can include an internal guard return; only the
+    # original setFeatured body must be checked for early exits.
+    original_body = body.split("    var " + _MARKER + "_", 1)[0]
+    if re.search(r"\breturn\b", original_body):
         raise GfxError(
             "setFeatured contains an early return; automatic injection "
             "could be skipped. Review this function in FFDec instead.")
