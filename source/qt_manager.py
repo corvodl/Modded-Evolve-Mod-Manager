@@ -2686,8 +2686,8 @@ class QtManager(QMainWindow):
         except Exception as exc:
             self.failure(exc)
 
-    def apply_mod_profile(self, profile_id):
-        """Queue signed PAK staging in a worker, not the Qt thread."""
+    def apply_mod_profile(self, profile_id, *, receipt_id=None):
+        """Queue signed PAK staging; mark a receipt only after the worker succeeds."""
         if self.busy:
             raise RuntimeError('Wait for the current operation to finish.')
         if not self.flush_editors():
@@ -2702,6 +2702,10 @@ class QtManager(QMainWindow):
                    '--swap', str(Path(self.swap_path)),
                    '--profile', profile_id if profile_id is not None else 'baseline']
         def complete():
+            if receipt_id is not None:
+                from mod_install_receipts import mark_staged
+                mark_staged(DATA_HOME / 'Profiles', receipt_id,
+                            self.stage_path, self.swap_path)
             self.refresh_archives()
             self.refresh_swap_status()
             self.info('Mod profile staged',
