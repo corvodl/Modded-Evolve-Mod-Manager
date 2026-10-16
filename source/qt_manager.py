@@ -1965,7 +1965,7 @@ class QtManager(QMainWindow):
         lay.addStretch()
         self.stack.addWidget(scroll)
         self.pages['settings'] = scroll
-        self.settings_sections = ('UPDATES', 'GENERAL', 'GAME & FILES', 'ASSET LIBRARY',
+        self.settings_sections = ('UPDATES', 'GENERAL', 'GAME STORAGE', 'ASSET LIBRARY',
                                   'BACKUPS & RECOVERY', 'LAUNCH PREFERENCES',
                                   'ADVANCED & MAINTENANCE')
 
