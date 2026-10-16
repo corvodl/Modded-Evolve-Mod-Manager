@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
 from mod_profiles import ModProfiles
 from universal_stage import allowed_paks
 from mod_install_receipts import list_receipts
+from mod_install_safety import verify_collection, repair_mod_source
+from qt_background_exports import begin_file_operation, exports_busy
 
 
 class ModProfilesDialog(QDialog):
@@ -51,6 +53,9 @@ class ModProfilesDialog(QDialog):
                 ('Import Shared Profile…', self.import_shared),
                 ('Export Profile…', self.export_shared)):
             tools.addWidget(self._button(label,callback))
+        self.verify_button = self._button('Verify & Repair…', self.verify_and_repair)
+        self.verify_button.setObjectName('verifyInstalledMods')
+        tools.addWidget(self.verify_button)
         tools.addWidget(self._button('Installation History…', self.show_receipts))
         tools.addStretch()
         root_layout.addLayout(tools)
@@ -74,6 +79,9 @@ class ModProfilesDialog(QDialog):
 
         actions = QHBoxLayout()
         actions.addWidget(self._button('Add signed PAK…', self.add_mod))
+        repair_button = self._button('Repair Selected Source…', self.repair_selected_source)
+        repair_button.setObjectName('repairSelectedModSource')
+        actions.addWidget(repair_button)
         actions.addWidget(self._button('Remove selected', self.remove_mod))
         actions.addWidget(self._button('Move Up', lambda: self.move_selected(-1)))
         actions.addWidget(self._button('Move Down', lambda: self.move_selected(1)))
@@ -211,6 +219,89 @@ class ModProfilesDialog(QDialog):
             self.status.setText('Mod library status unavailable: ' + str(exc))
         finally:
             self._filling = False
+
+    def verify_and_repair(self):
+        """Read-only, explicitly requested collection verification."""
+        try:
+            profile_id = self._selected()
+            if exports_busy(self):
+                return
+            self.verify_button.setEnabled(False)
+            def completed(issues):
+                self.verify_button.setEnabled(True)
+                if not issues:
+                    QMessageBox.information(
+                        self, 'Mod Verification',
+                        'All tracked mod sources match their SHA256 hashes, '
+                        'PAK targets are recognized, and there are no enabled-target '
+                        'collisions. This does not guarantee runtime compatibility.')
+                    self.refresh()
+                    return
+                lines = [f'{x.target}: {x.problem}' for x in issues]
+                QMessageBox.warning(
+                    self, 'Mod Verification — attention needed',
+                    '\n'.join(lines[:16]) +
+                    ('\n…More issues exist.' if len(lines) > 16 else '') +
+                    '\n\nTo relink a missing or altered source, select that mod '
+                    'and choose Repair Selected Source… below. No data was changed.')
+                self.refresh()
+            def failed(error):
+                self.verify_button.setEnabled(True)
+                QMessageBox.warning(self, 'Mod Verification failed', str(error))
+            begin_file_operation(
+                self, 'Verify installed mods',
+                'Reading signed mod hashes and conflicts (no writes)…',
+                lambda _progress, cancelled:
+                verify_collection(self.store.root, profile_id, self.stage_path)
+                if not cancelled() else (_ for _ in ()).throw(
+                    InterruptedError('Cancelled')),
+                on_success=completed, on_error=failed)
+        except Exception as exc:
+            self.verify_button.setEnabled(True)
+            self._error(exc)
+
+    def repair_selected_source(self):
+        """Only relink after the user identifies and approves a byte-identical PAK."""
+        try:
+            profile_id = self._selected()
+            mod_id = self._selected_mod_id()
+            source, _ = QFileDialog.getOpenFileName(
+                self, 'Locate exact replacement for missing/changed PAK',
+                '', 'Signed PAK files (*.pak)')
+            if not source:
+                return
+            if QMessageBox.question(
+                    self, 'Confirm mod source repair',
+                    'Verify the selected replacement against the saved SHA256, '
+                    'current signed stage and RSA archive layout, then register '
+                    'a durable local copy? This will not stage or modify game PAKs.',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No) != QMessageBox.Yes:
+                return
+            if exports_busy(self):
+                return
+            self.verify_button.setEnabled(False)
+            def completed(destination):
+                self.verify_button.setEnabled(True)
+                self.reload(select=profile_id)
+                QMessageBox.information(
+                    self, 'Source repaired',
+                    'The exact verified mod has been relinked to the local library. '
+                    'No signing-stage or installed game files were changed.')
+            def failed(error):
+                self.verify_button.setEnabled(True)
+                QMessageBox.warning(self, 'Mod repair refused', str(error))
+            begin_file_operation(
+                self, 'Repair verified mod source',
+                'Verifying exact SHA256 and signed PAK before relinking…',
+                lambda _progress, cancelled:
+                repair_mod_source(self.store.root, profile_id, mod_id,
+                                  source, self.stage_path)
+                if not cancelled() else (_ for _ in ()).throw(
+                    InterruptedError('Cancelled')),
+                on_success=completed, on_error=failed)
+        except Exception as exc:
+            self._error(exc)
 
     def show_receipts(self):
         """On-demand, copyable installation history with status from journals."""
