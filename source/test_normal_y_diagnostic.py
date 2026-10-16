@@ -50,7 +50,10 @@ class NormalYDiagnosticTests(unittest.TestCase):
         import inspect
         self.assertIn("('normal_y_flip',invert_normal_y)",
                       inspect.getsource(Renderer3.bind))
-        self.assertIn("'normal_y_flip'",inspect.getsource(Renderer3.__init__))
+        # Uniform declarations are now shared module constants so sampler
+        # lookup and binding cannot diverge (e.g. emissive_map missing).
+        from renderer_3 import MATERIAL_UNIFORMS
+        self.assertIn('normal_y_flip', MATERIAL_UNIFORMS)
 
     def test_nonflat_y_fixture_detects_polarity(self):
         # Neutral Y=128 cannot detect an inversion. Use non-neutral Y.
