@@ -163,6 +163,36 @@ class SafetyTests(unittest.TestCase):
                 mark_staged(self.catalog, receipt, self.stage, self.swap)
         self.assertEqual(list_receipts(self.catalog)[0]["status"], "recovery_needed")
 
+    def test_prepared_swap_needs_exact_ready_pak_hash_and_journal(self):
+        backup = self._stage_journal()
+        old_meta = json.loads((backup / "metadata.json").read_text())
+        old_meta["has_ready"] = True
+        _atomic_json(backup / "metadata.json", old_meta)
+        (backup / "ready-before.pak").write_bytes(self.old)
+        ready = self.root / "prepared" / "libs.pak"
+        ready.parent.mkdir()
+        ready.write_bytes(self.source.read_bytes())
+        _atomic_json(self.swap / "controlled_swap_state.json", {
+            "version": 1, "phase": "prepared", "stage": str(self.stage),
+            "game": str(self.root / "Game"), "files": [
+                {"name": "Game/libs.pak", "source": str(self.pak),
+                 "ready": str(ready), "sha256": self.sha}
+            ]})
+        with patch("launch_integration.state_status",
+                   return_value=SimpleNamespace(phase="prepared")):
+            self.assertEqual(verify_staged_profile(self.catalog, self.pid,
+                                                   self.stage, self.swap), 1)
+            ready.write_bytes(b"tampered")
+            with self.assertRaisesRegex(RuntimeError, "journal hashes disagree"):
+                verify_staged_profile(self.catalog, self.pid,
+                                      self.stage, self.swap)
+
+    def test_post_stage_cli_exits_nonzero_if_verification_fails(self):
+        from mod_install_receipts import main
+        with self.assertRaisesRegex(RuntimeError, "incomplete"):
+            main(["--root", str(self.catalog), "--stage", str(self.stage),
+                  "--swap", str(self.swap), "--profile", self.pid])
+
     def test_staged_archive_tampering_is_detected(self):
         self._stage_journal()
         self.pak.write_bytes(b"tampered-after-stage")
