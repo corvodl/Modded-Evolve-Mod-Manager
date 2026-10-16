@@ -146,6 +146,66 @@ class ModProfiles:
         _atomic_json(self.catalog_path, data)
         return mod['id']
 
+    def add_verified_bundle(self, profile_id, files, stage, *, replace_conflicts=False):
+        """Register several independently signed PAKs in one catalog commit.
+
+        Files are (source, stage-relative target, verified_sha256) tuples.
+        Existing enabled target conflicts require explicit user consent.
+        No active stage or installed game file is touched here.
+        """
+        data = self._catalog()
+        profile = self._get(data, profile_id)
+        if not files or len(profile['mods']) + len(files) > MAX_MODS:
+            raise ValueError('Bundle is empty or the mod collection is full.')
+        stage = Path(stage).resolve()
+        allowed = allowed_paks(stage)
+        incoming = []
+        seen = set()
+        for source, relative, sha in files:
+            target = _clean_relative(relative)
+            real = allowed.get(target.casefold())
+            if real is None or real.casefold() in seen:
+                raise ValueError('Invalid or duplicated signed PAK target: ' + target)
+            seen.add(real.casefold())
+            path = Path(source).resolve(strict=True)
+            if (path.suffix.casefold() != '.pak'
+                    or path.name.casefold() != Path(real).name.casefold()
+                    or path == (stage / 'paks' / Path(*real.split('/'))).resolve()
+                    or digest(path) != sha):
+                raise ValueError('Mod is unavailable or its verified hash changed: ' + real)
+            incoming.append((path, real, sha))
+        from_existing = []
+        for path, target, sha in incoming:
+            for mod in profile['mods']:
+                if (mod['relative'].casefold() == target.casefold()
+                        and mod['sha256'] == sha):
+                    from_existing.append((mod, path, target, sha))
+                    break
+        collisions = [m for m in profile['mods']
+                      if m.get('enabled') and m['relative'].casefold() in seen
+                      and not any(old is m for old, *_ in from_existing)]
+        if collisions and not replace_conflicts:
+            raise ValueError('Enabled PAK target conflicts require explicit replacement approval.')
+        if len(from_existing) == len(incoming) and all(m['enabled'] for m, *_ in from_existing):
+            return [m['id'] for m, *_ in from_existing], True
+        if replace_conflicts:
+            for old in collisions:
+                old['enabled'] = False
+        ids = []
+        for path, target, sha in incoming:
+            match = next((mod for mod, _, rel, hash_value in from_existing
+                          if rel == target and hash_value == sha), None)
+            if match:
+                match['enabled'] = True
+                ids.append(match['id'])
+            else:
+                record = {'id': _uuid(), 'relative': target,
+                          'source': str(path), 'sha256': sha, 'enabled': True}
+                profile['mods'].append(record)
+                ids.append(record['id'])
+        _atomic_json(self.catalog_path, data)
+        return ids, False
+
     def set_enabled(self, profile_id, mod_id, enabled):
         data = self._catalog()
         mod = self._mod(data, profile_id, mod_id)
