@@ -229,7 +229,7 @@ class CharacterStageTests(unittest.TestCase):
         from pathlib import Path
         skins = tuple((label, 'characters/hunters/h/h_3p_%s.skin' % label)
                       for label in ('body', 'leftarm', 'rightarm', 'hand',
-                                    'lefthand', 'righthand', 'mask', 'scarf',
+                                    'lefthand', 'righthand', 'larm', 'rarm',
                                     'arm', 'rifle'))
         with TemporaryDirectory() as tmp:
             mesh = Path(tmp) / 'mesh'
