@@ -8,17 +8,11 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Stable — v1.2.6
 
-- Restore CryEngine emissive glow materials, preserving dedicated emissive textures and authorized diffuse-alpha glow masks in the GPU viewer and Blender GLB exports.
-- Add an emission intensity control; keep translucent surfaces separate from glow masking.
-- Validate exported models, discard degenerate triangles, safely close tiny unambiguous holes, preserve UV seams, vertex IDs, rigging and hard edges, and include repair diagnostics in exported GLB files.
-- Preserve the existing stable material features (normal, gloss, detail, ambient occlusion, cubemap reflection, and SSAO).
-
-
-- Fix Asset Library's separate character export path so Emet and other characters use the single-GLB layout instead of loose meshes, Assemblies, and old CDF assembly reports.
-- Use the same complete character-folder exporter from File Editor and Modding Tools, instead of scattering standalone model GLBs across the export root.
-- Create a character-named main GLB and categorized animations, textures, and models directories containing additional verified assemblies and equipment.
-- Preserve Emet's canonical complete 3P body when selecting the primary GLB, with explicit rig and animation compatibility reports instead of fabricated skeletons.
-- Handle empty-name, zero-byte CryPAK placeholders in read-only Asset Library and workspace indexes while continuing to reject unsafe names and entries with data.
+- Restore verified CryEngine emissive materials and glow masks in model previews and Blender GLB exports.
+- Add a GPU emissive intensity control while preserving distinct transparency and glow mask handling.
+- Validate exported geometry, remove degenerate faces, and repair only small verified holes without disturbing skin vertex IDs.
+- Clean up nearly identical UV coordinates without joining intentional UV seams or hard edges.
+- Record geometry repair diagnostics in exported GLBs and preserve stable diffuse, normal, gloss, AO, detail and reflection support.
 
 ## Download and install
 
