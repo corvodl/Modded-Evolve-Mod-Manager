@@ -716,7 +716,8 @@ class QtGLModelCanvas(QOpenGLWidget):
                             diffuse=False, normal=False, specular=False,
                             emissive=True, emissive_strength=amount*self.glow_strength,
                             emissive_alpha_mask=needs_alpha,
-                            uv_matrices={'emissive': transform_for(self.materials,slot,'emissive')},
+                            uv_matrices={'emissive': transform_for(self.materials,slot,'emissive',
+                                seconds=time.monotonic()-self._uv_motion_started)},
                             emission_enabled=True, bloom_pass=True)
                 glDrawElements(GL_TRIANGLES, int(count), GL_UNSIGNED_INT,
                                arrays.indices[first:first+count])
@@ -1719,6 +1720,32 @@ class QtGPUModelPanel(QWidget):
                           if selected < len(getattr(materials, 'emissive_sources', ())) else None)
                 message += ' Strength: %.2fx.' % strength
                 message += (' Source: %s (%s).' % origin) if origin else ' Mask: material-approved diffuse alpha.'
+            masks = getattr(materials, 'emissive_masks', ())
+            if selected is not None and selected in resolved:
+                from texture_transform import transform_for, IDENTITY
+                mask_mode = masks[selected] if selected<len(masks) else 'none'
+                mask_label = ('diffuse alpha, sampled independently' if mask_mode=='diffuse_alpha'
+                              else 'diffuse alpha baked into emission atlas' if mask_mode=='baked_diffuse_alpha'
+                              else 'none')
+                message += ' Emission mask: %s.' % mask_label
+                uv_transform = transform_for(materials,selected,'emissive')
+                if uv_transform != IDENTITY:
+                    message += ' Emission UV scale: %.3g×%.3g, offset: %.3g, %.3g.' % uv_transform[:4]
+                from emissive_materials import subset_emission_coverage
+                mesh = getattr(self.canvas, 'mesh', None)
+                cache = getattr(self, '_emissive_coverage_cache', {})
+                key = (id(mesh), id(materials), selected)
+                if key not in cache:
+                    if len(cache) > 24:
+                        cache.clear()
+                    cache[key] = subset_emission_coverage(mesh,materials,selected)
+                    self._emissive_coverage_cache = cache
+                coverage = cache[key]
+                if coverage is not None:
+                    lit,total = coverage
+                    message += ' Approximate mesh UV emission samples: %d/%d nonzero.' % (lit,total)
+                    if total and not lit:
+                        message += ' Warning: emission is dark everywhere sampled by this mesh subset.'
             black = getattr(materials, 'emissive_black', ())
             dark_slots = [slot for slot in resolved
                           if slot < len(black) and black[slot]]
