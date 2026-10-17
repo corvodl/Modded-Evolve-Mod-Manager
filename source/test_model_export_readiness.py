@@ -55,10 +55,10 @@ class SourceReadyExportTests(unittest.TestCase):
         good=_pack_glb(doc,raw)
         self.assertEqual(audit_material_uvs(good)['textured_primitives_verified'],1)
         doc['accessors'][1]['count']=3
-        with self.assertRaisesRegex(ValueError, 'incomplete UV'):
+        with self.assertRaisesRegex(ValueError, 'complete UV0'):
             audit_material_uvs(_pack_glb(doc,raw))
         del doc['meshes'][0]['primitives'][0]['attributes']['TEXCOORD_0']
-        with self.assertRaisesRegex(ValueError, 'lacks UV0'):
+        with self.assertRaisesRegex(ValueError, 'complete UV0'):
             audit_material_uvs(_pack_glb(doc,raw))
 
     def test_render_parts_do_not_use_lower_lods(self):
