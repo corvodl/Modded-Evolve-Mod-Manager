@@ -67,6 +67,68 @@ class TexturedModelExportTests(unittest.TestCase):
             self.assertEqual(report['texture_count'], 0)
             self.assertIn('missing', report['texture_status'])
 
+
+    def test_lennox_blender_export_bakes_separate_uv_alpha_glow(self):
+        """An emissive tile repeated twice cannot ignore diffuse armor alpha."""
+        from io import BytesIO
+        from texture_transform import IDENTITY
+        from model_textured_export import _unpack_glb
+        diffuse = Image.new('RGBA', (4, 4), (40, 40, 40, 0))
+        for y in range(4):
+            for x in (0, 1):
+                diffuse.putpixel((x, y), (40, 40, 40, 255))
+        emission = Image.new('RGB', (4, 4), (255, 50, 10))
+        mesh = replace(read_preview_mesh(test_mesh(), 'test.skinm'),
+                       uvs=((0., 0.), (1., 0.), (0., 1.), (1., 1.)),
+                       subsets=((0, 6, 3), (6, 6, 4)))
+        mats = PreviewMaterials(
+            (None, None, None, diffuse, None),
+            ('no glow', 'no glow', 'no glow', 'Lennox armor', 'no glow'),
+            'lennox.mtl',
+            emissive_maps=(None, None, None, emission, None),
+            emissive_strengths=(0., 0., 0., 4., 0.),
+            emissive_masks=('none', 'none', 'none', 'diffuse_alpha', 'none'),
+            map_uv_transforms=(('emissive',
+                (IDENTITY, IDENTITY, IDENTITY, (2., 2., 0., 0., 0.), IDENTITY)),))
+        data, _ = embed_diffuse_textures(glb_bytes(mesh), mats)
+        doc, binary = _unpack_glb(data)
+        armor = next(m for m in doc['materials']
+                     if m['name'].startswith('CryEngine material slot 3 '))
+        reference = armor['emissiveTexture']
+        self.assertNotIn('extensions', reference)
+        self.assertTrue(armor['extras']['cryEngineEmissionMask']['bakedForBlender'])
+        source = doc['textures'][reference['index']]['source']
+        view = doc['bufferViews'][doc['images'][source]['bufferView']]
+        image = Image.open(BytesIO(binary[
+            view['byteOffset']:view['byteOffset'] + view['byteLength']]))
+        self.assertEqual(image.size, (8, 8))
+        self.assertGreater(image.getpixel((1, 2))[0], 245)
+        self.assertEqual(image.getpixel((6, 2)), (0, 0, 0))
+        self.assertEqual(
+            armor['extensions']['KHR_materials_emissive_strength']['emissiveStrength'],
+            100.)
+
+    def test_missing_emission_alpha_fails_closed_not_full_body_glow(self):
+        from texture_transform import IDENTITY
+        mesh = replace(read_preview_mesh(test_mesh(), 'test.skinm'),
+                       subsets=((0, 6, 3), (6, 6, 4)))
+        mats = PreviewMaterials(
+            (None, None, None, Image.new('RGB', (4, 4), (40, 40, 40)), None),
+            ('none', 'none', 'none', 'armor', 'none'), 'lennox.mtl',
+            emissive_maps=(None, None, None,
+                           Image.new('RGB', (4, 4), (255, 50, 10)), None),
+            emissive_strengths=(0., 0., 0., 4., 0.),
+            emissive_masks=('none', 'none', 'none', 'diffuse_alpha', 'none'),
+            map_uv_transforms=(('emissive',
+                (IDENTITY, IDENTITY, IDENTITY, (2., 2., 0., 0., 0.), IDENTITY)),))
+        data, _ = embed_diffuse_textures(glb_bytes(mesh), mats)
+        doc, _ = _unpack_glb(data)
+        armor = next(m for m in doc['materials']
+                     if m['name'].startswith('CryEngine material slot 3 '))
+        self.assertNotIn('emissiveTexture', armor)
+        self.assertIn('emission omitted',
+                      armor['extras']['cryEngineEmissionExportWarning'])
+
     def test_weight_status_does_not_invent_rig(self):
         self.assertEqual(weight_stream_status(test_mesh())['status'],
                          'no bone mapping stream')

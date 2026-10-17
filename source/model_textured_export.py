@@ -156,6 +156,28 @@ def embed_diffuse_textures(blob, materials):
             if len(images) >= MAX_TEXTURES:
                 raise ValueError('Exceeded texture export safety limit.')
             source = collection[slot]
+            emission_uv_baked = False
+            if role == 'emissive':
+                mask_modes = getattr(materials, 'emissive_masks', ())
+                mask_mode = mask_modes[slot] if slot < len(mask_modes) else 'none'
+                if mask_mode == 'diffuse_alpha':
+                    # Unlike the manager shader, glTF cannot multiply
+                    # emissive and diffuse alpha with independent TexMods.
+                    # Bake both samplers in base UV space: retaining the
+                    # emission TexMod here would light unrelated armor.
+                    from emissive_materials import bake_independent_uv_alpha_emission
+                    diffuse = (materials.textures[slot] if
+                               slot < len(materials.textures) else None)
+                    source = bake_independent_uv_alpha_emission(
+                        source, diffuse, transform_for(materials, slot, 'emissive'),
+                        transform_for(materials, slot))
+                    if source is None:
+                        material.setdefault('extras', {})[
+                            'cryEngineEmissionExportWarning'] = (
+                            'Cannot bake diffuse-alpha emission mask; '
+                            'emission omitted rather than exporting unmasked glow.')
+                        continue
+                    emission_uv_baked = True
             # glTF expects LINEAR roughness in the green metallic-roughness
             # channel; CryEngine gloss is inverse smoothness. Do not interpret
             # arbitrary RGB specular maps as gloss.
@@ -239,7 +261,8 @@ def embed_diffuse_textures(blob, materials):
             if role == 'emissive':
                 material['emissiveTexture'] = {'index': len(textures)-1}
                 material['emissiveFactor'] = [1., 1., 1.]
-                transform = transform_for(materials, slot, 'emissive')
+                transform = (IDENTITY if emission_uv_baked
+                             else transform_for(materials, slot, 'emissive'))
                 if transform != IDENTITY:
                     su, sv, ou, ov, angle = transform
                     material['emissiveTexture']['extensions'] = {
@@ -248,18 +271,12 @@ def embed_diffuse_textures(blob, materials):
                     used = doc.setdefault('extensionsUsed', [])
                     if 'KHR_texture_transform' not in used:
                         used.append('KHR_texture_transform')
-                mask_modes = getattr(materials,'emissive_masks',())
-                mask_mode = mask_modes[slot] if slot<len(mask_modes) else 'none'
-                if mask_mode=='diffuse_alpha':
-                    # glTF 2.0 cannot express an emissive texture multiplied
-                    # by a separately UV-transformed diffuse alpha sampler.
-                    # Preserve authoring provenance instead of silently
-                    # assigning the wrong mask to a different UV channel.
+                if emission_uv_baked:
                     material.setdefault('extras', {})['cryEngineEmissionMask'] = {
                         'source': 'diffuse_alpha',
-                        'diffuseUvTransform': list(transform_for(materials,slot)),
-                        'emissiveUvTransform': list(transform),
-                        'requiresBakingForBlender': True,
+                        'diffuseUvTransform': list(transform_for(materials, slot)),
+                        'emissiveUvTransform': list(transform_for(materials, slot, 'emissive')),
+                        'bakedForBlender': True,
                     }
                 # The original CryEngine GlowAmount is not Blender's unit.
                 # Preserve the untouched authored value for inspection while
