@@ -244,7 +244,9 @@ def export_character_directory(source_folder, destination, *, projects_root=None
     # Never substitute the standalone equipment mesh for character.glb.
     if _is_emet_character_folder(virtual):
         complete = {name: pair for name, pair in assemblies.items()
-                    if _verified_emet_complete_assembly(pair[1])}
+                    if _verified_emet_complete_assembly(pair[1])
+                    and pair[1].get('geometry_verification', {}).get('status')
+                    == 'verified_body_and_remote_cannon'}
         if not complete and any(_assembly_perspective(pair[1]) != 'fp'
                                 for pair in assemblies.values()):
             details = '; '.join(
