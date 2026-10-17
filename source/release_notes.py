@@ -4,6 +4,17 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.3.0', (
+        "Render verified CryEngine Glass visors as translucent in the GPU viewer, preserving source opacity, tint, fog, Fresnel and refraction settings.",
+        "Export verified Glass materials to Blender GLB with optical transmission, original IOR and source material metadata instead of treating them as opaque.",
+        "Reduce occasional model-selection stalls by sampling material diagnostics efficiently, resolving only selected assets and decoding off the Qt UI thread.",
+        "Prioritize the latest selected model, cancel obsolete queued decodes and prevent repeated loads when browsing characters quickly.",
+        "Add cancellable model-loading progress with stage labels, elapsed time and genuine GPU texture upload counts, without inventing completion percentages.",
+        "Release stale GPU textures and pending uploads on model changes and viewer close while retaining bounded decoded-model caching.",
+        "Display CryEngine Glass shader properties and approximate preview transparency separately in the Material diagnostics inspector.",
+        "Extend Performance Monitor with loading-stage timings, texture allocation estimates, process memory peaks and cancellation counters.",
+        "Speed up Asset Library file search with a 525 ms typing debounce, Enter-to-search and reused case-insensitive path indexing.",
+    )),
     ('1.2.8', (
         "Redesign the GPU character viewer with more viewport space, pictogram toolbars, scrollable Materials and Animation popovers, and a draggable XYZ orbit gizmo.",
         "Display precise percentage values for lighting, glow, gloss and studio fill; preserve Smooth as the default shading mode.",
