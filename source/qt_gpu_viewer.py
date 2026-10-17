@@ -2523,7 +2523,12 @@ class QtGPUModelPanel(QWidget):
                 imported.doc, getattr(self, '_native_source_materials', None))
             self._show_animated(
                 imported, auto_play=not bool(pair),
-                prepared_geometry=geometry, choose_dba_fallback=was_default_dba,
+                prepared_geometry=geometry,
+                # This callback handles an explicit Play request as well as
+                # automatically selected DBAs. A valid converted database
+                # without a clip literally named "idle" must still start
+                # playing its first safe base motion.
+                choose_dba_fallback=True,
                 materials_override=source_materials)
             self._layered_pair = pair
             if pair:
@@ -2594,17 +2599,30 @@ class QtGPUModelPanel(QWidget):
         self.clip_select.addItems(tuple(imported.clips))
         self.playlist_items.clear()
         self.playlist_items.addItems(tuple(imported.clips))
-        idle = next((name for name in imported.clips if
-                     'idle' in name.casefold() and 'additive' not in name.casefold()), None)
+        # Never auto-play additive/aimpose/layered tracks without a base,
+        # even if they happen to contain "idle" in the display name.
+        modes = getattr(imported, 'clip_modes', {})
+        def standalone(name):
+            info = modes.get(name, {})
+            folded = name.casefold()
+            return (not info.get('layered') and not info.get('additive')
+                    and 'additive' not in folded and 'aimpose' not in folded)
+        idle = next((name for name in imported.clips
+                     if standalone(name) and 'idle' in name.casefold()), None)
         if idle is None and choose_dba_fallback:
-            idle = next((name for name in imported.clips if
-                         'stand' in name.casefold() and
-                         'additive' not in name.casefold()), None)
-            if idle is None and imported.clips:
-                idle = next(iter(imported.clips))
-                self.anim_status.setText(
-                    'No named idle in this DBA; playing the first verified '
-                    'clip. Choose another motion from Playback if needed.')
+            idle = next((name for name in imported.clips
+                         if standalone(name) and 'stand' in name.casefold()), None)
+            if idle is None:
+                idle = next((name for name in imported.clips if standalone(name)), None)
+                if idle is not None:
+                    self.anim_status.setText(
+                        'No named idle in this converted motion; playing its '
+                        'first verified standalone clip. Select another '
+                        'motion from Playback if needed.')
+        if idle is None and auto_play:
+            self.anim_status.setText(
+                'No standalone base motion in this animation; '
+                'select a compatible base for an additive/layered clip.')
         if idle:
             self.clip_select.setCurrentText(idle)
         self.clip_select.blockSignals(False)
@@ -2612,7 +2630,7 @@ class QtGPUModelPanel(QWidget):
         if self._pending_playback_preferences:
             self.restore_playback_preferences(self._pending_playback_preferences)
         self._display_animation_frame()
-        if auto_play and (idle or len(imported.clips)==1):
+        if auto_play and idle:
             self.toggle_play()
 
     def playback_preferences(self):
