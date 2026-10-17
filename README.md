@@ -8,6 +8,9 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Stable — v1.2.6
 
+- Patch 5: Preserve verified CryEngine Decal glow, emissive strength and original material UV mapping when native CAF/DBA playback switches to a skinned GLB preview.
+- Patch 5: Use each legacy Illum Decal material's authored diffuse tint when no explicit emissive color is provided, preserving colored light instead of untinted white.
+- Patch 5: Restore emissive textures, UV transforms and intensity from imported animated GLBs; regression-test native assembly handoff and non-emissive materials.
 - Patch 4: Preserve each source MTL submaterial identity, original slot, and resolved emissive reference when combining hunter, monster and wildlife character parts.
 - Patch 4: Allow verified Decal/Emittance glow to load even when a submaterial has no diffuse DDS; retain safe missing-material diagnostics.
 - Patch 4: Refresh scoped character, shared and global Asset Library textures before final assembly, and show precise glow decode status in the GPU viewer.
@@ -17,9 +20,6 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 - Patch 2: Fix missing Kala emissive glow by correcting Renderer 3 sampler registration and legacy CryEngine GlowAmount masking.
 - Patch 2: Show model-loading progress from geometry preparation until the existing bottom texture-loading bar takes over.
 - Patch 2: Report unavailable GPU emissive shading and black baked glow maps without changing original textures.
-- Patch 1: Export monsters as three separate Stage 1, 2 and 3 root GLBs, each carrying only animations verified against its own CDF/skeleton; keep hunters and wildlife unchanged.
-- Validate exported geometry, remove degenerate faces, and repair only small verified holes without disturbing skin vertex IDs.
-- Clean up nearly identical UV coordinates without joining intentional UV seams or hard edges.
 
 ## Download and install
 
