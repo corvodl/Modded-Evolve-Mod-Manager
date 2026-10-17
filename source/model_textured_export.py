@@ -89,7 +89,8 @@ def embed_diffuse_textures(blob, materials):
             raise ValueError('Exceeded texture export safety limit.')
         alpha_mode = slot < len(materials.alpha_modes) and materials.alpha_modes[slot]
         cutoff = materials.alpha_cutoffs[slot] if slot < len(materials.alpha_cutoffs) else 0.
-        opacity = materials.opacity[slot] if slot < len(materials.opacity) else 1.
+        from material_preview import preview_material_opacity
+        opacity = preview_material_opacity(materials, slot)
         with BytesIO() as output:
             # Original DDS may use BCn compression; embed a portable PNG.
             image.convert('RGBA' if alpha_mode else 'RGB').save(output, format='PNG')
@@ -302,15 +303,27 @@ def embed_diffuse_textures(blob, materials):
             material.setdefault('extras', {})['cryEngineEnvironmentFaces'] = env_names
         glasses = getattr(materials, 'glass_materials', ())
         if 0 <= slot < len(glasses) and glasses[slot]:
-            opacity = (materials.opacity[slot]
-                       if slot < len(getattr(materials,'opacity',())) else 1.)
-            transmission = max(0.,min(1.,1.-opacity))
+            from material_preview import preview_material_opacity
+            opacity = preview_material_opacity(materials, slot)
+            transmission = max(0., min(1., 1.-opacity))
             if transmission > 0.:
+                # In glTF, optical transmission is NOT ordinary alpha
+                # transparency. A transmissive solid with BLEND alpha would
+                # double-fade the visor and may discard its reflections.
+                # Keep authored alpha masks only when explicitly requested.
                 material.setdefault('extensions', {})['KHR_materials_transmission'] = {
                     'transmissionFactor': transmission}
-                used=doc.setdefault('extensionsUsed',[])
+                used = doc.setdefault('extensionsUsed', [])
                 if 'KHR_materials_transmission' not in used:
                     used.append('KHR_materials_transmission')
+                if not alpha_mode and cutoff <= 0.:
+                    material['alphaMode'] = 'OPAQUE'
+                    material['pbrMetallicRoughness']['baseColorFactor'][3] = 1.
+                original = (materials.opacity[slot] if
+                            slot < len(getattr(materials,'opacity',())) else 1.)
+                material.setdefault('extras', {})['cryEngineAuthoredOpacity'] = original
+                if abs(original - opacity) > 0.0001:
+                    material['extras']['cryEngineGlassPreviewOpacity'] = opacity
             indices = getattr(materials, 'refraction_indices', ())
             ior = indices[slot] if slot < len(indices) else None
             if ior is not None:
