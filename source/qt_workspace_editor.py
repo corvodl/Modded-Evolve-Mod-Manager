@@ -215,6 +215,19 @@ class QtWorkspaceEditor(QMainWindow):
         self.model_load_ms = None
         self.model_cache_hit = False
         self._model_started_at = None
+        self._model_stage_times = {}
+        self._model_peak_memory_mib = None
+        self._model_stage_previous = None
+        self._model_stage_started = None
+        self._model_cancelled_count = 0
+        self._model_selection_timer = QTimer(self)
+        self._model_selection_timer.setSingleShot(True)
+        self._model_selection_timer.setInterval(150)
+        self._model_selection_timer.timeout.connect(self._open_queued_model)
+        self._queued_model = None
+        self._model_elapsed_timer = QTimer(self)
+        self._model_elapsed_timer.setInterval(250)
+        self._model_elapsed_timer.timeout.connect(self._update_model_elapsed)
         self._preflight_token = 0
         self._preflight_pool = None
         self._preflight_signals = None
@@ -351,8 +364,17 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_loading_progress.setRange(0, 0)
                 self.model_loading_progress.setTextVisible(True)
                 self.model_loading_progress.setMaximumHeight(16)
+                self.model_loading_elapsed = QLabel('0.0s', self.model_loading_footer)
+                self.model_loading_elapsed.setObjectName('modelLoadingElapsed')
+                self.model_loading_cancel = QPushButton('Cancel', self.model_loading_footer)
+                self.model_loading_cancel.setObjectName('modelLoadingCancel')
+                self.model_loading_cancel.setToolTip(
+                    'Cancel the selected model load; original game files are unchanged')
+                self.model_loading_cancel.clicked.connect(self.cancel_model_loading)
                 loading_row.addWidget(self.model_loading_label)
                 loading_row.addWidget(self.model_loading_progress, 1)
+                loading_row.addWidget(self.model_loading_elapsed)
+                loading_row.addWidget(self.model_loading_cancel)
                 self.model_loading_footer.hide()
                 box.addWidget(self.model_loading_footer)
             self.tabs.addTab(tab, navigation_icon({'files':'text','images':'texture','models':'model','gfx':'gfx','media':'files'}[section]), label)
@@ -397,9 +419,15 @@ class QtWorkspaceEditor(QMainWindow):
         # items. Wait for typing to settle instead of rebuilding every key.
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
-        self._search_timer.setInterval(200)
+        # Large Asset Libraries can contain tens of thousands of assets.
+        # Restart the timer on every keystroke and search only once the user
+        # has paused; pressing Enter searches immediately.
+        self._search_timer.setInterval(525)
         self._search_timer.timeout.connect(self.populate)
-        self.search.textChanged.connect(lambda _text: self._search_timer.start())
+        self.search.textChanged.connect(self._search_text_changed)
+        self.search.returnPressed.connect(self._search_now)
+        self._search_records_cache_key = None
+        self._search_records_cache = ()
         explorer_box.addWidget(self.search)
         explorer_controls = QHBoxLayout()
         self.favorites_only = QPushButton('Favorites')
@@ -939,14 +967,33 @@ class QtWorkspaceEditor(QMainWindow):
                     if image is not None:
                         gpu_bytes+=image.width*image.height*len(image.getbands())
         from studio_polish_117 import model_cache_stats
+        from model_loading_diagnostics import (
+            decoded_texture_megabytes, format_stage_times, process_memory_mib)
+        current_memory, process_peak = process_memory_mib()
+        peak = getattr(self, '_model_peak_memory_mib', None)
+        if process_peak is not None:
+            peak = max(peak or 0., process_peak)
+        active_workers = (self._model_pool.activeThreadCount()
+                          if self._model_pool is not None else 0)
         self._diagnostics_label.setText(
-            'Last model preparation: %s ms\nCache hit: %s\nDecoded texture allocation estimate: %.2f MiB\n'
+            'Last model preparation: %s ms\nCache hit: %s\n'
+            'Model stages: %s\n'
+            'Decoded texture allocation estimate: %.2f MiB (supported maps)\n'
+            'Process working set: %s MiB | observed peak: %s MiB\n'
+            'Model worker threads: %d | cancelled loads: %d\n'
             'Editor file-tree refresh: %.1f ms\nCache: %s\n'
-            'GPU texture upload (last event): %s ms\nFPS: not measured.' %
-            ('%.1f'%self.model_load_ms if self.model_load_ms is not None else 'Not sampled',
-             'yes' if self.model_cache_hit else 'no',gpu_bytes/1048576,
-             getattr(self,'last_populate_ms',0),model_cache_stats(),
-             getattr(self.model_gpu,'gpu_upload_ms',None) if self.model_gpu else 'Not sampled'))
+            'GPU texture upload (cumulative): %s ms\nFPS: not measured.' %
+            ('%.1f'%self.model_load_ms if self.model_load_ms is not None
+             else 'Not sampled',
+             'yes' if self.model_cache_hit else 'no',
+             format_stage_times(self._model_stage_times),
+             decoded_texture_megabytes(materials),
+             current_memory if current_memory is not None else 'Unavailable',
+             peak if peak is not None else 'Unavailable',
+             active_workers, self._model_cancelled_count,
+             getattr(self,'last_populate_ms',0), model_cache_stats(),
+             getattr(self.model_gpu,'gpu_upload_ms',None)
+             if self.model_gpu else 'Not sampled'))
 
     def _with_model_panel(self, callback):
         if self.model_panel is None or self.mode != 'models':
@@ -1203,14 +1250,43 @@ class QtWorkspaceEditor(QMainWindow):
         except (OSError, ValueError):
             return 'Missing'
 
+    def _search_text_changed(self, _text):
+        if not self.records:
+            self._search_timer.stop()
+            self.explorer_count.setText('0 files')
+            return
+        self.explorer_count.setText('Search pending… (Enter to search now)')
+        self._search_timer.start()
+
+    def _search_now(self):
+        self._search_timer.stop()
+        self.populate()
+
+    def _search_candidates(self):
+        """Normalize and sort paths once per workspace/manifest generation.
+
+        The match loop is cheap Python string filtering, while the expensive
+        Qt tree reconstruction occurs only after the search debounce fires.
+        """
+        signature = (id(self.records), len(self.records))
+        if getattr(self, '_search_records_cache_key', None) != signature:
+            self._search_records_cache = tuple(
+                (relative, relative.casefold()) for relative in
+                sorted(self.records, key=str.casefold))
+            self._search_records_cache_key = signature
+        needle = self.search.text().casefold()
+        if self.favorites_only.isChecked():
+            prefix = str(self.workspace) + '|'
+            return [rel for rel, folded in self._search_records_cache
+                    if needle in folded and prefix + rel in self.favorites]
+        return [rel for rel, folded in self._search_records_cache
+                if needle in folded]
+
     def _populate_virtual_explorer(self):
         """Construct metadata nodes, leaving Qt rows unloaded until expanded."""
         started = time.perf_counter()
         needle = self.search.text().casefold()
-        names = [rel for rel in sorted(self.records, key=str.casefold)
-                 if needle in rel.casefold() and
-                 (not self.favorites_only.isChecked() or
-                  str(self.workspace) + '|' + rel in self.favorites)]
+        names = self._search_candidates()
         first_stream = {}
         for rel in names:
             if is_split_dds(rel):
@@ -1331,10 +1407,7 @@ class QtWorkspaceEditor(QMainWindow):
         try:
             tree.clear()
             folders = {}
-            entries = [rel for rel in sorted(self.records, key=str.casefold)
-                       if needle in rel.casefold() and
-                       (not self.favorites_only.isChecked()
-                        or str(self.workspace) + '|' + rel in self.favorites)]
+            entries = self._search_candidates()
             first = {}
             for rel in entries:
                 if is_split_dds(rel):
@@ -1513,10 +1586,65 @@ class QtWorkspaceEditor(QMainWindow):
                  self.virtual_file_tree.currentIndex().data(Qt.UserRole + 2) == 'full-character'))
             if chosen.casefold().endswith('.lyr') and not self.read_only_library:
                 self.manager.open_level_editor(self.workspace)
+            elif (self._category(chosen) == 'models' and
+                  os.environ.get('QT_QPA_PLATFORM', '').casefold()
+                  not in ('offscreen', 'minimal')):
+                # A double-click or rapid arrow-key navigation used to start
+                # several expensive loads. Debounce automatic selection only;
+                # explicit direct load(), context actions and offscreen tests
+                # still work synchronously as requested.
+                if (chosen == self.current and
+                    full_character == self.full_character_active and
+                    (self._model_prepared or self._queued_model is None)):
+                    return
+                self._queued_model = (chosen, full_character)
+                self._model_selection_timer.start()
             else:
                 self.load(chosen, full_character=full_character)
         except ValueError as exc:
             self.status.setText(str(exc))
+
+    def _open_queued_model(self):
+        request = self._queued_model
+        self._queued_model = None
+        if request is None:
+            return
+        rel, full_character = request
+        # A refresh or archive switch might have invalidated the queued
+        # entry while the user was typing or navigating elsewhere.
+        if rel not in self.records:
+            return
+        self.load(rel, full_character=full_character)
+
+    def cancel_model_loading(self):
+        """Cancel pending decode and ignore delayed geometry/worker results."""
+        self._model_selection_timer.stop()
+        self._queued_model = None
+        self._model_cancel.set()
+        self._model_generation += 1
+        self._model_cancelled_count += 1
+        if self._model_pool is not None:
+            self._model_pool.clear()
+        self._set_model_loading_phase('', False)
+        self.model_fallback.setText('Model loading cancelled. Select another model.')
+        if self.model_panel is not None:
+            self.model_panel.set_texture_resolution_pending(False)
+        self.status.setText('Model loading cancelled · source assets unchanged')
+        from performance_trace import record
+        record('model', 'load_cancelled',
+               elapsed_ms=(time.perf_counter()-self._model_started_at)*1000
+               if self._model_started_at is not None else None)
+
+    def _update_model_elapsed(self):
+        if self._model_started_at is not None:
+            self.model_loading_elapsed.setText(
+                '%.1fs' % (time.perf_counter()-self._model_started_at))
+            from model_loading_diagnostics import process_memory_mib
+            resident, peak = process_memory_mib()
+            measured = peak if peak is not None else resident
+            if measured is not None:
+                self._model_peak_memory_mib = max(
+                    measured, self._model_peak_memory_mib or 0.)
 
     def load(self, rel, *, full_character=False):
         self.media_view.clear()
@@ -1550,6 +1678,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.dependency_button.setVisible(self.mode == 'models')
         if self.mode != 'models':
             self.dependency_button.setText('Dependencies…')
+        self._model_selection_timer.stop()
+        self._queued_model = None
         self._model_cancel.set()
         self._model_cancel = Event()
         self._model_generation += 1
@@ -1558,7 +1688,10 @@ class QtWorkspaceEditor(QMainWindow):
         path = checked_path(self.workspace, rel)
         if self.read_only_library:
             from asset_library_preview import archive_entries
-            path = archive_entries(self.library_archive['id']).get(rel)
+            # Validate only the clicked manifest entry. Scanning and
+            # stat()-ing every file in a large extracted PAK on each click
+            # blocked Qt for seconds (especially on spinning drives).
+            path = archive_entries(self.library_archive['id'], paths=(rel,)).get(rel)
             if path is None:
                 raise FileNotFoundError('This imported library asset is missing or changed.')
         if self.mode == 'models':
@@ -1752,14 +1885,21 @@ class QtWorkspaceEditor(QMainWindow):
         if visible:
             self.model_loading_label.setText(label)
             self.model_loading_progress.setRange(0, 0)
+            self._update_model_elapsed()
+            self._model_elapsed_timer.start()
             footer.show()
         else:
+            self._model_elapsed_timer.stop()
             footer.hide()
 
     def _load_model_background(self, rel):
         """Load heavy CryEngine files and textures away from the GUI thread."""
         self._model_prepared = False
         self._model_started_at = time.perf_counter()
+        self._model_stage_started = self._model_started_at
+        self._model_stage_previous = 'reading_geometry'
+        self._model_stage_times = {}
+        self._model_peak_memory_mib = None
         view = self.views['models']
         self.model_fallback.setPixmap(QPixmap())
         self.model_fallback.setText('Loading model geometry and skeleton…')
@@ -1826,7 +1966,10 @@ class QtWorkspaceEditor(QMainWindow):
         # Tests and headless software previews retain deterministic synchronous
         # behavior. Real GPU viewing runs all expensive preparation in a worker.
         platform = os.environ.get('QT_QPA_PLATFORM','').casefold()
-        if platform in ('offscreen','minimal') or not self.isVisible():
+        # In a real desktop session, even an initially hidden/tabbed editor
+        # must never decode a model synchronously on the GUI event thread.
+        # Keep deterministic synchronous loading only for headless tests.
+        if platform in ('offscreen', 'minimal'):
             try:
                 self._model_ready(token, resolve(None), None)
             except (ValueError, OSError, InterruptedError) as exc:
@@ -1836,9 +1979,16 @@ class QtWorkspaceEditor(QMainWindow):
         from PySide6.QtCore import QThreadPool
         if self._model_pool is None:
             self._model_pool = QThreadPool(self)
-            self._model_pool.setMaxThreadCount(2)
+            # Two concurrent full-resolution DDS/CDF decodes can double peak
+            # memory and starve Qt/OpenGL. Cancelled stale requests leave
+            # quickly; the latest click remains in the single worker queue.
+            self._model_pool.setMaxThreadCount(1)
             self._model_signals = _NativeResult(self)
             self._model_signals.completed.connect(self._model_ready)
+        # QThreadPool.clear removes pending obsolete jobs without terminating
+        # the currently running worker (which cooperatively checks cancel).
+        # One running + the newest selected request bounds memory spikes.
+        self._model_pool.clear()
         self._model_pool.start(
             _NativeConversion(resolve, None, token, self._model_signals))
 
@@ -1855,6 +2005,13 @@ class QtWorkspaceEditor(QMainWindow):
             return
         elapsed = (time.perf_counter()-self._model_started_at
                    if self._model_started_at else 0.)
+        now = time.perf_counter()
+        if self._model_stage_previous and self._model_stage_started:
+            self._model_stage_times[self._model_stage_previous] = round(
+                (now-self._model_stage_started)*1000, 2)
+        self._model_stage_started = now
+        self._model_stage_previous = ('material_dds' if stage == 'materials'
+                                      else 'animation_references')
         self.status.setText(
             '%s | Mesh ready · %s (%.1f s)' %
             (self.current, labels[stage], elapsed))
@@ -1930,6 +2087,9 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText('3D preview unavailable: ' + error[:260])
             return
         data, cache_hit, load_ms = result[0]
+        if self._model_stage_previous and self._model_stage_started:
+            self._model_stage_times[self._model_stage_previous] = round(
+                (time.perf_counter()-self._model_stage_started)*1000, 2)
         self.model_cache_hit = cache_hit
         self.model_load_ms = round(load_ms, 2)
         self.raw = data['raw']
@@ -2220,8 +2380,19 @@ class QtWorkspaceEditor(QMainWindow):
             new_records = self._read_records(target)
         self.dependency_button.setEnabled(False)
         self.media_view.clear()
+        # A pending model from the previous archive must not publish into
+        # the new workspace or leave a long-running decoded copy resident.
+        self._model_cancel.set()
+        self._model_generation += 1
+        self._model_selection_timer.stop()
+        self._queued_model = None
+        self._set_model_loading_phase('', False)
+        if self._model_pool is not None:
+            self._model_pool.clear()
         self.workspace, self.records = target, new_records
         self._search_timer.stop()  # Never install a prior project's search.
+        self._search_records_cache_key = None
+        self._search_records_cache = ()
         self.favorites_only.setChecked(False)
         self.preview_index = None
         self.character_preview = None
@@ -3282,6 +3453,11 @@ class QtWorkspaceEditor(QMainWindow):
         self.media_view.clear()
         self._model_cancel.set()
         self._model_generation += 1
+        self._model_selection_timer.stop()
+        self._queued_model = None
+        self._model_elapsed_timer.stop()
+        if self._model_pool is not None:
+            self._model_pool.clear()
         self.gfx_view.cancel_pending()
         self._close_gfx_editor()
         if self.model_panel is not None:
@@ -3289,7 +3465,9 @@ class QtWorkspaceEditor(QMainWindow):
             if isValid(self.model_panel) and not self.model_panel.close():
                 event.ignore()
                 return
-        for timer in (self.recovery_timer, self._search_timer, self._diagnostics_timer):
+        for timer in (self.recovery_timer, self._search_timer,
+                      self._model_selection_timer, self._model_elapsed_timer,
+                      self._diagnostics_timer):
             if timer is not None:
                 from shiboken6 import isValid
                 if isValid(timer):

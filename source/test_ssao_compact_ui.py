@@ -4,6 +4,7 @@ import os
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock
 
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 
@@ -93,7 +94,9 @@ class CompactGpuModelUiTests(unittest.TestCase):
         footer.hide()
         fake = SimpleNamespace(model_loading_footer=footer,
                                model_loading_label=label,
-                               model_loading_progress=bar)
+                               model_loading_progress=bar,
+                               _model_elapsed_timer=Mock(),
+                               _update_model_elapsed=Mock())
         QtWorkspaceEditor._set_model_loading_phase(
             fake, 'Loading model · reading geometry…')
         self.assertFalse(footer.isHidden())
@@ -114,6 +117,9 @@ class CompactGpuModelUiTests(unittest.TestCase):
         fake=SimpleNamespace(
             _model_generation=6,mode='models',_model_prepared=False,
             _model_started_at=time.perf_counter()-3.,
+            _model_stage_previous='reading_geometry',
+            _model_stage_started=time.perf_counter()-1.,
+            _model_stage_times={},
             status=status,current='characters/creatures/armadonbull.skinm')
         QtWorkspaceEditor._model_stage_ready(fake,6,'materials')
         self.assertIn('material',status.text())

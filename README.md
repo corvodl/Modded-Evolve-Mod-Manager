@@ -1,19 +1,22 @@
-# Evolve Stage 2 Mod Manager — v1.2.8
+# Evolve Stage 2 Mod Manager — v1.3.0
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.2.8 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.3.0 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.8
+## Latest Stable — v1.3.0
 
-- Redesign the GPU character viewer with more viewport space, pictogram toolbars, scrollable Materials and Animation popovers, and a draggable XYZ orbit gizmo.
-- Display precise percentage values for lighting, glow, gloss and studio fill; preserve Smooth as the default shading mode.
-- Show cancellable, stage-labelled animation loading; export separately validated DBA Actions alongside compatible CAF clips instead of skipping databases when CAFs are present.
-- Apply the user-tested reference emission strength of 100 to verified glowing surfaces in GPU previews and Blender GLB exports while preserving authored CryEngine GlowAmount and masks.
-- Preserve Blender animated GLB emissive strength above the old 16-unit limit when exporting and importing compatible animations.
-- Reclaim wasted space in the Asset Library Full Character view; preserve original game assets as read-only.
+- Render verified CryEngine Glass visors as translucent in the GPU viewer, preserving source opacity, tint, fog, Fresnel and refraction settings.
+- Export verified Glass materials to Blender GLB with optical transmission, original IOR and source material metadata instead of treating them as opaque.
+- Reduce occasional model-selection stalls by sampling material diagnostics efficiently, resolving only selected assets and decoding off the Qt UI thread.
+- Prioritize the latest selected model, cancel obsolete queued decodes and prevent repeated loads when browsing characters quickly.
+- Add cancellable model-loading progress with stage labels, elapsed time and genuine GPU texture upload counts, without inventing completion percentages.
+- Release stale GPU textures and pending uploads on model changes and viewer close while retaining bounded decoded-model caching.
+- Display CryEngine Glass shader properties and approximate preview transparency separately in the Material diagnostics inspector.
+- Extend Performance Monitor with loading-stage timings, texture allocation estimates, process memory peaks and cancellation counters.
+- Speed up Asset Library file search with a 525 ms typing debounce, Enter-to-search and reused case-insensitive path indexing.
 
 ## Download and install
 

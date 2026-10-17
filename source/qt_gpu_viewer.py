@@ -293,6 +293,33 @@ class QtGLModelCanvas(QOpenGLWidget):
         self._queue_texture_uploads()
         self.update()
 
+    def _cleanup_gpu_context(self):
+        """Delete obsolete full-resolution GL textures in their owning context.
+
+        Model switches already release old textures. Do the same on viewer
+        close/context teardown; otherwise rapidly opening and closing a model
+        panel can leave driver allocations resident until process exit.
+        """
+        self._uv_motion_timer.stop()
+        self._pending_texture_uploads = []
+        if self.isValid():
+            try:
+                self.makeCurrent()
+                self._release_textures()
+            finally:
+                self.doneCurrent()
+        else:
+            for name in ('textures','normal_textures','specular_textures',
+                         'gloss_textures','detail_textures',
+                         'detail_normal_textures','ao_textures',
+                         'emissive_textures','environment_textures'):
+                setattr(self, name, [])
+        self._batch_sort_cache = None
+
+    def closeEvent(self, event):
+        self._cleanup_gpu_context()
+        super().closeEvent(event)
+
     def set_enhanced_materials(self, enabled):
         self.enhanced_materials = bool(enabled)
         self.update()
@@ -827,14 +854,20 @@ class QtGLModelCanvas(QOpenGLWidget):
         try:
             # Render translucent material groups after opaque ones. Geometry
             # in a material group still uses source ordering (no invented triangles).
+            from material_preview import preview_material_opacity
             def is_translucent(slot):
                 if self.force_opaque_preview:
                     return False
-                values=getattr(self.materials,'opacity',()) if self.materials else ()
+                glasses=getattr(self.materials,'glass_materials',())
+                glass=slot<len(glasses) and glasses[slot]
                 cutoffs=getattr(self.materials,'alpha_cutoffs',())
-                if slot<len(cutoffs) and cutoffs[slot]>0:
+                # Glass AlphaTest controls dirt shadows, not whether the
+                # refractive lens is solid. Never render it in the depth-
+                # writing opaque pass, even with a fully opaque diffuse DDS.
+                if not glass and slot<len(cutoffs) and cutoffs[slot]>0:
                     return False
-                return slot in self.translucent_slots or (slot<len(values) and values[slot]<.999)
+                return (glass or slot in self.translucent_slots or
+                        preview_material_opacity(self.materials, slot)<.999)
             from renderer_3 import ordered_transparency_batches
             transparent_slots={slot for _,_,slot in arrays.draws if is_translucent(slot)}
             order_key=(id(arrays),tuple(self.rotation),tuple(sorted(transparent_slots)))
@@ -851,12 +884,14 @@ class QtGLModelCanvas(QOpenGLWidget):
                     continue
                 if self.visible_material_slot is not None and slot != self.visible_material_slot:
                     continue
-                alpha = (self.materials.opacity[slot] if self.materials and
-                         slot<len(getattr(self.materials,'opacity',())) else 1.0)
+                alpha = preview_material_opacity(self.materials, slot)
                 if self.force_opaque_preview:
                     alpha = 1.0
+                glasses = getattr(self.materials, 'glass_materials', ())
+                glass = slot < len(glasses) and bool(glasses[slot])
                 cutoffs = getattr(self.materials, 'alpha_cutoffs', ())
-                cutoff = cutoffs[slot] if not self.force_opaque_preview and slot < len(cutoffs) else 0.
+                cutoff = (cutoffs[slot] if not glass and not self.force_opaque_preview
+                          and slot < len(cutoffs) else 0.)
                 from OpenGL.GL import GL_ALPHA_TEST, GL_GEQUAL, glAlphaFunc
                 if cutoff > 0:
                     glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GEQUAL, cutoff)
@@ -1387,6 +1422,14 @@ class QtGPUModelPanel(QWidget):
         self.normal_diagnostic_info.setObjectName('modelNormalYSourceStatus')
         self.normal_diagnostic_info.setWordWrap(True)
         self._material_advanced.addWidget(self.normal_diagnostic_info)
+        self.glass_source_info = QLabel(self)
+        self.glass_source_info.setObjectName('modelGlassSourceDiagnostics')
+        self.glass_source_info.setWordWrap(True)
+        self.glass_source_info.setToolTip(
+            'Authored Glass opacity, fog, reflection and Fresnel. '
+            'The viewer approximates optical transmission; the source MTL '
+            'is not modified.')
+        self._material_advanced.addWidget(self.glass_source_info)
         ambient_row = QHBoxLayout()
         ambient_row.addWidget(QLabel('Studio fill'))
         self.studio_fill_slider = QSlider(Qt.Horizontal)
@@ -1413,7 +1456,8 @@ class QtGPUModelPanel(QWidget):
         self.part_select.currentIndexChanged.connect(
             lambda _index: (self._update_source_brightness(),
                             self._update_normal_source_status(),
-                            self._update_emissive_source_status()))
+                            self._update_emissive_source_status(),
+                            self._update_glass_source_status()))
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = _CompactDiagnosticText(self)
@@ -1867,6 +1911,29 @@ class QtGPUModelPanel(QWidget):
                 message += ' Soft halo unavailable: ' + self.canvas.bloom_error
         self.emissive_source_info.setText(message)
 
+    def _update_glass_source_status(self):
+        from material_preview import glass_preview_report
+        materials = self.canvas.materials
+        if materials is None:
+            self.glass_source_info.setText('No material loaded.')
+            return
+        subset = self.part_select.currentData()
+        if subset is not None:
+            text = glass_preview_report(materials, subset)
+        else:
+            slots = sorted({slot for _,_,slot in self.canvas.mesh.subsets})
+            glasses = [slot for slot in slots
+                       if slot < len(getattr(materials,'glass_materials',()))
+                       and materials.glass_materials[slot]]
+            details = [glass_preview_report(materials, slot)
+                       for slot in glasses[:2]]
+            text = ('%d Glass material(s) · choose a slot for details.\n%s' %
+                    (len(glasses), '\n'.join(details))) if glasses else ''
+        self.glass_source_info.setText(
+            text or 'No CryEngine Glass shader in selected material.')
+        self.glass_source_info.setToolTip(text or
+            'This material is not a verified CryEngine Glass submaterial.')
+
     def _populate_material_slots(self,mesh,materials):
         from material_preview import diffuse_source_stats
         slots=sorted({part[2] for part in mesh.subsets}) if mesh.subsets else [0]
@@ -1922,6 +1989,7 @@ class QtGPUModelPanel(QWidget):
             self._update_source_brightness()
         self._update_normal_source_status()
         self._update_emissive_source_status()
+        self._update_glass_source_status()
 
     def show_uv_layout(self):
         from io import BytesIO

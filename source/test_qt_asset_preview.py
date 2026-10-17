@@ -88,6 +88,20 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         })
         self.addCleanup(self.window.close)
 
+    def test_opening_one_model_validates_only_the_clicked_library_entry(self):
+        # Previously every click scanned/statted the entire extracted PAK.
+        # The active virtual path must still be validated against the
+        # read-only manifest, including its original byte count.
+        from asset_library_preview import archive_entries
+        relative = self.models[0]
+        with patch('asset_library_preview.archive_entries',
+                   wraps=archive_entries) as checked, patch.object(
+                   self.window, '_load_model_background') as load:
+            self.window.load(relative)
+        checked.assert_called_once_with(self.identifier, paths=(relative,))
+        load.assert_called_once_with(relative)
+        self.assertEqual(self.window.current, relative)
+
     def test_gfx_library_preview_and_rgba_png_export_preserve_source(self):
         import io
         from PIL import Image
