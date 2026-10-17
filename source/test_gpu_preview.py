@@ -42,6 +42,20 @@ class GPUViewerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             prepare_geometry(self.mesh, shading='unsupported')
 
+    def test_fast_smooth_normals_match_original_area_weighted_method(self):
+        mesh=self.mesh
+        out=prepare_geometry(mesh,shading='smooth')
+        vertices=np.asarray(mesh.vertices,dtype=np.float32)
+        faces=np.asarray(mesh.triangles,dtype=np.int64)
+        triangles=vertices[faces]
+        contributions=np.cross(triangles[:,1]-triangles[:,0],
+                               triangles[:,2]-triangles[:,0])
+        reference=np.zeros_like(vertices)
+        for i in range(3):
+            np.add.at(reference,faces[:,i],contributions)
+        reference/=np.maximum(np.linalg.norm(reference,axis=1)[:,None],1e-8)
+        np.testing.assert_allclose(out.normals,reference,rtol=2e-5,atol=2e-5)
+
     def test_invalid_indices_are_never_passed_to_gpu(self):
         from dataclasses import replace
         altered = replace(self.mesh, triangles=((0, 1, 999999),))

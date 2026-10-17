@@ -47,6 +47,62 @@ class GeometryStageTests(TestCase):
                 self.assertEqual(result['geometry'], 'verified-arrays')
         return order
 
+    def test_live_preview_defers_disk_geometry_write(self):
+        from tempfile import TemporaryDirectory
+        mesh=SimpleNamespace(source_name='hero.skinm',
+                            vertices=((0.,0.,0.),(1.,0.,0.),(0.,1.,0.)),
+                            triangles=((0,1,2),),uvs=(),subsets=())
+        path=SimpleNamespace(read_bytes=lambda: b'CrChF fixture')
+        with TemporaryDirectory() as root, (
+                patch('async_model_resolve.checked_path',return_value=path),
+                patch('async_model_resolve.inspect_model',
+                      return_value=SimpleNamespace(description='Model')),
+                patch('async_model_resolve.assemble_character',return_value=None),
+                patch('async_model_resolve.find_preview_mesh',return_value=mesh),
+                patch('asset_geometry_cache.cached_geometry',
+                      return_value=('ready',False)) as cache,
+                patch('async_model_resolve.load_preview_materials',
+                      return_value=SimpleNamespace(
+                          textures=(),normal_maps=(),specular_maps=())),
+                patch('async_model_resolve.discover_animations',
+                      return_value=((),None,None))):
+            output=[]
+            resolve_model(root,'hero.skinm',index={},projects_root=root,
+                          geometry_ready=lambda event: output.append(event['geometry']))
+            self.assertEqual(output,['ready'])
+            self.assertTrue(cache.call_args.kwargs['defer_write'])
+
+    def test_async_cache_write_does_not_delay_first_frame(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from threading import Event
+        from asset_geometry_cache import cached_geometry, _save_cache
+        from model_preview import PreviewMesh
+        mesh=PreviewMesh(((0.,0.,0.),(1.,0.,0.),(0.,1.,0.)),
+                         ((0,1,2),),(0.5,0.5,0.),1.,'test',
+                         ((0.,0.),(1.,0.),(0.,1.)),((0,3,0),))
+        started, unblock=Event(),Event()
+        def blocked(*args):
+            started.set()
+            self.assertTrue(unblock.wait(10))
+            return _save_cache(*args)
+        with TemporaryDirectory() as root:
+            try:
+                with patch('asset_geometry_cache._save_cache',side_effect=blocked):
+                    geometry,hit=cached_geometry(
+                        mesh,Path(root),shading='smooth',defer_write=True)
+                    self.assertFalse(hit)
+                    self.assertEqual(len(geometry.vertices),3)
+                    self.assertTrue(started.wait(5))
+            finally:
+                unblock.set()
+            from asset_geometry_cache import _writer
+            if _writer is not None:
+                _writer.submit(lambda: None).result(timeout=15)
+            from_disk,hit=cached_geometry(mesh,Path(root),shading='smooth')
+            self.assertTrue(hit)
+            self.assertEqual(geometry.vertices.shape,from_disk.vertices.shape)
+
     def test_stage_before_materials_and_animations(self):
         self.assertEqual(self._prepare(),
                          ['geometry', 'stage', 'materials', 'animations'])
