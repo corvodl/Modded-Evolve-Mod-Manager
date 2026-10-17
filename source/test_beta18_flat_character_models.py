@@ -255,7 +255,7 @@ class FlatCharacterFolderTests(unittest.TestCase):
             export_character_asset_folder(
                 self.workspace, self.prefix, self.output, index=self.index)
 
-    def test_character_layout_collects_equipment_animations_and_texture_sources(self):
+    def test_character_layout_exports_equipment_and_textures_but_never_raw_motion(self):
         equipment = self.prefix + '/equipment/weapon.skin'
         idle = self.prefix + '/motion/idle.caf'
         self._add(equipment, b'WEAPON', self.workspace)
@@ -266,13 +266,19 @@ class FlatCharacterFolderTests(unittest.TestCase):
         root = Path(report['folder'])
         self.assertTrue((root / 'merc_parnelltank.fbx').is_file())
         self.assertEqual((root / 'models/equipment/weapon.skin').read_bytes(), b'WEAPON')
-        self.assertEqual((root / 'animations/motion/idle.caf').read_bytes(), b'CAF')
+        self.assertFalse((root / 'animations').exists())
+        self.assertFalse(list(root.rglob('*.caf')))
+        self.assertEqual((self.workspace/'files'/idle).read_bytes(), b'CAF')
+        self.assertEqual(report['animations']['animations'], 0)
+        self.assertIn('No verified animation Actions', report['animations']['note'])
         self.assertEqual((root / 'textures/body_diff.dds.0').read_bytes(),
                          b'DDS-sibling-TS')
         self.assertFalse((root / 'Assemblies').exists())
         manifest = json.loads((root / 'asset_sources.json').read_text('utf-8'))
         self.assertIn('models/equipment/weapon.skin',
                       [row['file'] for row in manifest['files']])
+        self.assertNotIn('animations/motion/idle.caf',
+                         [row['file'] for row in manifest['files']])
 
     def test_embedded_character_animation_omits_duplicate_raw_sources(self):
         from model_textured_export import _pack_glb, _unpack_glb
