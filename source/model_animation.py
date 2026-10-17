@@ -338,7 +338,11 @@ class AnimatedGLB:
                     raise ValueError('Invalid emissive factor length')
                 strength = float(material.get('extensions', {}).get(
                     'KHR_materials_emissive_strength', {}).get('emissiveStrength', 1.))
-                if not 0. <= strength <= 16.:
+                # The KHR extension has no 16-unit display cap. Allow
+                # game-reference-calibrated strength 100 when reopening an
+                # exported animated GLB, while rejecting malformed or
+                # nonfinite values before they reach OpenGL.
+                if not math.isfinite(strength) or not 0. <= strength <= 10000.:
                     raise ValueError('Invalid emissive strength')
             except (ValueError, TypeError, OverflowError):
                 factor, strength = (0., 0., 0.), 0.
