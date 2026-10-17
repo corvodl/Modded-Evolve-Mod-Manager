@@ -294,7 +294,7 @@ def _hunter_anatomical_skin(label, binding, cdf):
 
 def assemble_character(workspace, selected, index, *, texture_folder=None,
                        projects_root=None, stage_root=None, equipment=None,
-                       cancel=None):
+                       cancel=None, pre_material_geometry=None, stage_ready=None):
     """Return None when no owning CDF or no renderable bound skin exists.
 
     Only select the character body and explicitly selected weapon/skin. Extra
@@ -393,32 +393,53 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
     if not requested:
         return None
     included, omitted, parts, rig_parts = [], [], [], []
+    deferred = []
+    # The viewer may show combined geometry before decoding full-resolution
+    # DDS streams. Exporters keep the original all-in-one assembly behavior.
+    if stage_ready is not None:
+        stage_ready('assembly_geometry')
     if len(requested) > MAX_CDF_RENDER_PARTS:
         omitted.extend(label + ': CDF part limit (' +
                        str(MAX_CDF_RENDER_PARTS) + ')' for label, _ in
                        requested[MAX_CDF_RENDER_PARTS:])
-    for label, skin in requested[:MAX_CDF_RENDER_PARTS]:
+    from performance_trace import span, record
+    for number, (label, skin) in enumerate(requested[:MAX_CDF_RENDER_PARTS], 1):
         if cancel is not None and cancel():
             raise InterruptedError('Character assembly cancelled')
+        if stage_ready is not None:
+            stage_ready('assembly_geometry:%d/%d' % (number, min(len(requested), MAX_CDF_RENDER_PARTS)))
         render = skin if skin.casefold().endswith('.chr') else skin + 'm'
         path = _resolve_file(index, render, workspace)
         if path is None:
             omitted.append(label + ': missing ' + render)
             continue
         try:
-            mesh = read_preview_mesh(Path(path).read_bytes(), render)
+            # Preview sources are bounded before read_bytes, so malformed or
+            # unexpectedly huge references do not exhaust process memory.
+            if Path(path).stat().st_size > 256 * 1024 * 1024:
+                raise ValueError('Renderable CDF part exceeds 256 MiB source limit')
+            record('model', 'cdf_part_mesh_started', part=number)
+            with span('model', 'cdf_part_mesh_decode', part=number):
+                mesh = read_preview_mesh(Path(path).read_bytes(), render)
         except (ValueError, OSError) as exc:
             omitted.append(label + ': ' + str(exc))
             continue
-        try:
-            materials = load_preview_materials(
-                workspace, render, texture_folder, projects_root=projects_root,
-                stage_root=stage_root, index=index, cdf=cdf,
-                **({'cancel': cancel} if cancel is not None else {}))
-        except (ValueError, OSError) as exc:
-            materials = None
-            omitted.append(label + ' textures: ' + str(exc))
+        materials = None
+        if pre_material_geometry is None:
+            record('model', 'cdf_part_material_started', part=number)
+            with span('model', 'cdf_part_material_decode', part=number):
+                try:
+                    materials = load_preview_materials(
+                        workspace, render, texture_folder, projects_root=projects_root,
+                        stage_root=stage_root, index=index, cdf=cdf,
+                        **({'cancel': cancel} if cancel is not None else {}))
+                except (ValueError, OSError) as exc:
+                    omitted.append(label + ' textures: ' + str(exc))
+        else:
+            deferred.append((label, render, mesh))
         parts.append((label, mesh, materials))
+        if cancel is not None and cancel():
+            raise InterruptedError('Character assembly cancelled')
         skin_path = (_resolve_file(index, skin, workspace)
                      if skin.casefold().endswith('.skin') else None)
         # Legacy .chr body geometry must not be misrepresented as .skin
@@ -430,7 +451,53 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         return None
     if cancel is not None and cancel():
         raise InterruptedError('Character assembly cancelled')
-    mesh, materials = combine_meshes(parts)
+    if pre_material_geometry is not None:
+        # Do not hold the first visible frame hostage to several full-size
+        # DDS/mipmap decodes. Build a source-accurate untextured assembly now,
+        # then resolve material slots without touching Qt/OpenGL from this worker.
+        record('model', 'cdf_preview_mesh_started', parts=len(parts))
+        with span('model', 'cdf_preview_mesh_assemble', parts=len(parts)):
+            preview_mesh, _ = combine_meshes(parts)
+        pre_material_geometry(preview_mesh)
+        if cancel is not None and cancel():
+            raise InterruptedError('Character assembly cancelled')
+        if stage_ready is not None:
+            stage_ready('assembly_materials')
+        decorated = []
+        decoded_budget = 0
+        for number, (label, render, part_mesh) in enumerate(deferred, 1):
+            if cancel is not None and cancel():
+                raise InterruptedError('Character assembly cancelled')
+            if stage_ready is not None:
+                stage_ready('assembly_materials:%d/%d' % (number, len(deferred)))
+            record('model', 'cdf_part_material_started', part=number)
+            with span('model', 'cdf_part_material_decode', part=number):
+                try:
+                    materials = load_preview_materials(
+                        workspace, render, texture_folder, projects_root=projects_root,
+                        stage_root=stage_root, index=index, cdf=cdf,
+                        **({'cancel': cancel} if cancel is not None else {}))
+                    # Preserve full resolution; do not silently downscale
+                    # source textures. Reject excessive combined working sets.
+                    unique = set()
+                    for role in ('textures', 'normal_maps', 'specular_maps',
+                                 'gloss_maps', 'detail_maps', 'emissive_maps'):
+                        for image in getattr(materials, role, ()) or ():
+                            if image is not None and id(image) not in unique:
+                                unique.add(id(image))
+                                decoded_budget += image.width * image.height * 4
+                    if decoded_budget > 768 * 1024 * 1024:
+                        raise ValueError('CDF preview textures exceed 768 MiB decoded budget')
+                except (ValueError, OSError) as exc:
+                    materials = None
+                    omitted.append(label + ' textures: ' + str(exc))
+            decorated.append((label, part_mesh, materials))
+        parts = decorated
+        if cancel is not None and cancel():
+            raise InterruptedError('Character assembly cancelled')
+    record('model', 'cdf_final_assembly_started', parts=len(parts))
+    with span('model', 'cdf_final_assembly', parts=len(parts)):
+        mesh, materials = combine_meshes(parts)
     if omitted and materials is not None:
         from dataclasses import replace
         # Render failures must show which actual CDF part/MTL/texture failed,

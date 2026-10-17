@@ -1685,6 +1685,12 @@ class QtWorkspaceEditor(QMainWindow):
         self._model_generation += 1
         if self.mode != 'gfx':
             self.gfx_view.cancel_pending()
+        if self.mode == 'models':
+            # All disk checks and library index construction happen in the
+            # worker. Even validating a large library manifest synchronously
+            # can starve the Qt event loop on slow storage.
+            self._load_model_background(rel)
+            return
         path = checked_path(self.workspace, rel)
         if self.read_only_library:
             from asset_library_preview import archive_entries
@@ -1694,9 +1700,6 @@ class QtWorkspaceEditor(QMainWindow):
             path = archive_entries(self.library_archive['id'], paths=(rel,)).get(rel)
             if path is None:
                 raise FileNotFoundError('This imported library asset is missing or changed.')
-        if self.mode == 'models':
-            self._load_model_background(rel)
-            return
         if self.mode == 'media':
             self.raw = b''
             self.loaded_text = ''
@@ -1951,7 +1954,11 @@ class QtWorkspaceEditor(QMainWindow):
             # rebuilding it changed id(index), defeating model cache hits.
             if library_id is not None and active_index is None:
                 from asset_library_preview import library_model_index
-                active_index = library_model_index(library_id)
+                from performance_trace import record, span
+                record('model', 'library_index_started')
+                stage_ready('library_index')
+                with span('model', 'library_index'):
+                    active_index = library_model_index(library_id)
             if cancel.is_set():
                 raise InterruptedError('Obsolete model preparation cancelled')
             data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
@@ -1998,11 +2005,19 @@ class QtWorkspaceEditor(QMainWindow):
                 or self._model_prepared):
             return
         labels = {
+            'library_index': 'Indexing Asset Library dependencies',
+            'assembly_geometry': 'Assembling verified character meshes',
+            'assembly_materials': 'Decoding CDF materials and DDS textures',
             'materials': 'Reading material references and DDS textures',
             'animations': 'Indexing character animation references',
         }
         if stage not in labels:
-            return
+            if stage.startswith('assembly_geometry:'):
+                labels[stage] = 'Assembling character geometry (' + stage.split(':', 1)[1] + ')'
+            elif stage.startswith('assembly_materials:'):
+                labels[stage] = 'Decoding material part (' + stage.split(':', 1)[1] + ')'
+            else:
+                return
         elapsed = (time.perf_counter()-self._model_started_at
                    if self._model_started_at else 0.)
         now = time.perf_counter()
@@ -2057,7 +2072,10 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_panel.set_static_mesh(
                     mesh, None, prepared_geometry=geometry)
             view.setCurrentWidget(self.model_panel)
-            self._set_model_loading_phase('', False)
+            # Keep Cancel available while expensive full-resolution DDS
+            # decoding and CAF indexing continue on the worker.
+            self._set_model_loading_phase(
+                'Loading model · materials and animation references…')
             self.model_panel.set_texture_resolution_pending(True)
             self.status.setText(
                 self.current + ' | Verified geometry ready; '
