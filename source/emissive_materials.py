@@ -210,20 +210,18 @@ def bake_emission_map(diffuse, *, color=None, emission=None,
 
 
 
-# The original CryEngine GlowAmount (commonly 3) is an engine-specific shader
-# control, not a Blender emission-unit equivalent. Game-reference testing
-# found that 100 Blender units restores the expected brightness on the
-# supported Evolve emissive surfaces. Keep the authored value in metadata;
-# never bake 100 into DDS pixels or apply it to non-emissive slots.
-EVOLVE_REFERENCE_EMISSION_STRENGTH = 100.0
-
-
+# CryEngine and Blender/GPU emission units are not equivalent, so this
+# deliberately represents a source-relative preview approximation, not a
+# claim of exact in-game luminance. Unlike the old fixed 100-unit mapping,
+# the relative ratio of every valid source GlowAmount remains intact. The
+# viewer's existing Glow Intensity control is a separate user multiplier.
 def preview_emission_strength(authored_strength, *, has_emissive_map=True):
-    """Calibrated Blender/GPU intensity for a verified emitting material.
+    """Map a verified source emission strength without flattening variations.
 
-    Source values decide whether a material emits, not a linear 3->3 mapping.
-    An absent emissive map, zero, negative, malformed, or nonfinite strength
-    must never create new glowing surfaces.
+    Zero, negative, nonfinite and unverified emission remain disabled.
+    Positive source strengths are carried proportionally into both the GPU
+    viewport and glTF KHR_materials_emissive_strength. DDS pixels, material
+    color and emission masking are never modified.
     """
     if not has_emissive_map:
         return 0.0
@@ -233,38 +231,7 @@ def preview_emission_strength(authored_strength, *, has_emissive_map=True):
         return 0.0
     if not math.isfinite(authored) or authored <= 0.0:
         return 0.0
-    return EVOLVE_REFERENCE_EMISSION_STRENGTH
-
-
-# The 100-unit calibration is appropriate for the previously validated
-# glowing materials, but it blows out Behemoth/Rocky's broad lava surfaces in
-# the GPU viewport. Keep this visual-only exception tied to verified source
-# material provenance; leave source DDS and GLB emission metadata untouched.
-BEHEMOTH_GPU_EMISSION_CAP = 8.0
-
-
-def gpu_preview_emission_strength(authored_strength, *, original_material='',
-                                  has_emissive_map=True):
-    """Return viewport-only emission using the verified MTL's actor identity.
-
-    Only the Rocky/Behemoth actor directory is affected. Glacial Behemoth
-    (rockybobcicle), generic 'rocky' texture names, and unrelated characters
-    must not silently inherit this adjustment. The source GlowAmount itself
-    determines Rocky's strength instead of forcing it to 100 units.
-    """
-    reference = preview_emission_strength(
-        authored_strength, has_emissive_map=has_emissive_map)
-    if reference <= 0.0:
-        return 0.0
-    source = str(original_material or '').replace('\\', '/').casefold()
-    segments = tuple(piece for piece in source.split('/') if piece)
-    behemoth = any(
-        left in ('monsters', 'monster') and right == 'rocky'
-        for left, right in zip(segments, segments[1:]))
-    if not behemoth:
-        return reference
-    # Already verified as a positive finite number by preview_emission_strength.
-    return min(float(authored_strength), BEHEMOTH_GPU_EMISSION_CAP)
+    return authored
 
 
 def subset_emission_coverage(mesh, materials, slot, max_samples=4096):
