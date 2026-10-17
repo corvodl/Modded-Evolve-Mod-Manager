@@ -212,7 +212,11 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         self.assertEqual(self.source.read_text(encoding='utf-8'),
                          '<Character name="Maggie"/>')
         labels = ' '.join(x.text() for x in self.window.findChildren(QLabel))
-        self.assertIn('previewing and exporting only', labels)
+        # Protection details are available on hover, not in two oversized
+        # rows that needlessly shrink the character/model viewport.
+        self.assertIn('Read-only', labels)
+        self.assertIn('preview and export only',
+                      self.window.selection_label.toolTip())
         self.assertNotIn('Save Changes', [
             x.text() for x in self.window.findChildren(QLabel)])
 
