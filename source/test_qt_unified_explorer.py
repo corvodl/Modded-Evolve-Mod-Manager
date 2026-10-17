@@ -260,7 +260,8 @@ class UnifiedExplorerTests(unittest.TestCase):
         editor.search.setText('ch')
         editor.search.setText('character')
         self.assertTrue(editor._search_timer.isActive())
-        self.assertEqual(editor.explorer_count.text(), old_count)
+        self.assertNotEqual(editor.explorer_count.text(), old_count)
+        self.assertIn('Search pending', editor.explorer_count.text())
         editor._search_timer.stop()
         # Qt retains the slot bound when the signal was connected; emitting
         # the settled timeout verifies the actual populated result.
