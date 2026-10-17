@@ -417,6 +417,10 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         old_export.assert_not_called()
         root = destination / 'Emet'
         self.assertTrue((root / 'Emet.glb').is_file())
+        verification = json.loads((root / 'export_verification.json').read_text('utf-8'))
+        self.assertEqual(verification['geometry']['status'],
+                         'verified_body_and_remote_cannon')
+        self.assertEqual(verification['root_glb'], 'Emet.glb')
         self.assertEqual((root / 'textures' / 'emet_diff.dds').read_bytes(),
                          b'DDS source')
         self.assertTrue((root / 'animations' / 'animation_manifest.json').exists())
