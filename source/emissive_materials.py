@@ -299,3 +299,67 @@ def subset_emission_coverage(mesh, materials, slot, max_samples=4096):
         except (ValueError, OverflowError, IndexError, TypeError):
             continue
     return lit, len(ids)
+
+
+def bake_independent_uv_alpha_emission(emission, diffuse, emission_transform,
+                                        diffuse_transform, *, max_dimension=4096):
+    """Bake a CryEngine emission map and differently transformed diffuse alpha
+    into one RGB image in untransformed mesh UV space for glTF/Blender.
+
+    A single glTF emissiveTexture cannot multiply separately transformed UV
+    textures. Never emit unmasked glow when the required alpha is unavailable.
+    """
+    if emission is None or diffuse is None or 'A' not in diffuse.getbands():
+        return None
+    import numpy as np
+
+    def resolution(image, transform):
+        su, sv, _, _, angle = transform
+        c, s = abs(math.cos(angle)), abs(math.sin(angle))
+        return (image.width * c * abs(su) + image.height * s * abs(su),
+                image.width * s * abs(sv) + image.height * c * abs(sv))
+
+    ew, eh = resolution(emission, emission_transform)
+    dw, dh = resolution(diffuse, diffuse_transform)
+    if not all(math.isfinite(n) for n in (ew, eh, dw, dh)):
+        return None
+    width = max(1, min(max_dimension, math.ceil(max(ew, dw))))
+    height = max(1, min(max_dimension, math.ceil(max(eh, dh))))
+    rgb = np.asarray(emission.convert('RGB'))
+    alpha = np.asarray(diffuse.getchannel('A'))
+    result = np.empty((height, width, 3), dtype=np.uint8)
+
+    def sample(image, uv_x, uv_y):
+        h, w = image.shape[:2]
+        x = np.mod(uv_x * w - .5, w)
+        y = np.mod(uv_y * h - .5, h)
+        x0 = np.floor(x).astype(np.intp)
+        y0 = np.floor(y).astype(np.intp)
+        x1 = (x0 + 1) % w
+        y1 = (y0 + 1) % h
+        fx = (x - x0).astype(np.float32)
+        fy = (y - y0).astype(np.float32)
+        if image.ndim == 2:
+            image = image[:, :, None]
+        fx, fy = fx[..., None], fy[..., None]
+        return ((image[y0, x0].astype(np.float32) * (1 - fx) +
+                 image[y0, x1].astype(np.float32) * fx) * (1 - fy) +
+                (image[y1, x0].astype(np.float32) * (1 - fx) +
+                 image[y1, x1].astype(np.float32) * fx) * fy)
+
+    def transform(u, v, values):
+        su, sv, ou, ov, angle = values
+        c, s = math.cos(angle), math.sin(angle)
+        return c * su * u - s * sv * v + ou, s * su * u + c * sv * v + ov
+
+    u = (np.arange(width, dtype=np.float32)[None, :] + .5) / width
+    for start in range(0, height, 64):
+        end = min(start + 64, height)
+        v = (np.arange(start, end, dtype=np.float32)[:, None] + .5) / height
+        eu, ev = transform(u, v, emission_transform)
+        du, dv = transform(u, v, diffuse_transform)
+        emission_pixels = sample(rgb, eu, ev)
+        alpha_pixels = sample(alpha, du, dv)
+        result[start:end] = np.rint(
+            emission_pixels * (alpha_pixels / 255.)).clip(0, 255).astype(np.uint8)
+    return Image.fromarray(result, 'RGB')

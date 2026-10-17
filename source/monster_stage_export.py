@@ -27,6 +27,9 @@ def stage_from_cdf(cdf, character_folder):
 
     This intentionally excludes *_3p, LOD, equipment, and miscellaneous CDF
     variants. A stage in a nested folder also counts; conflicting markers do not.
+    Retail CryEngine monsters may instead use the exact character folder stem
+    followed by a stage digit (krakenelder1.cdf through krakenelder3.cdf).
+    Only same-directory exact matches count; never guess numbered accessories.
     """
     root = PurePosixPath(str(character_folder).replace('\\', '/'))
     name = PurePosixPath(str(cdf).replace('\\', '/'))
@@ -39,6 +42,23 @@ def stage_from_cdf(cdf, character_folder):
     for part in parts[:-1] + (name.stem,):
         matches = list(_STAGE_MARKER.finditer(part)) + list(_SHORT_MARKER.finditer(part))
         markers.update(int(match.group(1)) for match in matches)
+
+    # Actual retail Kraken Elder definitions are krakenelder1.cdf,
+    # krakenelder2.cdf and krakenelder3.cdf, each with its own verified
+    # numbered skeleton and body .skin. Unlike "stage1" / "s1" labels,
+    # this shorthand must be matched against the WHOLE character-folder
+    # basename: equipment1, krakenelder3p, lod1, krakenelder11 etc. do
+    # not identify a stage. Nested same-name CDFs are not selected without
+    # an explicit stage path; mismatched nested labels are contradictory.
+    if is_monster_character(root):
+        numbered = re.fullmatch(
+            re.escape(root.name) + r'([123])', name.stem, flags=re.IGNORECASE)
+        if numbered:
+            numbered_stage = int(numbered.group(1))
+            if name.parent == root:
+                markers.add(numbered_stage)
+            elif markers and numbered_stage not in markers:
+                return None
     return next(iter(markers)) if len(markers) == 1 else None
 
 
@@ -85,7 +105,8 @@ def select_monster_stage_models(assemblies, character_folder):
         raise ValueError(
             'Monster root export requires independently verified CDF models for '
             'Stages 1, 2 and 3; missing stage(s): ' + ', '.join(missing)
-            + '. Import the correct monster DATA/shared/animation PAKs and retry.')
+            + '. Inspect skipped CDF assembly errors; verify the exact '
+              '.chr skeleton and .skin body dependencies before reimporting PAKs.')
     chosen, selected = {}, set()
     for stage, candidates in options.items():
         candidates.sort(key=lambda item: (item[0], item[1].casefold()), reverse=True)

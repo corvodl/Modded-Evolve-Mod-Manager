@@ -52,6 +52,60 @@ class MonsterStageSelectionTests(TestCase):
         self.assertIsNone(stage_from_cdf(MONSTER+'/goliath_stage1_stage3.cdf',MONSTER))
         self.assertIsNone(stage_from_cdf('characters/monsters/other/goliath_stage1.cdf',MONSTER))
 
+    def test_retail_krakenelder_numbered_cdfs_are_explicit_stages(self):
+        elder = 'characters/monsters/krakenelder'
+        for stage in (1, 2, 3):
+            cdf = '%s/krakenelder%d.cdf' % (elder, stage)
+            self.assertEqual(stage_from_cdf(cdf, elder), stage)
+            self.assertEqual(stage_from_cdf(cdf.upper(), elder.upper()), stage)
+            self.assertIsNone(stage_from_cdf(cdf, MONSTER))
+        # These do not name distinct evolution stages, even if numbered.
+        for name in ('krakenelder_3p.cdf', 'krakenelder3p.cdf',
+                     'krakenelder01.cdf', 'krakenelder11.cdf',
+                     'krakenelder1_lod.cdf', 'krakenelder1_weapon.cdf',
+                     'equipment1.cdf', 'lod1.cdf', 'krakenelder4.cdf'):
+            self.assertIsNone(stage_from_cdf(elder + '/' + name, elder), name)
+        self.assertIsNone(stage_from_cdf(
+            elder + '/gear/krakenelder1.cdf', elder))
+        self.assertIsNone(stage_from_cdf(
+            elder + '/stage2/krakenelder1.cdf', elder))
+        self.assertEqual(stage_from_cdf(
+            elder + '/stage2/krakenelder.cdf', elder), 2)
+
+    def test_numbered_cdf_explicit_skeleton_and_skin_bindings(self):
+        # Reduced source-derived fixtures from supplied krakenelder1/2/3
+        # definitions. Distinct skeletons and .skin body assets are required;
+        # the parser must preserve both CA_SKIN_UNIQUE and CA_SKIN.
+        from character_assembly import _parse_cdf
+        for stage in (1, 2, 3):
+            kind = 'CA_SKIN' if stage == 3 else 'CA_SKIN_UNIQUE'
+            prefix = 'characters/monsters/krakenelder/krakenelder%d' % stage
+            xml = ('<CharacterDefinition><Model File="%s_skeleton.chr"/>'
+                   '<AttachmentList><Attachment Type="%s" AName="body"'
+                   ' Binding="%s.skin"/></AttachmentList>'
+                   '</CharacterDefinition>') % (prefix, kind, prefix)
+            skeleton, attachments, _ = _parse_cdf(xml.encode())
+            self.assertEqual(skeleton, prefix + '_skeleton.chr')
+            self.assertEqual(attachments, (('body', prefix + '.skin'),))
+
+    def test_numbered_cdf_assemblies_use_three_different_verified_glbs(self):
+        elder = 'characters/monsters/krakenelder'
+        assemblies = {}
+        for stage in (1, 2, 3):
+            blob, original = animated_stage(stage)
+            info = dict(original, cdf=elder + '/krakenelder%d.cdf' % stage)
+            assemblies['Assemblies/krakenelder%d.glb' % stage] = (blob, info)
+        stages, selected = select_monster_stage_models(assemblies, elder)
+        self.assertEqual(set(stages), {1, 2, 3})
+        self.assertEqual(selected, frozenset(assemblies))
+        self.assertEqual(
+            [stages[n][1]['cdf'] for n in (1,2,3)],
+            [elder + '/krakenelder%d.cdf' % n for n in (1,2,3)])
+        # No replacement or synthetic Stage 3 when its GLB is not verified.
+        assemblies.pop('Assemblies/krakenelder3.glb')
+        with self.assertRaisesRegex(ValueError, r'missing stage\(s\): 3'):
+            select_monster_stage_models(assemblies, elder)
+
     def test_three_distinct_exact_cdf_sources_selected(self):
         assemblies = stage_assemblies()
         models, picked = select_monster_stage_models(assemblies, MONSTER)
@@ -119,6 +173,51 @@ class MonsterRootExportTests(TestCase):
                          [2,2,2])
         self.assertIsNone(manifest['full_model'])
         self.assertEqual(len(result['monster_stages']),3)
+
+    def test_krakenelder_root_export_accepts_verified_numbered_cdfs(self):
+        from character_export_command import export_character_directory
+        elder = 'characters/monsters/krakenelder'
+        elder_source = self.home/'files'/elder
+        elder_source.mkdir(parents=True)
+        (elder_source/'readme.txt').write_text('original')
+        assemblies = {}
+        for stage in (1, 2, 3):
+            blob, original = animated_stage(stage)
+            info = dict(original,cdf=elder+'/krakenelder%d.cdf'%stage)
+            assemblies['Assemblies/krakenelder%d.glb'%stage]=(blob, info)
+        with (patch('character_export_command.build_cdf_folder_glbs',
+                    return_value=(assemblies, ())),
+              patch('character_animation_export.export_character_animation_folder',
+                    return_value={'animations':0,'sources':0,
+                                  'manifest':'animations/animation_manifest.json'})):
+            result = export_character_directory(
+                self.home/'files'/elder,self.output,index={})
+        folder = Path(result['folder'])
+        self.assertEqual(len(result['monster_stages']), 3)
+        self.assertEqual(len([p for p in folder.glob('*_Stage*.glb')]), 3)
+        self.assertEqual(
+            {row['cdf'] for row in result['monster_stages']},
+            {elder+'/krakenelder%d.cdf'%n for n in (1,2,3)})
+
+    def test_actual_missing_monster_dependency_is_reported(self):
+        from character_export_command import export_character_directory
+        elder = 'characters/monsters/krakenelder'
+        (self.home/'files'/elder).mkdir(parents=True)
+        errors = (
+            (elder+'/krakenelder1.cdf','exact krakenelder1_skeleton.chr unavailable'),
+            (elder+'/krakenelder2.cdf','krakenelder2.skin was ambiguous'),
+        )
+        with patch('character_export_command.build_cdf_folder_glbs',
+                   return_value=({}, errors)):
+            with self.assertRaisesRegex(
+                    ValueError, 'krakenelder1_skeleton.chr unavailable') as raised:
+                export_character_directory(
+                    self.home/'files'/elder,self.output,index={})
+        self.assertIn('missing stage(s): 1, 2, 3',str(raised.exception))
+        self.assertIn('krakenelder2.skin was ambiguous',str(raised.exception))
+        # An aborted export cannot create a misleading partial "Complete"
+        # folder or modify source files.
+        self.assertEqual(list(self.output.iterdir()), [])
 
     def test_stage_animation_mismatch_refused_before_writing(self):
         from character_asset_export import export_character_asset_folder
