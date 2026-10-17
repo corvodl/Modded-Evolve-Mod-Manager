@@ -1439,6 +1439,33 @@ class QtGPUModelPanel(QWidget):
         self.texture_loading_footer.hide()
         self._texture_resolution_pending = False
         layout.addWidget(self.texture_loading_footer)
+        # Loading feedback must remain visible even if Animations is closed.
+        # The conversion/CAF extractor does not expose reliable step totals;
+        # busy progress is truthful, not an invented percentage.
+        self.native_loading_footer = QFrame(self)
+        self.native_loading_footer.setObjectName('nativeAnimationLoadingFooter')
+        busy_row = QHBoxLayout(self.native_loading_footer)
+        busy_row.setContentsMargins(8, 2, 8, 2)
+        busy_row.setSpacing(6)
+        self.native_loading_label = QLabel('Loading game animation', self.native_loading_footer)
+        self.native_loading_label.setObjectName('nativeAnimationLoadingLabel')
+        self.native_loading_label.setMinimumWidth(110)
+        self.native_loading_progress = QProgressBar(self.native_loading_footer)
+        self.native_loading_progress.setObjectName('nativeAnimationLoadingProgress')
+        self.native_loading_progress.setRange(0, 0)
+        self.native_loading_progress.setTextVisible(False)
+        self.native_loading_progress.setMaximumHeight(15)
+        self.native_loading_cancel = QToolButton(self.native_loading_footer)
+        self.native_loading_cancel.setObjectName('nativeAnimationLoadingCancel')
+        self.native_loading_cancel.setIcon(navigation_icon('close', size=16))
+        self.native_loading_cancel.setAccessibleName('Cancel animation loading')
+        self.native_loading_cancel.setToolTip('Cancel active CAF/DBA extraction and conversion')
+        self.native_loading_cancel.clicked.connect(self.cancel_native_conversion)
+        busy_row.addWidget(self.native_loading_label)
+        busy_row.addWidget(self.native_loading_progress, 1)
+        busy_row.addWidget(self.native_loading_cancel)
+        layout.addWidget(self.native_loading_footer)
+        self.native_loading_footer.hide()
         # Queue UI layout changes until after paintGL has released its OpenGL
         # framebuffer; directly showing/hiding widgets within paintGL can
         # resize QOpenGLWidget mid-frame on Windows.
@@ -1451,6 +1478,24 @@ class QtGPUModelPanel(QWidget):
                 total - len(self.canvas._pending_texture_uploads), total)
         self._build_compact_timeline(layout)
         QTimer.singleShot(0,self._position_overlay)
+
+    def _set_native_loading(self, stage=None):
+        """One visible, cancellable busy indicator for any native clip load.
+
+        Progress stays indeterminate until the native converter publishes
+        real counts. Never invent a percent from elapsed time or file size.
+        """
+        running = bool(stage)
+        self.native_loading_footer.setVisible(running)
+        self.native_loading_cancel.setEnabled(running)
+        if running:
+            self.native_loading_label.setText(str(stage))
+            self.native_loading_label.setToolTip(str(stage))
+            self.native_loading_progress.setRange(0, 0)
+            self.native_loading_progress.setAccessibleName(str(stage))
+            self.play_native_button.setText('Loading…')
+        elif self.play_native_button.text() == 'Loading…':
+            self.play_native_button.setText('▶  Play')
 
     def set_texture_resolution_pending(self, pending):
         """Show indeterminate DDS resolution before GPU upload totals exist.
@@ -2238,6 +2283,7 @@ class QtGPUModelPanel(QWidget):
             self._native_source_materials = self.canvas.materials
         self._native_generation += 1
         self._auto_dba_loading = False
+        self._set_native_loading(None)
         self.cancel_native_button.setEnabled(False)
         # A new character should never inherit the old character's filter,
         # which could conceal the exact 3P DBA and prevent default playback.
@@ -2461,6 +2507,7 @@ class QtGPUModelPanel(QWidget):
         self._auto_dba_loading = False
         self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
+        self._set_native_loading(None)
         self.native_info.setText('Motion decoding cancelled. Source assets were not changed.')
 
     def load_native(self):
@@ -2494,6 +2541,7 @@ class QtGPUModelPanel(QWidget):
             self.native_info.setText(
                 'Decoding base + additive/aimpose CAF on one verified skeleton…')
             self.cancel_native_button.setEnabled(True)
+            self._set_native_loading('Decoding layered CAF + verified base…')
             self._native_pool.start(_NativeConversion(
                 lambda unused: self._native_loader(ref, base_ref=base),
                 ref, token, self._native_signals))
@@ -2510,12 +2558,17 @@ class QtGPUModelPanel(QWidget):
              if state != 'candidate' else 'Decoding standalone CAF and rigged model…'))
         self.play_native_button.setEnabled(False)
         self.cancel_native_button.setEnabled(True)
+        stage = ('Converting DBA on selected rig…' if state == 'converter'
+                 else 'Extracting CAF from signed PAK…' if state != 'candidate'
+                 else 'Decoding CAF and binding skeleton…')
+        self._set_native_loading(stage)
         job = _NativeConversion(self._native_loader, ref, token, self._native_signals)
         self._native_pool.start(job)
 
     def _native_ready(self, token, result, error):
         if token != self._native_generation:
             return
+        self._set_native_loading(None)
         self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
         self._auto_dba_loading = False
