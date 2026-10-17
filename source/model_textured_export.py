@@ -538,7 +538,10 @@ def textured_model_from_workspace(mesh, workspace, relative,
 def export_extracted_model(source, destination, *, projects_root=None,
                            stage_root=None, texture_folder=None):
     source, destination = Path(source).resolve(), Path(destination)
-    from model_blender_export import convert_model
+    import re
+    if re.search(r'_lod[1-9][0-9]*$', source.stem, re.IGNORECASE):
+        raise ValueError('LOD0 only: refusing lower resolution standalone model.')
+    from fbx_export_converter import convert_glb_to_fbx
     workspace, rel = _workspace_for_file(source, projects_root)
     if workspace is None:
         # A loose extracted folder may still contain a matching .skin/.chr.
@@ -573,9 +576,9 @@ def export_extracted_model(source, destination, *, projects_root=None,
                 report['bone_count'] = rig['bone_count']
                 report['rig_status'] = 'Rigged: %d bones, %d active' % (
                     rig['bone_count'], rig['active_bones'])
-        if destination.suffix.casefold() != '.glb' or not destination.parent.is_dir():
-            raise ValueError('Choose an existing export folder and .glb filename.')
-        destination.write_bytes(blob)
+        if destination.suffix.casefold() != '.fbx' or not destination.parent.is_dir():
+            raise ValueError('Choose an existing export folder and .fbx filename.')
+        convert_glb_to_fbx(blob, destination, static=(report.get('bone_count', 0) == 0))
         from blender_texture_folder import write_texture_folder
         write_texture_folder(blob, destination)
         return (len(mesh.vertices), len(mesh.triangles)), report
@@ -583,11 +586,11 @@ def export_extracted_model(source, destination, *, projects_root=None,
     glb, report = textured_model_from_workspace(
         mesh, workspace, rel, texture_folder=texture_folder,
         projects_root=projects_root, stage_root=stage_root)
-    if destination.suffix.casefold() != '.glb' or not destination.parent.is_dir():
-        raise ValueError('Export to an existing folder with a .glb filename.')
+    if destination.suffix.casefold() != '.fbx' or not destination.parent.is_dir():
+        raise ValueError('Export to an existing folder with a .fbx filename.')
     if destination.resolve() == source:
         raise ValueError('Cannot overwrite the original CryEngine model.')
-    destination.write_bytes(glb)
+    convert_glb_to_fbx(glb, destination, static=(report.get('bone_count', 0) == 0))
     from blender_texture_folder import write_texture_folder
     write_texture_folder(glb, destination)
     report['weight_status'] = weight_stream_status(source.read_bytes())['status']
@@ -615,18 +618,22 @@ def export_extracted_folder(folder, destination, *, projects_root=None,
         if cancelled and cancelled():
             raise InterruptedError('Blender folder export cancelled.')
         rel = p.relative_to(folder)
+        import re
+        if re.search(r'_lod[1-9][0-9]*$', p.stem, re.IGNORECASE):
+            errors.append((str(rel), 'LOD0 only: lower-detail source excluded'))
+            continue
         if p.suffix.casefold() == '.chrm' and p.with_suffix('.skinm').exists():
             if progress:
                 progress('Exporting Blender models', i, len(candidates))
             continue
-        target = destination / rel.with_suffix('.glb')
+        target = destination / rel.with_suffix('.fbx')
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             counts, details = export_extracted_model(
                 p, target, projects_root=projects_root, stage_root=stage_root,
                 texture_folder=texture_folder)
             done.append((str(rel), str(target.relative_to(destination)), counts, details))
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, RuntimeError) as exc:
             errors.append((str(rel), str(exc)))
         if progress:
             progress('Exporting Blender models', i, len(candidates))
