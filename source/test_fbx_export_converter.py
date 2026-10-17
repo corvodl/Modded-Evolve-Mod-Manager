@@ -29,6 +29,12 @@ class FbxConverterTests(unittest.TestCase):
         compile(BLENDER_FBX_SCRIPT, 'blender_fbx_converter.py', 'exec')
         self.assertIn('bake_anim_use_all_actions=True', BLENDER_FBX_SCRIPT)
         self.assertIn('obj.matrix_world = world', BLENDER_FBX_SCRIPT)
+        # Kala's original UV atlas is not repacked: separate by material
+        # to make each group's preserved UV layout selectable on its own.
+        self.assertIn("bpy.ops.mesh.separate(type='MATERIAL')", BLENDER_FBX_SCRIPT)
+        self.assertIn("material_groups.append(", BLENDER_FBX_SCRIPT)
+        self.assertNotIn("bpy.ops.uv.smart_project", BLENDER_FBX_SCRIPT)
+        self.assertNotIn("bpy.ops.uv.unwrap", BLENDER_FBX_SCRIPT)
 
     def test_valid_static_fbx_uses_real_binary_signature(self):
         with tempfile.TemporaryDirectory() as temp:
