@@ -236,7 +236,7 @@ def export_character_asset_folder(workspace, character_folder, destination,
         pairs keyed 1, 2, 3. All three are written beside models/ and must
         contain only clips verified against that stage's original CDF rig.
     assemblies: mapping of internal Assemblies/<cdf relative>.glb to (bytes, report).
-    Source models (including equipment), animations, and textures are categorized.
+    Source models (including equipment) and textures are categorized. Motion\n    is contained only in verified root FBX Actions; original CAF/DBA sources\n    remain untouched in the workspace and are not copied to the export.
     """
     home = Path(workspace).resolve()
     destination = Path(destination).resolve()
@@ -263,9 +263,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
     limit = sum(int(source.stat().st_size) for source, _, _ in records)
     assemblies = dict(assemblies or {})
     stage_models = dict(stage_models or {})
-    # When the root Character/Stage GLB already carries verified Actions,
-    # do not attach the same CAF/DBA sources or make a second animated GLB.
-    # Preserve source assets in the original PAK/workspace, untouched.
+    # Original CAF/DBA files never appear in the exported character tree.
+    # Each root FBX contains exactly the verified Actions from its source GLB.
     from model_export_readiness import embedded_action_names
     if full_model is not None:
         embedded = {short_name + '.fbx': embedded_action_names(full_model[0])}
@@ -276,7 +275,6 @@ def export_character_asset_folder(workspace, character_folder, destination,
             for stage in (1, 2, 3)}
     else:
         embedded = {}
-    use_embedded_animations = bool(embedded) and all(embedded.values())
     if stage_models:
         from monster_stage_export import is_monster_character, stage_from_cdf
         if not is_monster_character(virtual) or full_model is not None:
@@ -323,11 +321,11 @@ def export_character_asset_folder(workspace, character_folder, destination,
         for i, (source, game_path, archive) in enumerate(records, 1):
             if cancelled and cancelled():
                 raise InterruptedError('Character export cancelled.')
-            if (use_embedded_animations and
-                    game_path.casefold().endswith(
-                        ('.caf', '.dba', '.adb', '.bspace', '.animevents'))):
-                # Duplicate raw animation attachments are not needed when the
-                # exported character GLB already contains those Actions.
+            if game_path.casefold().endswith(
+                    ('.caf', '.dba', '.adb', '.bspace', '.animevents')):
+                # Do not copy unconverted animation sources into a separate
+                # folder. No output Action is ever invented for an unsupported
+                # source; retain the source in its original game workspace.
                 continue
             if not game_path.casefold().startswith(prefix):
                 raise ValueError('Companion asset lies outside character virtual path.')
@@ -339,12 +337,10 @@ def export_character_asset_folder(workspace, character_folder, destination,
             if lower.endswith(('.dds', '.dds.0', '.png', '.tif', '.tiff',
                                '.tga', '.jpg', '.jpeg', '.bmp', '.ktx', '.hdr')):
                 category = 'textures'
-            elif lower.endswith(('.caf', '.dba', '.adb', '.bspace', '.animevents')):
-                category = 'animations'
             else:
                 category = 'models'
-            # Avoid duplicate textures/textures and animations/animations
-            # when source PAK paths already use the category directory.
+            # Avoid duplicate textures/textures when the original PAK path
+            # already includes the category directory.
             organized_parts = (local_parts[1:] if local_parts[0].casefold() == category
                                else local_parts)
             output = staging.joinpath(category, *organized_parts)
@@ -424,60 +420,25 @@ def export_character_asset_folder(workspace, character_folder, destination,
             if progress:
                 progress('Writing CDF Blender assemblies',
                          len(records) + int(full_model is not None) + position, count)
-        # Do not produce a second animated GLB or source CAF folder when all
-        # required root GLBs already carry verified, named animation tracks.
-        from character_animation_export import export_character_animation_folder
-        animation_report = None
-        if use_embedded_animations:
-            animation_report = {
-                'animations': sum(len(names) for names in embedded.values()),
-                'sources': 0, 'animated_glb': None,
-                'embedded_in': {key: list(value) for key, value in embedded.items()},
-                'note': 'Animation Actions are embedded in the root character FBX; '
-                        'redundant standalone animation files omitted.'}
-        representative = full_model or stage_models.get(1)
-        if representative is None and assemblies:
-            representative = next(iter(assemblies.values()))
-        if representative is not None and not use_embedded_animations:
-            base_blob, base_info = representative
-            chosen_cdf = base_info.get('cdf') if isinstance(base_info, dict) else None
-            source_character = None
-            if chosen_cdf and index:
-                try:
-                    from character_assembly import assemble_character
-                    source_character = assemble_character(
-                        home, chosen_cdf, index)
-                except (ValueError, OSError):
-                    pass  # Preserve source attachments and write diagnostics.
-            animation_report = export_character_animation_folder(
-                staging, base_blob, chosen_cdf or virtual,
-                index or {}, home, character=source_character,
-                model_name=short_name, cancelled=cancelled, progress=progress,
-                references=() if not index or not chosen_cdf else None)
-            animation_name = animation_report.get('animated_glb')
-            if animation_name:
-                old_model = staging / 'animations' / animation_name
-                new_model = old_model.with_suffix('.fbx')
-                convert_glb_to_fbx(old_model.read_bytes(), new_model)
-                old_model.unlink()
-                animation_report['animated_glb'] = None
-                animation_report['animated_fbx'] = new_model.name
-                manifest = staging / 'animations' / 'animation_manifest.json'
-                if manifest.is_file():
-                    payload = json.loads(manifest.read_text(encoding='utf-8'))
-                    payload['animated_glb'] = None
-                    payload['animated_fbx'] = new_model.name
-                    manifest.write_text(json.dumps(payload, indent=2), encoding='utf-8')
-        elif not use_embedded_animations:
-            animation_folder = staging / 'animations'
-            animation_folder.mkdir(exist_ok=True)
-            (animation_folder / 'animation_manifest.json').write_text(
-                json.dumps({
-                    'format': 'evolve-character-animation-export-v1',
-                    'converted_clips': [], 'raw_sources': [],
-                    'note': 'No verified CDF rig available. Original animation '
-                            'source assets in this directory remain unconverted.'
-                }, indent=2), encoding='utf-8')
+        # No animations/ directory, raw motion attachments, or second
+        # animated mesh. The verified Actions already reside inside each
+        # root character/stage FBX. If none were validated, record why in
+        # existing JSON reports without fabricating a playable animation.
+        embedded_named = {name: list(actions) for name, actions in embedded.items()}
+        action_count = sum(len(actions) for actions in embedded_named.values())
+        animation_report = {
+            'animations': action_count,
+            'sources': 0,
+            'animated_glb': None,
+            'animated_fbx': None,
+            'embedded_in': embedded_named,
+            'note': ('Verified animation Actions are embedded in root FBX files; '
+                     'no standalone animations folder is exported.'
+                     if action_count else
+                     'No verified animation Actions in the root FBX. Original '
+                     'CAF/DBA sources remain in the game workspace; they '
+                     'are not copied or mislabeled as playable animations.'),
+        }
         full_verification = (info.get('geometry_verification', {})
                              if isinstance(info, dict) else {})
         export_verification = {
@@ -500,8 +461,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
                              if isinstance(info, dict) else 0,
             'unresolved_cdf_assemblies': list(assembly_errors),
             'unresolved_companions': list(conflicts),
-            'embedded_animations': (animation_report.get('embedded_in', {})
-                                    if animation_report else {}),
+            'embedded_animations': animation_report['embedded_in'],
+            'animation_note': animation_report['note'],
         }
         (staging / 'export_verification.json').write_text(
             json.dumps(export_verification, indent=2, default=str),
