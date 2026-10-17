@@ -119,6 +119,11 @@ def _prepare_paint_uv(obj):
     existing = mesh.uv_layers.get('UV1_Texturing')
     if existing is not None:
         existing.name = 'UV1_Source_Preexisting'
+        for material in mesh.materials:
+            if material and material.use_nodes:
+                for node in material.node_tree.nodes:
+                    if node.type == 'UVMAP' and node.uv_map == 'UV1_Texturing':
+                        node.uv_map = existing.name
     clean = mesh.uv_layers.new(name='UV1_Texturing', do_init=False)
     mesh.uv_layers.active = clean
     bpy.ops.object.select_all(action='DESELECT')
@@ -128,8 +133,10 @@ def _prepare_paint_uv(obj):
     bpy.ops.mesh.select_all(action='SELECT')
     # Generate a new non-overlapping per-material UV atlas in [0,1].
     # This edits UV1 only; no mesh modifier, merge, reindex or texture rebind.
-    bpy.ops.uv.smart_project(island_margin=0.015)
+    unwrap_result = bpy.ops.uv.smart_project(island_margin=0.015)
     bpy.ops.object.mode_set(mode='OBJECT')
+    if 'FINISHED' not in unwrap_result:
+        raise RuntimeError('Painting UV1 unwrap did not finish: ' + obj.name)
     clean = mesh.uv_layers.get('UV1_Texturing')
     if clean is None or len(clean.data) != len(mesh.loops):
         raise RuntimeError('Painting UV1 generation produced an incomplete map: ' + obj.name)
@@ -137,6 +144,10 @@ def _prepare_paint_uv(obj):
     if any(not math.isfinite(v) or v < -0.0001 or v > 1.0001
            for uv in painted for v in uv):
         raise RuntimeError('Painting UV1 coordinates escaped the unit tile: ' + obj.name)
+    if not any(abs(painted[i][0] - painted[0][0]) > 0.000001 or
+               abs(painted[i][1] - painted[0][1]) > 0.000001
+               for i in range(1, len(painted))):
+        raise RuntimeError('Painting UV1 unwrap is degenerate: ' + obj.name)
     for name, values in prior:
         layer = mesh.uv_layers.get(name)
         if (layer is None or len(layer.data) != len(values)
