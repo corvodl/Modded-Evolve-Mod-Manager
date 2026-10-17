@@ -982,8 +982,16 @@ def diffuse_source_stats(materials, slot):
     if image is None:
         return None
     from PIL import Image
-    sample = image.convert('RGB')
-    sample.thumbnail((32, 32), Image.Resampling.BILINEAR)
+    # This diagnostic runs while updating Qt's material controls. Converting
+    # a 4K/8K original to RGB *before* thumbnailing allocates and scans the
+    # entire source DDS on the GUI thread, appearing to hang on model clicks.
+    # Sample at most 32x32 source pixels BEFORE conversion. NEAREST uses only
+    # those source samples, preserving highest-res textures for GPU/export.
+    width = min(32, image.width)
+    height = min(32, image.height)
+    sample = image.resize((width, height), Image.Resampling.NEAREST)
+    if sample.mode != 'RGB':
+        sample = sample.convert('RGB')
     pixels = list(sample.getdata())
     if not pixels:
         return None
