@@ -2489,6 +2489,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.character_skin_choice = None
         self.character_faceplate_choice = None
+        self.character_equipment_menu.clear()
+        self.character_equipment_menu.menuAction().setVisible(False)
         self.current, self.loaded_text, self.raw = None, '', b''
         self.gfx_view.cancel_pending()
         self._close_gfx_editor()
