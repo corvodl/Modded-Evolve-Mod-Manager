@@ -60,6 +60,48 @@ for obj in meshes:
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
         bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+# Material isolation is deliberately *not* automatic UV unwrapping.
+# Large original texture atlases can look like densely overlapping UVs when
+# every part is selected, but their islands must retain source coordinates
+# to line up with CryEngine diffuse/normal masks. Separate mesh objects
+# by existing material IDs, preserving their original UV loops and vertex
+# groups so each material is independently selectable for painting.
+for obj in tuple(meshes):
+    ids = {polygon.material_index for polygon in obj.data.polygons}
+    if len(ids) <= 1:
+        continue
+    bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.separate(type='MATERIAL')
+    bpy.ops.object.mode_set(mode='OBJECT')
+meshes = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
+if not meshes or any(not obj.data.polygons for obj in meshes):
+    raise RuntimeError('Splitting FBX material groups produced an empty mesh.')
+material_groups = []
+for obj in meshes:
+    used = {polygon.material_index for polygon in obj.data.polygons}
+    if len(used) != 1:
+        raise RuntimeError('FBX mesh still mixes several texture/material IDs.')
+    slot = next(iter(used))
+    if slot >= len(obj.data.materials):
+        raise RuntimeError('FBX material ID does not have a corresponding material.')
+    material = obj.data.materials[slot]
+    if material:
+        # Give the artist a readable, material-specific object in the Outliner.
+        obj.name = (obj.name[:48] + '__' + material.name[:42])[:100]
+    if obj.data.uv_layers.active:
+        uv = obj.data.uv_layers.active
+        if len(uv.data) != len(obj.data.loops):
+            raise RuntimeError('Material-specific UV set is incomplete.')
+    material_groups.append({
+        'object':obj.name,
+        'material':material.name if material else 'No material',
+        'uv_loops':len(obj.data.uv_layers.active.data)
+                    if obj.data.uv_layers.active else 0,
+        'triangles':len(obj.data.polygons)})
 # Never weld or bake individual mesh transforms on rigged models: source weight
 # indices and bind matrices would no longer describe their vertices.
 for obj in tuple(bpy.context.scene.objects):
@@ -86,6 +128,7 @@ Path(receipt).write_text(json.dumps({
     'actions':sorted(a.name for a in actions),
     'materials':sum(len(obj.data.materials) for obj in meshes),
     'uv_meshes':sum(bool(obj.data.uv_layers) for obj in meshes),
+    'material_groups':material_groups,
 }), encoding='utf-8')
 '''
 
@@ -143,4 +186,6 @@ def convert_glb_to_fbx(blob, destination, *, static=False, blender=None, timeout
         os.replace(output, target)
     return {'format':'FBX Binary', 'profile':'static' if static else 'character',
             'mesh_count':verified['meshes'], 'armatures':verified['armatures'],
-            'actions':verified['actions'], 'material_uv_verification':uv_report}
+            'actions':verified['actions'],
+            'material_groups':verified.get('material_groups', []),
+            'material_uv_verification':uv_report}
