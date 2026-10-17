@@ -29,11 +29,16 @@ class FbxConverterTests(unittest.TestCase):
         compile(BLENDER_FBX_SCRIPT, 'blender_fbx_converter.py', 'exec')
         self.assertIn('bake_anim_use_all_actions=True', BLENDER_FBX_SCRIPT)
         self.assertIn('obj.matrix_world = world', BLENDER_FBX_SCRIPT)
-        # Kala's original UV atlas is not repacked: separate by material
-        # to make each group's preserved UV layout selectable on its own.
+        # Kala retains UV0 for game textures; UV1 has its own paint atlas.
+        # Material separation and UV1 unwrapping must not touch skeletons.
         self.assertIn("bpy.ops.mesh.separate(type='MATERIAL')", BLENDER_FBX_SCRIPT)
         self.assertIn("material_groups.append(", BLENDER_FBX_SCRIPT)
-        self.assertNotIn("bpy.ops.uv.smart_project", BLENDER_FBX_SCRIPT)
+        self.assertIn("bpy.ops.uv.smart_project(island_margin=0.015)", BLENDER_FBX_SCRIPT)
+        self.assertIn("mesh.uv_layers.active = mesh.uv_layers['UV0_Original']", BLENDER_FBX_SCRIPT)
+        self.assertIn("mesh.uv_layers['UV0_Original'].active_render = True", BLENDER_FBX_SCRIPT)
+        self.assertIn("mesh.uv_layers.new(name='UV1_Texturing', do_init=False)", BLENDER_FBX_SCRIPT)
+        self.assertIn("after_vertices != vertices_before", BLENDER_FBX_SCRIPT)
+        self.assertIn("'uv_maps':uv_maps", BLENDER_FBX_SCRIPT)
         self.assertNotIn("bpy.ops.uv.unwrap", BLENDER_FBX_SCRIPT)
 
     def test_valid_static_fbx_uses_real_binary_signature(self):
@@ -47,7 +52,12 @@ class FbxConverterTests(unittest.TestCase):
                 Path(arguments[i+2]).write_bytes(FBX_SIGNATURE + b'valid'*32)
                 Path(arguments[i+3]).write_text(json.dumps({
                     'meshes':1,'armatures':0,'actions':[],
-                    'materials':1,'uv_meshes':1}))
+                    'materials':1,'uv_meshes':1,
+                    'uv_maps':[{'texturing':'UV1_Texturing',
+                                'original':'UV0_Original',
+                                'uv_loops':3,'source_uvs_preserved':True,
+                                'topology_preserved':True,
+                                'weights_preserved':True}]}))
                 return SimpleNamespace(returncode=0,stderr='',stdout='')
             with patch('fbx_export_converter.subprocess.run',side_effect=run):
                 result=convert_glb_to_fbx(
@@ -70,13 +80,58 @@ class FbxConverterTests(unittest.TestCase):
                 Path(arguments[i+2]).write_bytes(FBX_SIGNATURE + b'body'*44)
                 Path(arguments[i+3]).write_text(json.dumps({
                     'meshes':1,'armatures':1,
-                    'actions':['idle','walk'],'materials':2,'uv_meshes':1}))
+                    'actions':['idle','walk'],'materials':2,'uv_meshes':1,
+                    'uv_maps':[{'texturing':'UV1_Texturing',
+                                'original':'UV0_Original',
+                                'uv_loops':3,'source_uvs_preserved':True,
+                                'topology_preserved':True,
+                                'weights_preserved':True}]}))
                 return SimpleNamespace(returncode=0,stderr='',stdout='')
             with patch('fbx_export_converter.subprocess.run',side_effect=run):
                 report=convert_glb_to_fbx(
                     sample_glb(rig=True,animated=True),target,blender=exe)
             self.assertEqual(report['armatures'],1)
             self.assertEqual(len(report['actions']),2)
+
+    def test_incomplete_second_uv_map_rejects_export_atomically(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            target = root / 'Kala.fbx'
+            exe = root / 'blender'
+            exe.write_text('mock')
+            def run(arguments, **_unused):
+                i = arguments.index('--')
+                Path(arguments[i+2]).write_bytes(FBX_SIGNATURE + b'body'*44)
+                Path(arguments[i+3]).write_text(json.dumps({
+                    'meshes': 1, 'armatures': 1, 'actions': ['idle','walk'],
+                    'uv_maps': [{'texturing':'UV1_Texturing',
+                                 'uv_loops':3,'source_uvs_preserved':True,
+                                 'topology_preserved':True,
+                                 'weights_preserved':False}]}))
+                return SimpleNamespace(returncode=0,stderr='',stdout='')
+            with patch('fbx_export_converter.subprocess.run',side_effect=run):
+                with self.assertRaisesRegex(ValueError,'UV1 texturing atlas'):
+                    convert_glb_to_fbx(
+                        sample_glb(rig=True,animated=True), target, blender=exe)
+            self.assertFalse(target.exists())
+
+    def test_missing_uv1_receipt_rejects_export_atomically(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            target = root / 'Kala.fbx'
+            exe = root / 'blender'
+            exe.write_text('mock')
+            def run(arguments, **_unused):
+                i = arguments.index('--')
+                Path(arguments[i+2]).write_bytes(FBX_SIGNATURE + b'body'*44)
+                Path(arguments[i+3]).write_text(json.dumps({
+                    'meshes': 1, 'armatures': 0, 'actions': []}))
+                return SimpleNamespace(returncode=0,stderr='',stdout='')
+            with patch('fbx_export_converter.subprocess.run',side_effect=run):
+                with self.assertRaisesRegex(ValueError,'UV1 texturing atlas'):
+                    convert_glb_to_fbx(sample_glb(), target, static=True,
+                                       blender=exe)
+            self.assertFalse(target.exists())
 
     def test_missing_blender_does_not_write_misnamed_glb(self):
         with tempfile.TemporaryDirectory() as temp:

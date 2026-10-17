@@ -78,17 +78,17 @@ def validate_character_export_destination(source_folder, destination):
         raise ValueError(
             'You selected an existing ' + friendly + ' folder. Select its '
             'PARENT instead: ' + str(output.parent) + '. The manager creates '
-            + friendly + '/' + friendly + '.glb automatically; it will not '
+            + friendly + '/' + friendly + '.fbx automatically; it will not '
             'create a nested ' + friendly + '/' + friendly + ' folder.')
     if output.name.casefold() == internal.casefold() and (
             (output / 'Assemblies').exists()
             or (output / 'CDF_assembly_report.json').exists()
-            or any(output.glob('*.glb'))):
+            or any(output.glob('*.glb')) or any(output.glob('*.fbx'))):
         raise ValueError(
             'This is the old flat export folder. Select its PARENT instead: '
             + str(output.parent) + '. The new export will be '
             + str(output.parent / friendly) + ' with ' + friendly
-            + '.glb, animations/, textures/, and models/. Existing files are preserved.')
+            + '.fbx, textures/, and models/ (no animations folder). Existing files are preserved.')
     if (output / friendly).exists():
         raise FileExistsError(
             'Character export already exists at ' + str(output / friendly)
@@ -194,9 +194,9 @@ def _preferred_full_assembly(assemblies, selected_cdf=None):
 def export_character_directory(source_folder, destination, *, projects_root=None,
                                stage_root=None, texture_folder=None, index=None,
                                selected_cdf=None, progress=None, cancelled=None):
-    """Export three root monster Stage GLBs, or one hunter/wildlife root GLB.
+    """Export three root monster Stage FBXs, or one hunter/wildlife root FBX.
 
-    Monsters require three distinct verified CDFs; each root GLB retains only
+    Monsters require three distinct verified CDFs; each root FBX retains only
     animations validated against that exact stage rig. Other classes retain
     the original single-primary model layout.
     """

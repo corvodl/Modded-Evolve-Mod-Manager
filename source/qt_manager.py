@@ -1348,7 +1348,7 @@ class QtManager(QMainWindow):
             ('Mod Profiles…', self.open_mod_profiles),
             ('Asset Library / Add PAKs…', self.open_asset_library),
             ('Export Complete Character Folder…', self.export_model_folder),
-            ('Export Individual Models (.glb)…', self.export_individual_models),
+            ('Export Individual Models (.fbx)…', self.export_individual_models),
             ('PAK Diff…', self.open_pak_diff),
             ('Task Manager…', self.open_task_manager),
             ('Offline Test…', self.build_offline_test),
@@ -1901,8 +1901,8 @@ class QtManager(QMainWindow):
         self.blender_addon_install_button.setObjectName('blenderAddonInstallButton')
         blender_row.addWidget(self.blender_addon_install_button)
         blender_row.addWidget(_label(
-            'Uses Blender\'s own User Default extension installer and an exact v1.1.0 ZIP. '
-            'Place Evolve_Animation_Browser_v1.1.0.zip in Downloads or choose it when '
+            'Uses Blender\'s own User Default extension installer and an exact v1.3.1 ZIP. '
+            'Place Evolve_Animation_Browser_v1.3.1.zip in Downloads or choose it when '
             'prompted. This does not change your game files. Restart open Blender '
             'windows after installing.', muted=True))
 
@@ -2892,7 +2892,7 @@ class QtManager(QMainWindow):
         if not input_folder:
             return
         output_folder = QFileDialog.getExistingDirectory(
-            self, 'Choose PARENT folder for new <Character>/<Character>.glb', self.projects_path)
+            self, 'Choose PARENT folder for new <Character>/<Character>.fbx', self.projects_path)
         if not output_folder:
             return
         from qt_background_exports import begin_file_operation, exports_busy
@@ -2917,10 +2917,10 @@ class QtManager(QMainWindow):
             animations = report.get('animations') or {}
             self.info(
                 'Character folder exported',
-                'Exported to %s\\nMain character GLB: %s\\n'
+                'Exported to %s\\nMain character FBX: %s\\n'
                 '%d additional CDF models; %d converted animation clips.\\n'
                 'See asset_sources.json for unsupported rigs or clips.' %
-                (report['folder'], Path(report['folder']).name + '.glb',
+                (report['folder'], Path(report['folder']).name + '.fbx',
                  len(report['cdf_assemblies']), animations.get('animations', 0)))
 
         begin_file_operation(
@@ -2930,14 +2930,14 @@ class QtManager(QMainWindow):
             on_error=lambda error: self.failure('Character export stopped: ' + error))
 
     def export_individual_models(self):
-        """Explicit legacy batch export: one GLB per mesh, no shared character."""
+        """Explicit legacy batch export: one FBX per mesh, no shared character."""
         input_folder = QFileDialog.getExistingDirectory(
             self, 'Choose folder containing individual CryEngine models',
             self.projects_path)
         if not input_folder:
             return
         output_folder = QFileDialog.getExistingDirectory(
-            self, 'Choose folder for individual model GLBs', self.projects_path)
+            self, 'Choose folder for individual model FBXs', self.projects_path)
         if not output_folder:
             return
         from qt_background_exports import begin_file_operation, exports_busy
@@ -2959,7 +2959,7 @@ class QtManager(QMainWindow):
                 (destination / 'Blender_export_report.txt').write_text(
                     '\\n'.join(name + ': ' + reason for name, reason in skipped),
                     encoding='utf-8')
-            self.info('Individual GLB export finished',
+            self.info('Individual FBX export finished',
                       '%d individual models exported; %d skipped.\\n%s' %
                       (len(exported), len(skipped), output_folder))
 

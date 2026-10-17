@@ -3123,7 +3123,7 @@ class QtWorkspaceEditor(QMainWindow):
         return source
 
     def export_blender_folder(self):
-        """Create a new <Character>/<Character>.glb plus categorized assets.
+        """Create a new <Character>/<Character>.fbx plus categorized assets.
 
         The destination picker chooses the parent; never silently overwrite
         old flat merc_<name> exports or reuse their legacy Assemblies/ layout.
@@ -3188,6 +3188,7 @@ class QtWorkspaceEditor(QMainWindow):
             converted = len(report['cdf_assemblies'])
             skipped = len(report['cdf_assembly_errors'])
             note += ' • %d additional CDF FBX model(s) in models/' % converted
+            note += ' • animation Actions embedded in FBX only; no animations folder'
             monster_stages = report.get('monster_stages', ())
             if monster_stages:
                 note += ' • 3 root monster stage FBX files with stage-specific rigs/animations'
