@@ -155,9 +155,10 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.setMinimumSize(260, 180)
         self.mesh = mesh
         # Preserve geometry staging and animation-buffer layout. Authored
-        # normals are used when Smooth shading is explicitly selected.
-        self.shading = 'faceted'
-        self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
+        # Smooth shading is the default. Use verified source vertex normals
+        # when available, preserving mesh UVs and hard edges split in source.
+        self.shading = 'smooth'
+        self.geometry = self._prepared_geometry(mesh, prepared_geometry)
         self.materials = materials
         # Character assembled parts can use CryEngine alpha semantics that
         # are not reproduced by the preview. Solid diagnostic rendering keeps
@@ -223,6 +224,15 @@ class QtGLModelCanvas(QOpenGLWidget):
         self._uv_motion_timer.timeout.connect(self.update)
         self._refresh_uv_motion()
 
+    def _prepared_geometry(self, mesh, prepared_geometry):
+        # Progressive workers normally stage buffers for the default Smooth
+        # mode. If an older/cached Faceted batch arrives, rebuild to prevent
+        # a mismatch between UI selection and the actual GPU index layout.
+        if (prepared_geometry is not None and
+                len(prepared_geometry.vertices) == len(mesh.vertices)):
+            return prepared_geometry
+        return prepare_geometry(mesh, shading=self.shading)
+
     def _refresh_uv_motion(self):
         self._uv_motion_started = time.monotonic()
         groups = (getattr(self.materials, 'uv_motions', ()),)
@@ -260,8 +270,7 @@ class QtGLModelCanvas(QOpenGLWidget):
 
     def set_mesh(self, mesh, materials=None, prepared_geometry=None):
         self._reset_frame_timeline()
-        geometry = (prepared_geometry if prepared_geometry is not None
-                    else prepare_geometry(mesh, shading=self.shading))
+        geometry = self._prepared_geometry(mesh, prepared_geometry)
         # Replacing an existing model must also upload the NEW diffuse maps.
         # Previously the old textures were deleted but the new ones were not
         # uploaded until an unrelated OpenGL context reinitialization.
@@ -1207,6 +1216,7 @@ class QtGPUModelPanel(QWidget):
         shading = QComboBox()
         self.shading_combo = shading
         shading.addItems(('Faceted (hard edges)', 'Smooth'))
+        shading.setCurrentIndex(1)  # Match the canvas's initial Smooth mode.
         shading.currentIndexChanged.connect(
             lambda i: self.canvas.set_shading('Smooth' if i else 'Faceted'))
         line.addWidget(shading)
