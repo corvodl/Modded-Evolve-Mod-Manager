@@ -14,7 +14,7 @@ from character_assembly import assemble_character
 from character_animation_catalog import discover_animations
 from gpu_model_preview import prepare_geometry
 from workspace_file_actions import checked_path
-from performance_trace import span
+from performance_trace import span, record
 
 
 
@@ -76,20 +76,42 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
             report = inspect_model(raw).description
         except ValueError as exc:
             report = str(exc)
-    if index is None:
-        index = _workspace_index(workspace, projects_root, stage_root)
-    # Refresh AFTER the editor snapshot was captured. This is a read-only,
-    # scoped lookup: no mutations to the source index or game PAKs.
-    index = refresh_character_material_index(index, relative, stage_root)
+    record('model', 'reference_index_started')
+    with span('model', 'reference_index'):
+        if index is None:
+            index = _workspace_index(workspace, projects_root, stage_root)
+        # Refresh index in the background, not from a QWidget.
+        index = refresh_character_material_index(index, relative, stage_root)
     checkpoint()
     downstream_cancel = {'cancel': cancel} if cancel is not None else {}
     character = None
     assembly_error = ''
+    preliminary = {}
+    def publish_geometry(mesh):
+        checkpoint()
+        record('model', 'geometry_prepare_started', vertices=len(mesh.vertices),
+               triangles=len(mesh.triangles))
+        with span('model', 'geometry_prepare'):
+            if projects_root is not None:
+                from asset_geometry_cache import cached_geometry
+                geometry, cached = cached_geometry(
+                    mesh, Path(projects_root)/'.asset-cache'/'gpu', shading='smooth')
+            else:
+                geometry, cached = prepare_geometry(mesh, shading='smooth'), False
+        checkpoint()
+        preliminary.update(mesh=mesh, geometry=geometry, cached=cached)
+        if geometry_ready is not None:
+            geometry_ready({'mesh': mesh, 'geometry': geometry,
+                            'character': None, 'index': index, 'report': report})
+    record('model', 'character_assembly_started')
     try:
-        character = assemble_character(
-            workspace, relative, index, texture_folder=texture_folder,
-            projects_root=projects_root, stage_root=stage_root,
-            equipment=equipment, **downstream_cancel)
+        with span('model', 'character_assembly'):
+            character = assemble_character(
+                workspace, relative, index, texture_folder=texture_folder,
+                projects_root=projects_root, stage_root=stage_root,
+                equipment=equipment, pre_material_geometry=(
+                    publish_geometry if geometry_ready is not None else None),
+                stage_ready=stage_ready, **downstream_cancel)
     except (ValueError, OSError) as exc:
         assembly_error = str(exc)
     checkpoint()
@@ -110,27 +132,20 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                 'equipment meshes. ' + (assembly_error or 'No CDF assembly found.'))
         report = 'Emet • Original remote-cannon 3P complete mesh (with arm)'
 
+    record('model', 'mesh_decode_started')
     with span('model', 'mesh_decode'):
         mesh = (character.mesh if character else
                 find_preview_mesh(workspace, relative, raw,
                                   projects_root=projects_root, stage_root=stage_root,
                                   index=index))
     checkpoint()
-    # Geometry does not depend on decoded diffuse/normal/specular maps.
-    # Publish it before potentially expensive material and CAF discovery.
-    with span('model', 'geometry_prepare'):
-        if projects_root is not None:
-            from asset_geometry_cache import cached_geometry
-            geometry, cached = cached_geometry(
-                mesh,Path(projects_root)/'.asset-cache'/'gpu',shading='smooth')
-        else:
-            geometry = prepare_geometry(mesh, shading='smooth')
-            cached = False
-    checkpoint()
-    if geometry_ready is not None:
-        geometry_ready({'mesh': mesh, 'geometry': geometry,
-                        'character': character, 'index': index,
-                        'report': report})
+    if preliminary:
+        # Reuse early geometry instead of rebuilding the same GPU buffers
+        # after all CDF materials have finished decoding.
+        geometry, cached = preliminary['geometry'], preliminary['cached']
+    else:
+        publish_geometry(mesh)
+        geometry, cached = preliminary['geometry'], preliminary['cached']
     checkpoint()
     if stage_ready is not None:
         stage_ready('materials')

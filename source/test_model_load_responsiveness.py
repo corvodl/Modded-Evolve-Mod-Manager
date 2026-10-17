@@ -127,6 +127,75 @@ class ModelLoadResponsivenessTests(TestCase):
         editor._model_ready(token,None,'stale result')
         self.assertIn('cancelled',editor.status.text())
 
+    def test_full_character_geometry_is_reported_before_material_decode(self):
+        """Lennox-style multipart previews must publish geometry first."""
+        from character_assembly import assemble_character
+        from model_preview import PreviewMesh
+        from material_preview import PreviewMaterials
+        events = []
+        mesh = PreviewMesh(
+            ((0., 0., 0.), (1., 0., 0.), (0., 1., 0.)),
+            ((0, 1, 2),), (0.5, 0.5, 0.), 1., 'body',
+            ((0., 0.), (1., 0.), (0., 1.)),
+            ((0, 3, 0),))
+        mat = PreviewMaterials((None,), ('body',), 'test.mtl')
+        def decode(*args, **kwargs):
+            events.append('material')
+            return mat
+        with (TemporaryDirectory() as tmp,
+              patch('character_assembly._character_definition',
+                    return_value=('characters/hunters/merc_lennox/lennox_3p.cdf',
+                                  'lennox_skeleton.chr',
+                                  [('body', 'lennox_3p.skin')], {})),
+              patch('character_assembly._resolve_file',
+                    return_value=Path(tmp)/'body.skinm'),
+              patch('character_assembly.read_preview_mesh', return_value=mesh),
+              patch('character_assembly.load_preview_materials', side_effect=decode),
+              patch.object(Path, 'stat', autospec=True) as stat):
+            stat.return_value.st_size = 1024
+            part = assemble_character(
+                Path(tmp), 'characters/hunters/merc_lennox/lennox_3p.skinm', {},
+                pre_material_geometry=lambda preview: events.append('geometry'),
+                stage_ready=lambda phase: None)
+        self.assertEqual(events, ['geometry', 'material'])
+        self.assertEqual(part.mesh.description, mesh.description)
+        self.assertEqual(part.materials.names[0], 'body: body')
+
+    def test_cancel_between_geometry_and_materials(self):
+        from character_assembly import assemble_character
+        from model_preview import PreviewMesh
+        flag = {'stopped': False}
+        mesh = PreviewMesh(
+            ((0., 0., 0.), (1., 0., 0.), (0., 1., 0.)),
+            ((0, 1, 2),), (0.5, 0.5, 0.), 1., 'body',
+            ((0., 0.), (1., 0.), (0., 1.)), ((0, 3, 0),))
+        with (TemporaryDirectory() as tmp,
+              patch('character_assembly._character_definition',
+                    return_value=('characters/hunters/merc_lennox/lennox_3p.cdf',
+                                  'lennox_skeleton.chr',
+                                  [('body', 'lennox_3p.skin')], {})),
+              patch('character_assembly._resolve_file',
+                    return_value=Path(tmp)/'body.skinm'),
+              patch('character_assembly.read_preview_mesh', return_value=mesh),
+              patch('character_assembly.load_preview_materials') as materials,
+              patch.object(Path, 'stat', autospec=True) as stat):
+            stat.return_value.st_size = 1024
+            with self.assertRaisesRegex(InterruptedError, 'cancelled'):
+                assemble_character(
+                    Path(tmp), 'characters/hunters/merc_lennox/lennox_3p.skinm', {},
+                    cancel=lambda: flag['stopped'],
+                    pre_material_geometry=lambda preview: flag.update(stopped=True))
+        materials.assert_not_called()
+
+    def test_model_load_validation_does_not_scan_library_on_gui_thread(self):
+        """The first expensive checked_path/library IO belongs to the worker."""
+        editor = self.editor
+        with (patch('qt_workspace_editor.checked_path',
+                    side_effect=AssertionError('synchronous file check')),
+              patch.object(editor, '_load_model_background') as queued):
+            editor.load('characters/a.skinm')
+        queued.assert_called_once_with('characters/a.skinm')
+
     def test_worker_queue_discards_obsolete_queued_decode(self):
         editor=self.editor
         editor._model_pool = Mock()
