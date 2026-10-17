@@ -140,11 +140,14 @@ class TexturedModelExportTests(unittest.TestCase):
             output = folder / 'export'
             source.mkdir(); output.mkdir()
             (source / 'test.skinm').write_bytes(test_mesh())
-            done, errors = export_extracted_folder(source, output)
+            with patch('fbx_export_converter.convert_glb_to_fbx',
+                       side_effect=lambda _blob, file, **_: Path(file).write_bytes(
+                           b'Kaydara FBX Binary  TEST')):
+                done, errors = export_extracted_folder(source, output)
             self.assertEqual(len(errors), 0, errors)
             self.assertEqual(len(done), 1)
             self.assertEqual(done[0][3]['texture_count'], 0)
-            self.assertTrue((output / 'test.glb').is_file())
+            self.assertTrue((output / 'test.fbx').is_file())
             self.assertEqual((source/'test.skinm').read_bytes(), test_mesh())
             with self.assertRaisesRegex(ValueError, 'separate'):
                 export_extracted_folder(source, source)

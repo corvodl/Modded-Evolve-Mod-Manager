@@ -400,7 +400,11 @@ class ReadOnlyAssetPreviewUITests(TestCase):
                 encoding='utf-8')
             return {'animations': 0, 'sources': 0}
 
-        with (patch('qt_workspace_editor.QFileDialog.getExistingDirectory',
+        def fake_converter(_blob, output, **kwargs):
+            Path(output).write_bytes(b'Kaydara FBX Binary  TEST')
+            return {'format':'FBX Binary','mesh_count':1}
+        with (patch('fbx_export_converter.convert_glb_to_fbx', side_effect=fake_converter),
+              patch('qt_workspace_editor.QFileDialog.getExistingDirectory',
                     return_value=str(destination)) as picker,
               patch('qt_background_exports.begin_file_operation',
                     side_effect=run_inline),
@@ -416,19 +420,19 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         picker.assert_called_once()
         old_export.assert_not_called()
         root = destination / 'Emet'
-        self.assertTrue((root / 'Emet.glb').is_file())
+        self.assertTrue((root / 'Emet.fbx').is_file())
         verification = json.loads((root / 'export_verification.json').read_text('utf-8'))
         self.assertEqual(verification['geometry']['status'],
                          'verified_body_and_remote_cannon')
-        self.assertEqual(verification['root_glb'], 'Emet.glb')
+        self.assertEqual(verification['root_fbx'], 'Emet.fbx')
         self.assertEqual((root / 'textures' / 'emet_diff.dds').read_bytes(),
                          b'DDS source')
         self.assertTrue((root / 'animations' / 'animation_manifest.json').exists())
-        self.assertTrue((root / 'models' / 'emetcannon.glb').is_file())
+        self.assertTrue((root / 'models' / 'emetcannon.fbx').is_file())
         self.assertTrue((root / 'models' / 'emet_3p.skinm').is_file())
         self.assertFalse((root / 'Assemblies').exists())
         self.assertFalse((root / 'CDF_assembly_report.json').exists())
-        self.assertFalse((root / 'models' / 'emet_3p.glb').exists())
+        self.assertFalse((root / 'models' / 'emet_3p.fbx').exists())
         self.assertFalse((destination / 'merc_emet').exists())
         self.assertFalse(any(destination.glob('*.glb')))
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from model_preview import read_preview_mesh
 from model_blender_export import glb_bytes, convert_model, convert_folder
@@ -45,12 +46,15 @@ class BlenderExportTests(unittest.TestCase):
             root = Path(root)
             source = root / 'test.skinm'
             source.write_bytes(test_mesh())
-            output = root / 'export.glb'
-            vertices, triangles = convert_model(source, output)
+            output = root / 'export.fbx'
+            with patch('fbx_export_converter.convert_glb_to_fbx',
+                       side_effect=lambda _blob, file, **_: Path(file).write_bytes(
+                           b'Kaydara FBX Binary  TEST')):
+                vertices, triangles = convert_model(source, output)
             self.assertEqual((vertices, triangles), (4, 4))
             self.assertEqual(source.read_bytes(), test_mesh())
             self.assertTrue(output.is_file())
-            self.assertEqual(inspect_glb(output.read_bytes())['accessors'][0]['count'], 4)
+            self.assertTrue(output.read_bytes().startswith(b'Kaydara FBX'))
             with self.assertRaisesRegex(ValueError, 'end with'):
                 convert_model(source, root / 'bad.obj')
 
@@ -63,17 +67,20 @@ class BlenderExportTests(unittest.TestCase):
             (src/'models'/'render.skinm').write_bytes(test_mesh())
             (src/'models'/'not-render.chrm').write_bytes(b'native skeleton metadata')
             (src/'models'/'other.txt').write_text('never modified')
-            results, errors = convert_folder(src, out)
+            with patch('fbx_export_converter.convert_glb_to_fbx',
+                       side_effect=lambda _blob, file, **_: Path(file).write_bytes(
+                           b'Kaydara FBX Binary  TEST')):
+                results, errors = convert_folder(src, out)
             self.assertEqual(len(results), 1)
             self.assertEqual(len(errors), 1)
-            self.assertTrue((out/'models'/'render.glb').is_file())
+            self.assertTrue((out/'models'/'render.fbx').is_file())
             self.assertEqual((src/'models'/'other.txt').read_text(), 'never modified')
             with self.assertRaisesRegex(ValueError, 'outside'):
                 convert_folder(src, src)
 
     def test_gpu_first_ui_and_native_actions_preserved(self):
         code = Path(__file__).with_name('qt_workspace_editor.py').read_text(encoding='utf-8')
-        for required in ('defaultGpuModelPreview', 'Export Current Model Only (.glb)…',
+        for required in ('defaultGpuModelPreview', 'Export Current Model Only (.fbx)…',
                          'Export Model Folder', 'Export Native Model',
                          'Import Same-Layout Model', '_software_model_preview',
                          'QtGPUModelPanel'):

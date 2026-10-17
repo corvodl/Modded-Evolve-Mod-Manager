@@ -190,6 +190,12 @@ class FlatCharacterFolderTests(unittest.TestCase):
     def setUp(self):
         self.tmp = TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        def fake_converter(_blob, output, **kwargs):
+            Path(output).write_bytes(b'Kaydara FBX Binary  TEST')
+            return {'format':'FBX Binary','mesh_count':1,'armatures':0,'actions':[]}
+        converter = patch('fbx_export_converter.convert_glb_to_fbx', side_effect=fake_converter)
+        converter.start()
+        self.addCleanup(converter.stop)
         self.root = Path(self.tmp.name)
         self.workspace = self.root / 'project'
         self.output = self.root / 'export'
@@ -234,7 +240,7 @@ class FlatCharacterFolderTests(unittest.TestCase):
         self.assertEqual((dest / 'models/parnelltank_3p.skinm').read_bytes(), b'MODEL')
         self.assertEqual((dest / 'textures/body_diff.dds.0').read_bytes(),
                          b'DDS-sibling-TS')
-        self.assertEqual((dest / 'merc_parnelltank.glb').read_bytes(), self._glb())
+        self.assertTrue((dest / 'merc_parnelltank.fbx').read_bytes().startswith(b'Kaydara FBX'))
         self.assertFalse((dest / 'characters').exists())
         self.assertFalse((dest / 'merc_val').exists())
         self.assertFalse((dest / 'Assemblies').exists())
@@ -257,7 +263,7 @@ class FlatCharacterFolderTests(unittest.TestCase):
             self.workspace, self.prefix, self.output, index=self.index,
             full_model=(self._glb(), {'rig_status': 'Synthetic test'}))
         root = Path(report['folder'])
-        self.assertTrue((root / 'merc_parnelltank.glb').is_file())
+        self.assertTrue((root / 'merc_parnelltank.fbx').is_file())
         self.assertEqual((root / 'models/equipment/weapon.skin').read_bytes(), b'WEAPON')
         self.assertEqual((root / 'animations/motion/idle.caf').read_bytes(), b'CAF')
         self.assertEqual((root / 'textures/body_diff.dds.0').read_bytes(),
@@ -283,12 +289,12 @@ class FlatCharacterFolderTests(unittest.TestCase):
                                    'embedded_animations':2,
                                    'embedded_animation_clips':('idle','run')}))
         folder = Path(result['folder'])
-        self.assertEqual((folder/'merc_parnelltank.glb').read_bytes(), root_glb)
+        self.assertTrue((folder/'merc_parnelltank.fbx').read_bytes().startswith(b'Kaydara FBX'))
         self.assertFalse((folder/'animations').exists())
         self.assertEqual(result['animations']['animations'], 2)
         self.assertIsNone(result['animations']['animated_glb'])
         report = json.loads((folder/'export_verification.json').read_text('utf-8'))
-        self.assertEqual(report['embedded_animations']['merc_parnelltank.glb'],
+        self.assertEqual(report['embedded_animations']['merc_parnelltank.fbx'],
                          ['idle','run'])
         self.assertEqual((self.workspace/'files'/idle).read_bytes(), b'CAF')
         self.assertEqual((self.workspace/'files'/action).read_bytes(), b'DBA')
@@ -331,8 +337,8 @@ class FlatCharacterFolderTests(unittest.TestCase):
         target = Path(report['folder'])
         self.assertEqual(len(report['cdf_assemblies']), 3)
         for stage in (1,2,3):
-            output = target/'models'/('parnell'+str(stage)+'.glb')
-            self.assertTrue(output.read_bytes().startswith(b'glTF'))
+            output = target/'models'/('parnell'+str(stage)+'.fbx')
+            self.assertTrue(output.read_bytes().startswith(b'Kaydara FBX'))
         manifest = json.loads((target/'asset_sources.json').read_text('utf-8'))
         self.assertEqual(len(manifest['cdf_assemblies']), 3)
         self.assertFalse((target/'models'/'other.glb').exists())

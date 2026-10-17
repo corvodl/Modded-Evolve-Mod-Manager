@@ -159,4 +159,6 @@ Version **1.0.1** marks the application's first official release, **not** a clai
 
 Project by **@CorvoDL**. [Source repository](https://github.com/corvodl/Modded-Evolve-Mod-Manager) · [Required Modded Evolve client](https://modded-evolve.com/).
 
+**FBX export:** Standalone LOD0 models and complete character exports deliver genuine binary FBX. Blender 4.2+ must be installed and `blender.exe` available on PATH for conversion. GLB is an internal intermediate; characters retain verified rigs and animation Actions, while static exports exclude bones and poses. Welds must preserve UV/material seams; rigged source vertices are never remapped before skinning. Missing Blender or invalid conversion prevents output rather than relabeling a GLB.
+
 **Optional Blender Animation Browser:** Use Settings → Blender Integration to install the verified v1.1.0 ZIP in Blender 4.2+.
