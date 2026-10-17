@@ -381,7 +381,9 @@ class ReadOnlyAssetPreviewUITests(TestCase):
                        'part_count':2, 'embedded_animations':0,
                        'rendered_parts': (
                            character + '/emet_3p.skinm',
-                           character + '/emetremotecannon_3p.skinm')})
+                           character + '/emetremotecannon_3p.skinm'),
+                       'geometry_verification': {
+                           'status': 'verified_body_and_remote_cannon'}})
         cannon = (blob, {'cdf': character + '/emetcannon.cdf',
                          'bone_count':0, 'part_count':1,
                          'embedded_animations':0})
