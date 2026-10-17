@@ -394,6 +394,9 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         return None
     included, omitted, parts, rig_parts = [], [], [], []
     deferred = []
+    # Local to this CDF: don't share mutable or stale material data with
+    # another model selection, archive, or source edit.
+    shared_materials = {}
     # The viewer may show combined geometry before decoding full-resolution
     # DDS streams. Exporters keep the original all-in-one assembly behavior.
     if stage_ready is not None:
@@ -432,6 +435,7 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
                     materials = load_preview_materials(
                         workspace, render, texture_folder, projects_root=projects_root,
                         stage_root=stage_root, index=index, cdf=cdf,
+                        material_cache=shared_materials,
                         **({'cancel': cancel} if cancel is not None else {}))
                 except (ValueError, OSError) as exc:
                     omitted.append(label + ' textures: ' + str(exc))
@@ -463,8 +467,35 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
             raise InterruptedError('Character assembly cancelled')
         if stage_ready is not None:
             stage_ready('assembly_materials')
+        # Determine a shared MTL's required source leaf indexes across all
+        # bound CDF parts, so we can decode its textures once, without loading
+        # unrelated texture slots from a large shared material table.
+        from model_material_resolve import find_model_material
+        slots_by_material = {}
+        material_by_render = {}
+        for _label, render, part_mesh in deferred:
+            if cancel is not None and cancel():
+                raise InterruptedError('Character assembly cancelled')
+            try:
+                record, _reason, _attempts = find_model_material(
+                    index, render, preferred_workspace=workspace, cdf=cdf)
+                if record is None:
+                    continue
+                key = str(Path(record['file']).resolve())
+                material_by_render[render] = key
+                slots_by_material.setdefault(key, set()).update(
+                    slot for _offset, _size, slot in
+                    (part_mesh.subsets or
+                     ((0, len(part_mesh.triangles) * 3, 0),)))
+            except (ValueError, OSError):
+                # Keep the precise missing/ambiguous MTL error from the loader.
+                continue
         decorated = []
         decoded_budget = 0
+        seen_images = set()
+        texture_roles = (
+            'textures', 'normal_maps', 'specular_maps', 'gloss_maps',
+            'detail_maps', 'detail_normal_maps', 'ao_maps', 'emissive_maps')
         for number, (label, render, part_mesh) in enumerate(deferred, 1):
             if cancel is not None and cancel():
                 raise InterruptedError('Character assembly cancelled')
@@ -476,18 +507,39 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
                     materials = load_preview_materials(
                         workspace, render, texture_folder, projects_root=projects_root,
                         stage_root=stage_root, index=index, cdf=cdf,
+                        material_cache=shared_materials,
+                        used_slots=slots_by_material.get(
+                            material_by_render.get(render)),
                         **({'cancel': cancel} if cancel is not None else {}))
-                    # Preserve full resolution; do not silently downscale
-                    # source textures. Reject excessive combined working sets.
-                    unique = set()
-                    for role in ('textures', 'normal_maps', 'specular_maps',
-                                 'gloss_maps', 'detail_maps', 'emissive_maps'):
-                        for image in getattr(materials, role, ()) or ():
-                            if image is not None and id(image) not in unique:
-                                unique.add(id(image))
-                                decoded_budget += image.width * image.height * 4
-                    if decoded_budget > 768 * 1024 * 1024:
+                    # Count only slot images retained by combine_meshes,
+                    # once per image across all components and all map roles.
+                    # This fixes three Maggie Savage skins sharing one MTL
+                    # each being charged for the same top-resolution pixels.
+                    slots = {slot for _offset, _size, slot in
+                             (part_mesh.subsets or
+                              ((0, len(part_mesh.triangles) * 3, 0),))}
+                    pending = set()
+                    additional = 0
+                    for role in texture_roles:
+                        images = getattr(materials, role, ()) or ()
+                        for slot in slots:
+                            image = images[slot] if 0 <= slot < len(images) else None
+                            if (image is not None and id(image) not in seen_images
+                                    and id(image) not in pending):
+                                pending.add(id(image))
+                                additional += image.width * image.height * 4
+                    for slot in slots:
+                        environments = getattr(materials, 'environment_maps', ()) or ()
+                        faces = environments[slot] if 0 <= slot < len(environments) else None
+                        for image in faces or ():
+                            if (image is not None and id(image) not in seen_images
+                                    and id(image) not in pending):
+                                pending.add(id(image))
+                                additional += image.width * image.height * 4
+                    if decoded_budget + additional > 768 * 1024 * 1024:
                         raise ValueError('CDF preview textures exceed 768 MiB decoded budget')
+                    decoded_budget += additional
+                    seen_images.update(pending)
                 except (ValueError, OSError) as exc:
                     materials = None
                     omitted.append(label + ' textures: ' + str(exc))
