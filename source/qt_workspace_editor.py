@@ -224,6 +224,9 @@ class QtWorkspaceEditor(QMainWindow):
         self._model_selection_timer.setInterval(150)
         self._model_selection_timer.timeout.connect(self._open_queued_model)
         self._queued_model = None
+        self._model_elapsed_timer = QTimer(self)
+        self._model_elapsed_timer.setInterval(250)
+        self._model_elapsed_timer.timeout.connect(self._update_model_elapsed)
         self._preflight_token = 0
         self._preflight_pool = None
         self._preflight_signals = None
@@ -360,8 +363,17 @@ class QtWorkspaceEditor(QMainWindow):
                 self.model_loading_progress.setRange(0, 0)
                 self.model_loading_progress.setTextVisible(True)
                 self.model_loading_progress.setMaximumHeight(16)
+                self.model_loading_elapsed = QLabel('0.0s', self.model_loading_footer)
+                self.model_loading_elapsed.setObjectName('modelLoadingElapsed')
+                self.model_loading_cancel = QPushButton('Cancel', self.model_loading_footer)
+                self.model_loading_cancel.setObjectName('modelLoadingCancel')
+                self.model_loading_cancel.setToolTip(
+                    'Cancel the selected model load; original game files are unchanged')
+                self.model_loading_cancel.clicked.connect(self.cancel_model_loading)
                 loading_row.addWidget(self.model_loading_label)
                 loading_row.addWidget(self.model_loading_progress, 1)
+                loading_row.addWidget(self.model_loading_elapsed)
+                loading_row.addWidget(self.model_loading_cancel)
                 self.model_loading_footer.hide()
                 box.addWidget(self.model_loading_footer)
             self.tabs.addTab(tab, navigation_icon({'files':'text','images':'texture','models':'model','gfx':'gfx','media':'files'}[section]), label)
@@ -1554,10 +1566,59 @@ class QtWorkspaceEditor(QMainWindow):
                  self.virtual_file_tree.currentIndex().data(Qt.UserRole + 2) == 'full-character'))
             if chosen.casefold().endswith('.lyr') and not self.read_only_library:
                 self.manager.open_level_editor(self.workspace)
+            elif (self._category(chosen) == 'models' and
+                  os.environ.get('QT_QPA_PLATFORM', '').casefold()
+                  not in ('offscreen', 'minimal')):
+                # A double-click or rapid arrow-key navigation used to start
+                # several expensive loads. Debounce automatic selection only;
+                # explicit direct load(), context actions and offscreen tests
+                # still work synchronously as requested.
+                if (chosen == self.current and
+                    full_character == self.full_character_active and
+                    (self._model_prepared or self._queued_model is None)):
+                    return
+                self._queued_model = (chosen, full_character)
+                self._model_selection_timer.start()
             else:
                 self.load(chosen, full_character=full_character)
         except ValueError as exc:
             self.status.setText(str(exc))
+
+    def _open_queued_model(self):
+        request = self._queued_model
+        self._queued_model = None
+        if request is None:
+            return
+        rel, full_character = request
+        # A refresh or archive switch might have invalidated the queued
+        # entry while the user was typing or navigating elsewhere.
+        if rel not in self.records:
+            return
+        self.load(rel, full_character=full_character)
+
+    def cancel_model_loading(self):
+        """Cancel pending decode and ignore delayed geometry/worker results."""
+        self._model_selection_timer.stop()
+        self._queued_model = None
+        self._model_cancel.set()
+        self._model_generation += 1
+        self._model_cancelled_count += 1
+        if self._model_pool is not None:
+            self._model_pool.clear()
+        self._set_model_loading_phase('', False)
+        self.model_fallback.setText('Model loading cancelled. Select another model.')
+        if self.model_panel is not None:
+            self.model_panel.set_texture_resolution_pending(False)
+        self.status.setText('Model loading cancelled · source assets unchanged')
+        from performance_trace import record
+        record('model', 'load_cancelled',
+               elapsed_ms=(time.perf_counter()-self._model_started_at)*1000
+               if self._model_started_at is not None else None)
+
+    def _update_model_elapsed(self):
+        if self._model_started_at is not None:
+            self.model_loading_elapsed.setText(
+                '%.1fs' % (time.perf_counter()-self._model_started_at))
 
     def load(self, rel, *, full_character=False):
         self.media_view.clear()
@@ -1591,6 +1652,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.dependency_button.setVisible(self.mode == 'models')
         if self.mode != 'models':
             self.dependency_button.setText('Dependencies…')
+        self._model_selection_timer.stop()
+        self._queued_model = None
         self._model_cancel.set()
         self._model_cancel = Event()
         self._model_generation += 1
@@ -1796,14 +1859,20 @@ class QtWorkspaceEditor(QMainWindow):
         if visible:
             self.model_loading_label.setText(label)
             self.model_loading_progress.setRange(0, 0)
+            self._update_model_elapsed()
+            self._model_elapsed_timer.start()
             footer.show()
         else:
+            self._model_elapsed_timer.stop()
             footer.hide()
 
     def _load_model_background(self, rel):
         """Load heavy CryEngine files and textures away from the GUI thread."""
         self._model_prepared = False
         self._model_started_at = time.perf_counter()
+        self._model_stage_started = self._model_started_at
+        self._model_stage_previous = 'reading_geometry'
+        self._model_stage_times = {}
         view = self.views['models']
         self.model_fallback.setPixmap(QPixmap())
         self.model_fallback.setText('Loading model geometry and skeleton…')
@@ -1889,6 +1958,10 @@ class QtWorkspaceEditor(QMainWindow):
             self._model_pool.setMaxThreadCount(1)
             self._model_signals = _NativeResult(self)
             self._model_signals.completed.connect(self._model_ready)
+        # QThreadPool.clear removes pending obsolete jobs without terminating
+        # the currently running worker (which cooperatively checks cancel).
+        # One running + the newest selected request bounds memory spikes.
+        self._model_pool.clear()
         self._model_pool.start(
             _NativeConversion(resolve, None, token, self._model_signals))
 
@@ -1905,6 +1978,13 @@ class QtWorkspaceEditor(QMainWindow):
             return
         elapsed = (time.perf_counter()-self._model_started_at
                    if self._model_started_at else 0.)
+        now = time.perf_counter()
+        if self._model_stage_previous and self._model_stage_started:
+            self._model_stage_times[self._model_stage_previous] = round(
+                (now-self._model_stage_started)*1000, 2)
+        self._model_stage_started = now
+        self._model_stage_previous = ('material_dds' if stage == 'materials'
+                                      else 'animation_references')
         self.status.setText(
             '%s | Mesh ready · %s (%.1f s)' %
             (self.current, labels[stage], elapsed))
@@ -1980,6 +2060,9 @@ class QtWorkspaceEditor(QMainWindow):
             self.status.setText('3D preview unavailable: ' + error[:260])
             return
         data, cache_hit, load_ms = result[0]
+        if self._model_stage_previous and self._model_stage_started:
+            self._model_stage_times[self._model_stage_previous] = round(
+                (time.perf_counter()-self._model_stage_started)*1000, 2)
         self.model_cache_hit = cache_hit
         self.model_load_ms = round(load_ms, 2)
         self.raw = data['raw']
