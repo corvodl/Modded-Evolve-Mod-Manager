@@ -168,7 +168,7 @@ def glass_preview_report(materials, slot):
         if name in settings:
             details.append(name + ': ' + fmt(settings[name]))
     details.append('Preview transparency approximates CryEngine; original MTL unchanged.')
-    return '\\n'.join(details)
+    return '\n'.join(details)
 
 
 def preview_material_opacity(materials, slot):
