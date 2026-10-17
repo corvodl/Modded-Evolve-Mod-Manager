@@ -202,7 +202,7 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         with patch.object(window, 'load') as reload:
             window._restore_character_loadout()
         reload.assert_called_once_with(self.models[0], full_character=True)
-        self.assertIsNone(window.character_skin_choice)
+        self.assertEqual(window.character_skin_choice, '__default__')
         self.assertEqual(window.character_faceplate_choice, normal)
 
     def test_opening_model_defers_library_validation_to_worker(self):
