@@ -976,13 +976,13 @@ class QtWorkspaceEditor(QMainWindow):
         active_workers = (self._model_pool.activeThreadCount()
                           if self._model_pool is not None else 0)
         self._diagnostics_label.setText(
-            'Last model preparation: %s ms\\nCache hit: %s\\n'
-            'Model stages: %s\\n'
-            'Decoded texture allocation estimate: %.2f MiB (supported maps)\\n'
-            'Process working set: %s MiB | observed peak: %s MiB\\n'
-            'Model worker threads: %d | cancelled loads: %d\\n'
-            'Editor file-tree refresh: %.1f ms\\nCache: %s\\n'
-            'GPU texture upload (cumulative): %s ms\\nFPS: not measured.' %
+            'Last model preparation: %s ms\nCache hit: %s\n'
+            'Model stages: %s\n'
+            'Decoded texture allocation estimate: %.2f MiB (supported maps)\n'
+            'Process working set: %s MiB | observed peak: %s MiB\n'
+            'Model worker threads: %d | cancelled loads: %d\n'
+            'Editor file-tree refresh: %.1f ms\nCache: %s\n'
+            'GPU texture upload (cumulative): %s ms\nFPS: not measured.' %
             ('%.1f'%self.model_load_ms if self.model_load_ms is not None
              else 'Not sampled',
              'yes' if self.model_cache_hit else 'no',
