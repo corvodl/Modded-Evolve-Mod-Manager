@@ -1682,6 +1682,10 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.texture_message = 'No texture lookup has run'
         self.mode = self._category(rel)
+        # Keep the old character's options out of the way while a new model
+        # loads, and never show them in image/file/level views.
+        self.character_equipment_menu.clear()
+        self.character_equipment_menu.menuAction().setVisible(False)
         self._sync_editor_context_actions()
         self.dependency_button.setEnabled(self.mode=='models')
         self.dependency_button.setVisible(self.mode == 'models')
