@@ -147,6 +147,29 @@ def build_cdf_folder_glbs(workspace, character_folder, index, *,
                 projects_root=projects_root, stage_root=stage_root)
             if character is None or character.cdf.casefold() != name.casefold():
                 raise ValueError('No verified assembly belonging to this CDF')
+            # If the owning Emet CDF offers a remote-cannon attachment but a
+            # different equipment skin is currently its default, explicitly
+            # select the cannon in the *same verified CDF*. Never synthesize
+            # an arbitrary body/cannon merge outside CryEngine's bindings.
+            emet_actor = (virtual.casefold().split('/')[:3] in
+                          (['characters', 'hunters', 'merc_emet'],
+                           ['characters', 'hunters', 'medic_emet'],
+                           ['characters', 'hunters', 'emet']))
+            rendered = {PurePosixPath(str(part[0]).replace('\\', '/')).name.casefold()
+                        for part in getattr(character, 'rig_parts', ())}
+            if (emet_actor and 'emet_3p.skinm' in rendered
+                    and 'emetremotecannon_3p.skinm' not in rendered):
+                candidates = [
+                    path for _label, path in getattr(character, 'equipment_options', ())
+                    if PurePosixPath(str(path).replace('\\', '/')).name.casefold()
+                    == 'emetremotecannon_3p.skin']
+                if len(candidates) == 1:
+                    character = assemble_character(
+                        workspace, name, index, texture_folder=texture_folder,
+                        projects_root=projects_root, stage_root=stage_root,
+                        equipment=candidates[0], cancel=cancelled)
+                    if character is None or character.cdf.casefold() != name.casefold():
+                        raise ValueError('Cannot assemble verified Emet body and cannon.')
             blob, info = assembled_character_glb(
                 character, workspace, name, index,
                 texture_folder=texture_folder, projects_root=projects_root,
