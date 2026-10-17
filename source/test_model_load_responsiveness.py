@@ -153,6 +153,7 @@ class ModelLoadResponsivenessTests(TestCase):
               patch('character_assembly.load_preview_materials', side_effect=decode),
               patch.object(Path, 'stat', autospec=True) as stat):
             stat.return_value.st_size = 1024
+            (Path(tmp) / 'body.skinm').write_bytes(b'fixture render stream')
             part = assemble_character(
                 Path(tmp), 'characters/hunters/merc_lennox/lennox_3p.skinm', {},
                 pre_material_geometry=lambda preview: events.append('geometry'),
@@ -180,6 +181,7 @@ class ModelLoadResponsivenessTests(TestCase):
               patch('character_assembly.load_preview_materials') as materials,
               patch.object(Path, 'stat', autospec=True) as stat):
             stat.return_value.st_size = 1024
+            (Path(tmp) / 'body.skinm').write_bytes(b'fixture render stream')
             with self.assertRaisesRegex(InterruptedError, 'cancelled'):
                 assemble_character(
                     Path(tmp), 'characters/hunters/merc_lennox/lennox_3p.skinm', {},
