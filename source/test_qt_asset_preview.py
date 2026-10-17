@@ -171,6 +171,8 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         window._update_character_equipment_menu()
         self.assertTrue(menu.menuAction().isVisible())
         self.assertEqual(layout.count(), 3)
+        import gc
+        gc.collect()  # Nested QMenus must survive PySide6 wrapper collection.
         groups = {action.text(): action.menu() for action in menu.actions()
                   if action.menu() is not None}
         self.assertEqual(set(groups), {'Weapons', 'Face / Head Variants'})
