@@ -106,8 +106,8 @@ class ReadOnlyAssetPreviewUITests(TestCase):
                          'libraryReadOnlyNotice')
         self.assertIn('Read-only', window.selection_label.text())
         self.assertIn('editing and importing are disabled',
-                      window.selection_label.toolTip())
-        self.assertIn('copies', window.selection_label.toolTip())
+                      window.selection_label.toolTip().lower())
+        self.assertIn('editable copy', window.selection_label.toolTip())
         self.assertTrue(window.read_only_library)
         self.assertIs(window.editor_split.widget(1), window.explorer)
         self.assertEqual(window.explorer.objectName(), 'fileExplorerPane')
