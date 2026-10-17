@@ -1,19 +1,19 @@
-# Evolve Stage 2 Mod Manager — v1.2.7
+# Evolve Stage 2 Mod Manager — v1.2.8
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.2.7 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.2.8 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.7
+## Latest Stable — v1.2.8
 
-- Respect Kala's CDF SkinSets: Banshee Gun, Armor Reducer and Rift Device equipment no longer overlap; the Rift Device arm stays with its owning equipment.
-- Preserve Kala's authored blue Banshee Gun and purple Rift Device glow separately, without hardcoded color substitutions.
-- Decode high-resolution CryEngine DDNA gloss sidecars and keep gloss mapped to the correct material when assembling character attachments.
-- Default the GPU model viewer to Smooth shading while keeping Faceted available.
-- Start verified converted native CAF/DBA clips even without an idle name; never auto-play standalone additive or layered poses.
-- Retain CryEngine glow, bloom, emissive Blender export and rig-safe geometry handling without altering source assets.
+- Redesign the GPU character viewer with more viewport space, pictogram toolbars, scrollable Materials and Animation popovers, and a draggable XYZ orbit gizmo.
+- Display precise percentage values for lighting, glow, gloss and studio fill; preserve Smooth as the default shading mode.
+- Show cancellable, stage-labelled animation loading; export separately validated DBA Actions alongside compatible CAF clips instead of skipping databases when CAFs are present.
+- Apply the user-tested reference emission strength of 100 to verified glowing surfaces in GPU previews and Blender GLB exports while preserving authored CryEngine GlowAmount and masks.
+- Preserve Blender animated GLB emissive strength above the old 16-unit limit when exporting and importing compatible animations.
+- Reclaim wasted space in the Asset Library Full Character view; preserve original game assets as read-only.
 
 ## Download and install
 

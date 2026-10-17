@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup, QLineEdit, QLayout, QListWidget, QListWidgetItem, QAbstractItemView, QPlainTextEdit, QProgressBar)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
+from emissive_materials import preview_emission_strength
 
 
 from qt_navigation_icons import navigation_icon
@@ -44,8 +45,8 @@ class _CompactAnimationList(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('referencedNativeAnimations')
-        self.setMinimumHeight(88)
-        self.setMaximumHeight(108)
+        self.setMinimumHeight(122)
+        self.setMaximumHeight(150)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setSpacing(2)
@@ -103,8 +104,8 @@ class _CompactDiagnosticText(QPlainTextEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setLineWrapMode(QPlainTextEdit.WidgetWidth)
-        self.setMaximumHeight(90)
-        self.setMinimumHeight(60)
+        self.setMaximumHeight(164)
+        self.setMinimumHeight(80)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setObjectName('nativeAnimationDetail')
         self.setToolTip('Scroll within the details to see full paths and errors.')
@@ -142,6 +143,7 @@ class QtGLModelCanvas(QOpenGLWidget):
     # Reports GPU texture submissions, not time spent decoding DDS in a worker.
     # Signals keep Qt UI updates separate from the GL context's paint pass.
     textureUploadProgress = Signal(int, int)
+    cameraChanged = Signal()  # Keep the XYZ gizmo synced with canvas orbit.
 
     def __init__(self, mesh, materials=None, parent=None, prepared_geometry=None):
         super().__init__(parent)
@@ -336,6 +338,7 @@ class QtGLModelCanvas(QOpenGLWidget):
             raise ValueError('Unknown camera preset')
         self.rotation=list(orientations[choice])
         self.pan=[0.,0.]
+        self.cameraChanged.emit()
         self.update()
 
     def set_light_strength(self, percentage):
@@ -704,8 +707,9 @@ class QtGLModelCanvas(QOpenGLWidget):
                     continue
                 if slot < len(getattr(self.materials, 'hidden', ())) and self.materials.hidden[slot]:
                     continue
-                amount = (self.materials.emissive_strengths[slot] if
-                          slot < len(getattr(self.materials, 'emissive_strengths', ())) else 0.)
+                authored = (self.materials.emissive_strengths[slot] if
+                            slot < len(getattr(self.materials, 'emissive_strengths', ())) else 0.)
+                amount = preview_emission_strength(authored, has_emissive_map=bool(handle))
                 if amount <= 0.:
                     continue
                 from texture_transform import transform_for, gl_matrix
@@ -913,7 +917,12 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 emissive=slot<len(self.emissive_textures) and bool(self.emissive_textures[slot]),
                                 emissive_alpha_mask=(slot<len(getattr(self.materials,'emissive_masks',()))
                                   and self.materials.emissive_masks[slot]=='diffuse_alpha'),
-                                emissive_strength=self.glow_strength * (self.materials.emissive_strengths[slot] if self.materials and slot<len(getattr(self.materials,'emissive_strengths',())) else 0.),
+                                emissive_strength=self.glow_strength * preview_emission_strength(
+                                    self.materials.emissive_strengths[slot]
+                                    if self.materials and slot < len(getattr(self.materials, 'emissive_strengths', ()))
+                                    else 0.,
+                                    has_emissive_map=slot < len(self.emissive_textures)
+                                    and bool(self.emissive_textures[slot])),
                                 emission_enabled=self.emission_enabled)
                 if tex:
                     glEnable(GL_TEXTURE_2D)
@@ -1022,6 +1031,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                     self.rotation[0] += dx*.55
                     self.rotation[1] = max(-89,min(89,self.rotation[1]+dy*.45))
             self._last = pos
+            self.cameraChanged.emit()
             self.update()
             event.accept()
         else:
@@ -1231,9 +1241,6 @@ class QtGPUModelPanel(QWidget):
         quality.addItems(('Performance','High'))
         quality.currentTextChanged.connect(self.canvas.set_quality)
         detail_line.addWidget(quality)
-        reset=QPushButton('Reset Camera')
-        reset.clicked.connect(self.reset_view)
-        detail_line.addWidget(reset)
         detail_line.addStretch()
         self._view_advanced = self._compact_group(
             self._overlay_sections['View'][1], 'Display & quality', opened=False)
@@ -1246,20 +1253,22 @@ class QtGPUModelPanel(QWidget):
         enhanced.toggled.connect(self.canvas.set_enhanced_materials)
         self.enhanced_checkbox=enhanced
         studio.addWidget(enhanced)
-        studio.addWidget(QLabel('Camera'))
-        self.camera_combo = QComboBox()
+        # Camera direction is selected with the draggable on-canvas XYZ gizmo,
+        # rather than a separate dropdown consuming precious popover width.
+        self.camera_combo = QComboBox(self)
         self.camera_combo.addItems(('Isometric','Front','Back','Left','Right','Top','Bottom'))
         self.camera_combo.currentTextChanged.connect(self.canvas.set_camera_preset)
-        studio.addWidget(self.camera_combo)
+        self.camera_combo.hide()
         lighting_row = QHBoxLayout()
         lighting_row.addWidget(QLabel('Light'))
         self.lighting_slider = QSlider(Qt.Horizontal)
         self.lighting_slider.setRange(20,200)
         self.lighting_slider.setValue(100)
-        self.lighting_slider.setMaximumWidth(125)
         self.lighting_slider.valueChanged.connect(self.canvas.set_light_strength)
         lighting_row.addWidget(self.lighting_slider, 1)
-        lighting_row.addWidget(QLabel('SSAO'))
+        self.lighting_percent = self._slider_value(self.lighting_slider, lighting_row)
+        ssao_row = QHBoxLayout()
+        ssao_row.addWidget(QLabel('SSAO'))
         self.ssao_combo = QComboBox()
         self.ssao_combo.setObjectName('modelSsaoQuality')
         self.ssao_combo.addItems(('Off','Low','Medium','High'))
@@ -1268,7 +1277,7 @@ class QtGPUModelPanel(QWidget):
             'GPU screen-space contact shadows. Off by default; higher levels '
             'sample more depth neighbours. Does not require AO texture maps.')
         self.ssao_combo.currentTextChanged.connect(self.canvas.set_ssao_quality)
-        lighting_row.addWidget(self.ssao_combo)
+        ssao_row.addWidget(self.ssao_combo, 1)
         studio.addStretch()
         studio_detail = QHBoxLayout()
         self.background_combo = QComboBox()
@@ -1283,6 +1292,7 @@ class QtGPUModelPanel(QWidget):
         studio_detail.addStretch()
         self._overlay_sections['View'][1].insertLayout(0,studio)
         self._overlay_sections['View'][1].insertLayout(1,lighting_row)
+        self._overlay_sections['View'][1].insertLayout(2,ssao_row)
         self._view_advanced.addLayout(studio_detail)
         inspector=QHBoxLayout()
         inspector.addWidget(QLabel('Part'))
@@ -1313,11 +1323,16 @@ class QtGPUModelPanel(QWidget):
         self.glow_slider = QSlider(Qt.Horizontal)
         self.glow_slider.setRange(0,300)
         self.glow_slider.setValue(100)
+        self.glow_slider.setToolTip(
+            '100% corresponds to the game-reference-tested Blender emission '
+            'strength of 100 for verified glowing materials. Source MTL '
+            'GlowAmount, texture hue, masks and DDS pixels are unchanged.')
         self.glow_slider.valueChanged.connect(lambda value: (
             setattr(self.canvas, 'glow_strength', value/100.), self.canvas.update()))
         glow_row=QHBoxLayout()
         glow_row.addWidget(QLabel('Glow intensity'))
-        glow_row.addWidget(self.glow_slider)
+        glow_row.addWidget(self.glow_slider, 1)
+        self.glow_percent = self._slider_value(self.glow_slider, glow_row)
         self._overlay_sections['Materials'][1].addLayout(glow_row)
         self.bloom_checkbox = QCheckBox('Soft bloom halo')
         self.bloom_checkbox.setChecked(True)
@@ -1328,13 +1343,12 @@ class QtGPUModelPanel(QWidget):
         self.gloss_slider=QSlider(Qt.Horizontal)
         self.gloss_slider.setRange(0,100)
         self.gloss_slider.setValue(35)
-        self.gloss_slider.setMaximumWidth(95)
         self.gloss_slider.setToolTip(
             'Overall specular highlight strength. Explicit gloss/smoothness maps '
             'control highlight sharpness across the texture.')
         self.gloss_slider.valueChanged.connect(self.canvas.set_specular)
-        inspector_secondary.addWidget(self.gloss_slider)
-        inspector_secondary.addStretch()
+        inspector_secondary.addWidget(self.gloss_slider, 1)
+        self.gloss_percent = self._slider_value(self.gloss_slider, inspector_secondary)
         self._overlay_sections['Materials'][1].addLayout(inspector)
         self._overlay_sections['Materials'][1].addLayout(inspector_secondary)
         self.solid_geometry = QCheckBox('Show all character geometry (ignore alpha)')
@@ -1385,6 +1399,7 @@ class QtGPUModelPanel(QWidget):
             lambda value: (setattr(self.canvas, 'studio_fill', value/100.),
                            self.canvas.update()))
         ambient_row.addWidget(self.studio_fill_slider, 1)
+        self.studio_fill_percent = self._slider_value(self.studio_fill_slider, ambient_row)
         self._material_advanced.addLayout(ambient_row)
         self.emissive_source_info = QLabel('Emissive DDS diagnostics will appear here.')
         self.emissive_source_info.setObjectName('modelEmissiveSourceInfo')
@@ -1410,9 +1425,9 @@ class QtGPUModelPanel(QWidget):
             'Selection details', opened=False)
         self.native_info.setMaximumHeight(84)
         self._native_details.addWidget(self.native_info)
-        foot=QLabel('Renderer 3.0 approximates CryEngine materials; check optional maps in the texture diagnostics. '
-                    'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
-                    'Faceted shading keeps hard edges; smooth shading is optional.')
+        foot=QLabel('Renderer 3.0 approximates CryEngine. Drag the XYZ gizmo to orbit; '
+                    'use the left-side tools to orbit/pan/zoom, and scroll to zoom. '
+                    'Smooth shading is the default; Faceted remains optional.')
         foot.setWordWrap(True)
         self._view_advanced.addWidget(foot)
         # A compact progress strip sits below the 3D canvas, above the
@@ -1435,6 +1450,33 @@ class QtGPUModelPanel(QWidget):
         self.texture_loading_footer.hide()
         self._texture_resolution_pending = False
         layout.addWidget(self.texture_loading_footer)
+        # Loading feedback must remain visible even if Animations is closed.
+        # The conversion/CAF extractor does not expose reliable step totals;
+        # busy progress is truthful, not an invented percentage.
+        self.native_loading_footer = QFrame(self)
+        self.native_loading_footer.setObjectName('nativeAnimationLoadingFooter')
+        busy_row = QHBoxLayout(self.native_loading_footer)
+        busy_row.setContentsMargins(8, 2, 8, 2)
+        busy_row.setSpacing(6)
+        self.native_loading_label = QLabel('Loading game animation', self.native_loading_footer)
+        self.native_loading_label.setObjectName('nativeAnimationLoadingLabel')
+        self.native_loading_label.setFixedWidth(170)
+        self.native_loading_progress = QProgressBar(self.native_loading_footer)
+        self.native_loading_progress.setObjectName('nativeAnimationLoadingProgress')
+        self.native_loading_progress.setRange(0, 0)
+        self.native_loading_progress.setTextVisible(False)
+        self.native_loading_progress.setMaximumHeight(15)
+        self.native_loading_cancel = QToolButton(self.native_loading_footer)
+        self.native_loading_cancel.setObjectName('nativeAnimationLoadingCancel')
+        self.native_loading_cancel.setIcon(navigation_icon('close', size=16))
+        self.native_loading_cancel.setAccessibleName('Cancel animation loading')
+        self.native_loading_cancel.setToolTip('Cancel active CAF/DBA extraction and conversion')
+        self.native_loading_cancel.clicked.connect(self.cancel_native_conversion)
+        busy_row.addWidget(self.native_loading_label)
+        busy_row.addWidget(self.native_loading_progress, 1)
+        busy_row.addWidget(self.native_loading_cancel)
+        layout.addWidget(self.native_loading_footer)
+        self.native_loading_footer.hide()
         # Queue UI layout changes until after paintGL has released its OpenGL
         # framebuffer; directly showing/hiding widgets within paintGL can
         # resize QOpenGLWidget mid-frame on Windows.
@@ -1447,6 +1489,24 @@ class QtGPUModelPanel(QWidget):
                 total - len(self.canvas._pending_texture_uploads), total)
         self._build_compact_timeline(layout)
         QTimer.singleShot(0,self._position_overlay)
+
+    def _set_native_loading(self, stage=None):
+        """One visible, cancellable busy indicator for any native clip load.
+
+        Progress stays indeterminate until the native converter publishes
+        real counts. Never invent a percent from elapsed time or file size.
+        """
+        running = bool(stage)
+        self.native_loading_footer.setVisible(running)
+        self.native_loading_cancel.setEnabled(running)
+        if running:
+            self.native_loading_label.setText(str(stage))
+            self.native_loading_label.setToolTip(str(stage))
+            self.native_loading_progress.setRange(0, 0)
+            self.native_loading_progress.setAccessibleName(str(stage))
+            self.play_native_button.setText('Loading…')
+        elif self.play_native_button.text() == 'Loading…':
+            self.play_native_button.setText('▶  Play')
 
     def set_texture_resolution_pending(self, pending):
         """Show indeterminate DDS resolution before GPU upload totals exist.
@@ -1491,49 +1551,48 @@ class QtGPUModelPanel(QWidget):
         rail.setSpacing(3)
         self._navigation_group = QButtonGroup(self)
         self._navigation_group.setExclusive(True)
-        for symbol,mode,hint in (
-            ('R','orbit','Orbit with left drag'),
-            ('H','pan','Pan with left drag'),
-            ('Z','zoom','Zoom with vertical left drag')):
+        for symbol,mode,hint,icon in (
+            ('Orbit','orbit','Orbit with left drag','rotate'),
+            ('Pan','pan','Pan with left drag','hand'),
+            ('Zoom','zoom','Zoom with vertical left drag','zoom')):
             button = QToolButton(self._tool_rail)
+            button.setObjectName('modelTool' + symbol)
             button.setText(symbol)
+            button.setIcon(navigation_icon(icon, size=18))
+            button.setIconSize(QSize(19, 19))
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            button.setAccessibleName(symbol + ' tool')
             button.setToolTip(hint)
-            button.setFixedSize(31,34)
+            button.setFixedSize(34,34)
             button.setCheckable(True)
             button.setChecked(mode == 'orbit')
             self._navigation_group.addButton(button)
             button.clicked.connect(lambda _checked=False,m=mode: setattr(self.canvas,'navigation_mode',m))
             rail.addWidget(button)
         fit = QToolButton(self._tool_rail)
-        fit.setText('F')
-        fit.setToolTip('Frame the character')
-        fit.setFixedSize(31,34)
+        fit.setText('Frame model')
+        fit.setObjectName('modelToolFrame')
+        fit.setIcon(navigation_icon('focus', size=18))
+        fit.setIconSize(QSize(19, 19))
+        fit.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        fit.setAccessibleName('Frame model')
+        fit.setToolTip('Frame entire character (reset pan and zoom)')
+        fit.setFixedSize(34,34)
         fit.clicked.connect(self.reset_view)
         rail.addWidget(fit)
         rail.addStretch()
-        self._axis_widget = QFrame(self.canvas)
-        self._axis_widget.setObjectName('viewportAxisControls')
-        # The camera axis rail shares the same neutral surface.
-        axes = QHBoxLayout(self._axis_widget)
-        axes.setContentsMargins(3,3,3,3)
-        axes.setSpacing(2)
-        for name,preset,color in (
-            ('X','Right','#d87982'), ('Y','Back','#91b88b'), ('Z','Top','#78a6d2')):
-            button = QToolButton(self._axis_widget)
-            button.setText(name)
-            button.setToolTip('View along '+name+' axis')
-            button.setStyleSheet('QToolButton { color: '+color+'; font-weight: bold; }')
-            button.clicked.connect(lambda _checked=False,p=preset: self.canvas.set_camera_preset(p))
-            axes.addWidget(button)
+        from qt_model_orientation_gizmo import ModelOrientationGizmo
+        self._axis_widget = ModelOrientationGizmo(self.canvas)
+        self._axis_widget.show()
 
     def _position_navigation(self):
         if not hasattr(self,'_tool_rail'):
             return
-        self._tool_rail.setGeometry(8,43,40,min(174,max(34,self.canvas.height()-48)))
+        self._tool_rail.setGeometry(8,43,43,min(180,max(34,self.canvas.height()-50)))
         self._tool_rail.raise_()
-        self._axis_widget.setGeometry(max(0,self.canvas.width()-117),8,108,36)
+        self._axis_widget.move(max(0,self.canvas.width()-118),8)
         self._axis_widget.raise_()
-        self._info.setGeometry(12,7,max(30,self.canvas.width()-145),29)
+        self._info.setGeometry(12,7,max(30,self.canvas.width()-160),29)
         self._info.raise_()
 
     def _build_compact_timeline(self,parent_layout):
@@ -1564,6 +1623,18 @@ class QtGPUModelPanel(QWidget):
         bar.addWidget(more)
         strip.setFixedHeight(38)
         parent_layout.addWidget(strip)
+
+    @staticmethod
+    def _slider_value(slider, row):
+        """Keep a live, right-aligned percentage next to every intensity slider."""
+        number = QLabel('%d%%' % slider.value())
+        number.setObjectName((slider.objectName() or 'modelSlider') + 'Percent')
+        number.setMinimumWidth(48)
+        number.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        number.setToolTip('Percentage of original viewer effect; source textures unchanged')
+        slider.valueChanged.connect(lambda value: number.setText('%d%%' % value))
+        row.addWidget(number)
+        return number
 
     def _compact_group(self, layout, label, *, opened=False):
         """Small disclosure for optional controls; retains all tool widgets."""
@@ -1618,14 +1689,14 @@ class QtGPUModelPanel(QWidget):
     def _position_overlay(self):
         if not hasattr(self, '_overlay') or self._overlay is None:
             return
-        width = max(190, min(355 if self._active_overlay == 'Animation' else 370,
-                             self.canvas.width() - 70))
+        # Keep controls on the left and reserve space for the model. Prefer
+        # scrollable, readable full rows to compressed 250px-high inspectors.
+        available = max(0, self.canvas.width()-65)
+        width = min(415, available)
         page = self._overlay_sections.get(self._active_overlay)
-        wanted = (page[0].sizeHint().height() + 20) if page else 200
-        caps = {'View': 240, 'Materials': 255, 'Animation': 315}
-        height = max(80, min(wanted, caps.get(self._active_overlay, 260),
-                             self.canvas.height() - 55))
-        self._overlay.setGeometry(56, 43, width, height)
+        wanted = page[0].sizeHint().height()+28 if page else 280
+        height = min(max(0, self.canvas.height()-55), wanted, 490)
+        self._overlay.setGeometry(53, 43, max(0,width), max(0,height))
         self._position_navigation()
 
     def eventFilter(self, obj, event):
@@ -1830,7 +1901,9 @@ class QtGPUModelPanel(QWidget):
             if materials and slot < len(getattr(materials, 'emissive_strengths', ())):
                 value = materials.emissive_strengths[slot]
                 if value > 0 and slot < len(getattr(materials, 'emissive_maps', ())) and materials.emissive_maps[slot] is not None:
-                    tip += '\nEmissive glow: %.2fx' % value
+                    tip += ('\nOriginal CryEngine glow: %.2f; '
+                            'calibrated viewer strength: %.0f (at 100%% slider)' %
+                            (value, preview_emission_strength(value)))
                     origin = (materials.emissive_sources[slot]
                               if slot < len(getattr(materials, 'emissive_sources', ())) else None)
                     if origin:
@@ -1936,6 +2009,7 @@ class QtGPUModelPanel(QWidget):
         self.canvas.rotation[:]=[-30.,14.]
         self.canvas.zoom=1.0
         self.canvas.pan[:]=[0., 0.]
+        self.canvas.cameraChanged.emit()
         self.canvas.update()
 
     def _prepare_animation_controls(self, layout):
@@ -2021,15 +2095,21 @@ class QtGPUModelPanel(QWidget):
             'All sources', 'Ready in library', 'In PAK (extract on play)',
             'Not found', 'Layered / additive', 'Graph / unavailable', 'DBA converter'))
         self.native_state_filter.currentIndexChanged.connect(self._filter_native_catalog)
-        native_filters.addWidget(self.native_state_filter)
+        self.native_state_filter.setToolTip('Filter by library availability; no missing asset is silently substituted')
+        native_filters.addWidget(self.native_state_filter, 1)
         self.native_motion_filter = QComboBox()
         self.native_motion_filter.setObjectName('nativeAnimationMotionFilter')
         self.native_motion_filter.addItems((
             'All motions', 'Idle / Stand', 'Move / Run', 'Combat / Aim',
             'Actions / Other'))
         self.native_motion_filter.currentIndexChanged.connect(self._filter_native_catalog)
-        native_filters.addWidget(self.native_motion_filter)
+        native_filters.addWidget(self.native_motion_filter, 1)
+        # Narrow 350px overlays cannot show both full descriptions on one row.
+        # Stack filters with elision tooltips and allow the container to scroll.
+        native_filters.removeWidget(self.native_motion_filter)
         catalog_layout.addLayout(native_filters)
+        self.native_motion_filter.setToolTip('Filter the verified game motions by animation type')
+        catalog_layout.addWidget(self.native_motion_filter)
         self.native_result_count = QLabel('No animation references loaded')
         self.native_result_count.setStyleSheet('color:#aeb1c1;font-size:11px;')
         self.native_result_count.setWordWrap(False)
@@ -2203,6 +2283,9 @@ class QtGPUModelPanel(QWidget):
         self._native_pool.setMaxThreadCount(2)
         self._native_signals = _NativeResult(self)
         self._native_signals.completed.connect(self._native_ready)
+        self._file_generation = 0
+        self._file_signals = _NativeResult(self)
+        self._file_signals.completed.connect(self._file_animation_ready)
 
     def set_native_catalog(self, references, idle=None, description='',
                            loader=None, refresh_library=None, character=None,
@@ -2215,7 +2298,9 @@ class QtGPUModelPanel(QWidget):
         if getattr(self.canvas.materials, 'source', None) != 'Embedded GLB textures':
             self._native_source_materials = self.canvas.materials
         self._native_generation += 1
+        self._file_generation += 1  # invalidate imported GLBs for previous model
         self._auto_dba_loading = False
+        self._set_native_loading(None)
         self.cancel_native_button.setEnabled(False)
         # A new character should never inherit the old character's filter,
         # which could conceal the exact 3P DBA and prevent default playback.
@@ -2436,13 +2521,16 @@ class QtGPUModelPanel(QWidget):
         # The background converter polls this generation and terminates its
         # child process. Old QThreadPool results are ignored by token.
         self._native_generation += 1
+        self._file_generation += 1
         self._auto_dba_loading = False
         self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
+        self._set_native_loading(None)
         self.native_info.setText('Motion decoding cancelled. Source assets were not changed.')
 
     def load_native(self):
         from character_animation_catalog import native_clip_playability
+        self._file_generation += 1  # a manual CAF/DBA load wins over an older GLB import
         i = self.native_clip_select.currentData()
         if (not isinstance(i, int)
                 or i < 0 or i >= len(self._native_references)):
@@ -2472,6 +2560,7 @@ class QtGPUModelPanel(QWidget):
             self.native_info.setText(
                 'Decoding base + additive/aimpose CAF on one verified skeleton…')
             self.cancel_native_button.setEnabled(True)
+            self._set_native_loading('Decoding layered CAF + verified base…')
             self._native_pool.start(_NativeConversion(
                 lambda unused: self._native_loader(ref, base_ref=base),
                 ref, token, self._native_signals))
@@ -2488,12 +2577,17 @@ class QtGPUModelPanel(QWidget):
              if state != 'candidate' else 'Decoding standalone CAF and rigged model…'))
         self.play_native_button.setEnabled(False)
         self.cancel_native_button.setEnabled(True)
+        stage = ('Converting DBA on selected rig…' if state == 'converter'
+                 else 'Extracting CAF from signed PAK…' if state != 'candidate'
+                 else 'Decoding CAF and binding skeleton…')
+        self._set_native_loading(stage)
         job = _NativeConversion(self._native_loader, ref, token, self._native_signals)
         self._native_pool.start(job)
 
     def _native_ready(self, token, result, error):
         if token != self._native_generation:
             return
+        self._set_native_loading(None)
         self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
         self._auto_dba_loading = False
@@ -2570,15 +2664,40 @@ class QtGPUModelPanel(QWidget):
             self._load_animation_file(path)
 
     def _load_animation_file(self, path):
-        try:
+        # Decoding and validating full GLB animation rigs is expensive and
+        # must not freeze Qt or hide the loading state behind a modal dialog.
+        self._file_generation += 1
+        self._native_generation += 1  # ignore superseded CAF/DBA callbacks
+        token = self._file_generation
+        self.cancel_native_button.setEnabled(True)
+        self._set_native_loading('Reading and validating animated GLB…')
+        def decode(unused):
             from model_animation import AnimatedGLB
+            from gpu_model_preview import prepare_geometry
             imported = AnimatedGLB.from_file(path)
-            self._show_animated(imported, auto_play=True)
+            return (imported, prepare_geometry(imported.preview_mesh)), {
+                'file': str(path)}
+        self._native_pool.start(_NativeConversion(decode, None, token,
+                                                  self._file_signals))
+
+    def _file_animation_ready(self, token, result, error):
+        if token != self._file_generation:
+            return
+        self._set_native_loading(None)
+        self.cancel_native_button.setEnabled(False)
+        if error:
+            self.anim_status.setText('Animation import failed: ' + str(error)[:280])
+            return
+        try:
+            (imported, geometry), details = result
+            self._show_animated(imported, auto_play=True,
+                                prepared_geometry=geometry,
+                                choose_dba_fallback=True)
             self.anim_status.setText(
                 '%d playable clips from %s. Original game files unchanged.' %
-                (len(imported.clips), path))
-        except Exception as exc:
-            QMessageBox.warning(self, 'Animation import failed', str(exc))
+                (len(imported.clips), details['file']))
+        except (ValueError, OSError) as exc:
+            self.anim_status.setText('Animation import rejected: ' + str(exc)[:280])
 
     def _show_animated(self, imported, *, auto_play, prepared_geometry=None,
                        choose_dba_fallback=False, materials_override=None):

@@ -182,7 +182,10 @@ class StageAssemblyTextureTests(TestCase):
                             for item in doc['materials']))
         self.assertEqual(
             doc['materials'][1]['extensions']['KHR_materials_emissive_strength']
-            ['emissiveStrength'],2.5)
+            ['emissiveStrength'],100.)
+        self.assertEqual(
+            doc['materials'][1]['extras']['cryEngineAuthoredEmissiveStrength'],
+            2.5)
 
 
 if __name__ == '__main__':

@@ -93,6 +93,117 @@ class CharacterAnimationFolderTests(unittest.TestCase):
             self.assertEqual(result['skins'],[{'joints':[0]}])
             self.assertEqual(len(list((root/'animations'/'sources').glob('*.caf'))),2)
 
+    def test_dba_and_verified_cafs_are_exported_together_without_duplicates(self):
+        # The old exporter processed a DBA only when NO CAF had converted.
+        # A character with 19 loose CAFs therefore missed its packed DBA
+        # Actions, even though both sources were independently verified.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            caf = root / 'tech_idle.caf'
+            dba = root / 'tech_3p.dba'
+            caf.write_bytes(synthetic_caf())
+            dba.write_bytes(b'synthetic CryEngine DBA placeholder')
+            refs = (
+                AnimationReference('DBA: tech_3p',
+                    'characters/hunters/merc_tech/animations/tech_3p.dba',
+                    'dba', True, dba),
+                AnimationReference('tech_extra',
+                    'characters/hunters/merc_tech/animations/tech_extra.caf',
+                    'caf', True, caf),
+            )
+            doc, binary = _unpack_glb(test_glb())
+            doc['skins'] = [{'joints': [0]}]
+            original = _pack_glb(doc, binary)
+            character = SimpleNamespace(
+                skeleton='characters/hunters/merc_tech/tech_3p_skeleton.chr',
+                rig_parts=(('tech_3p.skinm',None,None,None),))
+            def make_dba(blob, *unused, **kwargs):
+                document, payload = _unpack_glb(blob)
+                document['animations'] = [
+                    {'name':'tech_idle','channels':[{
+                        'sampler':0,'target':{'node':0,'path':'translation'}}],
+                     'samplers':[{'input':0,'output':0}]},
+                    {'name':'tech_move','channels':[{
+                        'sampler':0,'target':{'node':0,'path':'translation'}}],
+                     'samplers':[{'input':0,'output':0}]}]
+                return _pack_glb(document, payload)
+            def valid_caf(blob, sources):
+                document, payload = _unpack_glb(blob)
+                document.setdefault('animations', []).append({
+                    'name':sources[0][0],
+                    'channels':[{'sampler':0,
+                                 'target':{'node':0,'path':'translation'}}],
+                    'samplers':[{'input':0,'output':0}]})
+                return _pack_glb(document, payload), {
+                    'clips':1,'bone_channels':1}
+            def classify(ref):
+                return ('converter','DBA converter available') if ref.kind=='dba' else (
+                    'candidate','Verified standalone CAF')
+            with patch('character_animation_catalog.native_clip_playability',
+                       side_effect=classify), patch(
+                       'character_animation_catalog.caf_header',
+                       return_value=True), patch(
+                       'database_animation.convert_database_motion',
+                       side_effect=make_dba) as convert, patch(
+                       'native_caf.append_caf_animations',
+                       side_effect=valid_caf):
+                report=export_character_animation_folder(
+                    root, original,
+                    'characters/hunters/merc_tech/tech_3p.cdf',
+                    {}, root, character=character, references=refs,
+                    copy_sources=False)
+            self.assertEqual(report['animations'],3)
+            convert.assert_called_once()
+            result,_=_unpack_glb(
+                (root/'animations'/'tech_3p_animations.glb').read_bytes())
+            self.assertEqual([a['name'] for a in result['animations']],
+                             ['tech_idle','tech_move','tech_extra'])
+            manifest=json.loads(
+                (root/'animations'/'animation_manifest.json').read_text())
+            self.assertEqual(manifest['converted_clips'],
+                             ['tech_idle','tech_move','tech_extra'])
+            self.assertIn('2 verified DBA',
+                          manifest['references'][0]['conversion'])
+            self.assertIn('Exported',manifest['references'][1]['conversion'])
+
+    def test_matching_caf_name_is_not_duplicated_over_dba_action(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            caf=root/'tech_idle.caf'; dba=root/'tech_3p.dba'
+            caf.write_bytes(synthetic_caf()); dba.write_bytes(b'converted DBA')
+            refs=(AnimationReference('DBA: tech_3p','anim/tech_3p.dba','dba',True,dba),
+                  AnimationReference('tech_idle','anim/tech_idle.caf','caf',True,caf))
+            doc,payload=_unpack_glb(test_glb())
+            doc['skins']=[{'joints':[0]}]
+            source=_pack_glb(doc,payload)
+            def converted(blob,*args,**kwargs):
+                data,binary=_unpack_glb(blob)
+                data['animations']=[{'name':'tech_idle',
+                    'channels':[{'sampler':0,'target':{'node':0,'path':'translation'}}],
+                    'samplers':[{'input':0,'output':0}]}]
+                return _pack_glb(data,binary)
+            character=SimpleNamespace(skeleton='tech_skeleton.chr',
+                 rig_parts=(('tech.skinm',None,None,None),))
+            def verify_caf(blob, sources):
+                return blob, {'clips':1, 'bone_channels':1}
+            with patch('character_animation_catalog.native_clip_playability',
+                       side_effect=lambda ref: ('converter','ok') if ref.kind=='dba'
+                                                  else ('candidate','ok')), patch(
+                       'character_animation_catalog.caf_header',return_value=True), patch(
+                       'database_animation.convert_database_motion',
+                       side_effect=converted), patch(
+                       'native_caf.append_caf_animations',
+                       side_effect=verify_caf) as append:
+                output=export_character_animation_folder(
+                    root,source,'tech.cdf',{},root,character=character,
+                    references=refs,copy_sources=False)
+            self.assertEqual(output['animations'],1)
+            append.assert_called_once()  # validation, not a duplicate append
+            manifest=json.loads(
+                (root/'animations'/'animation_manifest.json').read_text())
+            self.assertIn('not duplicated',
+                          manifest['references'][1]['conversion'])
+
     def test_more_than_old_sixteen_clip_limit_can_be_embedded(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
