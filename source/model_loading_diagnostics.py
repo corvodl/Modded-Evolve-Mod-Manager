@@ -22,6 +22,33 @@ def process_memory_mib():
             round(peak/1048576, 2) if peak else None)
     except (ImportError, OSError, ValueError, AttributeError):
         pass
+    if os.name == 'nt':
+        try:
+            import ctypes
+            from ctypes import wintypes
+            class _MemoryCounters(ctypes.Structure):
+                _fields_ = [
+                    ('cb', wintypes.DWORD),
+                    ('PageFaultCount', wintypes.DWORD),
+                    ('PeakWorkingSetSize', ctypes.c_size_t),
+                    ('WorkingSetSize', ctypes.c_size_t),
+                    ('QuotaPeakPagedPoolUsage', ctypes.c_size_t),
+                    ('QuotaPagedPoolUsage', ctypes.c_size_t),
+                    ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t),
+                    ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+                    ('PagefileUsage', ctypes.c_size_t),
+                    ('PeakPagefileUsage', ctypes.c_size_t),
+                ]
+            data = _MemoryCounters()
+            data.cb = ctypes.sizeof(data)
+            ctypes.windll.kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            process = ctypes.windll.kernel32.GetCurrentProcess()
+            if ctypes.windll.psapi.GetProcessMemoryInfo(
+                    process, ctypes.byref(data), data.cb):
+                return (round(data.WorkingSetSize/1048576, 2),
+                        round(data.PeakWorkingSetSize/1048576, 2))
+        except (AttributeError, OSError, ValueError):
+            pass
     try:
         if os.name == 'posix':
             import resource
