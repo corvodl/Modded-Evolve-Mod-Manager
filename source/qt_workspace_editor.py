@@ -2192,9 +2192,9 @@ class QtWorkspaceEditor(QMainWindow):
                 lambda checked=False: self._select_character_equipment('body'))
             menu.addSeparator()
 
-        for group_name, kind, entries in grouped:
+        for group_name, entries in grouped:
             subgroup = menu.addMenu(group_name)
-            for label, virtual in entries:
+            for kind, label, virtual in entries:
                 action = subgroup.addAction(label.replace('_', ' ').title())
                 action.setCheckable(True)
                 active = (preview.selected_faceplate if kind == 'faceplate'
