@@ -104,10 +104,11 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         # The same manifest checks still run in the worker's resolver.
         index = library_model_index(self.identifier)
         self.assertIn(relative.casefold(), index)
-        self.assertEqual(
-            next(row for row in index[relative.casefold()]
-                 if row.get('_asset_library') == self.identifier)['file'],
-            self.folder / 'files' / relative)
+        chosen = next(row for row in index[relative.casefold()]
+                      if row.get('_asset_library') == self.identifier)['file']
+        # Windows CI may mix long and 8.3 aliases for the temp directory.
+        # Compare actual file identity, not superficial path spellings.
+        self.assertTrue(Path(chosen).samefile(self.folder / 'files' / relative))
 
     def test_gfx_library_preview_and_rgba_png_export_preserve_source(self):
         import io
