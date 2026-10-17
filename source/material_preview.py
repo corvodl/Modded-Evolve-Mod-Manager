@@ -66,6 +66,7 @@ class PreviewMaterials:
     reflection_strengths: tuple = ()
     glass_materials: tuple = ()
     refraction_indices: tuple = ()  # explicit source IOR only
+    glass_public_params: tuple = ()  # authored Glass Fog/Tint/Fresnel, not guessed tint
     ao_maps: tuple = ()  # explicit ambient-occlusion map, or verified packed channel
     ao_strengths: tuple = ()  # per-material AO strength in [0, 1]
     emissive_maps: tuple = ()
@@ -101,6 +102,40 @@ class PreviewMaterials:
 # light transmission in a single blended pass, WITHOUT changing the source
 # MTL Opacity/Diffuse values or assuming diffuse alpha is transparency.
 GLASS_PREVIEW_SURFACE_OPACITY = 0.40
+
+
+def source_glass_public_params(item):
+    """Read supported CryEngine Glass public parameters without inventing
+    diffuse-alpha or refraction settings. Values are retained as source
+    metadata; converting volumetric fog to pixels requires actual mesh depth.
+    """
+    if 'glass' not in (item.get('Shader') or '').casefold():
+        return {}
+    params = item.find('PublicParams')
+    if params is None:
+        return {}
+    scalar = ('FogDensity', 'FogCutoffEnd', 'TintCloudiness',
+              'FresnelScale', 'FresnelBias', 'BumpScale',
+              'BumpMapTile', 'BackLightScale')
+    vectors = ('FogColor', 'TintColor')
+    result = {}
+    for key in scalar + vectors:
+        raw = params.get(key)
+        if raw is None:
+            continue
+        try:
+            if key in vectors:
+                rgb = tuple(float(value) for value in raw.split(','))
+                if len(rgb) != 3 or not all(math.isfinite(v) for v in rgb):
+                    continue
+                result[key] = list(rgb)
+            else:
+                value = float(raw)
+                if math.isfinite(value):
+                    result[key] = value
+        except (ValueError, OverflowError):
+            continue
+    return result
 
 
 def preview_material_opacity(materials, slot):
@@ -578,7 +613,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             decoded = Image.merge('RGB', (decoded.getchannel(component),) * 3)
         return decoded
 
-    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; details=[]; detail_normals=[]; ao_maps=[]; ao_strengths=[]; environments=[]; reflections=[]; glasses=[]; iors=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
+    result=[]; names=[]; issues=[]; normals=[]; speculars=[]; glosses=[]; details=[]; detail_normals=[]; ao_maps=[]; ao_strengths=[]; environments=[]; reflections=[]; glasses=[]; iors=[]; glass_params=[]; opacities=[]; alpha_modes=[]; cutoffs=[]
     transforms = []; motions = []; sources = []; references = []; hidden = []
     role_transforms = {role: [] for role in ('normal','specular','gloss','detail','detail_normal','ao','emissive')}
     role_motions = {role: [] for role in role_transforms}
@@ -672,6 +707,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
         shader = item.get('Shader', '').casefold()
         hidden.append(shader == 'nodraw')
         glasses.append('glass' in shader or 'refract' in shader)
+        glass_params.append(source_glass_public_params(item))
         ior = item.get('IOR') or item.get('RefractionIndex') or ''
         try:
             ior = float(ior) if ior else None
@@ -919,6 +955,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                             reflection_strengths=tuple(reflections),
                             glass_materials=tuple(glasses),
                             refraction_indices=tuple(iors),
+                            glass_public_params=tuple(glass_params),
                             ao_maps=tuple(ao_maps), ao_strengths=tuple(ao_strengths),
                              emissive_maps=tuple(emissive_maps),
                              emissive_strengths=tuple(emissive_strengths),
