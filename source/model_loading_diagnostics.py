@@ -41,10 +41,18 @@ def process_memory_mib():
                 ]
             data = _MemoryCounters()
             data.cb = ctypes.sizeof(data)
-            ctypes.windll.kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-            process = ctypes.windll.kernel32.GetCurrentProcess()
-            if ctypes.windll.psapi.GetProcessMemoryInfo(
-                    process, ctypes.byref(data), data.cb):
+            # ctypes defaults unspecified function arguments to c_int,
+            # truncating 64-bit Windows HANDLEs and crashing model selection.
+            # Declare all Win32 signatures explicitly before invoking psapi.
+            get_current = ctypes.windll.kernel32.GetCurrentProcess
+            get_current.argtypes = []
+            get_current.restype = wintypes.HANDLE
+            get_memory = ctypes.windll.psapi.GetProcessMemoryInfo
+            get_memory.argtypes = [
+                wintypes.HANDLE, ctypes.POINTER(_MemoryCounters), wintypes.DWORD]
+            get_memory.restype = wintypes.BOOL
+            process = get_current()
+            if get_memory(process, ctypes.byref(data), data.cb):
                 return (round(data.WorkingSetSize/1048576, 2),
                         round(data.PeakWorkingSetSize/1048576, 2))
         except (AttributeError, OSError, ValueError):
