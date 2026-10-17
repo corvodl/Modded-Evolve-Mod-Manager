@@ -184,13 +184,16 @@ class CharacterAnimationFolderTests(unittest.TestCase):
                 return _pack_glb(data,binary)
             character=SimpleNamespace(skeleton='tech_skeleton.chr',
                  rig_parts=(('tech.skinm',None,None,None),))
+            def verify_caf(blob, sources):
+                return blob, {'clips':1, 'bone_channels':1}
             with patch('character_animation_catalog.native_clip_playability',
                        side_effect=lambda ref: ('converter','ok') if ref.kind=='dba'
                                                   else ('candidate','ok')), patch(
                        'character_animation_catalog.caf_header',return_value=True), patch(
                        'database_animation.convert_database_motion',
                        side_effect=converted), patch(
-                       'native_caf.append_caf_animations') as append:
+                       'native_caf.append_caf_animations',
+                       side_effect=verify_caf) as append:
                 output=export_character_animation_folder(
                     root,source,'tech.cdf',{},root,character=character,
                     references=refs,copy_sources=False)
