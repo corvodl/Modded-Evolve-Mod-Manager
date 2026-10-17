@@ -216,6 +216,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.model_cache_hit = False
         self._model_started_at = None
         self._model_stage_times = {}
+        self._model_peak_memory_mib = None
         self._model_stage_previous = None
         self._model_stage_started = None
         self._model_cancelled_count = 0
@@ -966,14 +967,33 @@ class QtWorkspaceEditor(QMainWindow):
                     if image is not None:
                         gpu_bytes+=image.width*image.height*len(image.getbands())
         from studio_polish_117 import model_cache_stats
+        from model_loading_diagnostics import (
+            decoded_texture_megabytes, format_stage_times, process_memory_mib)
+        current_memory, process_peak = process_memory_mib()
+        peak = getattr(self, '_model_peak_memory_mib', None)
+        if process_peak is not None:
+            peak = max(peak or 0., process_peak)
+        active_workers = (self._model_pool.activeThreadCount()
+                          if self._model_pool is not None else 0)
         self._diagnostics_label.setText(
-            'Last model preparation: %s ms\nCache hit: %s\nDecoded texture allocation estimate: %.2f MiB\n'
-            'Editor file-tree refresh: %.1f ms\nCache: %s\n'
-            'GPU texture upload (last event): %s ms\nFPS: not measured.' %
-            ('%.1f'%self.model_load_ms if self.model_load_ms is not None else 'Not sampled',
-             'yes' if self.model_cache_hit else 'no',gpu_bytes/1048576,
-             getattr(self,'last_populate_ms',0),model_cache_stats(),
-             getattr(self.model_gpu,'gpu_upload_ms',None) if self.model_gpu else 'Not sampled'))
+            'Last model preparation: %s ms\\nCache hit: %s\\n'
+            'Model stages: %s\\n'
+            'Decoded texture allocation estimate: %.2f MiB (supported maps)\\n'
+            'Process working set: %s MiB | observed peak: %s MiB\\n'
+            'Model worker threads: %d | cancelled loads: %d\\n'
+            'Editor file-tree refresh: %.1f ms\\nCache: %s\\n'
+            'GPU texture upload (cumulative): %s ms\\nFPS: not measured.' %
+            ('%.1f'%self.model_load_ms if self.model_load_ms is not None
+             else 'Not sampled',
+             'yes' if self.model_cache_hit else 'no',
+             format_stage_times(self._model_stage_times),
+             decoded_texture_megabytes(materials),
+             current_memory if current_memory is not None else 'Unavailable',
+             peak if peak is not None else 'Unavailable',
+             active_workers, self._model_cancelled_count,
+             getattr(self,'last_populate_ms',0), model_cache_stats(),
+             getattr(self.model_gpu,'gpu_upload_ms',None)
+             if self.model_gpu else 'Not sampled'))
 
     def _with_model_panel(self, callback):
         if self.model_panel is None or self.mode != 'models':
@@ -1619,6 +1639,12 @@ class QtWorkspaceEditor(QMainWindow):
         if self._model_started_at is not None:
             self.model_loading_elapsed.setText(
                 '%.1fs' % (time.perf_counter()-self._model_started_at))
+            from model_loading_diagnostics import process_memory_mib
+            resident, peak = process_memory_mib()
+            measured = peak if peak is not None else resident
+            if measured is not None:
+                self._model_peak_memory_mib = max(
+                    measured, self._model_peak_memory_mib or 0.)
 
     def load(self, rel, *, full_character=False):
         self.media_view.clear()
@@ -1873,6 +1899,7 @@ class QtWorkspaceEditor(QMainWindow):
         self._model_stage_started = self._model_started_at
         self._model_stage_previous = 'reading_geometry'
         self._model_stage_times = {}
+        self._model_peak_memory_mib = None
         view = self.views['models']
         self.model_fallback.setPixmap(QPixmap())
         self.model_fallback.setText('Loading model geometry and skeleton…')
