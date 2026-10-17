@@ -19,10 +19,10 @@ import sys
 import tomllib
 import zipfile
 
-PACKAGE_NAME = "Evolve_Animation_Browser_v1.1.0.zip"
-PACKAGE_SHA256 = "b2f25ab3485217930cb7e1181ca9fe37b5fd020b34894fa9f6847b6565ccb39b"
+PACKAGE_NAME = "Evolve_Animation_Browser_v1.3.1.zip"
+PACKAGE_SHA256 = "f12733e37ab6e2e3580b6c49f5ae9f87cc50073e9398f3693f8b28d4222f1a28"
 PACKAGE_ID = "evolve_animation_browser"
-PACKAGE_VERSION = "1.1.0"
+PACKAGE_VERSION = "1.3.1"
 PACKAGE_FILES = frozenset({
     "blender_manifest.toml", "__init__.py", "core.py", "legacy_bridge.py",
     "README.md", "LICENSE.txt",
@@ -116,7 +116,7 @@ def validate_package(package):
     if digest != PACKAGE_SHA256:
         raise ValueError(
             "The extension ZIP does not match the official v1.1.0 build. "
-            "Select the original Evolve_Animation_Browser_v1.1.0.zip.")
+            "Select the original Evolve_Animation_Browser_v1.3.1.zip.")
     with zipfile.ZipFile(path) as archive:
         infos = archive.infolist()
         names = {entry.filename for entry in infos}
@@ -132,7 +132,7 @@ def validate_package(package):
         if (manifest.get("id") != PACKAGE_ID
                 or manifest.get("version") != PACKAGE_VERSION
                 or manifest.get("type") != "add-on"):
-            raise ValueError("The selected ZIP is not Evolve Animation Browser v1.1.0.")
+            raise ValueError("The selected ZIP is not Evolve Animation Browser v1.3.1.")
     return path.resolve(strict=True)
 
 
