@@ -215,6 +215,15 @@ class QtWorkspaceEditor(QMainWindow):
         self.model_load_ms = None
         self.model_cache_hit = False
         self._model_started_at = None
+        self._model_stage_times = {}
+        self._model_stage_previous = None
+        self._model_stage_started = None
+        self._model_cancelled_count = 0
+        self._model_selection_timer = QTimer(self)
+        self._model_selection_timer.setSingleShot(True)
+        self._model_selection_timer.setInterval(150)
+        self._model_selection_timer.timeout.connect(self._open_queued_model)
+        self._queued_model = None
         self._preflight_token = 0
         self._preflight_pool = None
         self._preflight_signals = None
@@ -397,9 +406,15 @@ class QtWorkspaceEditor(QMainWindow):
         # items. Wait for typing to settle instead of rebuilding every key.
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
-        self._search_timer.setInterval(200)
+        # Large Asset Libraries can contain tens of thousands of assets.
+        # Restart the timer on every keystroke and search only once the user
+        # has paused; pressing Enter searches immediately.
+        self._search_timer.setInterval(525)
         self._search_timer.timeout.connect(self.populate)
-        self.search.textChanged.connect(lambda _text: self._search_timer.start())
+        self.search.textChanged.connect(self._search_text_changed)
+        self.search.returnPressed.connect(self._search_now)
+        self._search_records_cache_key = None
+        self._search_records_cache = ()
         explorer_box.addWidget(self.search)
         explorer_controls = QHBoxLayout()
         self.favorites_only = QPushButton('Favorites')
@@ -1203,14 +1218,43 @@ class QtWorkspaceEditor(QMainWindow):
         except (OSError, ValueError):
             return 'Missing'
 
+    def _search_text_changed(self, _text):
+        if not self.records:
+            self._search_timer.stop()
+            self.explorer_count.setText('0 files')
+            return
+        self.explorer_count.setText('Search pending… (Enter to search now)')
+        self._search_timer.start()
+
+    def _search_now(self):
+        self._search_timer.stop()
+        self.populate()
+
+    def _search_candidates(self):
+        """Normalize and sort paths once per workspace/manifest generation.
+
+        The match loop is cheap Python string filtering, while the expensive
+        Qt tree reconstruction occurs only after the search debounce fires.
+        """
+        signature = (id(self.records), len(self.records))
+        if getattr(self, '_search_records_cache_key', None) != signature:
+            self._search_records_cache = tuple(
+                (relative, relative.casefold()) for relative in
+                sorted(self.records, key=str.casefold))
+            self._search_records_cache_key = signature
+        needle = self.search.text().casefold()
+        if self.favorites_only.isChecked():
+            prefix = str(self.workspace) + '|'
+            return [rel for rel, folded in self._search_records_cache
+                    if needle in folded and prefix + rel in self.favorites]
+        return [rel for rel, folded in self._search_records_cache
+                if needle in folded]
+
     def _populate_virtual_explorer(self):
         """Construct metadata nodes, leaving Qt rows unloaded until expanded."""
         started = time.perf_counter()
         needle = self.search.text().casefold()
-        names = [rel for rel in sorted(self.records, key=str.casefold)
-                 if needle in rel.casefold() and
-                 (not self.favorites_only.isChecked() or
-                  str(self.workspace) + '|' + rel in self.favorites)]
+        names = self._search_candidates()
         first_stream = {}
         for rel in names:
             if is_split_dds(rel):
@@ -1331,10 +1375,7 @@ class QtWorkspaceEditor(QMainWindow):
         try:
             tree.clear()
             folders = {}
-            entries = [rel for rel in sorted(self.records, key=str.casefold)
-                       if needle in rel.casefold() and
-                       (not self.favorites_only.isChecked()
-                        or str(self.workspace) + '|' + rel in self.favorites)]
+            entries = self._search_candidates()
             first = {}
             for rel in entries:
                 if is_split_dds(rel):
@@ -2231,6 +2272,8 @@ class QtWorkspaceEditor(QMainWindow):
         self.media_view.clear()
         self.workspace, self.records = target, new_records
         self._search_timer.stop()  # Never install a prior project's search.
+        self._search_records_cache_key = None
+        self._search_records_cache = ()
         self.favorites_only.setChecked(False)
         self.preview_index = None
         self.character_preview = None
