@@ -120,11 +120,18 @@ class AsyncProgressTests(unittest.TestCase):
         watchdog.stop()
         self.assertEqual(done, [2])
         self.assertGreaterEqual(len(ticks), 3)
-        # Process thread.finished cleanup queued after completed.
+        # completed is emitted from the worker *before* QThread.finished.
+        # On loaded Windows runners a single processEvents() tick can race
+        # the final thread transition. Wait a bounded time for a real finish,
+        # rather than treating an async scheduling delay as a hung export.
+        deadline = time.monotonic() + 2.0
+        while exports_busy(panel) and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.01)
         self.app.processEvents()
         # The worker is deleted asynchronously when its finished signal
         # fires; avoid dereferencing a potentially destroyed Qt wrapper.
-        self.assertFalse(exports_busy(panel))
+        self.assertFalse(exports_busy(panel), 'Qt export worker did not finish in 2 s')
 
     def test_cancellation_is_seen_by_worker_between_models(self):
         mesh = read_preview_mesh(uv_mesh(), 'synthetic.skinm')
