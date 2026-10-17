@@ -37,21 +37,30 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         self.tree = self.file_tree
         self.text = self.views['files']
         self.setWindowTitle('Asset Library — ' + self.name + ' — Read Only')
-        note = QLabel(
-            'Asset Library is for previewing and exporting only — editing '
-            'and importing are disabled. All original assets are protected.')
-        note.setWordWrap(True)
-        note.setObjectName('libraryReadOnlyNotice')
-        self.centralWidget().layout().insertWidget(0, note)
+        # The standard workspace already shows the selected asset, so keep
+        # the library-specific protection status in the SAME breadcrumb row.
+        # The previous two extra banner rows wasted viewport height, and
+        # wrapped into even more rows when the window became narrow.
+        self.selection_label = QLabel('Read-only · 0 selected')
+        self.selection_label.setObjectName('libraryReadOnlyNotice')
+        self.selection_label.setMaximumHeight(22)
+        self.selection_label.setToolTip(
+            'Asset Library originals are protected: preview and export only. '
+            'Editing and importing are disabled. File > Edit / Add to Mod '
+            'Project makes a separate editable copy; originals never change.')
+        self.selection_label.setAccessibleName('Asset Library read-only selection status')
+        self.workspace_header.insertWidget(1, self.selection_label)
         self.status.setText('Asset Library: preview and export only. No editing or importing.')
         self.editor_menus['File'].addAction(
             'Open Asset Library Folder', self.explore)
         self.editor_menus['File'].addAction('Edit / Add to Mod Project…', self.edit_in_project)
         self.editor_menus['File'].addAction('Export Selected Files…', self.export_selection)
         self.editor_menus['File'].addAction('Open Entire Map…', self.edit_entire_map)
-        self.selection_label = QLabel('Use Ctrl/Shift for multi-file selection.')
-        self.centralWidget().layout().insertWidget(1, self.selection_label)
+        # Selection changes update the inline badge instead of a second line.
+        # Preserve Ctrl/Shift multi-select and the protected file explorer.
         self.file_tree.itemSelectionChanged.connect(self._report_selection)
+        self.virtual_file_tree.selectionModel().selectionChanged.connect(
+            lambda *_: self._report_selection())
 
     def selected_virtual_files(self, *, limit=500):
         """Return deduplicated file identities under selected file/folder nodes."""
@@ -74,10 +83,12 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
     def _report_selection(self):
         try:
             count = len(self.selected_virtual_files())
-            self.selection_label.setText(
-                "%d selected • Originals read only • Edit / Add to Mod Project makes copies" % count)
+            self.selection_label.setText('Read-only · %d selected' % count)
         except ValueError as exc:
-            self.selection_label.setText(str(exc))
+            # Preserve the full safety error without turning it into a wide
+            # banner that crowds the model viewport.
+            self.selection_label.setText('Selection limit')
+            self.selection_label.setToolTip(str(exc))
 
     def edit_in_project(self):
         try:
@@ -201,6 +212,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         self.current_file_label.setText('Choose an extracted file from ' + name)
         self.setWindowTitle('Asset Library — ' + name + ' — Read Only')
         self.status.setText('Asset Library: read-only PAK switched; no files changed.')
+        self.selection_label.setText('Read-only · 0 selected')
 
     def preview(self, relative):
         self.load(relative)
