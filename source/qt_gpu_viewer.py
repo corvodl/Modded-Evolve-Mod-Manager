@@ -44,8 +44,8 @@ class _CompactAnimationList(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('referencedNativeAnimations')
-        self.setMinimumHeight(88)
-        self.setMaximumHeight(108)
+        self.setMinimumHeight(122)
+        self.setMaximumHeight(184)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setSpacing(2)
@@ -103,8 +103,8 @@ class _CompactDiagnosticText(QPlainTextEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setLineWrapMode(QPlainTextEdit.WidgetWidth)
-        self.setMaximumHeight(90)
-        self.setMinimumHeight(60)
+        self.setMaximumHeight(164)
+        self.setMinimumHeight(80)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setObjectName('nativeAnimationDetail')
         self.setToolTip('Scroll within the details to see full paths and errors.')
@@ -1234,9 +1234,6 @@ class QtGPUModelPanel(QWidget):
         quality.addItems(('Performance','High'))
         quality.currentTextChanged.connect(self.canvas.set_quality)
         detail_line.addWidget(quality)
-        reset=QPushButton('Reset Camera')
-        reset.clicked.connect(self.reset_view)
-        detail_line.addWidget(reset)
         detail_line.addStretch()
         self._view_advanced = self._compact_group(
             self._overlay_sections['View'][1], 'Display & quality', opened=False)
@@ -1249,20 +1246,22 @@ class QtGPUModelPanel(QWidget):
         enhanced.toggled.connect(self.canvas.set_enhanced_materials)
         self.enhanced_checkbox=enhanced
         studio.addWidget(enhanced)
-        studio.addWidget(QLabel('Camera'))
-        self.camera_combo = QComboBox()
+        # Camera direction is selected with the draggable on-canvas XYZ gizmo,
+        # rather than a separate dropdown consuming precious popover width.
+        self.camera_combo = QComboBox(self)
         self.camera_combo.addItems(('Isometric','Front','Back','Left','Right','Top','Bottom'))
         self.camera_combo.currentTextChanged.connect(self.canvas.set_camera_preset)
-        studio.addWidget(self.camera_combo)
+        self.camera_combo.hide()
         lighting_row = QHBoxLayout()
         lighting_row.addWidget(QLabel('Light'))
         self.lighting_slider = QSlider(Qt.Horizontal)
         self.lighting_slider.setRange(20,200)
         self.lighting_slider.setValue(100)
-        self.lighting_slider.setMaximumWidth(125)
         self.lighting_slider.valueChanged.connect(self.canvas.set_light_strength)
         lighting_row.addWidget(self.lighting_slider, 1)
-        lighting_row.addWidget(QLabel('SSAO'))
+        self.lighting_percent = self._slider_value(self.lighting_slider, lighting_row)
+        ssao_row = QHBoxLayout()
+        ssao_row.addWidget(QLabel('SSAO'))
         self.ssao_combo = QComboBox()
         self.ssao_combo.setObjectName('modelSsaoQuality')
         self.ssao_combo.addItems(('Off','Low','Medium','High'))
@@ -1271,7 +1270,7 @@ class QtGPUModelPanel(QWidget):
             'GPU screen-space contact shadows. Off by default; higher levels '
             'sample more depth neighbours. Does not require AO texture maps.')
         self.ssao_combo.currentTextChanged.connect(self.canvas.set_ssao_quality)
-        lighting_row.addWidget(self.ssao_combo)
+        ssao_row.addWidget(self.ssao_combo, 1)
         studio.addStretch()
         studio_detail = QHBoxLayout()
         self.background_combo = QComboBox()
@@ -1286,6 +1285,7 @@ class QtGPUModelPanel(QWidget):
         studio_detail.addStretch()
         self._overlay_sections['View'][1].insertLayout(0,studio)
         self._overlay_sections['View'][1].insertLayout(1,lighting_row)
+        self._overlay_sections['View'][1].insertLayout(2,ssao_row)
         self._view_advanced.addLayout(studio_detail)
         inspector=QHBoxLayout()
         inspector.addWidget(QLabel('Part'))
@@ -1320,7 +1320,8 @@ class QtGPUModelPanel(QWidget):
             setattr(self.canvas, 'glow_strength', value/100.), self.canvas.update()))
         glow_row=QHBoxLayout()
         glow_row.addWidget(QLabel('Glow intensity'))
-        glow_row.addWidget(self.glow_slider)
+        glow_row.addWidget(self.glow_slider, 1)
+        self.glow_percent = self._slider_value(self.glow_slider, glow_row)
         self._overlay_sections['Materials'][1].addLayout(glow_row)
         self.bloom_checkbox = QCheckBox('Soft bloom halo')
         self.bloom_checkbox.setChecked(True)
@@ -1331,13 +1332,12 @@ class QtGPUModelPanel(QWidget):
         self.gloss_slider=QSlider(Qt.Horizontal)
         self.gloss_slider.setRange(0,100)
         self.gloss_slider.setValue(35)
-        self.gloss_slider.setMaximumWidth(95)
         self.gloss_slider.setToolTip(
             'Overall specular highlight strength. Explicit gloss/smoothness maps '
             'control highlight sharpness across the texture.')
         self.gloss_slider.valueChanged.connect(self.canvas.set_specular)
-        inspector_secondary.addWidget(self.gloss_slider)
-        inspector_secondary.addStretch()
+        inspector_secondary.addWidget(self.gloss_slider, 1)
+        self.gloss_percent = self._slider_value(self.gloss_slider, inspector_secondary)
         self._overlay_sections['Materials'][1].addLayout(inspector)
         self._overlay_sections['Materials'][1].addLayout(inspector_secondary)
         self.solid_geometry = QCheckBox('Show all character geometry (ignore alpha)')
@@ -1388,6 +1388,7 @@ class QtGPUModelPanel(QWidget):
             lambda value: (setattr(self.canvas, 'studio_fill', value/100.),
                            self.canvas.update()))
         ambient_row.addWidget(self.studio_fill_slider, 1)
+        self.studio_fill_percent = self._slider_value(self.studio_fill_slider, ambient_row)
         self._material_advanced.addLayout(ambient_row)
         self.emissive_source_info = QLabel('Emissive DDS diagnostics will appear here.')
         self.emissive_source_info.setObjectName('modelEmissiveSourceInfo')
@@ -1413,9 +1414,9 @@ class QtGPUModelPanel(QWidget):
             'Selection details', opened=False)
         self.native_info.setMaximumHeight(84)
         self._native_details.addWidget(self.native_info)
-        foot=QLabel('Renderer 3.0 approximates CryEngine materials; check optional maps in the texture diagnostics. '
-                    'Left drag: rotate · Right/middle/Shift drag: pan · Wheel: zoom. '
-                    'Faceted shading keeps hard edges; smooth shading is optional.')
+        foot=QLabel('Renderer 3.0 approximates CryEngine. Drag the XYZ gizmo to orbit; '
+                    'use the left-side tools to orbit/pan/zoom, and scroll to zoom. '
+                    'Smooth shading is the default; Faceted remains optional.')
         foot.setWordWrap(True)
         self._view_advanced.addWidget(foot)
         # A compact progress strip sits below the 3D canvas, above the
@@ -1566,6 +1567,18 @@ class QtGPUModelPanel(QWidget):
         bar.addWidget(more)
         strip.setFixedHeight(38)
         parent_layout.addWidget(strip)
+
+    @staticmethod
+    def _slider_value(slider, row):
+        """Keep a live, right-aligned percentage next to every intensity slider."""
+        number = QLabel('%d%%' % slider.value())
+        number.setObjectName((slider.objectName() or 'modelSlider') + 'Percent')
+        number.setMinimumWidth(48)
+        number.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        number.setToolTip('Percentage of original viewer effect; source textures unchanged')
+        slider.valueChanged.connect(lambda value: number.setText('%d%%' % value))
+        row.addWidget(number)
+        return number
 
     def _compact_group(self, layout, label, *, opened=False):
         """Small disclosure for optional controls; retains all tool widgets."""
@@ -2024,15 +2037,21 @@ class QtGPUModelPanel(QWidget):
             'All sources', 'Ready in library', 'In PAK (extract on play)',
             'Not found', 'Layered / additive', 'Graph / unavailable', 'DBA converter'))
         self.native_state_filter.currentIndexChanged.connect(self._filter_native_catalog)
-        native_filters.addWidget(self.native_state_filter)
+        self.native_state_filter.setToolTip('Filter by library availability; no missing asset is silently substituted')
+        native_filters.addWidget(self.native_state_filter, 1)
         self.native_motion_filter = QComboBox()
         self.native_motion_filter.setObjectName('nativeAnimationMotionFilter')
         self.native_motion_filter.addItems((
             'All motions', 'Idle / Stand', 'Move / Run', 'Combat / Aim',
             'Actions / Other'))
         self.native_motion_filter.currentIndexChanged.connect(self._filter_native_catalog)
-        native_filters.addWidget(self.native_motion_filter)
+        native_filters.addWidget(self.native_motion_filter, 1)
+        # Narrow 350px overlays cannot show both full descriptions on one row.
+        # Stack filters with elision tooltips and allow the container to scroll.
+        native_filters.removeWidget(self.native_motion_filter)
         catalog_layout.addLayout(native_filters)
+        self.native_motion_filter.setToolTip('Filter the verified game motions by animation type')
+        catalog_layout.addWidget(self.native_motion_filter)
         self.native_result_count = QLabel('No animation references loaded')
         self.native_result_count.setStyleSheet('color:#aeb1c1;font-size:11px;')
         self.native_result_count.setWordWrap(False)
