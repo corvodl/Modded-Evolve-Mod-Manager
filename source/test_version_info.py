@@ -37,7 +37,7 @@ class VersionManifestTests(unittest.TestCase):
 
     def test_stable_notes_match_current_release_and_hide_beta_history(self):
         from release_notes import RELEASE_NOTES, markdown
-        self.assertEqual(('1.2.7',), tuple(v for v, _ in RELEASE_NOTES[:1]))
+        self.assertEqual(('1.2.8',), tuple(v for v, _ in RELEASE_NOTES[:1]))
         self.assertEqual('v' + RELEASE_NOTES[0][0], app_version())
         for version, notes in RELEASE_NOTES:
             self.assertTrue(1 <= len(notes) <= (12 if version.startswith(('1.2.', '1.3.')) else 3), version)
