@@ -1558,7 +1558,10 @@ class QtWorkspaceEditor(QMainWindow):
         path = checked_path(self.workspace, rel)
         if self.read_only_library:
             from asset_library_preview import archive_entries
-            path = archive_entries(self.library_archive['id']).get(rel)
+            # Validate only the clicked manifest entry. Scanning and
+            # stat()-ing every file in a large extracted PAK on each click
+            # blocked Qt for seconds (especially on spinning drives).
+            path = archive_entries(self.library_archive['id'], paths=(rel,)).get(rel)
             if path is None:
                 raise FileNotFoundError('This imported library asset is missing or changed.')
         if self.mode == 'models':
@@ -1826,7 +1829,10 @@ class QtWorkspaceEditor(QMainWindow):
         # Tests and headless software previews retain deterministic synchronous
         # behavior. Real GPU viewing runs all expensive preparation in a worker.
         platform = os.environ.get('QT_QPA_PLATFORM','').casefold()
-        if platform in ('offscreen','minimal') or not self.isVisible():
+        # In a real desktop session, even an initially hidden/tabbed editor
+        # must never decode a model synchronously on the GUI event thread.
+        # Keep deterministic synchronous loading only for headless tests.
+        if platform in ('offscreen', 'minimal'):
             try:
                 self._model_ready(token, resolve(None), None)
             except (ValueError, OSError, InterruptedError) as exc:
@@ -1836,7 +1842,10 @@ class QtWorkspaceEditor(QMainWindow):
         from PySide6.QtCore import QThreadPool
         if self._model_pool is None:
             self._model_pool = QThreadPool(self)
-            self._model_pool.setMaxThreadCount(2)
+            # Two concurrent full-resolution DDS/CDF decodes can double peak
+            # memory and starve Qt/OpenGL. Cancelled stale requests leave
+            # quickly; the latest click remains in the single worker queue.
+            self._model_pool.setMaxThreadCount(1)
             self._model_signals = _NativeResult(self)
             self._model_signals.completed.connect(self._model_ready)
         self._model_pool.start(
