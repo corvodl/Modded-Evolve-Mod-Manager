@@ -80,6 +80,8 @@ def assembled_character_glb(character, workspace, relative, index, *,
     """
     if character is None:
         raise ValueError('No CDF-based character assembly was verified.')
+    from model_export_readiness import ensure_lod0_parts, audit_material_uvs
+    lod = ensure_lod0_parts(character)
     try:
         from native_character_glb import create_character_glb
         payload, info = create_character_glb(
@@ -88,21 +90,26 @@ def assembled_character_glb(character, workspace, relative, index, *,
             projects_root=projects_root, stage_root=stage_root)
         info = dict(info)
         info['parts'] = tuple(character.included)
-        return payload, info
     except (ValueError, OSError) as error:
         from model_blender_export import glb_bytes
         from model_textured_export import embed_diffuse_textures
+        # Do not weld this fallback: native CDF vertex positions are still
+        # authoritative for part provenance and potential later rigging.
         payload = glb_bytes(character.mesh, name=Path(character.cdf).stem + '_Full')
         count = 0
         if character.materials is not None:
             payload, count = embed_diffuse_textures(payload, character.materials)
-        return payload, {
+        info = {
             'texture_count': count, 'bone_count': 0,
             'part_count': len(character.included),
             'parts': tuple(character.included),
             'rig_status': 'Unrigged assembled mesh: ' + str(error)[:180],
         }
-
+    # Audit the final payload, after texturing and native rigging. Never
+    # silently export an apparently textured primitive with missing UV0.
+    info['lod_verification'] = lod
+    info['material_uv_verification'] = audit_material_uvs(payload)
+    return payload, info
 
 def build_cdf_folder_glbs(workspace, character_folder, index, *,
                           texture_folder=None, projects_root=None,
