@@ -1,1 +1,1 @@
-1.2.6 - Stable Release
+1.2.7 - Stable Release
