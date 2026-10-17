@@ -238,7 +238,7 @@ def library_model_index(identifier, root=None, *, build_id=None):
 
 
 def export_glb(identifier, relative, destination, *, root=None, build_id=None):
-    """Blender-ready glTF with safely resolved library diffuse maps and rig."""
+    """Portable FBX with safely resolved library textures, UVs, and rig."""
     from model_preview import read_preview_mesh
     from model_blender_export import glb_bytes
     from model_textured_export import embed_diffuse_textures
@@ -246,6 +246,11 @@ def export_glb(identifier, relative, destination, *, root=None, build_id=None):
     from model_rigging import skin_glb, skin_companion_path
     from multi_pak_assets import _resolve
     relative = normalized_name(relative)
+    import re
+    if re.search(r'_lod[1-9][0-9]*$', PurePosixPath(relative).stem, re.IGNORECASE):
+        raise ValueError('Only highest-detail LOD0 meshes may be exported.')
+    from fbx_export_converter import convert_glb_to_fbx
+    from blender_texture_folder import write_texture_folder
     if relative.casefold().endswith(('.chr', '.cdf')):
         # A 2012 CA_SKIN body is itself .chr. CDF is the source of the
         # verified master skeleton; never invent an associated .skin file.
@@ -253,8 +258,8 @@ def export_glb(identifier, relative, destination, *, root=None, build_id=None):
         from native_character_glb import create_character_glb
         from model_preview import find_preview_mesh
         target = _outside_library(destination, root)
-        if target.suffix.casefold() != '.glb' or not target.parent.is_dir():
-            raise ValueError('Export to .glb outside the read-only Asset Library.')
+        if target.suffix.casefold() != '.fbx' or not target.parent.is_dir():
+            raise ValueError('Export to .fbx outside the read-only Asset Library.')
         files = archive_entries(identifier, root, paths=(relative,))
         if relative not in files:
             raise FileNotFoundError('The selected model is not present in this PAK.')
@@ -283,13 +288,15 @@ def export_glb(identifier, relative, destination, *, root=None, build_id=None):
                       'rig': details.get('rig_status', 'No validated rig'),
                       'bone_count': details.get('bone_count', 0),
                       'animation_clips': 0}
-        target.write_bytes(payload)
+        report['fbx_conversion'] = convert_glb_to_fbx(
+            payload, target, static=(report.get('bone_count', 0) == 0))
+        write_texture_folder(payload, target)
         return target, report
     if not relative.casefold().endswith(('.skinm', '.chrm', '.cgfm', '.cgam')):
-        raise ValueError('Select a supported CryEngine render mesh for GLB export.')
+        raise ValueError('Select a supported CryEngine render mesh for FBX export.')
     target = _outside_library(destination, root)
-    if target.suffix.casefold() != '.glb' or not target.parent.is_dir():
-        raise ValueError('Export to a .glb file in an existing external directory.')
+    if target.suffix.casefold() != '.fbx' or not target.parent.is_dir():
+        raise ValueError('Export to a .fbx file in an existing external directory.')
     files = archive_entries(identifier, root)
     if relative not in files:
         raise FileNotFoundError('The selected model is not present in this PAK.')
@@ -314,5 +321,7 @@ def export_glb(identifier, relative, destination, *, root=None, build_id=None):
                 report['rig'] = '%s bones' % rig['bone_count']
             except (OSError, ValueError) as exc:
                 report['rig'] = 'Unsupported: ' + str(exc)[:160]
-    target.write_bytes(payload)
+    report['fbx_conversion'] = convert_glb_to_fbx(
+        payload, target, static=not bool(report.get('bone_count', 0)))
+    write_texture_folder(payload, target)
     return target, report
