@@ -60,12 +60,10 @@ for obj in meshes:
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
         bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-# Material isolation is deliberately *not* automatic UV unwrapping.
-# Large original texture atlases can look like densely overlapping UVs when
-# every part is selected, but their islands must retain source coordinates
-# to line up with CryEngine diffuse/normal masks. Separate mesh objects
-# by existing material IDs, preserving their original UV loops and vertex
-# groups so each material is independently selectable for painting.
+# Never unwrap the ORIGINAL texture UV0. Dense, overlapping CryEngine
+# atlases and intentional mirrored islands must retain their source coordinates
+# for the existing DDS maps. Material separation retains vertex groups; a
+# second UV1 is unwrapped for painting, without changing UV0 or rig weights.
 for obj in tuple(meshes):
     ids = {polygon.material_index for polygon in obj.data.polygons}
     if len(ids) <= 1:
