@@ -62,6 +62,14 @@ def audit_material_uvs(blob):
             material = materials[slot]
             name = str(material.get('name', 'Material ' + str(slot)))
             counts[name] = counts.get(name, 0) + 1
+            # A texture-ready material group needs a *complete* UV0 stream
+            # even before artists assign replacement textures.
+            uv0 = attributes.get('TEXCOORD_0')
+            if (not isinstance(uv0, int)
+                    or not 0 <= uv0 < len(accessors)
+                    or accessors[uv0].get('type') != 'VEC2'
+                    or int(accessors[uv0].get('count', 0)) != vertex_count):
+                raise ValueError('Material %r has no complete UV0 set.' % name)
             infos = [material.get('normalTexture'), material.get('occlusionTexture'),
                      material.get('emissiveTexture'),
                      (material.get('pbrMetallicRoughness') or {}).get('baseColorTexture'),
