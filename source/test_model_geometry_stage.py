@@ -53,8 +53,8 @@ class GeometryStageTests(TestCase):
                             vertices=((0.,0.,0.),(1.,0.,0.),(0.,1.,0.)),
                             triangles=((0,1,2),),uvs=(),subsets=())
         path=SimpleNamespace(read_bytes=lambda: b'CrChF fixture')
-        with TemporaryDirectory() as root, (
-                patch('async_model_resolve.checked_path',return_value=path),
+        with (TemporaryDirectory() as root,
+              patch('async_model_resolve.checked_path',return_value=path),
                 patch('async_model_resolve.inspect_model',
                       return_value=SimpleNamespace(description='Model')),
                 patch('async_model_resolve.assemble_character',return_value=None),
