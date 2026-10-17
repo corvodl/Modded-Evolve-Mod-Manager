@@ -137,6 +137,82 @@ class CharacterPipelineTests(unittest.TestCase):
             self.assertFalse(foreign)
             self.assertIsNone(foreign_idle)
 
+    def _maggie_shared_mtl_fixture(self, root):
+        prefix = 'characters/hunters/merc_maggiesavage/'
+        cdf = root / 'maggiesavage_3p.cdf'
+        skins = ('maggiesavage_3p', 'maggiesavage_3p_flashlight',
+                 'maggiesavage_3p_headwear')
+        cdf.write_text(
+            '<CharacterDefinition><Model File="' + prefix +
+            'maggiesavage_3p_skeleton.chr"/><AttachmentList>' +
+            ''.join('<Attachment Type="CA_SKIN" AName="' + label +
+                    '" Binding="' + prefix + stem + '.skin"/>'
+                    for label, stem in zip(
+                        ('maggiebody', 'flashlight', 'headgear'), skins)) +
+            '</AttachmentList></CharacterDefinition>', encoding='utf-8')
+        index = {prefix + 'maggiesavage_3p.cdf': [
+            {'workspace': root, 'file': cdf}]}
+        for stem in skins:
+            file = root / (stem + '.skinm')
+            file.write_bytes(b'fixture')
+            index[prefix + stem + '.skinm'] = [
+                {'workspace': root, 'file': file}]
+        mesh = PreviewMesh(
+            ((0., 0., 0.), (1., 0., 0.), (0., 1., 0.)),
+            ((0, 1, 2),), (.5, .5, 0.), 1., 'synthetic',
+            ((0., 0.), (1., 0.), (0., 1.)), ((0, 3, 0),))
+        return prefix, index, mesh
+
+    def test_maggie_savage_shared_pixels_are_counted_once(self):
+        # A single full-quality 10K image is under 768 MiB, but counting it
+        # three times (body, flashlight, headgear) incorrectly rejects part 3.
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prefix, index, mesh = self._maggie_shared_mtl_fixture(root)
+            image = SimpleNamespace(width=10240, height=10240)
+            mats = PreviewMaterials(
+                (image,), ('shared body',), 'maggiesavage_3p.mtl',
+                normal_maps=(image,), specular_maps=(image,))
+            with patch('character_assembly.read_preview_mesh',
+                       return_value=mesh), patch(
+                    'character_assembly.load_preview_materials',
+                    return_value=mats) as loader:
+                result = assemble_character(
+                    root, prefix + 'maggiesavage_3p.skinm', index,
+                    pre_material_geometry=lambda _mesh: None)
+            self.assertEqual(('maggiebody', 'flashlight', 'headgear'),
+                             result.included)
+            self.assertFalse(result.omitted)
+            self.assertEqual(3, len(result.materials.textures))
+            self.assertTrue(all(tex is image for tex in result.materials.textures))
+            self.assertEqual(loader.call_count, 3)
+            self.assertTrue(all('material_cache' in call.kwargs
+                                for call in loader.call_args_list))
+
+    def test_distinct_oversized_maggie_textures_keep_budget_guard(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prefix, index, mesh = self._maggie_shared_mtl_fixture(root)
+            # Three separate 9K RGBA textures exceed the 768 MiB limit.
+            materials = [
+                PreviewMaterials((SimpleNamespace(width=9216, height=9216),),
+                                 ('part',), 'distinct.mtl')
+                for _ in range(3)]
+            with patch('character_assembly.read_preview_mesh',
+                       return_value=mesh), patch(
+                    'character_assembly.load_preview_materials',
+                    side_effect=materials):
+                result = assemble_character(
+                    root, prefix + 'maggiesavage_3p.skinm', index,
+                    pre_material_geometry=lambda _mesh: None)
+            self.assertEqual(3, len(result.mesh.triangles))
+            self.assertTrue(any(
+                'headgear textures: CDF preview textures exceed 768 MiB'
+                in msg for msg in result.omitted))
+            self.assertIsNone(result.materials.textures[2])
+
     def test_sparse_material_fallback_does_not_exhaust_slots(self):
         first = PreviewMesh(((0,0,0), (1,0,0), (0,1,0)),
             ((0,1,2),), (.5,.5,0),1,'body',
