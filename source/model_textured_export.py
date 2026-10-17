@@ -303,6 +303,14 @@ def embed_diffuse_textures(blob, materials):
             material.setdefault('extras', {})['cryEngineEnvironmentFaces'] = env_names
         glasses = getattr(materials, 'glass_materials', ())
         if 0 <= slot < len(glasses) and glasses[slot]:
+            # A CryEngine Glass visor can have no diffuse DDS: its amber
+            # color, fog and Fresnel response are material parameters, not
+            # missing textures. Preserve these authored controls for Blender
+            # importers instead of silently converting them to guessed RGB.
+            glass_params = getattr(materials, 'glass_public_params', ())
+            if slot < len(glass_params) and glass_params[slot]:
+                material.setdefault('extras', {})['cryEngineGlassPublicParams'] = (
+                    dict(glass_params[slot]))
             from material_preview import preview_material_opacity
             opacity = preview_material_opacity(materials, slot)
             transmission = max(0., min(1., 1.-opacity))
