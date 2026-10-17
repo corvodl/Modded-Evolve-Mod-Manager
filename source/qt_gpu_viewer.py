@@ -2496,7 +2496,6 @@ class QtGPUModelPanel(QWidget):
             return
         self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
-        was_default_dba = self._auto_dba_loading
         self._auto_dba_loading = False
         if error:
             if getattr(self, '_historical_character', False):
