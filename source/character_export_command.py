@@ -148,7 +148,20 @@ def export_character_directory(source_folder, destination, *, projects_root=None
         # Unlike hunters and wildlife, monsters have three independent
         # evolution rigs. Each assembly has already had its exact CDF's
         # playable CAF/DBA clips embedded by build_cdf_folder_glbs.
-        stages, selected_paths = select_monster_stage_models(assemblies, virtual)
+        try:
+            stages, selected_paths = select_monster_stage_models(assemblies, virtual)
+        except ValueError as exc:
+            # Report failures from the real per-CDF assembly builder. Missing
+            # "verified stages" does not mean missing .cdf files: an indexed
+            # CDF may be present but its .chr, .skin or shared assets may fail
+            # validation. Never tell users to import PAKs without evidence.
+            if 'missing stage(s)' not in str(exc) or not errors:
+                raise
+            details = '; '.join(
+                '%s: %s' % (PurePosixPath(str(name)).name, str(reason)[:160])
+                for name, reason in errors[:3])
+            raise ValueError(
+                str(exc) + ' Unverified CDF details: ' + details) from exc
         other_assemblies = {
             name: pair for name, pair in assemblies.items()
             if name not in selected_paths}
