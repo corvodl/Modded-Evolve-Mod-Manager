@@ -1359,9 +1359,9 @@ class QtGPUModelPanel(QWidget):
         self.glow_slider.setRange(0,300)
         self.glow_slider.setValue(100)
         self.glow_slider.setToolTip(
-            '100% corresponds to the game-reference-tested Blender emission '
-            'strength of 100 for verified glowing materials. Source MTL '
-            'GlowAmount, texture hue, masks and DDS pixels are unchanged.')
+            '100% displays each verified material at its original source-'
+            'relative GlowAmount. The slider multiplies that amount without '
+            'changing DDS pixels, masks or saved material color.')
         self.glow_slider.valueChanged.connect(lambda value: (
             setattr(self.canvas, 'glow_strength', value/100.), self.canvas.update()))
         glow_row=QHBoxLayout()
@@ -1969,7 +1969,7 @@ class QtGPUModelPanel(QWidget):
                 value = materials.emissive_strengths[slot]
                 if value > 0 and slot < len(getattr(materials, 'emissive_maps', ())) and materials.emissive_maps[slot] is not None:
                     tip += ('\nOriginal CryEngine glow: %.2f; '
-                            'calibrated viewer strength: %.0f (at 100%% slider)' %
+                            'source-relative viewer strength: %.2f (at 100%% slider)' %
                             (value, preview_emission_strength(value)))
                     origin = (materials.emissive_sources[slot]
                               if slot < len(getattr(materials, 'emissive_sources', ())) else None)

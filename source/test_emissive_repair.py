@@ -12,8 +12,7 @@ from PIL import Image
 from emissive_materials import (bake_emission_map, emission_settings, emission_mode,
                                 shader_flags, emission_mask_source,
                                 emission_texture_node, subset_emission_coverage,
-                                preview_emission_strength,
-                                EVOLVE_REFERENCE_EMISSION_STRENGTH)
+                                preview_emission_strength)
 from material_preview import PreviewMaterials
 from model_preview import read_preview_mesh
 from model_blender_export import glb_bytes
@@ -34,15 +33,33 @@ class EmissiveMaterialTests(unittest.TestCase):
             </ShaderParams></Material>''')
         self.assertEqual(emission_settings(second)[0], 0.75)
 
-    def test_reference_calibration_only_affects_verified_positive_glow(self):
-        # The source MTL numbers and RGB mask remain unmodified; 100 is the
-        # user-validated target intensity for Blender and GPU presentation.
-        self.assertEqual(EVOLVE_REFERENCE_EMISSION_STRENGTH, 100.)
-        for original in (0.75, 2.5, 3., 16., 100.):
-            self.assertEqual(preview_emission_strength(original), 100.)
-        for original in (None, 0., -3., float('nan'), float('inf'), 'bad'):
+    def test_source_relative_glow_retains_original_amounts(self):
+        # Material source numbers control their relative luminance; they
+        # must not all be inflated to 100 or subjected to a Behemoth cap.
+        for authored in (0.125, 0.75, 2.5, 3., 8., 16., 100.):
+            self.assertEqual(preview_emission_strength(authored), authored)
+        self.assertEqual(preview_emission_strength(3.) /
+                         preview_emission_strength(0.75), 4.)
+        for original in (None, 0., -3., float('nan'), float('inf'),
+                         float('-inf'), 'bad'):
             self.assertEqual(preview_emission_strength(original), 0.)
         self.assertEqual(preview_emission_strength(3., has_emissive_map=False), 0.)
+
+    def test_behemoth_rocky_glow_preserves_source_material_ratios(self):
+        rocky = ET.fromstring(
+            '<Material Shader="Illum"><PublicParams GlowAmount="0.75"/>'
+            '<Textures><Texture Map="Decal" File="rocky_glow.tif"/>'
+            '</Textures></Material>')
+        fissure = ET.fromstring(
+            '<Material Shader="Illum"><PublicParams GlowAmount="3"/>'
+            '<Textures><Texture Map="Decal" File="rocky_lava.tif"/>'
+            '</Textures></Material>')
+        small = emission_settings(rocky)[0]
+        large = emission_settings(fissure)[0]
+        self.assertEqual(preview_emission_strength(small), 0.75)
+        self.assertEqual(preview_emission_strength(large), 3.)
+        self.assertEqual(preview_emission_strength(large) /
+                         preview_emission_strength(small), 4.)
 
     def test_disabled_emissive_map_does_not_emit_in_glb(self):
         mesh = read_preview_mesh(test_mesh(), 'off.skinm')
@@ -96,9 +113,9 @@ class EmissiveMaterialTests(unittest.TestCase):
         self.assertEqual(material['alphaMode'], 'OPAQUE')
         self.assertEqual(material['emissiveFactor'], [1., 1., 1.])
         self.assertEqual(material['emissiveTexture']['index'], 1)
-        self.assertEqual(material['extensions']['KHR_materials_emissive_strength']['emissiveStrength'], 100.)
+        self.assertEqual(material['extensions']['KHR_materials_emissive_strength']['emissiveStrength'], 2.5)
         self.assertEqual(material['extras']['cryEngineAuthoredEmissiveStrength'], 2.5)
-        self.assertEqual(material['extras']['evolveReferenceEmissiveStrength'], 100.)
+        self.assertEqual(material['extras']['evolveSourceRelativeEmissiveStrength'], 2.5)
         self.assertIn('KHR_materials_emissive_strength', doc['extensionsUsed'])
         self.assertEqual(len(doc['images']), 2)
 
