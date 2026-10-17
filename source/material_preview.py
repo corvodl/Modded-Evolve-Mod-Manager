@@ -462,7 +462,7 @@ def _decode_texture_pixels(raw, relative, *, max_dimension=MAX_PREVIEW_TEX_DIM,
     return tex
 
 
-def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None, material_override=None, texture_quality="highest", cancel=None):
+def load_preview_materials(workspace, model_relative, texture_folder=None, *, projects_root=None, stage_root=None, index=None, cdf=None, material_override=None, texture_quality="highest", cancel=None, material_cache=None, used_slots=None):
     def checkpoint():
         if cancel is not None and cancel():
             raise InterruptedError('Texture/material decoding cancelled')
@@ -495,6 +495,21 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                          model_relative + '; searched: ' +
                          ', '.join(attempted[:6]) +
                          '. Check CDF material overrides or embedded material references.')
+    # Local to one character assembly. Only share a fully verified material
+    # file with the same workspace, decoding options and selected MTL slots.
+    # Do not key by basename; separate PAK builds must stay isolated.
+    active_slots = (None if used_slots is None else
+                    frozenset(int(slot) for slot in used_slots
+                              if 0 <= int(slot) < 256))
+    cache_key = (
+        str(Path(material['file']).resolve()),
+        str(material['relative']).casefold(),
+        str(material['workspace']), str(texture_folder or ''),
+        str(cdf or ''), id(index), texture_quality,
+        bool(historical_2012), active_slots)
+    if material_cache is not None and cache_key in material_cache:
+        checkpoint()
+        return material_cache[cache_key]
     checkpoint()
     raw = material['file'].read_bytes()
     if len(raw) > MAX_MATERIAL_BYTES or b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper():
@@ -514,6 +529,14 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                 yield from leaves(child)
 
     subs = list(leaves(root))
+    if active_slots is not None:
+        # Keep original leaf indexes for CryEngine subset remapping while
+        # avoiding decoding textures for unused leaves of a shared MTL.
+        subs = [leaf if slot in active_slots else
+                ET.Element('Material', {
+                    'Name': leaf.get('Name') or 'unused slot',
+                    'Shader': 'NoDraw'})
+                for slot, leaf in enumerate(subs)]
     # Broken virtual prefixes occur in older character materials. Resolve only
     # when exactly one verified matching DDS basename exists across all
     # extracted PAKs. Different files with the same name are never guessed.
@@ -977,7 +1000,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             detail = issues[0] if issues else 'Material defines no supported diffuse or emissive textures.'
             raise ValueError('No diffuse or emissive DDS textures found or decoded: '
                              + detail + ' (see Textures > Diagnose Texture Links).')
-    return PreviewMaterials(tuple(result),tuple(names),material['relative'],
+    resolved_materials = PreviewMaterials(tuple(result),tuple(names),material['relative'],
                             tuple(issues),tuple(normals),tuple(speculars),tuple(opacities),tuple(alpha_modes),
                             tuple(transforms),tuple(sources),tuple(references),alpha_cutoffs=tuple(cutoffs), hidden=tuple(hidden), gloss_maps=tuple(glosses),
                             detail_maps=tuple(details), detail_normal_maps=tuple(detail_normals),
@@ -999,6 +1022,10 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
                              original_materials=(material['relative'],)*len(subs),
                              emissive_references=tuple(emissive_references),
                              emissive_status=tuple(emissive_status))
+    checkpoint()
+    if material_cache is not None:
+        material_cache[cache_key] = resolved_materials
+    return resolved_materials
 
 
 
