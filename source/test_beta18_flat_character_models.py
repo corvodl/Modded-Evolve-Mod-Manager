@@ -101,13 +101,19 @@ class EmetCDFAssemblyTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
         from character_asset_export import build_cdf_folder_glbs
-        from test_character_export_folders import test_glb
+        from model_blender_export import glb_bytes
+        from types import SimpleNamespace
         base = 'characters/hunters/merc_emet/'
         cdf = base + 'emet_3p.cdf'
         body = base + 'emet_3p.skinm'
         cannon = base + 'emetremotecannon_3p.skinm'
         cannon_skin = cannon[:-1]
         other = base + 'emetother_3p.skinm'
+        face = base + 'emet_3p_face_normal.skinm'
+        mesh = SimpleNamespace(
+            vertices=tuple((float(j), float(j % 3), 0.) for j in range(9)),
+            triangles=((0, 1, 2), (3, 4, 5), (6, 7, 8)),
+            uvs=(), subsets=((0, 3, 0), (3, 3, 1), (6, 3, 2)))
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / 'files' / cdf
@@ -123,9 +129,12 @@ class EmetCDFAssemblyTests(unittest.TestCase):
                 return SimpleNamespace(
                     cdf=cdf, skeleton=base + 'emet_3p_skeleton.chr',
                     rig_parts=((body, None, None, 3),
+                               (face, None, None, 3),
                                (selected_model, None, None, 3)),
+                    included=('body', 'normal', 'remotecannon'),
+                    omitted=(), selected_faceplate=face[:-1],
                     equipment_options=(('remotecannon', cannon_skin),))
-            glb = test_glb()
+            glb = glb_bytes(mesh)
             with patch('character_assembly.assemble_character', side_effect=assemble), \
                  patch('character_asset_export.assembled_character_glb',
                        return_value=(glb, {'part_count': 2, 'bone_count': 4})), \
@@ -138,7 +147,11 @@ class EmetCDFAssemblyTests(unittest.TestCase):
             self.assertEqual(calls, [None, cannon_skin])
             info = assemblies['Assemblies/emet_3p.glb'][1]
             self.assertEqual(info['cdf'], cdf)
-            self.assertEqual(info['rendered_parts'], (body, cannon))
+            self.assertEqual(info['rendered_parts'], (body, face, cannon))
+            self.assertEqual(
+                info['geometry_verification']['status'],
+                'verified_body_and_remote_cannon')
+            self.assertTrue(info['geometry_verification']['default_faceplate_verified'])
             self.assertNotIn('Assemblies/Emetremotecannon_3p.glb', assemblies)
 
 
