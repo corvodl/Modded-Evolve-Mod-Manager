@@ -2200,7 +2200,11 @@ class QtWorkspaceEditor(QMainWindow):
             menu.addSeparator()
 
         for group_name, entries in grouped:
-            subgroup = menu.addMenu(group_name)
+            # Explicit QObject parenting avoids a PySide6/C++ ownership bug
+            # observed on Linux offscreen where addMenu(str) produced a
+            # dangling submenu action immediately after returning.
+            subgroup = QMenu(group_name, menu)
+            menu.addMenu(subgroup)
             self._character_equipment_submenus.append(subgroup)
             for kind, label, virtual in entries:
                 action = subgroup.addAction(label.replace('_', ' ').title())
