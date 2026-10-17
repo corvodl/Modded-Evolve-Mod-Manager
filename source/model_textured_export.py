@@ -172,8 +172,19 @@ def embed_diffuse_textures(blob, materials):
                         source, diffuse, transform_for(materials, slot, 'emissive'),
                         transform_for(materials, slot))
                     if source is None:
-                        material.setdefault('extras', {})[
-                            'cryEngineEmissionExportWarning'] = (
+                        # Keep the original source provenance for diagnostics
+                        # while refusing to attach a dangerously unmasked
+                        # emissiveTexture to the Blender GLB.
+                        extras = material.setdefault('extras', {})
+                        extras['cryEngineEmissionMask'] = {
+                            'source': 'diffuse_alpha',
+                            'diffuseUvTransform': list(transform_for(materials, slot)),
+                            'emissiveUvTransform': list(transform_for(
+                                materials, slot, 'emissive')),
+                            'requiresBakingForBlender': True,
+                            'omittedFromExport': True,
+                        }
+                        extras['cryEngineEmissionExportWarning'] = (
                             'Cannot bake diffuse-alpha emission mask; '
                             'emission omitted rather than exporting unmasked glow.')
                         continue
