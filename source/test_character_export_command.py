@@ -35,7 +35,10 @@ class CharacterExportCommandTests(unittest.TestCase):
             'rendered_parts': (
                 base + 'emet_3p.skinm',
                 base + 'emet_3p_face_normal.skinm',
-                base + 'emetremotecannon_3p.skinm')})
+                base + 'emetremotecannon_3p.skinm'),
+            'geometry_verification': {
+                'status': 'verified_body_and_remote_cannon',
+                'part_drawn_triangles': (2, 1, 1)}})
         # Even an explicitly preferred, rigged cannon-only export cannot
         # override a verified CDF that actually contains the character body.
         cannon = (b'glTF-arm-only', {
