@@ -102,6 +102,7 @@ def combine_meshes(items):
     vertices, triangles, uvs, subsets = [], [], [], []
     textures, names, issues = [], [], []
     normals, speculars, glosses, opacities, alpha_modes = [], [], [], [], []
+    glasses, refraction_indices, environments, reflection_strengths = [], [], [], []
     transforms, sources, references, uv_available = [], [], [], []
     cutoffs = []; hidden = []
     # All verified emissive per-submaterial settings must survive assembly
@@ -180,6 +181,21 @@ def combine_meshes(items):
                              slot < len(materials.opacity) else 1.0)
             alpha_modes.append(materials.alpha_modes[slot] if has_uv and materials and
                                slot < len(materials.alpha_modes) else False)
+            # Preserve refractive visor/glass classification across the
+            # dense CDF material remapping. Previously this was dropped and
+            # a Glass helmet became an opaque orange mesh when assembled.
+            glasses.append(bool(materials and
+                slot < len(getattr(materials, 'glass_materials', ())) and
+                materials.glass_materials[slot]))
+            refraction_indices.append(
+                materials.refraction_indices[slot] if materials and
+                slot < len(getattr(materials, 'refraction_indices', ())) else None)
+            environments.append(
+                materials.environment_maps[slot] if has_uv and materials and
+                slot < len(getattr(materials, 'environment_maps', ())) else None)
+            reflection_strengths.append(
+                materials.reflection_strengths[slot] if materials and
+                slot < len(getattr(materials, 'reflection_strengths', ())) else 0.)
             cutoffs.append(materials.alpha_cutoffs[slot] if materials and
                            slot < len(materials.alpha_cutoffs) else 0.)
             emissive_maps.append(materials.emissive_maps[slot] if has_uv and materials
@@ -222,6 +238,10 @@ def combine_meshes(items):
                                 tuple(opacities), tuple(alpha_modes), tuple(transforms),
                                 tuple(sources), tuple(references), tuple(uv_available), tuple(cutoffs),
                                 hidden=tuple(hidden), gloss_maps=tuple(glosses),
+                                glass_materials=tuple(glasses),
+                                refraction_indices=tuple(refraction_indices),
+                                environment_maps=tuple(environments),
+                                reflection_strengths=tuple(reflection_strengths),
                                 emissive_maps=tuple(emissive_maps),
                                 emissive_strengths=tuple(emissive_strengths),
                                 emissive_sources=tuple(emissive_sources),
