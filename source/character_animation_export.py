@@ -27,6 +27,46 @@ def _safe(value):
     return re.sub(r'[^a-zA-Z0-9_.-]+', '_', str(value)).strip('._')[:72] or 'Animation'
 
 
+def _bounded_catalog_for_export(references, skeleton, cancelled=None):
+    """Favor verified animation sources, never fail on a large .chrparams.
+
+    The source can contain thousands of absent CAF declarations and metadata.
+    Bound the work, not the original catalog; do not invent motion or mix rigs.
+    """
+    total = len(references)
+    if total <= MAX_ANIMATION_REFERENCES:
+        return references, 0
+    from character_animation_catalog import (
+        native_clip_playability, preferred_third_person_dba)
+    preferred = preferred_third_person_dba(references, skeleton)
+    selected_dba = (preferred.virtual_path.casefold()
+                    if preferred is not None else None)
+    ranked = []
+    for order, ref in enumerate(references):
+        if cancelled is not None and cancelled():
+            raise InterruptedError('Character animation export cancelled.')
+        status, _reason = native_clip_playability(ref)
+        if (selected_dba and ref.kind == 'dba'
+                and ref.virtual_path.casefold() == selected_dba):
+            priority = 0
+        elif ref.kind == 'caf' and status == 'candidate':
+            priority = (1 if re.search(r'(^|[_-])idle($|[_-])',
+                                       ref.name.casefold()) else 2)
+        elif ref.kind == 'dba' and status == 'converter':
+            priority = 3
+        elif ref.kind == 'caf' and status in ('converter', 'extractable'):
+            priority = 4
+        elif ref.kind == 'caf' and status == 'layered':
+            priority = 5
+        else:
+            priority = 6
+        ranked.append((priority, order, ref))
+    ranked.sort(key=lambda entry: (entry[0], entry[1]))
+    chosen = tuple(ref for _priority, _order, ref
+                   in ranked[:MAX_ANIMATION_REFERENCES])
+    return chosen, total - len(chosen)
+
+
 def export_character_animation_folder(
         root, model_blob, relative, index, workspace, *,
         character=None, model_name=None, cancelled=None, progress=None,
@@ -64,8 +104,14 @@ def export_character_animation_folder(
     else:
         references = tuple(references)
         note = 'Supplied verified character animation catalog'
-    if len(references) > MAX_ANIMATION_REFERENCES:
-        raise ValueError('Animation catalog exceeds bounded export limit.')
+    catalog_total = len(references)
+    references, catalog_omitted = _bounded_catalog_for_export(
+        references, character.skeleton if character is not None else relative,
+        cancelled=cancelled)
+    if catalog_omitted:
+        note += ('; selected %d export-relevant references from %d declarations '
+                 '(%d omitted under bounded animation export budget)'
+                 % (len(references), catalog_total, catalog_omitted))
     doc, _ = _unpack_glb(model_blob)
     rigged = len(doc.get('skins', ())) == 1
     prefix = _safe(model_name or Path(relative).stem)
@@ -248,6 +294,9 @@ def export_character_animation_folder(
               'animated_glb': prefix + '_animations.glb' if converted else None,
               'raw_sources': sources,
               'references': statuses, 'catalog_note': note,
+              'catalog_total': catalog_total,
+              'catalog_processed': len(references),
+              'catalog_omitted': catalog_omitted,
               'note': note_text}
     (folder / 'animation_manifest.json').write_text(
         json.dumps(report, indent=2), encoding='utf-8')

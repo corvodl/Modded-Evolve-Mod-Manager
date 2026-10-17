@@ -239,6 +239,50 @@ class CharacterAnimationFolderTests(unittest.TestCase):
             clips, _ = _unpack_glb(output.read_bytes())
             self.assertEqual(len(clips['animations']), 18)
 
+    def test_oversized_catalog_exports_valid_subset_with_manifest_note(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            caf = root / 'idle.caf'
+            caf.write_bytes(synthetic_caf())
+            records = tuple(AnimationReference(
+                'graph_%04d' % i, 'animations/graph_%04d.bspace' % i,
+                'bspace', False) for i in range(620))
+            records += (AnimationReference(
+                'actor_idle', 'animations/actor/idle.caf',
+                'caf', True, caf),)
+            result = export_character_animation_folder(
+                root, test_glb(), 'characters/hunters/merc_actor/actor_3p.cdf',
+                {}, root, references=records, copy_sources=False)
+            report = json.loads(
+                (root / 'animations' / 'animation_manifest.json').read_text())
+            self.assertEqual(result['animations'], 0)  # No rig: no invented motion.
+            self.assertEqual(report['catalog_total'], 621)
+            self.assertEqual(report['catalog_processed'], 512)
+            self.assertEqual(report['catalog_omitted'], 109)
+            self.assertTrue(any(row['name'] == 'actor_idle'
+                                for row in report['references']))
+            self.assertIn('109 omitted', report['catalog_note'])
+
+    def test_oversized_catalog_keeps_exact_preferred_3p_database(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            database = root / 'actor_3p.dba'
+            database.write_bytes(b'x' * 32)
+            records = tuple(AnimationReference(
+                'graph_%04d' % i, 'animations/graph_%04d.bspace' % i,
+                'bspace', False) for i in range(600))
+            records += (AnimationReference(
+                'DBA: actor_3p',
+                'characters/hunters/merc_actor/actor_3p.dba',
+                'dba', True, database),)
+            from character_animation_export import _bounded_catalog_for_export
+            selected, omitted = _bounded_catalog_for_export(
+                records, 'characters/hunters/merc_actor/actor_3p_skeleton.chr')
+            self.assertEqual(omitted, 89)
+            self.assertEqual(len(selected), 512)
+            self.assertEqual(selected[0].virtual_path,
+                             'characters/hunters/merc_actor/actor_3p.dba')
+
     def test_original_animation_directory_is_kept_without_overwriting(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)

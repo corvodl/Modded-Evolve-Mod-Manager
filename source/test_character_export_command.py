@@ -48,6 +48,69 @@ class CharacterExportCommandTests(unittest.TestCase):
         self.assertNotIn('Assemblies/cannon.glb',
                          export.call_args.kwargs['assemblies'])
 
+    def test_sunny_full_character_prefers_third_person_over_larger_fp(self):
+        from character_export_command import _preferred_full_assembly
+        first_person = (b'glTF-fp', {
+            'cdf': 'characters/hunters/merc_sunny/sunny_fp.cdf',
+            'skeleton': 'characters/hunters/merc_sunny/sunny_fp.chr',
+            'part_count': 9, 'bone_count': 80,
+            'embedded_animations': 20})
+        third_person = (b'glTF-3p', {
+            'cdf': 'characters/hunters/merc_sunny/sunny_3p.cdf',
+            'skeleton': 'characters/hunters/merc_sunny/sunny_3p.chr',
+            'part_count': 3, 'bone_count': 32})
+        result = _preferred_full_assembly({
+            'Assemblies/sunny_fp.glb': first_person,
+            'Assemblies/sunny_3p.glb': third_person,
+        }, selected_cdf=first_person[1]['cdf'])
+        self.assertIs(result, third_person)
+
+    def test_explicit_sunny_3p_beats_untagged_multi_part_variant(self):
+        from character_export_command import _preferred_full_assembly
+        neutral = (b'glTF-neutral', {
+            'cdf': 'characters/hunters/merc_sunny/sunny_equipment.cdf',
+            'bone_count': 64, 'part_count': 6})
+        third_person = (b'glTF-3p', {
+            'cdf': 'characters/hunters/merc_sunny/sunny_3p.cdf',
+            'part_count': 1, 'bone_count': 28})
+        self.assertIs(_preferred_full_assembly({
+            'Assemblies/neutral.glb': neutral,
+            'Assemblies/sunny_3p.glb': third_person,
+        }), third_person)
+
+    def test_first_person_only_never_becomes_main_character(self):
+        from character_export_command import _preferred_full_assembly
+        fp = (b'glTF', {'cdf': 'characters/hunters/merc_sunny/sunny_1p.cdf',
+                         'bone_count': 40, 'part_count': 5,
+                         'preferred_full_character': True})
+        self.assertIsNone(_preferred_full_assembly({'Assemblies/fp.glb': fp}))
+
+    def test_fp_skeleton_does_not_hide_behind_untagged_cdf(self):
+        from character_export_command import _preferred_full_assembly
+        fp = (b'glTF-fp', {
+            'cdf': 'characters/hunters/merc_sunny/sunny.cdf',
+            'skeleton': 'characters/hunters/merc_sunny/sunny_first_person.chr',
+            'part_count': 6, 'bone_count': 60})
+        body = (b'glTF-body', {
+            'cdf': 'characters/hunters/merc_sunny/sunny_body.cdf',
+            'skeleton': 'characters/hunters/merc_sunny/sunny_3p.chr',
+            'part_count': 2, 'bone_count': 28})
+        self.assertIs(_preferred_full_assembly({
+            'Assemblies/sunny.glb': fp, 'Assemblies/sunny_body.glb': body
+        }), body)
+
+    def test_only_fp_assemblies_raise_instead_of_creating_wrong_root(self):
+        from character_export_command import export_character_directory
+        first_person = (b'glTF-fp', {
+            'cdf': 'characters/hunters/merc_emet/emet_fp.cdf',
+            'skeleton': 'characters/hunters/merc_emet/emet_fp.chr',
+            'part_count': 7, 'bone_count': 48})
+        with patch('character_export_command.build_cdf_folder_glbs',
+                   return_value=({'Assemblies/fp.glb': first_person}, ())):
+            with self.assertRaisesRegex(ValueError, 'Only first-person'):
+                export_character_directory(self.base, self.destination, index={})
+        self.assertEqual(list(self.destination.iterdir()), [])
+
     def test_legacy_merc_emet_export_requires_parent_and_preserves_files(self):
         from character_export_command import validate_character_export_destination
         old = self.destination / 'merc_emet'
