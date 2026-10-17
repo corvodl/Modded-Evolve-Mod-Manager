@@ -289,17 +289,16 @@ def embed_diffuse_textures(blob, materials):
                         'emissiveUvTransform': list(transform_for(materials, slot, 'emissive')),
                         'bakedForBlender': True,
                     }
-                # The original CryEngine GlowAmount is not Blender's unit.
-                # Preserve the untouched authored value for inspection while
-                # using the game-reference-tested display intensity of 100.
-                # glTF KHR_materials_emissive_strength allows values >16:
-                # clamping here previously prevented accurate Blender glow.
+                # CryEngine GlowAmount is not a physically matched Blender
+                # luminance unit. Use a source-relative approximation that
+                # retains authored ratios rather than a fixed value of 100.
+                # Preserve the untouched source for future calibration.
                 strength = strengths[slot] if slot < len(strengths) else 0.
-                calibrated = preview_emission_strength(strength)
+                mapped = preview_emission_strength(strength)
                 material.setdefault('extras', {})['cryEngineAuthoredEmissiveStrength'] = float(strength)
-                material.setdefault('extras', {})['evolveReferenceEmissiveStrength'] = calibrated
+                material.setdefault('extras', {})['evolveSourceRelativeEmissiveStrength'] = mapped
                 material.setdefault('extensions', {})['KHR_materials_emissive_strength'] = {
-                    'emissiveStrength': calibrated}
+                    'emissiveStrength': mapped}
                 used = doc.setdefault('extensionsUsed', [])
                 if 'KHR_materials_emissive_strength' not in used:
                     used.append('KHR_materials_emissive_strength')
