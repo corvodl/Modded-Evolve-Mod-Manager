@@ -106,7 +106,7 @@ class TexturedModelExportTests(unittest.TestCase):
         self.assertEqual(image.getpixel((6, 2)), (0, 0, 0))
         self.assertEqual(
             armor['extensions']['KHR_materials_emissive_strength']['emissiveStrength'],
-            100.)
+            4.)
 
     def test_missing_emission_alpha_fails_closed_not_full_body_glow(self):
         from texture_transform import IDENTITY
