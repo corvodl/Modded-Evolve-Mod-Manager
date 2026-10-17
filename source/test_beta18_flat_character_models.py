@@ -267,6 +267,32 @@ class FlatCharacterFolderTests(unittest.TestCase):
         self.assertIn('models/equipment/weapon.skin',
                       [row['file'] for row in manifest['files']])
 
+    def test_embedded_character_animation_omits_duplicate_raw_sources(self):
+        from model_textured_export import _pack_glb, _unpack_glb
+        idle = self.prefix + '/motion/idle.caf'
+        action = self.prefix + '/motion/tech_3p.dba'
+        self._add(idle, b'CAF', self.workspace)
+        self._add(action, b'DBA', self.workspace)
+        doc, raw = _unpack_glb(self._glb())
+        doc['skins'] = [{'joints':[0]}]
+        doc['animations'] = [{'name':'idle'}, {'name':'run'}]
+        root_glb = _pack_glb(doc, raw)
+        result = export_character_asset_folder(
+            self.workspace, self.prefix, self.output, index=self.index,
+            full_model=(root_glb, {'cdf':self.prefix + '/tech_3p.cdf',
+                                   'embedded_animations':2,
+                                   'embedded_animation_clips':('idle','run')}))
+        folder = Path(result['folder'])
+        self.assertEqual((folder/'merc_parnelltank.glb').read_bytes(), root_glb)
+        self.assertFalse((folder/'animations').exists())
+        self.assertEqual(result['animations']['animations'], 2)
+        self.assertIsNone(result['animations']['animated_glb'])
+        report = json.loads((folder/'export_verification.json').read_text('utf-8'))
+        self.assertEqual(report['embedded_animations']['merc_parnelltank.glb'],
+                         ['idle','run'])
+        self.assertEqual((self.workspace/'files'/idle).read_bytes(), b'CAF')
+        self.assertEqual((self.workspace/'files'/action).read_bytes(), b'DBA')
+
     def test_ambiguous_cross_pak_asset_is_reported_not_guessed(self):
         self._add(self.dds, b'DIFFERENT', self.root / 'ts2')
         report = export_character_asset_folder(
