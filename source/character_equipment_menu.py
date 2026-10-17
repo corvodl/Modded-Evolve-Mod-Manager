@@ -33,17 +33,36 @@ def _display_group(label, virtual):
     return 'Other Attachments'
 
 
+def _menu_choices(equipment_options):
+    """Hide an arm companion when its owning equipment is a separate option.
+
+    The attachment still follows its CDF/SkinSets for the parent selection.
+    It must not be shown as an independent gun because that loses its owner.
+    """
+    entries = tuple(equipment_options)
+    labels = {re.sub(r'[^a-z0-9]', '', label.casefold()) for label, _ in entries}
+    for label, virtual in entries:
+        normalized = re.sub(r'[^a-z0-9]', '', label.casefold())
+        if (normalized.endswith('arm') and normalized[:-3] in labels
+                and normalized[:-3]):
+            continue
+        yield label, virtual
+
+
 def equipment_menu_groups(equipment_options, faceplate_options=()):
-    """Return nonempty (title, kind, options) groups in stable display order."""
+    """Return one submenu per nonempty CDF-derived group.
+
+    Entries are (kind, label, original virtual path). Classifications are
+    strictly presentation hints, not guesses about equipment compatibility.
+    """
     grouped = {}
-    for label, virtual in equipment_options:
-        category = _display_group(label, virtual)
-        grouped.setdefault((category, 'equipment'), []).append((label, virtual))
-    if faceplate_options:
-        grouped[('Face / Head Variants', 'faceplate')] = list(faceplate_options)
+    for label, virtual in _menu_choices(equipment_options):
+        grouped.setdefault(_display_group(label, virtual), []).append(
+            ('equipment', label, virtual))
+    for label, virtual in faceplate_options:
+        grouped.setdefault('Face / Head Variants', []).append(
+            ('faceplate', label, virtual))
     order = ('Weapons', 'Equipment / Abilities', 'Face / Head Variants',
              'Accessories', 'Other Attachments')
-    return tuple(
-        (title, kind, tuple(grouped[(title, kind)]))
-        for title in order for kind in ('equipment', 'faceplate')
-        if grouped.get((title, kind)))
+    return tuple((title, tuple(grouped[title]))
+                 for title in order if grouped.get(title))
