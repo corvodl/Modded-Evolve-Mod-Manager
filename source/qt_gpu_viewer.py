@@ -1896,6 +1896,9 @@ class QtGPUModelPanel(QWidget):
         self.native_clip_select.clear()
         self.native_info.setText('Native game animations: not scanned')
         self.canvas.set_mesh(mesh, materials, prepared_geometry=prepared_geometry)
+        # Native CAF/DBA geometry can come through a compacted intermediate
+        # GLB. Retain the authoritative source CryEngine material table.
+        self._native_source_materials = materials
         self.solid_geometry.blockSignals(True)
         self.solid_geometry.setChecked(self.canvas.force_opaque_preview)
         self.solid_geometry.blockSignals(False)
@@ -2195,6 +2198,10 @@ class QtGPUModelPanel(QWidget):
         """Filter a potentially huge native animation catalog on the GUI thread."""
         from character_animation_catalog import (
             native_clip_playability, preferred_third_person_dba)
+        # Initial QtGPUModelPanel construction can receive full materials
+        # without going through set_static_mesh.
+        if getattr(self.canvas.materials, 'source', None) != 'Embedded GLB textures':
+            self._native_source_materials = self.canvas.materials
         self._native_generation += 1
         self._auto_dba_loading = False
         self.cancel_native_button.setEnabled(False)
@@ -2496,9 +2503,16 @@ class QtGPUModelPanel(QWidget):
                 imported = AnimatedGLB(payload, 'Native Evolve animation')
                 geometry = None
             pair = details.get('_layered_pair')
+            from native_material_handoff import native_animation_materials
+            # The converter's GLB material list can reorder/compact slots.
+            # Only restore a source slot when the GLB explicitly identifies
+            # it; otherwise keep the ordinary embedded-GLB handling.
+            source_materials = native_animation_materials(
+                imported.doc, getattr(self, '_native_source_materials', None))
             self._show_animated(
                 imported, auto_play=not bool(pair),
-                prepared_geometry=geometry, choose_dba_fallback=was_default_dba)
+                prepared_geometry=geometry, choose_dba_fallback=was_default_dba,
+                materials_override=source_materials)
             self._layered_pair = pair
             if pair:
                 base_name, overlay_name = pair
@@ -2551,14 +2565,18 @@ class QtGPUModelPanel(QWidget):
             QMessageBox.warning(self, 'Animation import failed', str(exc))
 
     def _show_animated(self, imported, *, auto_play, prepared_geometry=None,
-                       choose_dba_fallback=False):
+                       choose_dba_fallback=False, materials_override=None):
         self.anim_timer.stop()
         self.anim_playing = False
         self.play_button.setText('Play')
         self._layered_pair = None
         self.animated = imported
-        self.canvas.set_mesh(imported.preview_mesh, imported.materials,
+        self.canvas.set_mesh(imported.preview_mesh,
+                             materials_override if materials_override is not None
+                             else imported.materials,
                              prepared_geometry=prepared_geometry)
+        self._populate_material_slots(imported.preview_mesh, self.canvas.materials)
+        self._update_emissive_source_status()
         self.clip_select.blockSignals(True)
         self.clip_select.clear()
         self.clip_select.addItems(tuple(imported.clips))
