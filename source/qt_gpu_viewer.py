@@ -2270,6 +2270,9 @@ class QtGPUModelPanel(QWidget):
         self._native_pool.setMaxThreadCount(2)
         self._native_signals = _NativeResult(self)
         self._native_signals.completed.connect(self._native_ready)
+        self._file_generation = 0
+        self._file_signals = _NativeResult(self)
+        self._file_signals.completed.connect(self._file_animation_ready)
 
     def set_native_catalog(self, references, idle=None, description='',
                            loader=None, refresh_library=None, character=None,
@@ -2504,6 +2507,7 @@ class QtGPUModelPanel(QWidget):
         # The background converter polls this generation and terminates its
         # child process. Old QThreadPool results are ignored by token.
         self._native_generation += 1
+        self._file_generation += 1
         self._auto_dba_loading = False
         self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
@@ -2645,15 +2649,40 @@ class QtGPUModelPanel(QWidget):
             self._load_animation_file(path)
 
     def _load_animation_file(self, path):
-        try:
+        # Decoding and validating full GLB animation rigs is expensive and
+        # must not freeze Qt or hide the loading state behind a modal dialog.
+        self._file_generation += 1
+        self._native_generation += 1  # ignore superseded CAF/DBA callbacks
+        token = self._file_generation
+        self.cancel_native_button.setEnabled(True)
+        self._set_native_loading('Reading and validating animated GLB…')
+        def decode(unused):
             from model_animation import AnimatedGLB
+            from gpu_model_preview import prepare_geometry
             imported = AnimatedGLB.from_file(path)
-            self._show_animated(imported, auto_play=True)
+            return (imported, prepare_geometry(imported.preview_mesh)), {
+                'file': str(path)}
+        self._native_pool.start(_NativeConversion(decode, None, token,
+                                                  self._file_signals))
+
+    def _file_animation_ready(self, token, result, error):
+        if token != self._file_generation:
+            return
+        self._set_native_loading(None)
+        self.cancel_native_button.setEnabled(False)
+        if error:
+            self.anim_status.setText('Animation import failed: ' + str(error)[:280])
+            return
+        try:
+            (imported, geometry), details = result
+            self._show_animated(imported, auto_play=True,
+                                prepared_geometry=geometry,
+                                choose_dba_fallback=True)
             self.anim_status.setText(
                 '%d playable clips from %s. Original game files unchanged.' %
-                (len(imported.clips), path))
-        except Exception as exc:
-            QMessageBox.warning(self, 'Animation import failed', str(exc))
+                (len(imported.clips), details['file']))
+        except (ValueError, OSError) as exc:
+            self.anim_status.setText('Animation import rejected: ' + str(exc)[:280])
 
     def _show_animated(self, imported, *, auto_play, prepared_geometry=None,
                        choose_dba_fallback=False, materials_override=None):
