@@ -8,6 +8,7 @@ RELEASE_NOTES = (
         "Prefer verified third-person character assemblies for main Blender GLB exports instead of accidentally choosing first-person view models.",
         "Remove redundant Asset Library read-only header rows; keep a compact inline status and maximize model preview space.",
         "Improve character export diagnostics and preserve the protected File Explorer with regression coverage.",
+        "Keep large CryEngine animation catalogs from aborting character exports; prioritize relevant clips and report skipped references.",
     )),
     ('1.3.0', (
         "Render verified CryEngine Glass visors as translucent in the GPU viewer, preserving source opacity, tint, fog, Fresnel and refraction settings.",
