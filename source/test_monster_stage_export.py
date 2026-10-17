@@ -155,7 +155,7 @@ class MonsterRootExportTests(TestCase):
             return {'format':'FBX Binary', 'actions': actions}
         with (patch('character_export_command.build_cdf_folder_glbs',
                     return_value=(expected, ())),
-              patch('character_asset_export.convert_glb_to_fbx',
+              patch('fbx_export_converter.convert_glb_to_fbx',
                     side_effect=make_fbx)):
             result = export_character_directory(
                 self.home/'files'/MONSTER, self.output, index={})
@@ -195,7 +195,7 @@ class MonsterRootExportTests(TestCase):
                     'actions':[x['name'] for x in _unpack_glb(blob)[0]['animations']]}
         with (patch('character_export_command.build_cdf_folder_glbs',
                     return_value=(assemblies, ())),
-              patch('character_asset_export.convert_glb_to_fbx',
+              patch('fbx_export_converter.convert_glb_to_fbx',
                     side_effect=make_fbx)):
             result = export_character_directory(
                 self.home/'files'/elder, self.output, index={})
