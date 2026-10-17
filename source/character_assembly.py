@@ -305,11 +305,21 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         # Hunter body accessories (mask, scarf, flashlight, etc.) stay visible
         # when a weapon changes; only separate equipment is selectable.
         body_stems = [Path(rel).stem.casefold() + '_' for _, rel in primary]
+        clean = lambda value: re.sub(r'[^a-z0-9]', '', value.casefold())
+        # CDF SkinSets outrank a filename's anatomical suffix. Kala's
+        # techriftdevice_3p_arm.skin ends in "_arm" but the CDF explicitly
+        # hides riftdevicearm when Banshee Gun/Armor Reducer is equipped.
+        # Treating that mesh as a permanent limb renders two weapon arms
+        # simultaneously, with the wrong purple glow over the Banshee Gun.
+        hidden_equipment = frozenset().union(
+            *(names for key, names in skin_sets.items()
+              if key.startswith('hiddenwhen') and key.endswith('selected')))
         primary.extend((label, rel) for label, rel in skins
-                       if (label, rel) not in primary and
-                       (any(Path(rel).stem.casefold().startswith(stem)
-                            for stem in body_stems)
-                        or _hunter_anatomical_skin(label, rel, cdf)))
+                       if (label, rel) not in primary
+                       and clean(label) not in hidden_equipment
+                       and (any(Path(rel).stem.casefold().startswith(stem)
+                                for stem in body_stems)
+                            or _hunter_anatomical_skin(label, rel, cdf)))
     options = [(label, rel) for label, rel in skins if (label, rel) not in primary]
     if equipment == 'body':
         chosen = []
@@ -318,9 +328,32 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
     else:
         selected_matches = [(label, rel) for label, rel in options
                             if rel.casefold() == selected_skin]
-        # The first CDF skin after the body is the character's default
-        # equipped appearance. Draw exactly ONE, never every overlapping gun.
-        chosen = selected_matches or options[:1]
+        # Opening a dependent arm mesh must select its owning equipment,
+        # not display the arm without its Rift Device. CDF presence and
+        # SkinSet membership supply the evidence for this relationship.
+        if (len(selected_matches) == 1 and
+                re.sub(r'[^a-z0-9]', '', selected_matches[0][0].casefold())
+                == 'riftdevicearm' and
+                'hiddenwhenriftdeviceselected' in skin_sets):
+            owner = [(label, rel) for label, rel in options
+                     if re.sub(r'[^a-z0-9]', '', label.casefold())
+                     == 'riftdevice']
+            if len(owner) == 1:
+                selected_matches = owner
+        # The Banshee Gun is the default appearance shown in Kala's game
+        # reference; unlike the first CDF attachment (Armor Reducer), it
+        # has its own verified blue glow. Do not change other hunters, and
+        # never override an explicitly selected weapon.
+        default = options[:1]
+        if (cdf.casefold().replace('\\', '/').endswith(
+                'characters/hunters/merc_tech/tech_3p.cdf') and
+                'hiddenwhenbansheegunselected' in skin_sets):
+            banshee = [(label, rel) for label, rel in options
+                       if label.casefold() == 'bansheegun'
+                       and rel.casefold().endswith('/techbansheegun_3p.skin')]
+            if len(banshee) == 1:
+                default = banshee
+        chosen = selected_matches or default
     requested = primary + chosen
     # Respect CDF SkinSets. Kala's Rift Device and its arm are a set,
     # while other weapon skins should be hidden.
