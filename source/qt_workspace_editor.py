@@ -2216,8 +2216,7 @@ class QtWorkspaceEditor(QMainWindow):
                         lambda checked=False, name=virtual: self._select_character_equipment(name))
         menu.addSeparator()
         restore = menu.addAction('Restore Default Loadout')
-        restore.setEnabled(bool(self.character_skin_choice or
-                                self.character_faceplate_choice))
+        restore.setToolTip('Use the CDF default equipment and normal faceplate, if available.')
         restore.triggered.connect(self._restore_character_loadout)
 
     def _select_character_equipment(self, name):
@@ -2236,7 +2235,7 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode != 'models' or not self.current:
             return
         preview = self.character_preview
-        self.character_skin_choice = None
+        self.character_skin_choice = '__default__'
         self.character_faceplate_choice = None
         # An explicitly opened alternate face source would otherwise remain
         # the default when faceplate=None. Restore Emet's normal plate instead.
