@@ -146,31 +146,18 @@ def export_character_animation_folder(
             row['conversion'] = 'Not a standalone convertible clip: ' + explanation[:125]
         statuses.append(row)
 
+    # A DBA database and loose CAF clips are independent valid motion sources.
+    # Do not suppress the verified DBA simply because some loose CAFs converted:
+    # that previously made 19 valid CAFs hide hundreds of database references.
+    # Always attach both sets to this same checked rig, never retarget by name.
+    animated = model_blob
     converted = []
-    if accepted and rigged:
-        # Test compatibility separately above, then assemble only once to
-        # avoid rebuilding CDF models/textures for every animation.
-        animated = model_blob
-        for ref,row in accepted:
-            checkpoint()
-            try:
-                proposed, details = append_caf_animations(
-                    animated, [(ref.name, Path(ref.file).read_bytes())])
-                if len(proposed) > MAX_ANIMATED_GLB_BYTES:
-                    raise ValueError('Combined animation GLB exceeds safety budget')
-                animated = proposed
-            except (OSError, ValueError) as exc:
-                row['conversion'] = 'Failed assembling: ' + str(exc)[:160]
-                continue
-            row['conversion'] = 'Exported into animated GLB'
-            converted.append(ref.name)
-        if converted:
-            # Animated GLBs contain the verified original armature and mesh,
-            # not detached keyframes lacking the correct bone attachments.
-            (folder / (prefix + '_animations.glb')).write_bytes(animated)
-    if not converted and rigged and convert_database and chosen_dba is not None and character is not None:
+    converted_keys = set()
+    dba_failed = None
+    if rigged and convert_database and chosen_dba is not None and character is not None:
         checkpoint()
-        matching = next((row for row in statuses if row['virtual'] == chosen_dba.virtual_path), None)
+        matching = next(
+            (row for row in statuses if row['virtual'] == chosen_dba.virtual_path), None)
         try:
             from database_animation import (
                 convert_database_motion, convert_historical_database_motion)
@@ -180,24 +167,73 @@ def export_character_animation_folder(
             if progress:
                 progress('Converting verified DBA for Blender', 0, 1)
             if historical:
-                animated = convert_historical_database_motion(
+                proposed = convert_historical_database_motion(
                     model_blob, chosen_dba, index, character,
                     preferred_workspace=workspace, cancelled=cancelled)
             else:
-                animated = convert_database_motion(
+                proposed = convert_database_motion(
                     model_blob, chosen_dba, index, character,
                     preferred_workspace=workspace)
-            animated_doc, _ = _unpack_glb(animated)
-            clips = animated_doc.get('animations', ())
-            if not clips or len(animated) > MAX_ANIMATED_GLB_BYTES:
-                raise ValueError('DBA conversion produced no bounded animation GLB')
-            (folder / (prefix + '_animations.glb')).write_bytes(animated)
-            converted = [clip.get('name','Verified DBA motion') for clip in clips]
+            database_doc, _ = _unpack_glb(proposed)
+            clips = database_doc.get('animations', ())
+            if (len(database_doc.get('skins', ())) != 1 or not clips
+                    or len(clips) > MAX_NATIVE_CLIPS
+                    or len(proposed) > MAX_ANIMATED_GLB_BYTES):
+                raise ValueError('DBA conversion produced no bounded rigged animation GLB')
+            names = [clip.get('name','').strip() for clip in clips]
+            if any(not name for name in names) or len(set(names)) != len(names):
+                raise ValueError('DBA converter produced missing or duplicate clip names')
+            animated = proposed
+            converted.extend(names)
+            converted_keys.update(name.casefold() for name in names)
             if matching is not None:
-                matching['conversion'] = 'Converted verified DBA tracks to animated GLB'
+                matching['conversion'] = (
+                    '%d verified DBA clips exported into animated GLB' % len(names))
         except (ValueError, OSError, RuntimeError, TimeoutError) as exc:
+            dba_failed = str(exc)[:175]
             if matching is not None:
-                matching['conversion'] = 'DBA unavailable: ' + str(exc)[:175]
+                matching['conversion'] = 'DBA unavailable: ' + dba_failed
+
+    # Only standalone rig-compatible CAFs are appended; all source material,
+    # original skeleton mapping and already verified DBA tracks stay intact.
+    for ref, row in accepted if rigged else ():
+        checkpoint()
+        key = ref.name.casefold()
+        if key in converted_keys:
+            row['conversion'] = 'Already provided by verified DBA (not duplicated)'
+            continue
+        if len(converted) >= MAX_NATIVE_CLIPS:
+            row['conversion'] = 'Skipped: combined CAF/DBA limit of 256 verified clips'
+            continue
+        try:
+            proposed, details = append_caf_animations(
+                animated, [(ref.name, Path(ref.file).read_bytes())])
+            if (details.get('clips') != 1 or
+                    len(proposed) > MAX_ANIMATED_GLB_BYTES):
+                raise ValueError('Combined animation GLB exceeds safety budget')
+            updated, _ = _unpack_glb(proposed)
+            if (len(updated.get('skins', ())) != 1 or
+                    len(updated.get('animations', ())) != len(converted) + 1):
+                raise ValueError('CAF append changed verified rig or animation count')
+            animated = proposed
+        except (OSError, ValueError) as exc:
+            row['conversion'] = 'Failed assembling: ' + str(exc)[:160]
+            continue
+        row['conversion'] = 'Exported into animated GLB'
+        converted.append(ref.name)
+        converted_keys.add(key)
+
+    # Write a single final GLB only when its complete track manifest is valid.
+    # The saved manifest distinguishes actual Action clips from references.
+    if converted:
+        checkpoint()
+        (folder / (prefix + '_animations.glb')).write_bytes(animated)
+    for row in statuses:
+        if (row['kind'] == 'dba'
+                and row['conversion'] == 'DBA conversion candidate (verified separately)'):
+            row['conversion'] = (
+                'Not converted: preferred DBA was processed for this skeleton'
+                if chosen_dba is not None else 'Not converted: no verified DBA selected')
     note_text = (
         'Animated GLB includes original rig, mesh and embedded textures. '
         'CAF/DBA source attachments are CryEngine data, not separate Blender animation files.'
