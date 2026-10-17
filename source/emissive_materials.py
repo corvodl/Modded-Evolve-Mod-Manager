@@ -163,6 +163,14 @@ def emission_settings(material):
     else:
         color = modern_color if modern_color is not None else serialized_color
     explicit, decal = _map_references(material)
+    if legacy and decal and shader == 'illum' and not explicit and color is None:
+        # CryEngine Illum Decal carries RGB emission but the owning legacy
+        # material may tint it through its declared Diffuse color. Without
+        # this the bright Decal RGB alone can make colored tubes white.
+        # Do not apply this to modern Emittance or alpha-only Body glow.
+        authored_tint = _color(_parameter(material, 'Diffuse'))
+        if authored_tint is not None and any(authored_tint):
+            color = authored_tint
     if explicit and intensity_raw is None:
         intensity = 1.0
     if intensity_raw is None and color is not None and any(color):
