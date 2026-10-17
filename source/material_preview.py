@@ -106,15 +106,15 @@ GLASS_PREVIEW_SURFACE_OPACITY = 0.40
 def preview_material_opacity(materials, slot):
     """Display opacity. Preserve source MTL opacity in PreviewMaterials.
 
-    CRYENGINE Glass is always refractive. If the source did not supply a
-    sub-unity opacity, a neutral 40%-surface / 60%-transmission approximation
+    CRYENGINE Glass is always refractive. If the source does not supply a meaningfully
+    translucent opacity (CryEngine's 99% glass is still refractive), a neutral 40%-surface / 60%-transmission approximation
     keeps the underlying face visible. Explicit values win, and non-glass
     materials (including masks on armor) are unchanged.
     """
     opacities = getattr(materials, 'opacity', ())
     opacity = float(opacities[slot]) if slot < len(opacities) else 1.0
     glasses = getattr(materials, 'glass_materials', ())
-    if slot < len(glasses) and glasses[slot] and opacity >= 0.999:
+    if slot < len(glasses) and glasses[slot] and opacity >= 0.98:
         return GLASS_PREVIEW_SURFACE_OPACITY
     return max(0., min(1., opacity))
 
@@ -739,7 +739,7 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             explicitly_packed_opacity or
             (not glass_shader and (bool(alpha_test) or opacity < .999 or
              any(word in shader for word in ('transparent','translucent','decal')))))
-        if glass_shader and opacity >= .999:
+        if glass_shader and opacity >= .98:
             issues.append(
                 name + ': Glass refractive surface uses approximate preview '
                 'transmission; original MTL opacity and tint are unchanged')
