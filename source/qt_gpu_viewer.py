@@ -1927,8 +1927,8 @@ class QtGPUModelPanel(QWidget):
                        and materials.glass_materials[slot]]
             details = [glass_preview_report(materials, slot)
                        for slot in glasses[:2]]
-            text = ('%d Glass material(s) · choose a slot for details.\\n%s' %
-                    (len(glasses), '\\n'.join(details))) if glasses else ''
+            text = ('%d Glass material(s) · choose a slot for details.\n%s' %
+                    (len(glasses), '\n'.join(details))) if glasses else ''
         self.glass_source_info.setText(
             text or 'No CryEngine Glass shader in selected material.')
         self.glass_source_info.setToolTip(text or
