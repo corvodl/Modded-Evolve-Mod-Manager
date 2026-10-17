@@ -22,6 +22,8 @@ class RepairReport:
     boundary_edges: int = 0
     disconnected_triangles: int = 0
     uv_coordinates_snapped: int = 0
+    welded_vertices: int = 0
+    unused_vertices_removed: int = 0
     notes: tuple = ()
 
 
@@ -188,3 +190,85 @@ def prepare_export_mesh(mesh, *, close_tiny_holes=True):
         tiny_holes_closed=holes, boundary_edges=boundary_count,
         disconnected_triangles=isolated, uv_coordinates_snapped=snapped,
         notes=tuple(notes))
+
+
+def prepare_static_texturing_mesh(mesh, report):
+    """Compact an *unrigged* export without collapsing UV/hard/material seams.
+
+    IMPORTANT: never use on a CDF/skinned character before skinning. Native
+    CryEngine skin weights are indexed by the original render-vertex IDs.
+    The GLB full-character path deliberately retains those exact IDs.
+    """
+    verts = tuple(mesh.vertices)
+    uvs = tuple(getattr(mesh, 'uvs', ()) or ())
+    normals = tuple(getattr(mesh, 'vertex_normals', ()) or ())
+    tangents = tuple(getattr(mesh, 'vertex_tangents', ()) or ())
+    if len(uvs) != len(verts):
+        return mesh, replace(report, notes=report.notes + (
+            'Static vertex welding skipped because the complete UV0 stream is unavailable.',))
+    if normals and len(normals) != len(verts):
+        raise ValueError('Incomplete original vertex normals.')
+    if tangents and len(tangents) != len(verts):
+        raise ValueError('Incomplete original vertex tangents.')
+    # Keep independent material regions separate; they can have different
+    # textures even when the positions and UV floats happen to be identical.
+    material_owners = [set() for _ in verts]
+    face_normals = [set() for _ in verts]
+    for first, count, slot in mesh.subsets or ((0, len(mesh.triangles)*3, 0),):
+        for tri in mesh.triangles[first//3:(first+count)//3]:
+            for vi in tri:
+                material_owners[vi].add(slot)
+            if not normals:
+                aa,bb,cc = [verts[vi] for vi in tri]
+                ab = tuple(float(bb[i])-float(aa[i]) for i in range(3))
+                ac = tuple(float(cc[i])-float(aa[i]) for i in range(3))
+                cross = (ab[1]*ac[2]-ab[2]*ac[1],
+                         ab[2]*ac[0]-ab[0]*ac[2],
+                         ab[0]*ac[1]-ab[1]*ac[0])
+                length = math.sqrt(sum(t*t for t in cross))
+                face = tuple(round(t/length, 6) for t in cross)
+                for vi in tri:
+                    face_normals[vi].add(face)
+    def replace_mesh(**changes):
+        if is_dataclass(mesh):
+            return replace(mesh, **changes)
+        new = copy(mesh)
+        for key, val in changes.items():
+            setattr(new, key, val)
+        return new
+    unique = {}
+    remap = {}
+    new_vertices, new_uvs, new_normals, new_tangents = [], [], [], []
+    for index in sorted({i for tri in mesh.triangles for i in tri}):
+        key = (
+            tuple(float(v) for v in verts[index]),
+            tuple(float(v) for v in uvs[index]),
+            tuple(sorted(material_owners[index])),
+            tuple(float(v) for v in normals[index]) if normals else
+            tuple(sorted(face_normals[index])),
+            tuple(float(v) for v in tangents[index]) if tangents else ())
+        position = unique.get(key)
+        if position is None:
+            position = len(new_vertices)
+            unique[key] = position
+            new_vertices.append(verts[index])
+            new_uvs.append(uvs[index])
+            if normals:
+                new_normals.append(normals[index])
+            if tangents:
+                new_tangents.append(tangents[index])
+        remap[index] = position
+    cleaned = replace_mesh(
+        vertices=tuple(new_vertices),
+        triangles=tuple(tuple(remap[i] for i in tri)
+                        for tri in mesh.triangles),
+        uvs=tuple(new_uvs),
+        vertex_normals=tuple(new_normals),
+        vertex_tangents=tuple(new_tangents))
+    welded = len(remap)-len(new_vertices)
+    removed = len(verts)-len(remap)
+    return cleaned, replace(
+        report, welded_vertices=welded, unused_vertices_removed=removed,
+        notes=report.notes + (
+            'Static unrigged LOD0 mesh: welded only matching UV0, normal and material regions.',
+        ))
