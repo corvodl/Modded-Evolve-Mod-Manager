@@ -320,7 +320,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         Assemblies/ and CDF_assembly_report.json. That legacy layout is
         incompatible with the character-folder export contract. Keep one
         implementation so both menus export <Character>/<Character>.fbx,
-        animations/, textures/, and models/ consistently.
+        textures/ and models/ consistently, with Actions embedded in FBX.
         """
         return super().export_blender_folder()
 

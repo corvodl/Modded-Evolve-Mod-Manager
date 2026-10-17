@@ -60,12 +60,10 @@ for obj in meshes:
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
         bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-# Material isolation is deliberately *not* automatic UV unwrapping.
-# Large original texture atlases can look like densely overlapping UVs when
-# every part is selected, but their islands must retain source coordinates
-# to line up with CryEngine diffuse/normal masks. Separate mesh objects
-# by existing material IDs, preserving their original UV loops and vertex
-# groups so each material is independently selectable for painting.
+# Never unwrap the ORIGINAL texture UV0. Dense, overlapping CryEngine
+# atlases and intentional mirrored islands must retain their source coordinates
+# for the existing DDS maps. Material separation retains vertex groups; a
+# second UV1 is unwrapped for painting, without changing UV0 or rig weights.
 for obj in tuple(meshes):
     ids = {polygon.material_index for polygon in obj.data.polygons}
     if len(ids) <= 1:
@@ -80,6 +78,189 @@ for obj in tuple(meshes):
 meshes = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
 if not meshes or any(not obj.data.polygons for obj in meshes):
     raise RuntimeError('Splitting FBX material groups produced an empty mesh.')
+# UV_TOPOLOGY_PLANNER_START
+from collections import Counter, defaultdict
+
+def plan_split_vertex_reconnections(positions, triangles, *, weights=(), normals=(), materials=()):
+    """Reconnect only renderer-split geometric edges with matching rig data.
+
+    The plan changes vertex connectivity, never per-corner UV values.
+    UV seams may remain UV seams after the coincident mesh vertices reconnect.
+    """
+    count = len(positions)
+    if not 3 <= count <= 250000 or len(triangles) > 500000:
+        raise ValueError('Original UV topology exceeds safe model limits.')
+    if weights and len(weights) != count:
+        raise ValueError('Skin weights disagree with vertex count.')
+    if normals and len(normals) != count:
+        raise ValueError('Normals disagree with vertex count.')
+    if materials and len(materials) != len(triangles):
+        raise ValueError('Material groups disagree with triangle count.')
+    position_keys = []
+    for point in positions:
+        if len(point) != 3 or not all(math.isfinite(float(v)) for v in point):
+            raise ValueError('Original mesh contains invalid coordinates.')
+        position_keys.append(tuple(round(float(v), 7) for v in point))
+    weight_keys = [tuple((int(index), round(float(value), 7))
+                         for index, value in row) for row in weights] if weights else None
+    normal_keys = [tuple(round(float(v), 5) for v in row)
+                   for row in normals] if normals else None
+    edges = defaultdict(list)
+    uses = [set() for _ in range(count)]
+    for face_id, face in enumerate(triangles):
+        if (len(face) != 3 or len(set(face)) != 3
+                or any(not isinstance(i, int) or i < 0 or i >= count for i in face)):
+            raise ValueError('Invalid original triangle index.')
+        for i in face:
+            uses[i].add(face_id)
+        for a, c in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
+            if position_keys[a] != position_keys[c]:
+                edges[tuple(sorted((position_keys[a], position_keys[c])))].append(
+                    (face_id, a, c))
+    candidate = []
+    renderer_splits = 0
+    nonmanifold = 0
+    for edge, pair in edges.items():
+        if len(pair) > 2:
+            nonmanifold += 1
+            continue
+        if len(pair) != 2:
+            continue
+        (fa, a, c), (fb, b, d) = pair
+        if fa == fb or (materials and materials[fa] != materials[fb]):
+            continue
+        left = {position_keys[a]: a, position_keys[c]: c}
+        right = {position_keys[b]: b, position_keys[d]: d}
+        if set(left.values()) == set(right.values()):
+            continue
+        renderer_splits += 1
+        for point in edge:
+            x, y = left[point], right[point]
+            if x == y or uses[x] & uses[y]:
+                continue
+            if weight_keys is not None and weight_keys[x] != weight_keys[y]:
+                continue
+            if normal_keys is not None and normal_keys[x] != normal_keys[y]:
+                continue
+            candidate.append((min(x, y), max(x, y)))
+    parent = list(range(count))
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    for x, y in sorted(set(candidate)):
+        a, c = root(x), root(y)
+        if a == c or uses[a] & uses[c]:
+            continue
+        low, high = sorted((a, c))
+        parent[high] = low
+        uses[low].update(uses[high])
+    mapping = {i: root(i) for i in range(count) if root(i) != i}
+    return mapping, {
+        'render_vertex_split_edges': renderer_splits,
+        'nonmanifold_edges_skipped': nonmanifold,
+        'safe_vertex_pairs': len(mapping),
+    }
+# UV_TOPOLOGY_PLANNER_END
+
+def _corner_signature(mesh):
+    """Snapshot face-corner UV, position, skin influences and normals."""
+    layers = list(mesh.uv_layers)
+    def fingerprint(i, loop_id):
+        vertex = mesh.vertices[i]
+        weight = tuple(sorted((g.group, round(g.weight, 6)) for g in vertex.groups))
+        uvs = tuple(tuple(round(float(v), 6) for v in layer.data[loop_id].uv)
+                    for layer in layers)
+        return (tuple(round(float(v), 6) for v in vertex.co), uvs,
+                weight, tuple(round(float(v), 5) for v in vertex.normal))
+    return Counter((poly.material_index, tuple(sorted(
+        fingerprint(mesh.loops[li].vertex_index, li)
+        for li in range(poly.loop_start, poly.loop_start + poly.loop_total))))
+        for poly in mesh.polygons)
+
+def _rebuild_original_uv_topology(obj):
+    mesh = obj.data
+    source_uvs = len(mesh.uv_layers)
+    if source_uvs:
+        uv0 = mesh.uv_layers[0]
+        prior = uv0.name
+        collision = mesh.uv_layers.get('UV0_Original')
+        if collision is not None and collision != uv0:
+            collision.name = 'SourceUV_Additional'
+        uv0.name = 'UV0_Original'
+        uv0.active_render = True
+        mesh.uv_layers.active = uv0
+        for material in mesh.materials:
+            if material and material.use_nodes:
+                for node in material.node_tree.nodes:
+                    if node.type == 'UVMAP' and node.uv_map == prior:
+                        node.uv_map = 'UV0_Original'
+    if not mesh.uv_layers and any(
+            mat and mat.use_nodes and any(n.type == 'TEX_IMAGE'
+                                          for n in mat.node_tree.nodes)
+            for mat in mesh.materials):
+        raise RuntimeError('Textured mesh lacks original UV coordinates.')
+    if any(not math.isfinite(v)
+           for layer in mesh.uv_layers
+           for loop in layer.data for v in loop.uv):
+        raise RuntimeError('Original UV stream contains nonfinite values.')
+    summary = {'object': obj.name, 'uv_sets': [x.name for x in mesh.uv_layers],
+               'source_uv_sets': source_uvs, 'generated_uv_sets': 0,
+               'source_uvs_preserved': True, 'weights_preserved': True,
+               'reconnected_vertices': 0, 'reconnect_status': 'none needed'}
+    if not source_uvs or mesh.shape_keys or any(len(p.vertices) != 3 for p in mesh.polygons):
+        summary['reconnect_status'] = 'unsupported shape keys, nontriangles, or missing UV'
+        return summary
+    # Never merge across independently exported material objects or nonmanifold
+    # edges. Extra vertex attributes may depend on their original vertex IDs.
+    if any(a.domain == 'POINT' and a.name != 'position' for a in mesh.attributes):
+        summary['reconnect_status'] = 'custom point attributes preserved without welding'
+        return summary
+    positions = [tuple(v.co) for v in mesh.vertices]
+    triangles = [tuple(int(i) for i in p.vertices) for p in mesh.polygons]
+    weights = [tuple(sorted((g.group, g.weight) for g in v.groups))
+               for v in mesh.vertices]
+    normals = [tuple(v.normal) for v in mesh.vertices]
+    mapping, diagnostic = plan_split_vertex_reconnections(
+        positions, triangles, weights=weights, normals=normals,
+        materials=[p.material_index for p in mesh.polygons])
+    summary.update(diagnostic)
+    if not mapping:
+        summary['reconnect_status'] = 'no safely reconnectable renderer seams'
+        return summary
+    original_fingerprint = _corner_signature(mesh)
+    saved = mesh.copy()
+    try:
+        import bmesh
+        bm = bmesh.new()
+        try:
+            bm.from_mesh(mesh)
+            bm.verts.ensure_lookup_table()
+            bmesh.ops.weld_verts(bm, targetmap={
+                bm.verts[source]: bm.verts[target]
+                for source, target in mapping.items()})
+            bm.to_mesh(mesh)
+        finally:
+            bm.free()
+        mesh.update()
+        if (len(mesh.uv_layers) != source_uvs
+                or len(mesh.polygons) != len(triangles)
+                or _corner_signature(mesh) != original_fingerprint):
+            raise ValueError('UV loop, rig influences or surface normals changed')
+        summary['reconnected_vertices'] = len(mapping)
+        summary['reconnect_status'] = 'validated per-corner original UV and skin weights'
+        bpy.data.meshes.remove(saved)
+    except (ValueError, RuntimeError, TypeError) as exc:
+        # Conserve the original imported mesh when Blender cannot guarantee
+        # exact UV, weight, normal and triangle preservation.
+        damaged = obj.data
+        obj.data = saved
+        bpy.data.meshes.remove(damaged)
+        summary['reconnect_status'] = 'safe fallback: ' + str(exc)[:160]
+    return summary
+
+uv_maps = []
 material_groups = []
 for obj in meshes:
     used = {polygon.material_index for polygon in obj.data.polygons}
@@ -96,6 +277,7 @@ for obj in meshes:
         uv = obj.data.uv_layers.active
         if len(uv.data) != len(obj.data.loops):
             raise RuntimeError('Material-specific UV set is incomplete.')
+    uv_maps.append(_rebuild_original_uv_topology(obj))
     material_groups.append({
         'object':obj.name,
         'material':material.name if material else 'No material',
@@ -129,6 +311,7 @@ Path(receipt).write_text(json.dumps({
     'materials':sum(len(obj.data.materials) for obj in meshes),
     'uv_meshes':sum(bool(obj.data.uv_layers) for obj in meshes),
     'material_groups':material_groups,
+    'uv_maps':uv_maps,
 }), encoding='utf-8')
 '''
 
@@ -185,9 +368,21 @@ def convert_glb_to_fbx(blob, destination, *, static=False, blender=None, timeout
             raise ValueError('FBX conversion dropped verified skin or animations.')
         if static and verified.get('armatures'):
             raise ValueError('Static FBX must not include an armature.')
+        uv_maps = verified.get('uv_maps')
+        if (not isinstance(uv_maps, list) or
+                len(uv_maps) != verified['meshes'] or
+                any(not isinstance(row, dict)
+                    or row.get('generated_uv_sets') != 0
+                    or not row.get('source_uvs_preserved')
+                    or not row.get('weights_preserved')
+                    or (row.get('source_uv_sets') and
+                        'UV0_Original' not in row.get('uv_sets', ()))
+                    for row in uv_maps)):
+            raise ValueError('FBX original UV or skinned topology validation failed.')
         os.replace(output, target)
     return {'format':'FBX Binary', 'profile':'static' if static else 'character',
             'mesh_count':verified['meshes'], 'armatures':verified['armatures'],
             'actions':verified['actions'],
             'material_groups':verified.get('material_groups', []),
+            'uv_maps':verified['uv_maps'],
             'material_uv_verification':uv_report}
