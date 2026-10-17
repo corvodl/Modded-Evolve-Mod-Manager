@@ -5,7 +5,7 @@ or writes to the game installation. All lookups use manifest-listed virtual path
 """
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import os
 import re
 import shutil
@@ -319,6 +319,7 @@ def export_glb(identifier, relative, destination, *, root=None, build_id=None):
                 payload, rig = skin_glb(
                     payload, files[relative].read_bytes(), Path(hits[0]['file']).read_bytes())
                 report['rig'] = '%s bones' % rig['bone_count']
+                report['bone_count'] = rig['bone_count']
             except (OSError, ValueError) as exc:
                 report['rig'] = 'Unsupported: ' + str(exc)[:160]
     report['fbx_conversion'] = convert_glb_to_fbx(
