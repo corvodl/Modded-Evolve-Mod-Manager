@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
 import unittest
+from unittest.mock import patch
 
 from character_full_models import discover_full_characters
 from character_asset_export import (
