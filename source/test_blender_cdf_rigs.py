@@ -78,6 +78,46 @@ class BlenderCDFRigTests(unittest.TestCase):
             self.assertTrue(np.isclose(
                 _accessor(doc,binary,attrs['WEIGHTS_0']).sum(axis=1),1).all())
 
+    def test_emet_body_normal_face_and_cannon_keep_native_rig_and_textures(self):
+        from types import SimpleNamespace
+        from PIL import Image
+        from material_preview import PreviewMaterials
+        from model_textured_export import embed_diffuse_textures
+        from character_export_verification import verify_emet_glb
+
+        base = 'characters/hunters/merc_emet/'
+        labels = ('emet_3p.skinm', 'emet_3p_face_normal.skinm',
+                  'emetremotecannon_3p.skinm')
+        combined, _ = combine_meshes([
+            (label, self.mesh, None) for label in labels])
+        blob = glb_bytes(combined)
+        # Preserve actual decoded materials, rather than using only vertex
+        # and subset metadata to assert visual completeness.
+        tex = Image.new('RGBA', (4, 4), (200, 100, 60, 255))
+        mat = PreviewMaterials((tex, tex, tex),
+                               ('body', 'normal face', 'remote cannon'), 'emet_3p.mtl')
+        blob, count = embed_diffuse_textures(blob, mat)
+        self.assertGreaterEqual(count, 1)
+        blob, rig = skin_glb_composite(
+            blob, [(self.render, tiny_skeleton(), 4)] * 3,
+            tiny_skeleton())
+        character = SimpleNamespace(
+            cdf=base + 'emet_3p.cdf',
+            rig_parts=tuple((base + label, None, None, 4) for label in labels),
+            selected_faceplate=base + 'emet_3p_face_normal.skin',
+            omitted=())
+        verification = verify_emet_glb(
+            blob, character, require_default_faceplate=True)
+        doc, _ = _unpack_glb(blob)
+        self.assertEqual(verification['status'], 'verified_body_and_remote_cannon')
+        self.assertGreaterEqual(verification['part_drawn_triangles'][0], 1)
+        self.assertGreaterEqual(verification['part_drawn_triangles'][2], 1)
+        self.assertEqual(verification['rig_count'], 1)
+        self.assertGreaterEqual(verification['texture_count'], 1)
+        self.assertEqual(len(doc['skins']), 1)
+        self.assertIn('WEIGHTS_0', doc['meshes'][0]['primitives'][0]['attributes'])
+        self.assertEqual(rig['part_count'], 3)
+
     def test_rejects_part_size_mismatch(self):
         with self.assertRaisesRegex(ValueError,'vertex count'):
             skin_glb_composite_separate(
