@@ -11,7 +11,9 @@ from PIL import Image
 
 from emissive_materials import (bake_emission_map, emission_settings, emission_mode,
                                 shader_flags, emission_mask_source,
-                                emission_texture_node, subset_emission_coverage)
+                                emission_texture_node, subset_emission_coverage,
+                                preview_emission_strength,
+                                EVOLVE_REFERENCE_EMISSION_STRENGTH)
 from material_preview import PreviewMaterials
 from model_preview import read_preview_mesh
 from model_blender_export import glb_bytes
@@ -31,6 +33,30 @@ class EmissiveMaterialTests(unittest.TestCase):
             <Param Name="GlowAmount" Value="0.75" />
             </ShaderParams></Material>''')
         self.assertEqual(emission_settings(second)[0], 0.75)
+
+    def test_reference_calibration_only_affects_verified_positive_glow(self):
+        # The source MTL numbers and RGB mask remain unmodified; 100 is the
+        # user-validated target intensity for Blender and GPU presentation.
+        self.assertEqual(EVOLVE_REFERENCE_EMISSION_STRENGTH, 100.)
+        for original in (0.75, 2.5, 3., 16., 100.):
+            self.assertEqual(preview_emission_strength(original), 100.)
+        for original in (None, 0., -3., float('nan'), float('inf'), 'bad'):
+            self.assertEqual(preview_emission_strength(original), 0.)
+        self.assertEqual(preview_emission_strength(3., has_emissive_map=False), 0.)
+
+    def test_disabled_emissive_map_does_not_emit_in_glb(self):
+        mesh = read_preview_mesh(test_mesh(), 'off.skinm')
+        gray = Image.new('RGB', (2,2), (80, 80, 80))
+        bright = Image.new('RGB', (2,2), (30, 90, 200))
+        materials = PreviewMaterials(
+            (gray,), ('No glow',), 'off.mtl',
+            emissive_maps=(bright,), emissive_strengths=(0.,))
+        exported, _ = embed_diffuse_textures(glb_bytes(mesh), materials)
+        doc, _ = _unpack_glb(exported)
+        material = doc['materials'][0]
+        self.assertNotIn('emissiveTexture', material)
+        self.assertNotIn('KHR_materials_emissive_strength', material.get('extensions', {}))
+        self.assertNotIn('KHR_materials_emissive_strength', doc.get('extensionsUsed', []))
 
     def test_plain_alpha_does_not_automatically_emit(self):
         material = ET.fromstring('''<Material Shader="Glass"><Textures>
@@ -70,7 +96,9 @@ class EmissiveMaterialTests(unittest.TestCase):
         self.assertEqual(material['alphaMode'], 'OPAQUE')
         self.assertEqual(material['emissiveFactor'], [1., 1., 1.])
         self.assertEqual(material['emissiveTexture']['index'], 1)
-        self.assertEqual(material['extensions']['KHR_materials_emissive_strength']['emissiveStrength'], 2.5)
+        self.assertEqual(material['extensions']['KHR_materials_emissive_strength']['emissiveStrength'], 100.)
+        self.assertEqual(material['extras']['cryEngineAuthoredEmissiveStrength'], 2.5)
+        self.assertEqual(material['extras']['evolveReferenceEmissiveStrength'], 100.)
         self.assertIn('KHR_materials_emissive_strength', doc['extensionsUsed'])
         self.assertEqual(len(doc['images']), 2)
 
