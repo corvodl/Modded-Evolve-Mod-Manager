@@ -1395,6 +1395,14 @@ class QtGPUModelPanel(QWidget):
         self.normal_diagnostic_info.setObjectName('modelNormalYSourceStatus')
         self.normal_diagnostic_info.setWordWrap(True)
         self._material_advanced.addWidget(self.normal_diagnostic_info)
+        self.glass_source_info = QLabel(self)
+        self.glass_source_info.setObjectName('modelGlassSourceDiagnostics')
+        self.glass_source_info.setWordWrap(True)
+        self.glass_source_info.setToolTip(
+            'Authored Glass opacity, fog, reflection and Fresnel. '
+            'The viewer approximates optical transmission; the source MTL '
+            'is not modified.')
+        self._material_advanced.addWidget(self.glass_source_info)
         ambient_row = QHBoxLayout()
         ambient_row.addWidget(QLabel('Studio fill'))
         self.studio_fill_slider = QSlider(Qt.Horizontal)
@@ -1421,7 +1429,8 @@ class QtGPUModelPanel(QWidget):
         self.part_select.currentIndexChanged.connect(
             lambda _index: (self._update_source_brightness(),
                             self._update_normal_source_status(),
-                            self._update_emissive_source_status()))
+                            self._update_emissive_source_status(),
+                            self._update_glass_source_status()))
         self._populate_material_slots(mesh,materials)
         self._prepare_animation_controls(self._overlay_sections['Animation'][1])
         self.native_info = _CompactDiagnosticText(self)
@@ -1875,6 +1884,29 @@ class QtGPUModelPanel(QWidget):
                 message += ' Soft halo unavailable: ' + self.canvas.bloom_error
         self.emissive_source_info.setText(message)
 
+    def _update_glass_source_status(self):
+        from material_preview import glass_preview_report
+        materials = self.canvas.materials
+        if materials is None:
+            self.glass_source_info.setText('No material loaded.')
+            return
+        subset = self.part_select.currentData()
+        if subset is not None:
+            text = glass_preview_report(materials, subset)
+        else:
+            slots = sorted({slot for _,_,slot in self.canvas.mesh.subsets})
+            glasses = [slot for slot in slots
+                       if slot < len(getattr(materials,'glass_materials',()))
+                       and materials.glass_materials[slot]]
+            details = [glass_preview_report(materials, slot)
+                       for slot in glasses[:2]]
+            text = ('%d Glass material(s) · choose a slot for details.\\n%s' %
+                    (len(glasses), '\\n'.join(details))) if glasses else ''
+        self.glass_source_info.setText(
+            text or 'No CryEngine Glass shader in selected material.')
+        self.glass_source_info.setToolTip(text or
+            'This material is not a verified CryEngine Glass submaterial.')
+
     def _populate_material_slots(self,mesh,materials):
         from material_preview import diffuse_source_stats
         slots=sorted({part[2] for part in mesh.subsets}) if mesh.subsets else [0]
@@ -1930,6 +1962,7 @@ class QtGPUModelPanel(QWidget):
             self._update_source_brightness()
         self._update_normal_source_status()
         self._update_emissive_source_status()
+        self._update_glass_source_status()
 
     def show_uv_layout(self):
         from io import BytesIO
