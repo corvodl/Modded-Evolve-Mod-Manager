@@ -24,6 +24,67 @@ def mesh_for_slot(slot):
 
 
 class CryEngineGlassVisorTests(TestCase):
+    def test_caira_lowgrav_visor_no_diffuse_and_actual_glass_params(self):
+        # Faithful reduced excerpt of the user's cairalowgrav_3p.mtl:
+        # Glass is material slot 14, NO diffuse map, Opacity=.99000001,
+        # environment is a runtime nearest_cubemap reference, not DDS.
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            prefix = 'characters/hunters/merc_cairalowgrav/'
+            material = root / 'cairalowgrav_3p.mtl'
+            material.write_text(
+                '<Material><SubMaterials>'
+                '<Material Name="visor" Shader="Glass" Opacity="0.99000001" '
+                'Diffuse="0.57112497,0.10702311,0.0074990322" '
+                'StringGenMask="%BILINEAR_FP16%DEPTH_FOG%ENVIRONMENT_MAP">'
+                '<Textures>'
+                '<Texture Map="Bumpmap" '
+                'File="materials/particle/textures/misc/diffcloud01_ddn.tif"/>'
+                '<Texture Map="Environment" File="nearest_cubemap" TexType="7"/>'
+                '</Textures><PublicParams FogColor="0.043735035,0.010960096,0" '
+                'FogDensity="10" TintColor="0.46778381,0.30946895,0" '
+                'TintCloudiness="0.33199999" FresnelScale="4.0900002" '
+                'FresnelBias="0.829" FogCutoffEnd="20" BumpScale="0.030999999"/>'
+                '</Material></SubMaterials></Material>', encoding='utf-8')
+            virtual = prefix+'cairalowgrav_3p.mtl'
+            index = {virtual: [{
+                'file': material, 'relative': virtual, 'workspace': root}]}
+            mats = load_preview_materials(
+                root, prefix+'cairalowgrav_3p.skinm', index=index)
+        self.assertEqual(mats.names, ('visor',))
+        self.assertEqual(mats.diffuse_references, ('',))
+        self.assertIsNotNone(mats.textures[0])  # source tint, not DDS
+        r,g,b = mats.textures[0].convert('RGB').getpixel((0,0))
+        self.assertGreater(r,g)
+        self.assertGreater(g,b)
+        self.assertEqual(mats.alpha_modes, (False,))
+        self.assertEqual(mats.glass_materials, (True,))
+        self.assertAlmostEqual(mats.opacity[0], .99000001)
+        self.assertEqual(preview_material_opacity(mats, 0),
+                         GLASS_PREVIEW_SURFACE_OPACITY)
+        source = mats.glass_public_params[0]
+        self.assertEqual(source['FogDensity'], 10.)
+        self.assertEqual(source['FogCutoffEnd'], 20.)
+        self.assertEqual(source['TintCloudiness'], .33199999)
+        self.assertEqual(source['FogColor'],
+                         [.043735035,.010960096,0.])
+        self.assertEqual(source['TintColor'],
+                         [.46778381,.30946895,0.])
+        self.assertEqual(source['FresnelScale'], 4.0900002)
+        self.assertEqual(source['FresnelBias'], .829)
+        mesh = mesh_for_slot(0)
+        merged, compact = combine_meshes([('Caira', mesh, mats)])
+        self.assertEqual(compact.glass_public_params[0], source)
+        exported, count = embed_diffuse_textures(glb_bytes(merged), compact)
+        self.assertEqual(count, 1)
+        doc, _ = _unpack_glb(exported)
+        pbr = doc['materials'][0]
+        self.assertEqual(pbr['extras']['cryEngineGlassPublicParams'], source)
+        self.assertAlmostEqual(pbr['extras']['cryEngineAuthoredOpacity'],
+                               .99000001)
+        self.assertIn('KHR_materials_transmission',pbr['extensions'])
+        self.assertEqual(pbr['alphaMode'],'OPAQUE')
+
     def test_glass_shader_without_alpha_still_transmits_and_opaque_body_does_not(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
