@@ -101,7 +101,7 @@ def combine_meshes(items):
         raise ValueError('No compatible character parts to combine.')
     vertices, triangles, uvs, subsets = [], [], [], []
     textures, names, issues = [], [], []
-    normals, speculars, opacities, alpha_modes = [], [], [], []
+    normals, speculars, glosses, opacities, alpha_modes = [], [], [], [], []
     transforms, sources, references, uv_available = [], [], [], []
     cutoffs = []; hidden = []
     # All verified emissive per-submaterial settings must survive assembly
@@ -172,6 +172,10 @@ def combine_meshes(items):
                            slot < len(materials.normal_maps) else None)
             speculars.append(materials.specular_maps[slot] if has_uv and materials and
                              slot < len(materials.specular_maps) else None)
+            # Split CryEngine DDNA alpha gloss belongs to this exact source
+            # MTL leaf, not an arbitrary adjacent CDF composite slot.
+            glosses.append(materials.gloss_maps[slot] if has_uv and materials and
+                           slot < len(materials.gloss_maps) else None)
             opacities.append(materials.opacity[slot] if materials and
                              slot < len(materials.opacity) else 1.0)
             alpha_modes.append(materials.alpha_modes[slot] if has_uv and materials and
@@ -217,7 +221,8 @@ def combine_meshes(items):
                                 tuple(normals), tuple(speculars),
                                 tuple(opacities), tuple(alpha_modes), tuple(transforms),
                                 tuple(sources), tuple(references), tuple(uv_available), tuple(cutoffs),
-                                hidden=tuple(hidden), emissive_maps=tuple(emissive_maps),
+                                hidden=tuple(hidden), gloss_maps=tuple(glosses),
+                                emissive_maps=tuple(emissive_maps),
                                 emissive_strengths=tuple(emissive_strengths),
                                 emissive_sources=tuple(emissive_sources),
                                 emissive_black=tuple(emissive_black),
