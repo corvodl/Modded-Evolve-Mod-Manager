@@ -386,11 +386,14 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
                if (label, rel) not in primary and (label, rel) not in faceplates]
     if equipment == 'body':
         chosen = []
-    elif equipment:
+    elif equipment and equipment != '__default__':
         chosen = [(label, rel) for label, rel in options if rel.casefold() == equipment.casefold()]
     else:
-        selected_matches = [(label, rel) for label, rel in options
-                            if rel.casefold() == selected_skin]
+        # Explicit default restoration must disregard a weapon whose source
+        # .skinm is currently open, unlike ordinary initial file selection.
+        selected_matches = ([] if equipment == '__default__' else
+                            [(label, rel) for label, rel in options
+                             if rel.casefold() == selected_skin])
         # Opening a dependent arm mesh must select its owning equipment,
         # not display the arm without its Rift Device. CDF presence and
         # SkinSet membership supply the evidence for this relationship.
