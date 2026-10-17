@@ -183,6 +183,26 @@ class UnifiedExplorerTests(unittest.TestCase):
             catalog.assert_called_once_with(
                 editor.manager.stage_path, 'characters/hero.skinm')
 
+    def test_hidden_desktop_editor_never_runs_model_decode_on_qt_thread(self):
+        from unittest.mock import Mock
+        editor = self.editor
+        pool = Mock()
+        editor._model_pool = None
+        # The first click may happen just before the preview tab is shown.
+        # It must queue work regardless of widget visibility; only offscreen
+        # test platforms should retain deterministic synchronous behavior.
+        with patch.dict(os.environ, {'QT_QPA_PLATFORM':'windows'}), \
+             patch.object(editor, 'isVisible', return_value=False), \
+             patch('PySide6.QtCore.QThreadPool', return_value=pool), \
+             patch('qt_workspace_editor.prepare_model_cached') as decode, \
+             patch.object(editor, '_model_ready') as ready:
+            editor._load_model_background('characters/hero.skinm')
+        decode.assert_not_called()
+        ready.assert_not_called()
+        pool.setMaxThreadCount.assert_called_once_with(1)
+        pool.start.assert_called_once()
+        self.assertIn('Loading model', editor.model_loading_label.text())
+
     def test_left_side_setting_controls_new_editor(self):
         self.editor.manager.settings['file_explorer_side'] = 'Left'
         other = QtWorkspaceEditor(self.editor.manager, self.editor.workspace)
