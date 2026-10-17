@@ -8,11 +8,9 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 ## Latest Stable — v1.3.2
 
-- Reuse shared high-resolution character textures across CDF attachments without charging duplicate images against the 768 MiB preview budget.
-- Decode only referenced material slots while retaining verified texture quality and reporting genuinely oversized assemblies.
-- Display Emet's Normal faceplate by default; switch between his five faceplates independently of equipped weapons.
-- Add a compact Model > Character Equipment menu for CDF-backed weapons, abilities, accessories and head variants.
-- Preserve compatible equipment and faceplate selections in model previews and Blender exports, with a Restore Default Loadout action.
+- Reuse verified high-resolution textures across CDF parts without double-counting preview memory.
+- Use a compact Character Equipment menu and default Emet to his Normal faceplate.
+- Keep each CryEngine material's original relative GlowAmount in GPU previews and Blender GLBs instead of forcing every glow to 100.
 
 ## Download and install
 
