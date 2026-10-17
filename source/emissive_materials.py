@@ -236,6 +236,37 @@ def preview_emission_strength(authored_strength, *, has_emissive_map=True):
     return EVOLVE_REFERENCE_EMISSION_STRENGTH
 
 
+# The 100-unit calibration is appropriate for the previously validated
+# glowing materials, but it blows out Behemoth/Rocky's broad lava surfaces in
+# the GPU viewport. Keep this visual-only exception tied to verified source
+# material provenance; leave source DDS and GLB emission metadata untouched.
+BEHEMOTH_GPU_EMISSION_CAP = 8.0
+
+
+def gpu_preview_emission_strength(authored_strength, *, original_material='',
+                                  has_emissive_map=True):
+    """Return viewport-only emission using the verified MTL's actor identity.
+
+    Only the Rocky/Behemoth actor directory is affected. Glacial Behemoth
+    (rockybobcicle), generic 'rocky' texture names, and unrelated characters
+    must not silently inherit this adjustment. The source GlowAmount itself
+    determines Rocky's strength instead of forcing it to 100 units.
+    """
+    reference = preview_emission_strength(
+        authored_strength, has_emissive_map=has_emissive_map)
+    if reference <= 0.0:
+        return 0.0
+    source = str(original_material or '').replace('\\', '/').casefold()
+    segments = tuple(piece for piece in source.split('/') if piece)
+    behemoth = any(
+        left in ('monsters', 'monster') and right == 'rocky'
+        for left, right in zip(segments, segments[1:]))
+    if not behemoth:
+        return reference
+    # Already verified as a positive finite number by preview_emission_strength.
+    return min(float(authored_strength), BEHEMOTH_GPU_EMISSION_CAP)
+
+
 def subset_emission_coverage(mesh, materials, slot, max_samples=4096):
     """Approximate emissive vertex-UV coverage for a material subset.
 
