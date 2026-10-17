@@ -477,11 +477,11 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
             if cancel is not None and cancel():
                 raise InterruptedError('Character assembly cancelled')
             try:
-                record, _reason, _attempts = find_model_material(
+                mtl_hit, _reason, _attempts = find_model_material(
                     index, render, preferred_workspace=workspace, cdf=cdf)
-                if record is None:
+                if mtl_hit is None:
                     continue
-                key = str(Path(record['file']).resolve())
+                key = str(Path(mtl_hit['file']).resolve())
                 material_by_render[render] = key
                 slots_by_material.setdefault(key, set()).update(
                     slot for _offset, _size, slot in
