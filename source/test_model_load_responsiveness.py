@@ -82,8 +82,8 @@ class ModelLoadResponsivenessTests(TestCase):
                 entries[rel] = iterator.value()
             iterator += 1
         self.assertEqual(len(entries),2)
-        with patch.dict(os.environ, {'QT_QPA_PLATFORM':'windows'}), \\
-             patch.object(editor, 'load') as load:
+        with (patch.dict(os.environ, {'QT_QPA_PLATFORM':'windows'}),
+              patch.object(editor, 'load') as load):
             editor.file_tree.setCurrentItem(entries['characters/a.skinm'])
             self.assertTrue(editor._model_selection_timer.isActive())
             editor.file_tree.setCurrentItem(entries['characters/b.skinm'])
