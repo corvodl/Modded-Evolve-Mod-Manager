@@ -314,8 +314,11 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         selected_skin = selected_skin[:-1]
     # Emet's five CDF skin bindings are mutually exclusive facial plates.
     # The old 'emet_3p_' body-prefix check added all five faces at once.
-    is_emet_3p = cdf.casefold().replace('\\', '/').endswith(
-        'characters/hunters/merc_emet/emet_3p.cdf')
+    # Do not assume the owning CDF has a particular filename: the
+    # remote-cannon assembly may resolve a different Emet definition.
+    # Exact faceplate skin stems below are the authoritative filter.
+    is_emet_3p = (Path(cdf).parent.as_posix().casefold() ==
+                  'characters/hunters/merc_emet')
     faceplates = ([(label, rel) for label, rel in skins
                    if re.fullmatch(
                        r'emet_3p_face_(normal|oh|evil|healing|broken)',
