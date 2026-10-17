@@ -2916,10 +2916,21 @@ class QtWorkspaceEditor(QMainWindow):
         token = self._export_native_token
 
         def produce(_reference):
+            from character_export_verification import (
+                is_emet_assembly, prepare_emet_full_character, verify_emet_glb)
+            active = character
+            if active is not None and is_emet_assembly(active):
+                active = prepare_emet_full_character(
+                    workspace, active.cdf, index, character=active,
+                    texture_folder=tex, projects_root=projects,
+                    stage_root=stage)
             payload, report = create_character_glb(
-                workspace, relative, index, character=character,
+                workspace, relative, index, character=active,
                 texture_folder=tex, projects_root=projects,
                 stage_root=stage, clips=clips, materials=selected_materials)
+            if active is not None and is_emet_assembly(active):
+                report = dict(report)
+                report['geometry_verification'] = verify_emet_glb(payload, active)
             import os
             import tempfile
             # Atomic export: never leave a half-written GLB on failure.
@@ -2993,12 +3004,21 @@ class QtWorkspaceEditor(QMainWindow):
             if source_character is not None:
                 from character_asset_export import assembled_character_glb
                 from character_assembly import assemble_character
+                from character_export_verification import (
+                    is_emet_assembly, prepare_emet_full_character, verify_emet_glb)
                 fresh_character = assemble_character(
                     workspace, virtual, asset_index,
                     texture_folder=textures, projects_root=projects,
                     stage_root=stage,
                     equipment=source_character.selected_equipment,
                     faceplate=source_character.selected_faceplate)
+                if fresh_character is not None and is_emet_assembly(fresh_character):
+                    fresh_character = prepare_emet_full_character(
+                        workspace, fresh_character.cdf, asset_index,
+                        character=fresh_character, texture_folder=textures,
+                        projects_root=projects, stage_root=stage,
+                        faceplate=source_character.selected_faceplate,
+                        cancelled=cancelled)
                 if fresh_character is None:
                     raise ValueError('Unable to reconstruct full-quality CDF textures; '
                                      'ensure the character and shared texture PAKs '
@@ -3007,7 +3027,11 @@ class QtWorkspaceEditor(QMainWindow):
                     fresh_character, workspace, virtual, asset_index,
                     texture_folder=textures, projects_root=projects,
                     stage_root=stage)
-                export_mesh = source_character.mesh
+                if is_emet_assembly(fresh_character):
+                    report = dict(report)
+                    report['geometry_verification'] = verify_emet_glb(
+                        payload, fresh_character)
+                export_mesh = fresh_character.mesh
             else:
                 export_mesh = model
                 payload, report = textured_model_from_workspace(
