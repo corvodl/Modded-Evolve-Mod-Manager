@@ -88,6 +88,70 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         })
         self.addCleanup(self.window.close)
 
+    def test_compact_library_header_preserves_explorer_and_read_only_status(self):
+        window = self.window
+        layout = window.centralWidget().layout()
+        # One header row, the splitter, and a bottom status line: no stacked
+        # banners stealing model viewport space.
+        self.assertEqual(layout.count(), 3)
+        self.assertIs(layout.itemAt(0).layout(), window.workspace_header)
+        self.assertIs(layout.itemAt(1).widget(), window.editor_split)
+        self.assertIs(window.workspace_header.itemAt(0).widget(),
+                      window.current_file_label)
+        self.assertIs(window.workspace_header.itemAt(1).widget(),
+                      window.selection_label)
+        self.assertIs(window.workspace_header.itemAt(2).widget(),
+                      window.sidebar_button)
+        self.assertEqual(window.selection_label.objectName(),
+                         'libraryReadOnlyNotice')
+        self.assertIn('Read-only', window.selection_label.text())
+        self.assertIn('editing and importing are disabled',
+                      window.selection_label.toolTip().lower())
+        self.assertIn('editable copy', window.selection_label.toolTip())
+        self.assertTrue(window.read_only_library)
+        self.assertIs(window.editor_split.widget(1), window.explorer)
+        self.assertEqual(window.explorer.objectName(), 'fileExplorerPane')
+        self.assertEqual(window.explorer.findChild(
+            QLabel, 'fileExplorerHeading').text(), 'FILE EXPLORER')
+        self.assertIs(window.search.parentWidget(), window.explorer)
+        self.assertEqual(window.sidebar_button.size().width(), 36)
+
+        for width in (660, 840, 1280):
+            window.resize(width, 480)
+            window.show()
+            self.app.processEvents()
+            self.assertLessEqual(window.workspace_header.geometry().height(), 34)
+            self.assertLessEqual(window.selection_label.height(), 22)
+            self.assertEqual(layout.count(), 3)
+            self.assertGreater(window.editor_split.height(), 300)
+            self.assertTrue(window.explorer.isVisible())
+
+        item = None
+        walker = QTreeWidgetItemIterator(window.file_tree)
+        while walker.value():
+            if walker.value().data(0, Qt.UserRole) == self.relative:
+                item = walker.value()
+                break
+            walker += 1
+        self.assertIsNotNone(item)
+        window.file_tree.setCurrentItem(item)
+        self.app.processEvents()
+        self.assertIn('selected', window.selection_label.text())
+        self.assertEqual(layout.count(), 3)
+        self.assertEqual(self.source.read_text(encoding='utf-8'),
+                         '<Character name="Maggie"/>')
+
+    def test_compact_library_selection_recovers_read_only_tooltip(self):
+        window = self.window
+        with patch.object(window, 'selected_virtual_files',
+                          side_effect=ValueError('At most 500 files')):
+            window._report_selection()
+        self.assertEqual(window.selection_label.text(), 'Selection limit')
+        self.assertIn('At most 500', window.selection_label.toolTip())
+        window._report_selection()
+        self.assertIn('Read-only', window.selection_label.text())
+        self.assertIn('editable copy', window.selection_label.toolTip())
+
     def test_opening_model_defers_library_validation_to_worker(self):
         # A model click must never perform manifest/file system checks on
         # the Qt event loop. Background library_model_index still validates
@@ -178,7 +242,9 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         self.assertEqual(self.source.read_text(encoding='utf-8'),
                          '<Character name="Maggie"/>')
         labels = ' '.join(x.text() for x in self.window.findChildren(QLabel))
-        self.assertIn('previewing and exporting only', labels)
+        self.assertIn('Read-only', labels)
+        self.assertIn('preview and export only',
+                      self.window.selection_label.toolTip())
         self.assertNotIn('Save Changes', [
             x.text() for x in self.window.findChildren(QLabel)])
 
