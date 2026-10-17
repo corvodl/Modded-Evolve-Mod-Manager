@@ -378,7 +378,10 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         blob = glb_bytes(mesh)
         body = (blob, {'cdf': character + '/emet_3p.cdf',
                        'preferred_full_character': True, 'bone_count':3,
-                       'part_count':2, 'embedded_animations':0})
+                       'part_count':2, 'embedded_animations':0,
+                       'rendered_parts': (
+                           character + '/emet_3p.skinm',
+                           character + '/emetremotecannon_3p.skinm')})
         cannon = (blob, {'cdf': character + '/emetcannon.cdf',
                          'bone_count':0, 'part_count':1,
                          'embedded_animations':0})
