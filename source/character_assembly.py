@@ -102,7 +102,7 @@ def combine_meshes(items):
     vertices, triangles, uvs, subsets = [], [], [], []
     textures, names, issues = [], [], []
     normals, speculars, glosses, opacities, alpha_modes = [], [], [], [], []
-    glasses, refraction_indices, environments, reflection_strengths = [], [], [], []
+    glasses, refraction_indices, environments, reflection_strengths, glass_params = [], [], [], [], []
     transforms, sources, references, uv_available = [], [], [], []
     cutoffs = []; hidden = []
     # All verified emissive per-submaterial settings must survive assembly
@@ -187,6 +187,9 @@ def combine_meshes(items):
             glasses.append(bool(materials and
                 slot < len(getattr(materials, 'glass_materials', ())) and
                 materials.glass_materials[slot]))
+            glass_params.append(
+                materials.glass_public_params[slot] if materials and
+                slot < len(getattr(materials, 'glass_public_params', ())) else {})
             refraction_indices.append(
                 materials.refraction_indices[slot] if materials and
                 slot < len(getattr(materials, 'refraction_indices', ())) else None)
@@ -239,6 +242,7 @@ def combine_meshes(items):
                                 tuple(sources), tuple(references), tuple(uv_available), tuple(cutoffs),
                                 hidden=tuple(hidden), gloss_maps=tuple(glosses),
                                 glass_materials=tuple(glasses),
+                                glass_public_params=tuple(glass_params),
                                 refraction_indices=tuple(refraction_indices),
                                 environment_maps=tuple(environments),
                                 reflection_strengths=tuple(reflection_strengths),
