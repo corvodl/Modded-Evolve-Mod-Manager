@@ -142,6 +142,7 @@ class QtGLModelCanvas(QOpenGLWidget):
     # Reports GPU texture submissions, not time spent decoding DDS in a worker.
     # Signals keep Qt UI updates separate from the GL context's paint pass.
     textureUploadProgress = Signal(int, int)
+    cameraChanged = Signal()  # Keep the XYZ gizmo synced with canvas orbit.
 
     def __init__(self, mesh, materials=None, parent=None, prepared_geometry=None):
         super().__init__(parent)
@@ -336,6 +337,7 @@ class QtGLModelCanvas(QOpenGLWidget):
             raise ValueError('Unknown camera preset')
         self.rotation=list(orientations[choice])
         self.pan=[0.,0.]
+        self.cameraChanged.emit()
         self.update()
 
     def set_light_strength(self, percentage):
@@ -1022,6 +1024,7 @@ class QtGLModelCanvas(QOpenGLWidget):
                     self.rotation[0] += dx*.55
                     self.rotation[1] = max(-89,min(89,self.rotation[1]+dy*.45))
             self._last = pos
+            self.cameraChanged.emit()
             self.update()
             event.accept()
         else:
@@ -1491,49 +1494,48 @@ class QtGPUModelPanel(QWidget):
         rail.setSpacing(3)
         self._navigation_group = QButtonGroup(self)
         self._navigation_group.setExclusive(True)
-        for symbol,mode,hint in (
-            ('R','orbit','Orbit with left drag'),
-            ('H','pan','Pan with left drag'),
-            ('Z','zoom','Zoom with vertical left drag')):
+        for symbol,mode,hint,icon in (
+            ('Orbit','orbit','Orbit with left drag','rotate'),
+            ('Pan','pan','Pan with left drag','hand'),
+            ('Zoom','zoom','Zoom with vertical left drag','zoom')):
             button = QToolButton(self._tool_rail)
+            button.setObjectName('modelTool' + symbol)
             button.setText(symbol)
+            button.setIcon(navigation_icon(icon, size=18))
+            button.setIconSize(QSize(19, 19))
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            button.setAccessibleName(symbol + ' tool')
             button.setToolTip(hint)
-            button.setFixedSize(31,34)
+            button.setFixedSize(34,34)
             button.setCheckable(True)
             button.setChecked(mode == 'orbit')
             self._navigation_group.addButton(button)
             button.clicked.connect(lambda _checked=False,m=mode: setattr(self.canvas,'navigation_mode',m))
             rail.addWidget(button)
         fit = QToolButton(self._tool_rail)
-        fit.setText('F')
-        fit.setToolTip('Frame the character')
-        fit.setFixedSize(31,34)
+        fit.setText('Frame model')
+        fit.setObjectName('modelToolFrame')
+        fit.setIcon(navigation_icon('focus', size=18))
+        fit.setIconSize(QSize(19, 19))
+        fit.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        fit.setAccessibleName('Frame model')
+        fit.setToolTip('Frame entire character (reset pan and zoom)')
+        fit.setFixedSize(34,34)
         fit.clicked.connect(self.reset_view)
         rail.addWidget(fit)
         rail.addStretch()
-        self._axis_widget = QFrame(self.canvas)
-        self._axis_widget.setObjectName('viewportAxisControls')
-        # The camera axis rail shares the same neutral surface.
-        axes = QHBoxLayout(self._axis_widget)
-        axes.setContentsMargins(3,3,3,3)
-        axes.setSpacing(2)
-        for name,preset,color in (
-            ('X','Right','#d87982'), ('Y','Back','#91b88b'), ('Z','Top','#78a6d2')):
-            button = QToolButton(self._axis_widget)
-            button.setText(name)
-            button.setToolTip('View along '+name+' axis')
-            button.setStyleSheet('QToolButton { color: '+color+'; font-weight: bold; }')
-            button.clicked.connect(lambda _checked=False,p=preset: self.canvas.set_camera_preset(p))
-            axes.addWidget(button)
+        from qt_model_orientation_gizmo import ModelOrientationGizmo
+        self._axis_widget = ModelOrientationGizmo(self.canvas)
+        self._axis_widget.show()
 
     def _position_navigation(self):
         if not hasattr(self,'_tool_rail'):
             return
-        self._tool_rail.setGeometry(8,43,40,min(174,max(34,self.canvas.height()-48)))
+        self._tool_rail.setGeometry(8,43,43,min(180,max(34,self.canvas.height()-50)))
         self._tool_rail.raise_()
-        self._axis_widget.setGeometry(max(0,self.canvas.width()-117),8,108,36)
+        self._axis_widget.move(max(0,self.canvas.width()-118),8)
         self._axis_widget.raise_()
-        self._info.setGeometry(12,7,max(30,self.canvas.width()-145),29)
+        self._info.setGeometry(12,7,max(30,self.canvas.width()-160),29)
         self._info.raise_()
 
     def _build_compact_timeline(self,parent_layout):
@@ -1618,14 +1620,14 @@ class QtGPUModelPanel(QWidget):
     def _position_overlay(self):
         if not hasattr(self, '_overlay') or self._overlay is None:
             return
-        width = max(190, min(355 if self._active_overlay == 'Animation' else 370,
-                             self.canvas.width() - 70))
+        # Keep controls on the left and reserve space for the model. Prefer
+        # scrollable, readable full rows to compressed 250px-high inspectors.
+        available = max(0, self.canvas.width()-65)
+        width = min(415, available)
         page = self._overlay_sections.get(self._active_overlay)
-        wanted = (page[0].sizeHint().height() + 20) if page else 200
-        caps = {'View': 240, 'Materials': 255, 'Animation': 315}
-        height = max(80, min(wanted, caps.get(self._active_overlay, 260),
-                             self.canvas.height() - 55))
-        self._overlay.setGeometry(56, 43, width, height)
+        wanted = page[0].sizeHint().height()+28 if page else 280
+        height = min(max(0, self.canvas.height()-55), wanted, 490)
+        self._overlay.setGeometry(53, 43, max(0,width), max(0,height))
         self._position_navigation()
 
     def eventFilter(self, obj, event):
@@ -1936,6 +1938,7 @@ class QtGPUModelPanel(QWidget):
         self.canvas.rotation[:]=[-30.,14.]
         self.canvas.zoom=1.0
         self.canvas.pan[:]=[0., 0.]
+        self.canvas.cameraChanged.emit()
         self.canvas.update()
 
     def _prepare_animation_controls(self, layout):
