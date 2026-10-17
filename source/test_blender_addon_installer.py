@@ -15,7 +15,7 @@ def make_package(root, *, manifest_id="evolve_animation_browser"):
     manifest = (
         'schema_version = "1.0.0"\n'
         'id = "%s"\n'
-        'version = "1.1.0"\n'
+        'version = "1.3.1"\n'
         'type = "add-on"\n' % manifest_id)
     with zipfile.ZipFile(archive, "w") as zip_file:
         for name in sorted(installer.PACKAGE_FILES):
@@ -123,9 +123,9 @@ class BlenderAddonInstallerTests(TestCase):
             manifest = root / "extensions" / "user_default" / installer.PACKAGE_ID / "blender_manifest.toml"
             self.assertEqual(installer.installed_versions(appdata=Path(tmp)), ())
             manifest.parent.mkdir(parents=True)
-            manifest.write_text('id = "evolve_animation_browser"\nversion = "1.1.0"')
+            manifest.write_text('id = "evolve_animation_browser"\nversion = "1.3.1"')
             self.assertEqual(installer.installed_versions(appdata=Path(tmp)),
-                             (("4.3", "1.1.0"),))
+                             (("4.3", "1.3.1"),))
 
 
 if __name__ == "__main__":
