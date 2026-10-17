@@ -11,6 +11,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 - Prefer verified third-person character assemblies for main Blender GLB exports instead of accidentally choosing first-person view models.
 - Remove redundant Asset Library read-only header rows; keep a compact inline status and maximize model preview space.
 - Improve character export diagnostics and preserve the protected File Explorer with regression coverage.
+- Keep large CryEngine animation catalogs from aborting character exports; prioritize relevant clips and report skipped references.
 
 ## Download and install
 
