@@ -44,75 +44,103 @@ class FullCharacterDiscoveryTests(unittest.TestCase):
             'characters/hunters/merc_other/other_3p.skinm']))
 
 
-    def test_emet_defaults_to_arm_complete_remote_cannon_three_p_model(self):
+    def test_emet_full_character_uses_body_cdf_not_remote_cannon(self):
         base = 'characters/hunters/merc_emet/'
         files = [base + name for name in (
+            'emet_3p.cdf', 'emet_3p.skinm', 'emet_3p.skin',
             'emetremotecannon_fp.skinm', 'emetremotecannon_fp.skin',
             'emetremotecannon_3p.skinm', 'emetremotecannon_3p.skin',
             'emethealingtotemworld_3p.cdf',
             'emethealingtotemworld_3p.skinm',
             'emetdropshipbeaconworld_3p.cdf',
             'emetdropshipbeaconworld_3p.skinm')]
-        from character_full_models import preferred_emet_source
         choices = discover_full_characters(files)
-        original = base + 'emetremotecannon_3p.skinm'
-        self.assertEqual(preferred_emet_source(files), original)
-        self.assertEqual(choices[original].definition, original[:-1])
-        self.assertEqual(choices[original].label, 'Emet • Full Character')
+        body = base + 'emet_3p.skinm'
+        self.assertEqual(set(choices), {body})
+        self.assertEqual(choices[body].definition, base + 'emet_3p.cdf')
+        self.assertEqual(choices[body].label, 'Emet • Full Character')
+        self.assertNotIn(base + 'emetremotecannon_3p.skinm', choices)
         self.assertNotIn(base + 'emethealingtotemworld_3p.skinm', choices)
         self.assertNotIn(base + 'emetdropshipbeaconworld_3p.skinm', choices)
-        self.assertIn(base + 'emethealingtotemworld_3p.skinm', files)
-        self.assertIn(base + 'emetdropshipbeaconworld_3p.skinm', files)
-        self.assertNotIn(base + 'emetremotecannon_fp.skinm', choices)
 
-    def test_emet_requires_exact_native_skin_and_folder(self):
-        from character_full_models import preferred_emet_source
-        path = 'characters/hunters/merc_emet/emetremotecannon_3p.skinm'
-        self.assertIsNone(preferred_emet_source((path,)))
-        self.assertIsNone(preferred_emet_source((
-            'characters/hunters/merc_other/emetremotecannon_3p.skinm',
-            'characters/hunters/merc_other/emetremotecannon_3p.skin')))
-        self.assertIsNone(preferred_emet_source((
-            path, 'characters/hunters/merc_other/emetremotecannon_3p.skin')))
-        medic = 'characters/hunters/medic_emet/emetremotecannon_3p.skinm'
-        self.assertEqual(preferred_emet_source((medic, medic[:-1])), medic)
+    def test_emet_cannon_and_deployables_without_body_cdf_are_not_full(self):
+        root = 'characters/hunters/merc_emet/'
+        cannon = root + 'emetremotecannon_3p.skinm'
+        self.assertFalse(discover_full_characters((cannon, cannon[:-1])))
+        self.assertFalse(discover_full_characters((
+            root + 'emet_3p.cdf', cannon, cannon[:-1])))
+        self.assertFalse(discover_full_characters((
+            root + 'emet_3p.skinm', cannon, cannon[:-1])))
+        self.assertFalse(discover_full_characters((
+            'characters/hunters/medic_emet/emet_3p.cdf',
+            root + 'emet_3p.skinm')))
 
 
-class EmetStandaloneAssemblyTests(unittest.TestCase):
-    def test_verifies_original_emet_source_not_equipment_cdf(self):
+class EmetCDFAssemblyTests(unittest.TestCase):
+    def test_cannon_without_cdf_does_not_forge_body_glb(self):
+        from character_asset_export import build_cdf_folder_glbs
+        base = 'characters/hunters/merc_emet/'
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mesh = root / 'files' / (base + 'emetremotecannon_3p.skinm')
+            skin = root / 'files' / (base + 'emetremotecannon_3p.skin')
+            mesh.parent.mkdir(parents=True)
+            mesh.write_bytes(b'arm-only')
+            skin.write_bytes(b'arm-skin')
+            index = {
+                base + 'emetremotecannon_3p.skinm': [
+                    {'file': mesh, 'workspace': root}],
+                base + 'emetremotecannon_3p.skin': [
+                    {'file': skin, 'workspace': root}]}
+            assemblies, errors = build_cdf_folder_glbs(
+                root, base.rstrip('/'), index)
+            self.assertEqual(assemblies, {})
+            self.assertEqual(errors, ())
+
+    def test_emet_cdf_prefers_bound_cannon_over_other_equipment(self):
+        from types import SimpleNamespace
         from unittest.mock import patch
         from character_asset_export import build_cdf_folder_glbs
         from test_character_export_folders import test_glb
-        from types import SimpleNamespace
         base = 'characters/hunters/merc_emet/'
-        full = base + 'emetremotecannon_3p.skinm'
-        skin = full[:-1]
+        cdf = base + 'emet_3p.cdf'
+        body = base + 'emet_3p.skinm'
+        cannon = base + 'emetremotecannon_3p.skinm'
+        cannon_skin = cannon[:-1]
+        other = base + 'emetother_3p.skinm'
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            mesh = root / 'files' / full
-            native = root / 'files' / skin
-            mesh.parent.mkdir(parents=True)
-            mesh.write_bytes(b'synthetic mesh file')
-            native.write_bytes(b'synthetic native skin companion')
-            index = {
-                full: [{'file': mesh, 'workspace': root}],
-                skin: [{'file': native, 'workspace': root}]}
-            def resolve(idx, path, preferred_workspace=None):
-                return (idx[path], 'found') if path in idx else ((), 'missing')
-            with patch('multi_pak_assets._resolve', side_effect=resolve), \
-                 patch('model_preview.read_preview_mesh',
-                       return_value=SimpleNamespace(vertices=[(0, 0, 0)])), \
-                 patch('model_textured_export.textured_model_from_workspace',
-                       return_value=(test_glb(), {'rig_status': 'Rigged: verified'})):
-                results, skipped = build_cdf_folder_glbs(
+            source = root / 'files' / cdf
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b'<CharacterDefinition/>')
+            index = {cdf: [{'file': source, 'workspace': root}]}
+            calls = []
+            def assemble(_workspace, selected, _index, **kwargs):
+                self.assertEqual(selected, cdf)
+                equipment = kwargs.get('equipment')
+                calls.append(equipment)
+                selected_model = cannon if equipment == cannon_skin else other
+                return SimpleNamespace(
+                    cdf=cdf, skeleton=base + 'emet_3p_skeleton.chr',
+                    rig_parts=((body, None, None, 3),
+                               (selected_model, None, None, 3)),
+                    equipment_options=(('remotecannon', cannon_skin),))
+            glb = test_glb()
+            with patch('character_assembly.assemble_character', side_effect=assemble), \
+                 patch('character_asset_export.assembled_character_glb',
+                       return_value=(glb, {'part_count': 2, 'bone_count': 4})), \
+                 patch('character_animation_export.embed_verified_assembly_animations',
+                       return_value=(glb, {'animations': 0,
+                                           'converted_clips': (), 'note': 'none'})):
+                assemblies, errors = build_cdf_folder_glbs(
                     root, base.rstrip('/'), index)
-            self.assertFalse(skipped)
-            data, report = results['Assemblies/Emetremotecannon_3p.glb']
-            self.assertTrue(data.startswith(b'glTF'))
-            self.assertEqual(report['original_3p_model'], full)
-            self.assertTrue(report['preferred_full_character'])
-            self.assertEqual(report['embedded_animations'], 0)
-            self.assertNotIn('CDF', report.get('cdf', ''))
+            self.assertEqual(errors, ())
+            self.assertEqual(calls, [None, cannon_skin])
+            info = assemblies['Assemblies/emet_3p.glb'][1]
+            self.assertEqual(info['cdf'], cdf)
+            self.assertEqual(info['rendered_parts'], (body, cannon))
+            self.assertNotIn('Assemblies/Emetremotecannon_3p.glb', assemblies)
+
 
 class CompositeBlenderExportTests(unittest.TestCase):
     def test_missing_rig_still_exports_both_assembled_mesh_parts(self):
