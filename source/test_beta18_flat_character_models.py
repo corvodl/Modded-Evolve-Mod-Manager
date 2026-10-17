@@ -111,7 +111,8 @@ class EmetCDFAssemblyTests(unittest.TestCase):
         other = base + 'emetother_3p.skinm'
         face = base + 'emet_3p_face_normal.skinm'
         mesh = SimpleNamespace(
-            vertices=tuple((float(j), float(j % 3), 0.) for j in range(9)),
+            vertices=tuple((float(j//3)*2 + (1. if j%3 == 1 else 0.),
+                            1. if j%3 == 2 else 0., 0.) for j in range(9)),
             triangles=((0, 1, 2), (3, 4, 5), (6, 7, 8)),
             uvs=(), subsets=((0, 3, 0), (3, 3, 1), (6, 3, 2)))
         with TemporaryDirectory() as tmp:
