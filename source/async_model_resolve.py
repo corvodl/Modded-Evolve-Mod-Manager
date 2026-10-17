@@ -122,9 +122,9 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
         if projects_root is not None:
             from asset_geometry_cache import cached_geometry
             geometry, cached = cached_geometry(
-                mesh,Path(projects_root)/'.asset-cache'/'gpu',shading='faceted')
+                mesh,Path(projects_root)/'.asset-cache'/'gpu',shading='smooth')
         else:
-            geometry = prepare_geometry(mesh, shading='faceted')
+            geometry = prepare_geometry(mesh, shading='smooth')
             cached = False
     checkpoint()
     if geometry_ready is not None:

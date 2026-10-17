@@ -202,5 +202,83 @@ class CharacterPipelineTests(unittest.TestCase):
             self.assertEqual(('body','riftdevice','riftdevicearm'), device.included)
 
 
+    def test_kala_banshee_and_rift_device_are_exclusive_cdf_equipment(self):
+        # Synthetic excerpt matching the real tech_3p.cdf attachment names,
+        # binding paths, and the two mutually exclusive equipment SkinSets.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix = 'characters/hunters/merc_tech/'
+            cdf = root / 'tech_3p.cdf'
+            cdf.write_text(
+                '<CharacterDefinition><Model File="' + prefix +
+                'tech_3p_skeleton.chr"/><AttachmentList>' +
+                ''.join('<Attachment Type="CA_SKIN" AName="' + label +
+                        '" Binding="' + prefix + model + '.skin"/>'
+                        for label, model in (
+                            ('body', 'tech_3p'),
+                            ('armorreducer', 'techarmorreducer_3p'),
+                            ('bansheegun', 'techbansheegun_3p'),
+                            ('pistoltech', 'techpistol_3p'),
+                            ('riftdevice', 'techriftdevice_3p'),
+                            ('riftdevicearm', 'techriftdevice_3p_arm'))) +
+                '</AttachmentList><SkinSets>' +
+                '<SkinSet name="HiddenWhenBansheeGunSelected">' +
+                ''.join('<skin name="' + name + '"/>' for name in
+                        ('armorreducer','pistoltech','riftdevice','riftdevicearm')) +
+                '</SkinSet><SkinSet name="HiddenWhenRiftDeviceSelected">' +
+                ''.join('<skin name="' + name + '"/>' for name in
+                        ('armorreducer','bansheegun','pistoltech')) +
+                '</SkinSet><SkinSet name="HiddenWhenArmorReducerSelected">' +
+                ''.join('<skin name="' + name + '"/>' for name in
+                        ('bansheegun','pistoltech','riftdevice','riftdevicearm')) +
+                '</SkinSet></SkinSets></CharacterDefinition>')
+            index = {prefix+'tech_3p.cdf':
+                     [{'workspace': root, 'file': cdf,
+                       'relative': prefix+'tech_3p.cdf'}]}
+            for stem in ('tech_3p','techarmorreducer_3p',
+                         'techbansheegun_3p','techpistol_3p',
+                         'techriftdevice_3p','techriftdevice_3p_arm'):
+                model = root / (stem + '.skinm')
+                model.write_bytes(b'mesh placeholder')
+                virtual = prefix + stem + '.skinm'
+                index[virtual] = [{
+                    'workspace': root, 'file': model, 'relative': virtual}]
+            mesh = PreviewMesh(
+                ((0.,0.,0.), (1.,0.,0.), (0.,1.,0.)),
+                ((0,1,2),),(.5,.5,0.),1.,'synthetic',
+                ((0.,0.), (1.,0.), (0.,1.)), ((0,3,0),))
+            mats = PreviewMaterials(
+                (None,), ('material slot',), 'synthetic source')
+            with patch('character_assembly.read_preview_mesh',
+                       return_value=mesh), patch(
+                       'character_assembly.load_preview_materials',
+                       return_value=mats):
+                default = assemble_character(
+                    root, prefix+'tech_3p.skinm', index)
+                banshee = assemble_character(
+                    root, prefix+'tech_3p.skinm', index,
+                    equipment=prefix+'techbansheegun_3p.skin')
+                rift = assemble_character(
+                    root, prefix+'tech_3p.skinm', index,
+                    equipment=prefix+'techriftdevice_3p.skin')
+                opened_arm = assemble_character(
+                    root, prefix+'techriftdevice_3p_arm.skinm', index)
+                armor = assemble_character(
+                    root, prefix+'tech_3p.skinm', index,
+                    equipment=prefix+'techarmorreducer_3p.skin')
+                body = assemble_character(
+                    root, prefix+'tech_3p.skinm', index, equipment='body')
+            self.assertEqual(default.included, ('body', 'bansheegun'))
+            self.assertEqual(banshee.included, ('body', 'bansheegun'))
+            self.assertEqual(rift.included,
+                             ('body', 'riftdevice', 'riftdevicearm'))
+            self.assertEqual(opened_arm.included,
+                             ('body', 'riftdevice', 'riftdevicearm'))
+            self.assertEqual(opened_arm.selected_equipment,
+                             prefix+'techriftdevice_3p.skin')
+            self.assertEqual(armor.included, ('body', 'armorreducer'))
+            self.assertEqual(body.included, ('body',))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,25 +1,19 @@
-# Evolve Stage 2 Mod Manager — v1.2.6
+# Evolve Stage 2 Mod Manager — v1.2.7
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.2.6 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.2.7 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.2.6
+## Latest Stable — v1.2.7
 
-- Patch 5: Preserve verified CryEngine Decal glow, emissive strength and original material UV mapping when native CAF/DBA playback switches to a skinned GLB preview.
-- Patch 5: Use each legacy Illum Decal material's authored diffuse tint when no explicit emissive color is provided, preserving colored light instead of untinted white.
-- Patch 5: Restore emissive textures, UV transforms and intensity from imported animated GLBs; regression-test native assembly handoff and non-emissive materials.
-- Patch 4: Preserve each source MTL submaterial identity, original slot, and resolved emissive reference when combining hunter, monster and wildlife character parts.
-- Patch 4: Allow verified Decal/Emittance glow to load even when a submaterial has no diffuse DDS; retain safe missing-material diagnostics.
-- Patch 4: Refresh scoped character, shared and global Asset Library textures before final assembly, and show precise glow decode status in the GPU viewer.
-- Patch 3: Correct CryEngine ALPHAGLOW mask selection across all characters and models: independent Decal glow no longer inherits unrelated diffuse alpha.
-- Patch 3: Preserve each emissive texture's own UV tiling and offsets in the GPU viewer, bloom pass, assembled character parts and Blender GLB export.
-- Patch 3: Diagnose actual mesh-subset emission UV coverage, distinguish black sampled regions from nonblack atlases, and flag unsupported animated UV oscillators.
-- Patch 2: Fix missing Kala emissive glow by correcting Renderer 3 sampler registration and legacy CryEngine GlowAmount masking.
-- Patch 2: Show model-loading progress from geometry preparation until the existing bottom texture-loading bar takes over.
-- Patch 2: Report unavailable GPU emissive shading and black baked glow maps without changing original textures.
+- Respect Kala's CDF SkinSets: Banshee Gun, Armor Reducer and Rift Device equipment no longer overlap; the Rift Device arm stays with its owning equipment.
+- Preserve Kala's authored blue Banshee Gun and purple Rift Device glow separately, without hardcoded color substitutions.
+- Decode high-resolution CryEngine DDNA gloss sidecars and keep gloss mapped to the correct material when assembling character attachments.
+- Default the GPU model viewer to Smooth shading while keeping Faceted available.
+- Start verified converted native CAF/DBA clips even without an idle name; never auto-play standalone additive or layered poses.
+- Retain CryEngine glow, bloom, emissive Blender export and rig-safe geometry handling without altering source assets.
 
 ## Download and install
 
@@ -80,7 +74,7 @@ When a preview is gray, open **Textures → Texture Preview Status** to see whet
 
 ### Model camera, shading and animations (v1.1.9)
 
-The **Edit Files** window and separate **GPU Viewer** can now be resized and maximized. For either CPU fallback or GPU viewing, use **left drag to orbit**, **right/middle drag or Shift + left drag to pan**, and **mouse wheel to zoom**. The GPU viewer defaults to **Faceted (hard edges)** shading to avoid rounding over armor and hard surfaces; select **Smooth** for organic meshes. The embedded GPU pane attempts to use resolved diffuse textures by default. Normal maps and full CryEngine shader parity are not yet reconstructed, so preview appearance can still differ from the game.
+The **Edit Files** window and separate **GPU Viewer** can now be resized and maximized. For either CPU fallback or GPU viewing, use **left drag to orbit**, **right/middle drag or Shift + left drag to pan**, and **mouse wheel to zoom**. The GPU viewer defaults to **Smooth** shading; select **Faceted (hard edges)** when inspecting original hard-edge geometry. The embedded GPU pane attempts to use resolved diffuse textures by default. Normal maps and full CryEngine shader parity are not yet reconstructed, so preview appearance can still differ from the game.
 
 In **Edit Files → Models → Open GPU Viewer**, the new animation controls include **Load Animation GLB**, **Play/Pause**, **clip selection**, and **timeline scrubbing**. The file must contain a supported skinned glTF 2.0 mesh and animation curves. Playback deforms the rendered mesh without changing any source game files.
 

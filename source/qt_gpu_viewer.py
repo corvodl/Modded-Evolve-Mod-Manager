@@ -155,9 +155,10 @@ class QtGLModelCanvas(QOpenGLWidget):
         self.setMinimumSize(260, 180)
         self.mesh = mesh
         # Preserve geometry staging and animation-buffer layout. Authored
-        # normals are used when Smooth shading is explicitly selected.
-        self.shading = 'faceted'
-        self.geometry = prepared_geometry if prepared_geometry is not None else prepare_geometry(mesh, shading=self.shading)
+        # Smooth shading is the default. Use verified source vertex normals
+        # when available, preserving mesh UVs and hard edges split in source.
+        self.shading = 'smooth'
+        self.geometry = self._prepared_geometry(mesh, prepared_geometry)
         self.materials = materials
         # Character assembled parts can use CryEngine alpha semantics that
         # are not reproduced by the preview. Solid diagnostic rendering keeps
@@ -223,6 +224,17 @@ class QtGLModelCanvas(QOpenGLWidget):
         self._uv_motion_timer.timeout.connect(self.update)
         self._refresh_uv_motion()
 
+    def _prepared_geometry(self, mesh, prepared_geometry):
+        # Progressive workers normally stage buffers for the default Smooth
+        # mode. If an older/cached Faceted batch arrives, rebuild to prevent
+        # a mismatch between UI selection and the actual GPU index layout.
+        expected_vertices = (len(mesh.vertices) if self.shading == 'smooth'
+                             else len(mesh.triangles) * 3)
+        if (prepared_geometry is not None and
+                len(prepared_geometry.vertices) == expected_vertices):
+            return prepared_geometry
+        return prepare_geometry(mesh, shading=self.shading)
+
     def _refresh_uv_motion(self):
         self._uv_motion_started = time.monotonic()
         groups = (getattr(self.materials, 'uv_motions', ()),)
@@ -260,8 +272,7 @@ class QtGLModelCanvas(QOpenGLWidget):
 
     def set_mesh(self, mesh, materials=None, prepared_geometry=None):
         self._reset_frame_timeline()
-        geometry = (prepared_geometry if prepared_geometry is not None
-                    else prepare_geometry(mesh, shading=self.shading))
+        geometry = self._prepared_geometry(mesh, prepared_geometry)
         # Replacing an existing model must also upload the NEW diffuse maps.
         # Previously the old textures were deleted but the new ones were not
         # uploaded until an unrelated OpenGL context reinitialization.
@@ -1207,6 +1218,7 @@ class QtGPUModelPanel(QWidget):
         shading = QComboBox()
         self.shading_combo = shading
         shading.addItems(('Faceted (hard edges)', 'Smooth'))
+        shading.setCurrentIndex(1)  # Match the canvas's initial Smooth mode.
         shading.currentIndexChanged.connect(
             lambda i: self.canvas.set_shading('Smooth' if i else 'Faceted'))
         line.addWidget(shading)
@@ -2484,7 +2496,6 @@ class QtGPUModelPanel(QWidget):
             return
         self.cancel_native_button.setEnabled(False)
         self.play_native_button.setEnabled(True)
-        was_default_dba = self._auto_dba_loading
         self._auto_dba_loading = False
         if error:
             if getattr(self, '_historical_character', False):
@@ -2511,7 +2522,12 @@ class QtGPUModelPanel(QWidget):
                 imported.doc, getattr(self, '_native_source_materials', None))
             self._show_animated(
                 imported, auto_play=not bool(pair),
-                prepared_geometry=geometry, choose_dba_fallback=was_default_dba,
+                prepared_geometry=geometry,
+                # This callback handles an explicit Play request as well as
+                # automatically selected DBAs. A valid converted database
+                # without a clip literally named "idle" must still start
+                # playing its first safe base motion.
+                choose_dba_fallback=True,
                 materials_override=source_materials)
             self._layered_pair = pair
             if pair:
@@ -2582,17 +2598,30 @@ class QtGPUModelPanel(QWidget):
         self.clip_select.addItems(tuple(imported.clips))
         self.playlist_items.clear()
         self.playlist_items.addItems(tuple(imported.clips))
-        idle = next((name for name in imported.clips if
-                     'idle' in name.casefold() and 'additive' not in name.casefold()), None)
+        # Never auto-play additive/aimpose/layered tracks without a base,
+        # even if they happen to contain "idle" in the display name.
+        modes = getattr(imported, 'clip_modes', {})
+        def standalone(name):
+            info = modes.get(name, {})
+            folded = name.casefold()
+            return (not info.get('layered') and not info.get('additive')
+                    and 'additive' not in folded and 'aimpose' not in folded)
+        idle = next((name for name in imported.clips
+                     if standalone(name) and 'idle' in name.casefold()), None)
         if idle is None and choose_dba_fallback:
-            idle = next((name for name in imported.clips if
-                         'stand' in name.casefold() and
-                         'additive' not in name.casefold()), None)
-            if idle is None and imported.clips:
-                idle = next(iter(imported.clips))
-                self.anim_status.setText(
-                    'No named idle in this DBA; playing the first verified '
-                    'clip. Choose another motion from Playback if needed.')
+            idle = next((name for name in imported.clips
+                         if standalone(name) and 'stand' in name.casefold()), None)
+            if idle is None:
+                idle = next((name for name in imported.clips if standalone(name)), None)
+                if idle is not None:
+                    self.anim_status.setText(
+                        'No named idle in this converted motion; playing its '
+                        'first verified standalone clip. Select another '
+                        'motion from Playback if needed.')
+        if idle is None and auto_play:
+            self.anim_status.setText(
+                'No standalone base motion in this animation; '
+                'select a compatible base for an additive/layered clip.')
         if idle:
             self.clip_select.setCurrentText(idle)
         self.clip_select.blockSignals(False)
@@ -2600,7 +2629,7 @@ class QtGPUModelPanel(QWidget):
         if self._pending_playback_preferences:
             self.restore_playback_preferences(self._pending_playback_preferences)
         self._display_animation_frame()
-        if auto_play and (idle or len(imported.clips)==1):
+        if auto_play and idle:
             self.toggle_play()
 
     def playback_preferences(self):

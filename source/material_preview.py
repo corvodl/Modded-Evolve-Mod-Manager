@@ -720,6 +720,36 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             except (OSError,ValueError) as error:
                 target.append(None)
                 issues.append(name+': optional material map not loaded: '+str(error))
+        # CryEngine 3.6 DDNA (_ddna) stores authored gloss in a separate
+        # ATI1 .dds.0a/.1a/... stream. Use that alpha data as a gloss map
+        # instead of the generic fallback exponent. Explicit Gloss maps win.
+        # Never infer this from ordinary _ddn, specular or diffuse alpha.
+        has_explicit_gloss = any(
+            (node.get('Map') or node.get('map') or '').casefold()
+            in ('gloss', 'glossiness', 'smoothness')
+            for node in item.findall('./Textures/Texture'))
+        if not has_explicit_gloss and glosses[-1] is None:
+            normal_node = next((
+                node for node in item.findall('./Textures/Texture')
+                if (node.get('Map') or node.get('map') or '').casefold()
+                in ('bumpmap', 'normal', 'normalmap')), None)
+            normal_ref = ((normal_node.get('File') or normal_node.get('file'))
+                          if normal_node is not None else None)
+            if normal_ref and '_ddna.' in normal_ref.casefold():
+                try:
+                    hit = find_texture(normal_ref)
+                    if hit is not None:
+                        from ddna_gloss import decode_ddna_gloss
+                        gloss = decode_ddna_gloss(
+                            hit, index=index, max_dimension=decode_max)
+                        if gloss is not None:
+                            glosses[-1] = gloss
+                            # Packed alpha shares its normal map's authored UV
+                            # transforms/motion, not independent diffuse UVs.
+                            role_transforms['gloss'][-1] = role_transforms['normal'][-1]
+                            role_motions['gloss'][-1] = role_motions['normal'][-1]
+                except (ValueError, OSError) as error:
+                    issues.append(name + ': DDNA gloss unavailable: ' + str(error))
         diffuse = next((child.get('File') or child.get('file') for child in item.findall('./Textures/Texture')
                         if (child.get('Map') or child.get('map') or '').casefold() == 'diffuse'), None)
         references.append(diffuse or '')

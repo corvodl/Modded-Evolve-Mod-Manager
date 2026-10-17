@@ -4,6 +4,14 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.2.7', (
+        "Respect Kala's CDF SkinSets: Banshee Gun, Armor Reducer and Rift Device equipment no longer overlap; the Rift Device arm stays with its owning equipment.",
+        "Preserve Kala's authored blue Banshee Gun and purple Rift Device glow separately, without hardcoded color substitutions.",
+        "Decode high-resolution CryEngine DDNA gloss sidecars and keep gloss mapped to the correct material when assembling character attachments.",
+        "Default the GPU model viewer to Smooth shading while keeping Faceted available.",
+        "Start verified converted native CAF/DBA clips even without an idle name; never auto-play standalone additive or layered poses.",
+        "Retain CryEngine glow, bloom, emissive Blender export and rig-safe geometry handling without altering source assets.",
+    )),
     ('1.2.6', (
         "Patch 5: Preserve verified CryEngine Decal glow, emissive strength and original material UV mapping when native CAF/DBA playback switches to a skinned GLB preview.",
         "Patch 5: Use each legacy Illum Decal material's authored diffuse tint when no explicit emissive color is provided, preserving colored light instead of untinted white.",

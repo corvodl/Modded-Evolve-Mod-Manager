@@ -129,6 +129,58 @@ class PanelDbTests(unittest.TestCase):
                 self.assertTrue(play.called)
                 self.assertTrue(self.panel._auto_dba_loading)
 
+    def test_manual_kala_dba_without_idle_starts_first_standalone(self):
+        # Converter may produce valid tech_3p clips with names not containing
+        # "idle". Clicking Play must begin one instead of leaving a static pose.
+        panel = self.panel
+        sample = SimpleNamespace(
+            clips={'tech_3p_additive': (1., ()),
+                   'tech_3p_nw_alert_move': (1., ()),
+                   'tech_3p_nw_alert_react': (1., ())},
+            clip_modes={'tech_3p_additive': {'additive': True},
+                        'tech_3p_nw_alert_move': {},
+                        'tech_3p_nw_alert_react': {}},
+            preview_mesh=panel.canvas.mesh, materials=None)
+        with patch.object(panel, '_display_animation_frame'), patch.object(
+                panel, '_populate_material_slots'), patch.object(
+                panel, '_update_emissive_source_status'), patch.object(
+                panel, 'toggle_play') as play:
+            panel._show_animated(sample, auto_play=True,
+                                 choose_dba_fallback=True)
+        self.assertEqual(panel.clip_select.currentText(),
+                         'tech_3p_nw_alert_move')
+        play.assert_called_once_with()
+
+    def test_layered_only_kala_dba_never_auto_plays_as_base(self):
+        panel = self.panel
+        sample = SimpleNamespace(
+            clips={'tech_3p_aimpose_idle': (1., ())},
+            clip_modes={'tech_3p_aimpose_idle': {'layered': True}},
+            preview_mesh=panel.canvas.mesh, materials=None)
+        with patch.object(panel, '_display_animation_frame'), patch.object(
+                panel, '_populate_material_slots'), patch.object(
+                panel, '_update_emissive_source_status'), patch.object(
+                panel, 'toggle_play') as play:
+            panel._show_animated(sample, auto_play=True,
+                                 choose_dba_fallback=True)
+        play.assert_not_called()
+        self.assertIn('base motion', panel.anim_status.text())
+
+    def test_native_manual_ready_requests_fallback_clip_selection(self):
+        panel = self.panel
+        # A manual Play request previously only enabled idle fallback after
+        # auto DBA loading, making manual converted DBA appear stuck.
+        panel._native_generation = 14
+        panel._auto_dba_loading = False
+        panel._native_source_materials = None
+        panel._historical_character = False
+        panel._native_references = ()
+        imported = SimpleNamespace(doc={'materials': ()})
+        with patch.object(panel, '_show_animated') as show:
+            panel._native_ready(14, ((imported, None), {}), None)
+        self.assertTrue(show.call_args.kwargs['choose_dba_fallback'])
+        self.assertTrue(show.call_args.kwargs['auto_play'])
+
     def test_wrong_reference_cannot_start_old_default(self):
         with tempfile.TemporaryDirectory() as folder:
             asset=Path(folder)/'goliath_3p.dba'

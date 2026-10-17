@@ -84,7 +84,15 @@ class AssemblyEmissivePipelineTests(TestCase):
                                   else 'NoDraw' for i in range(12)),
             original_slot_ids=tuple(range(12)),
             original_materials=(src,)*12)
+        # Like a Kala arm DDNA alpha sidecar, gloss must follow the
+        # exact MTL leaf 11 rather than its composite slot number 7.
+        gloss = Image.new('L', (4,4), 93)
+        from dataclasses import replace
+        mats = replace(mats, gloss_maps=tuple(
+            gloss if i == 11 else None for i in range(12)))
         combined, materials=combine_meshes([('body',mesh,mats)])
+        self.assertIs(materials.gloss_maps[7], gloss)
+        self.assertIsNone(materials.gloss_maps[6])
         self.assertEqual([entry[2] for entry in combined.subsets],list(range(8)))
         self.assertEqual(materials.names[7], 'body: Glow')
         self.assertEqual(materials.original_slot_ids[7],11)
