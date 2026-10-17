@@ -3187,7 +3187,8 @@ class QtWorkspaceEditor(QMainWindow):
                     (report['files'], report['folder']))
             converted = len(report['cdf_assemblies'])
             skipped = len(report['cdf_assembly_errors'])
-            note += ' • %d additional CDF FBX model(s) in models/' % converted\n            note += ' • animation Actions embedded in FBX only; no animations folder'
+            note += ' • %d additional CDF FBX model(s) in models/' % converted
+            note += ' • animation Actions embedded in FBX only; no animations folder'
             monster_stages = report.get('monster_stages', ())
             if monster_stages:
                 note += ' • 3 root monster stage FBX files with stage-specific rigs/animations'
