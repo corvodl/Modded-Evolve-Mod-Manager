@@ -47,6 +47,33 @@ class CharacterAppearanceTests(unittest.TestCase):
                     self.assertEqual(c.included[:3],('maggiebody','flashlight','headgear'))
                     self.assertEqual(c.equipment_options,(skins[3],))
 
+    def test_explicit_default_ignores_current_equipment_skin(self):
+        prefix = 'characters/hunters/merc_example/'
+        body = prefix + 'example_3p.skin'
+        gun1 = prefix + 'weapon_one.skin'
+        gun2 = prefix + 'weapon_two.skin'
+        skins = (('body', body), ('rifle', gun1), ('shotgun', gun2))
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / 'model'
+            source.write_bytes(tiny_mesh())
+            with patch('character_assembly._character_definition',
+                       return_value=(prefix + 'example_3p.cdf',
+                                     prefix + 'example_3p_skeleton.chr',
+                                     skins, {})), patch(
+                    'character_assembly._resolve_file',
+                    return_value=source), patch(
+                    'character_assembly.load_preview_materials',
+                    return_value=None):
+                selected = assemble_character(
+                    None, gun2 + 'm', {}, equipment=None)
+                restored = assemble_character(
+                    None, gun2 + 'm', {}, equipment='__default__')
+                unequipped = assemble_character(
+                    None, gun2 + 'm', {}, equipment='body')
+        self.assertEqual(selected.selected_equipment, gun2)
+        self.assertEqual(restored.selected_equipment, gun1)
+        self.assertEqual(unequipped.selected_equipment, 'body')
+
     def test_glass_without_map_is_colored_but_nodraw_stays_hidden(self):
         with TemporaryDirectory() as folder:
             path=Path(folder)/'test.mtl'
