@@ -153,6 +153,58 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         self.assertIn('Read-only', window.selection_label.text())
         self.assertIn('editable copy', window.selection_label.toolTip())
 
+    def test_compact_character_equipment_menu_is_data_driven(self):
+        from types import SimpleNamespace
+        window = self.window
+        menu = window.character_equipment_menu
+        layout = window.centralWidget().layout()
+        self.assertFalse(menu.menuAction().isVisible())
+        root = 'characters/hunters/merc_emet/'
+        normal = root + 'emet_3p_face_normal.skin'
+        oh = root + 'emet_3p_face_oh.skin'
+        cannon = root + 'emetremotecannon_3p.skin'
+        window.character_preview = SimpleNamespace(
+            equipment_options=(('remotecannon', cannon),),
+            selected_equipment=cannon,
+            faceplate_options=(('normal', normal), ('oh', oh)),
+            selected_faceplate=normal)
+        window._update_character_equipment_menu()
+        self.assertTrue(menu.menuAction().isVisible())
+        self.assertEqual(layout.count(), 3)
+        groups = {action.text(): action.menu() for action in menu.actions()
+                  if action.menu() is not None}
+        self.assertEqual(set(groups), {'Weapons', 'Face / Head Variants'})
+        self.assertTrue(groups['Weapons'].actions()[0].isChecked())
+        self.assertTrue(groups['Face / Head Variants'].actions()[0].isChecked())
+        with patch.object(window, '_select_faceplate') as select:
+            groups['Face / Head Variants'].actions()[1].trigger()
+            select.assert_called_once_with(oh)
+
+        # Swapping to a file without an owning CDF hides all menu UI.
+        window.character_preview = None
+        window._update_character_equipment_menu()
+        self.assertFalse(menu.menuAction().isVisible())
+        self.assertEqual(layout.count(), 3)
+
+    def test_restore_default_loadout_keeps_emet_normal_face(self):
+        from types import SimpleNamespace
+        window = self.window
+        root = 'characters/hunters/merc_emet/'
+        normal = root + 'emet_3p_face_normal.skin'
+        alternate = root + 'emet_3p_face_evil.skin'
+        window.character_preview = SimpleNamespace(
+            faceplate_options=(('evil', alternate), ('normal', normal),))
+        window.mode = 'models'
+        window.current = self.models[0]
+        window.full_character_active = True
+        window.character_skin_choice = root + 'emetremotecannon_3p.skin'
+        window.character_faceplate_choice = alternate
+        with patch.object(window, 'load') as reload:
+            window._restore_character_loadout()
+        reload.assert_called_once_with(self.models[0], full_character=True)
+        self.assertIsNone(window.character_skin_choice)
+        self.assertEqual(window.character_faceplate_choice, normal)
+
     def test_opening_model_defers_library_validation_to_worker(self):
         # A model click must never perform manifest/file system checks on
         # the Qt event loop. Background library_model_index still validates
