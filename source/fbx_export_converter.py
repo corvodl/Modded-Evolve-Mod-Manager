@@ -178,6 +178,8 @@ def convert_glb_to_fbx(blob, destination, *, static=False, blender=None, timeout
         verified = json.loads(receipt.read_text('utf-8'))
         if not verified.get('meshes'):
             raise ValueError('Converted FBX has no meshes.')
+        if not static and gltf.get('skins') and not verified.get('armatures'):
+            raise ValueError('FBX conversion dropped the source character skeleton.')
         if tracks and (not verified.get('armatures')
                        or len(verified.get('actions', ())) < len(tracks)):
             raise ValueError('FBX conversion dropped verified skin or animations.')
