@@ -88,6 +88,62 @@ class ReadOnlyAssetPreviewUITests(TestCase):
         })
         self.addCleanup(self.window.close)
 
+    def test_compact_library_header_preserves_explorer_and_read_only_status(self):
+        window = self.window
+        layout = window.centralWidget().layout()
+        # Exactly one breadcrumb row, the splitter, and a bottom status row:
+        # no standalone library notices consuming vertical viewport space.
+        self.assertEqual(layout.count(), 3)
+        self.assertIs(layout.itemAt(0).layout(), window.workspace_header)
+        self.assertIs(layout.itemAt(1).widget(), window.editor_split)
+        self.assertIs(window.workspace_header.itemAt(0).widget(),
+                      window.current_file_label)
+        self.assertIs(window.workspace_header.itemAt(1).widget(),
+                      window.selection_label)
+        self.assertIs(window.workspace_header.itemAt(2).widget(),
+                      window.sidebar_button)
+        self.assertEqual(window.selection_label.objectName(),
+                         'libraryReadOnlyNotice')
+        self.assertIn('Read-only', window.selection_label.text())
+        self.assertIn('editing and importing are disabled',
+                      window.selection_label.toolTip())
+        self.assertIn('copies', window.selection_label.toolTip())
+        self.assertTrue(window.read_only_library)
+        self.assertIs(window.editor_split.widget(1), window.explorer)
+        self.assertEqual(window.explorer.objectName(), 'fileExplorerPane')
+        self.assertEqual(window.explorer.findChild(
+            QLabel, 'fileExplorerHeading').text(), 'FILE EXPLORER')
+        self.assertIs(window.search.parentWidget(), window.explorer)
+        self.assertEqual(window.sidebar_button.size().width(), 36)
+
+        for width in (660, 840, 1280):
+            window.resize(width, 480)
+            window.show()
+            self.app.processEvents()
+            # Keep the entire breadcrumb/protection status to one line.
+            self.assertLessEqual(window.workspace_header.geometry().height(), 34)
+            self.assertLessEqual(window.selection_label.height(), 22)
+            self.assertEqual(layout.count(), 3)
+            self.assertGreater(window.editor_split.height(), 300)
+            self.assertTrue(window.explorer.isVisible())
+
+        # The existing selection signal updates the badge in place rather
+        # than inserting another line or altering original source files.
+        item = None
+        walker = QTreeWidgetItemIterator(window.file_tree)
+        while walker.value():
+            if walker.value().data(0, Qt.UserRole) == self.relative:
+                item = walker.value()
+                break
+            walker += 1
+        self.assertIsNotNone(item)
+        window.file_tree.setCurrentItem(item)
+        self.app.processEvents()
+        self.assertIn('selected', window.selection_label.text())
+        self.assertEqual(layout.count(), 3)
+        self.assertEqual(self.source.read_text(encoding='utf-8'),
+                         '<Character name="Maggie"/>')
+
     def test_gfx_library_preview_and_rgba_png_export_preserve_source(self):
         import io
         from PIL import Image
