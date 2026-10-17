@@ -16,6 +16,36 @@ class PerformanceTests(unittest.TestCase):
         self.mesh = read_preview_mesh(uv_mesh(), 'fixture.skinm')
         self.mats = PreviewMaterials((Image.new('RGB', (16, 16), (170, 50, 85)),), ('body',), 'fixture.mtl')
 
+    def test_model_click_brightness_diagnostic_never_converts_full_resolution_dds(self):
+        from material_preview import diffuse_source_stats
+        from unittest.mock import Mock
+        # A 16K DDS occupies gigabytes across temporary conversions. The
+        # material inspector must sample before RGB conversion, even though
+        # the GPU/export path still retains the original full-resolution DDS.
+        source = Mock()
+        source.width = 16384
+        source.height = 8192
+        source.convert.side_effect = AssertionError(
+            'Converting full DDS in Qt material inspector blocks the UI')
+        sampled = Image.new('RGB', (32, 32), (80, 100, 120))
+        source.resize.return_value = sampled
+        material = SimpleNamespace(textures=(source,))
+        average, near_black = diffuse_source_stats(material, 0)
+        self.assertGreater(average, 0)
+        self.assertEqual(near_black, 0)
+        source.resize.assert_called_once_with(
+            (32, 32), Image.Resampling.NEAREST)
+        source.convert.assert_not_called()
+
+    def test_material_brightness_small_rgba_map_stays_bounded(self):
+        from material_preview import diffuse_source_stats
+        image = Image.new('RGBA', (4, 4), (200, 50, 25, 0))
+        mats = SimpleNamespace(textures=(image,))
+        average, near_black = diffuse_source_stats(mats, 0)
+        self.assertGreater(average, 0)
+        self.assertEqual(near_black, 0)
+        self.assertEqual(image.mode, 'RGBA')  # never mutate source DDS
+
     def test_prepared_texture_arrays_are_reused(self):
         first = self.mats.rgb_arrays
         self.assertIs(first, self.mats.rgb_arrays)
