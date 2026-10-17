@@ -209,6 +209,33 @@ def bake_emission_map(diffuse, *, color=None, emission=None,
     return result
 
 
+
+# The original CryEngine GlowAmount (commonly 3) is an engine-specific shader
+# control, not a Blender emission-unit equivalent. Game-reference testing
+# found that 100 Blender units restores the expected brightness on the
+# supported Evolve emissive surfaces. Keep the authored value in metadata;
+# never bake 100 into DDS pixels or apply it to non-emissive slots.
+EVOLVE_REFERENCE_EMISSION_STRENGTH = 100.0
+
+
+def preview_emission_strength(authored_strength, *, has_emissive_map=True):
+    """Calibrated Blender/GPU intensity for a verified emitting material.
+
+    Source values decide whether a material emits, not a linear 3->3 mapping.
+    An absent emissive map, zero, negative, malformed, or nonfinite strength
+    must never create new glowing surfaces.
+    """
+    if not has_emissive_map:
+        return 0.0
+    try:
+        authored = float(authored_strength)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    if not math.isfinite(authored) or authored <= 0.0:
+        return 0.0
+    return EVOLVE_REFERENCE_EMISSION_STRENGTH
+
+
 def subset_emission_coverage(mesh, materials, slot, max_samples=4096):
     """Approximate emissive vertex-UV coverage for a material subset.
 
