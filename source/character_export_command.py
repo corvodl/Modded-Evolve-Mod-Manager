@@ -6,6 +6,7 @@ The caller selects a character within an extracted, verified PAK workspace.
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
+import re
 
 from character_aliases import character_name_for_internal
 from character_asset_export import (
@@ -95,9 +96,49 @@ def validate_character_export_destination(source_folder, destination):
     return friendly
 
 
+_FIRST_PERSON = re.compile(
+    r'(?<![a-z0-9])(?:fp|1p|first[_-]?person|1st[_-]?person|view[_-]?model)(?![a-z0-9])',
+    re.IGNORECASE)
+_THIRD_PERSON = re.compile(
+    r'(?<![a-z0-9])(?:3p|third[_-]?person)(?![a-z0-9])',
+    re.IGNORECASE)
+
+
+def _assembly_perspective(info):
+    """Identify view-only CDFs from their own paths and verified skeletons.
+
+    Inspect only the asset's relative path within the character folder, not
+    the character name. If CDF/skeleton tags conflict, do not promote it as
+    the full 3P body. Unmarked CDFs remain eligible as neutral candidates.
+    """
+    if info.get('original_3p_model'):
+        return '3p'
+    kinds = set()
+    for source in (info.get('cdf'), info.get('skeleton')):
+        if not source:
+            continue
+        parts = PurePosixPath(str(source).replace('\\', '/')).parts
+        if (len(parts) >= 4 and parts[0].casefold() == 'characters'
+                and parts[1].casefold() in ('hunters', 'monsters', 'creatures')):
+            parts = parts[3:]
+        for segment in parts:
+            stem = PurePosixPath(segment).stem
+            if _FIRST_PERSON.search(stem):
+                kinds.add('fp')
+            elif _THIRD_PERSON.search(stem):
+                kinds.add('3p')
+    if 'fp' in kinds:
+        return 'fp'
+    return '3p' if '3p' in kinds else ''
+
+
 def _preferred_full_assembly(assemblies, selected_cdf=None):
     """Prefer a complete verified body; never promote a rigged accessory as main."""
-    entries = list(assemblies.values())
+    # The primary root GLB represents the complete player-visible body.
+    # FP/view-model CDFs remain available under models/ as variants but must
+    # never win the root export just because they have more parts or bones.
+    entries = [pair for pair in assemblies.values()
+               if _assembly_perspective(pair[1]) != 'fp']
     if not entries:
         return None
     selected = str(selected_cdf or '').casefold()
@@ -113,6 +154,7 @@ def _preferred_full_assembly(assemblies, selected_cdf=None):
         return (
             bool(info.get('preferred_full_character')),
             parts > 1,
+            _assembly_perspective(info) == '3p',
             bones > 0,
             parts,
             bool(selected and str(info.get('cdf', '')).casefold() == selected),
@@ -171,6 +213,11 @@ def export_character_directory(source_folder, destination, *, projects_root=None
             assembly_errors=errors, output_name=display_name,
             progress=progress, cancelled=cancelled)
     chosen = _preferred_full_assembly(assemblies, selected_cdf)
+    if chosen is None and assemblies:
+        raise ValueError(
+            'No verified third-person character body was found. '
+            'Only first-person/view-model assemblies were available; '
+            'check the character 3P CDF and its skeleton dependencies.')
     if chosen is None:
         summary = '; '.join(str(reason) for _, reason in errors[:3])
         raise ValueError(
