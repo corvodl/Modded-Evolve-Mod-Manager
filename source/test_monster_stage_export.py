@@ -145,37 +145,41 @@ class MonsterRootExportTests(TestCase):
 
     def test_command_exports_three_root_models_not_generic_name(self):
         from character_export_command import export_character_directory
-        from character_asset_export import export_character_asset_folder
-        expected=stage_assemblies()
-        def skip_reconversion(*args, **kwargs):
-            return {'animations':0, 'sources':0,
-                    'manifest':'animations/animation_manifest.json'}
+        from fbx_export_converter import FBX_SIGNATURE
+        expected = stage_assemblies()
+        def make_fbx(blob, filename, **_kw):
+            doc, _ = _unpack_glb(blob)
+            self.assertEqual(len(doc.get('skins', ())), 1)
+            actions = [a['name'] for a in doc.get('animations', ())]
+            Path(filename).write_bytes(FBX_SIGNATURE + b'fixture'*30)
+            return {'format':'FBX Binary', 'actions': actions}
         with (patch('character_export_command.build_cdf_folder_glbs',
-                    return_value=(expected,())),
-              patch('character_animation_export.export_character_animation_folder',
-                    side_effect=skip_reconversion)):
-            result=export_character_directory(
-                self.home/'files'/MONSTER,self.output,index={})
-        folder=Path(result['folder'])
-        self.assertFalse((folder/'Goliath.glb').exists())
+                    return_value=(expected, ())),
+              patch('character_asset_export.convert_glb_to_fbx',
+                    side_effect=make_fbx)):
+            result = export_character_directory(
+                self.home/'files'/MONSTER, self.output, index={})
+        folder = Path(result['folder'])
+        self.assertFalse((folder/'Goliath.fbx').exists())
         for stage in (1,2,3):
-            name='Goliath_Stage%d.glb' % stage
-            blob=(folder/name).read_bytes()
-            doc,_=_unpack_glb(blob)
-            actual=tuple(clip['name'] for clip in doc.get('animations',()))
-            self.assertEqual(actual,expected['Assemblies/goliath_stage%d.glb'%stage][1]
-                             ['embedded_animation_clips'])
-            self.assertEqual(len(doc['skins']),1)
+            name = 'Goliath_Stage%d.fbx' % stage
+            self.assertTrue((folder/name).read_bytes().startswith(FBX_SIGNATURE))
+            actual = tuple(result['monster_stages'][stage-1]['fbx_conversion']['actions'])
+            self.assertEqual(
+                actual, expected['Assemblies/goliath_stage%d.glb'%stage][1]
+                ['embedded_animation_clips'])
             self.assertFalse((folder/'models'/name).exists())
-        manifest=json.loads((folder/'asset_sources.json').read_text())
-        self.assertEqual([row['stage'] for row in manifest['monster_stages']],[1,2,3])
-        self.assertEqual([row['embedded_animations'] for row in manifest['monster_stages']],
+        self.assertFalse(list(folder.glob('*.glb')))
+        manifest = json.loads((folder/'asset_sources.json').read_text())
+        self.assertEqual([x['stage'] for x in manifest['monster_stages']], [1,2,3])
+        self.assertEqual([x['embedded_animations'] for x in manifest['monster_stages']],
                          [2,2,2])
         self.assertIsNone(manifest['full_model'])
         self.assertEqual(len(result['monster_stages']),3)
 
     def test_krakenelder_root_export_accepts_verified_numbered_cdfs(self):
         from character_export_command import export_character_directory
+        from fbx_export_converter import FBX_SIGNATURE
         elder = 'characters/monsters/krakenelder'
         elder_source = self.home/'files'/elder
         elder_source.mkdir(parents=True)
@@ -183,18 +187,22 @@ class MonsterRootExportTests(TestCase):
         assemblies = {}
         for stage in (1, 2, 3):
             blob, original = animated_stage(stage)
-            info = dict(original,cdf=elder+'/krakenelder%d.cdf'%stage)
+            info = dict(original, cdf=elder+'/krakenelder%d.cdf'%stage)
             assemblies['Assemblies/krakenelder%d.glb'%stage]=(blob, info)
+        def make_fbx(blob, filename, **_kw):
+            Path(filename).write_bytes(FBX_SIGNATURE + b'fixture'*30)
+            return {'format':'FBX Binary',
+                    'actions':[x['name'] for x in _unpack_glb(blob)[0]['animations']]}
         with (patch('character_export_command.build_cdf_folder_glbs',
                     return_value=(assemblies, ())),
-              patch('character_animation_export.export_character_animation_folder',
-                    return_value={'animations':0,'sources':0,
-                                  'manifest':'animations/animation_manifest.json'})):
+              patch('character_asset_export.convert_glb_to_fbx',
+                    side_effect=make_fbx)):
             result = export_character_directory(
-                self.home/'files'/elder,self.output,index={})
+                self.home/'files'/elder, self.output, index={})
         folder = Path(result['folder'])
         self.assertEqual(len(result['monster_stages']), 3)
-        self.assertEqual(len([p for p in folder.glob('*_Stage*.glb')]), 3)
+        self.assertEqual(len(list(folder.glob('*_Stage*.fbx'))), 3)
+        self.assertFalse(list(folder.glob('*.glb')))
         self.assertEqual(
             {row['cdf'] for row in result['monster_stages']},
             {elder+'/krakenelder%d.cdf'%n for n in (1,2,3)})
