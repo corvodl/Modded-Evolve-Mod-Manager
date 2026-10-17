@@ -214,10 +214,9 @@ class CharacterPipelineTests(unittest.TestCase):
             self.assertIsNone(result.materials.textures[2])
 
     def test_emet_repeated_face_mtl_and_separate_cannon_stay_textured(self):
-        # Emet's diagnostic lists five facial states sharing emet_3p.mtl
-        # with the body, plus a separate remote-cannon MTL. Repeating that
-        # same 512 MiB image for each face must not exhaust the budget.
-        # This tests budget accounting, not which expressions a CDF enables.
+        # Emet's five faceplates are alternatives, NOT five simultaneous
+        # meshes; the normal face is default and the cannon remains separate.
+        # Both faceplate changes and the remote cannon preserve shared pixels.
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -266,12 +265,49 @@ class CharacterPipelineTests(unittest.TestCase):
                 character = assemble_character(
                     root, prefix + 'emetremotecannon_3p.skinm', index,
                     pre_material_geometry=lambda _mesh: None)
-            self.assertEqual(tuple(label for label, _ in models),
+            self.assertEqual(('body', 'normal', 'remotecannon'),
                              character.included)
+            self.assertEqual(5, len(character.faceplate_options))
+            self.assertEqual((('remotecannon', prefix + 'emetremotecannon_3p.skin'),),
+                             character.equipment_options)
+            self.assertEqual(character.selected_faceplate,
+                             prefix + 'emet_3p_face_normal.skin')
             self.assertFalse(any('768 MiB' in item for item in character.omitted))
-            self.assertIs(character.materials.textures[4], shared_image)
-            self.assertIs(character.materials.textures[5], shared_image)
-            self.assertIs(character.materials.textures[6], cannon_image)
+            self.assertIs(character.materials.textures[1], shared_image)
+            self.assertIs(character.materials.textures[2], cannon_image)
+
+            for name in ('oh', 'normal', 'evil', 'healing', 'broken'):
+                with self.subTest(faceplate=name), patch(
+                    'character_assembly.read_preview_mesh',
+                    return_value=mesh), patch(
+                    'character_assembly.load_preview_materials',
+                    side_effect=materials_for):
+                    variant = assemble_character(
+                        root, prefix + 'emetremotecannon_3p.skinm', index,
+                        faceplate=name, pre_material_geometry=lambda _mesh: None)
+                    self.assertEqual(('body', name, 'remotecannon'), variant.included)
+                    self.assertEqual(variant.selected_faceplate,
+                                     prefix + 'emet_3p_face_' + name + '.skin')
+                    self.assertEqual(3, len(variant.materials.textures))
+                    self.assertFalse(any('768 MiB' in error
+                                         for error in variant.omitted))
+            with patch('character_assembly.read_preview_mesh',
+                       return_value=mesh), patch(
+                    'character_assembly.load_preview_materials',
+                    side_effect=materials_for):
+                body_only = assemble_character(
+                    root, prefix + 'emet_3p.skinm', index,
+                    equipment='body', faceplate='evil',
+                    pre_material_geometry=lambda _mesh: None)
+                selected_file = assemble_character(
+                    root, prefix + 'emet_3p_face_oh.skinm', index,
+                    pre_material_geometry=lambda _mesh: None)
+            self.assertEqual(('body', 'evil'), body_only.included)
+            self.assertEqual(('body', 'oh', 'remotecannon'),
+                             selected_file.included)
+            with self.assertRaisesRegex(ValueError, 'Unknown or ambiguous'):
+                assemble_character(root, prefix + 'emet_3p.skinm', index,
+                                   faceplate='other_character')
 
     def test_sparse_material_fallback_does_not_exhaust_slots(self):
         first = PreviewMesh(((0,0,0), (1,0,0), (0,1,0)),
