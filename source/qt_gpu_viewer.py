@@ -827,14 +827,20 @@ class QtGLModelCanvas(QOpenGLWidget):
         try:
             # Render translucent material groups after opaque ones. Geometry
             # in a material group still uses source ordering (no invented triangles).
+            from material_preview import preview_material_opacity
             def is_translucent(slot):
                 if self.force_opaque_preview:
                     return False
-                values=getattr(self.materials,'opacity',()) if self.materials else ()
+                glasses=getattr(self.materials,'glass_materials',())
+                glass=slot<len(glasses) and glasses[slot]
                 cutoffs=getattr(self.materials,'alpha_cutoffs',())
-                if slot<len(cutoffs) and cutoffs[slot]>0:
+                # Glass AlphaTest controls dirt shadows, not whether the
+                # refractive lens is solid. Never render it in the depth-
+                # writing opaque pass, even with a fully opaque diffuse DDS.
+                if not glass and slot<len(cutoffs) and cutoffs[slot]>0:
                     return False
-                return slot in self.translucent_slots or (slot<len(values) and values[slot]<.999)
+                return (glass or slot in self.translucent_slots or
+                        preview_material_opacity(self.materials, slot)<.999)
             from renderer_3 import ordered_transparency_batches
             transparent_slots={slot for _,_,slot in arrays.draws if is_translucent(slot)}
             order_key=(id(arrays),tuple(self.rotation),tuple(sorted(transparent_slots)))
@@ -851,12 +857,14 @@ class QtGLModelCanvas(QOpenGLWidget):
                     continue
                 if self.visible_material_slot is not None and slot != self.visible_material_slot:
                     continue
-                alpha = (self.materials.opacity[slot] if self.materials and
-                         slot<len(getattr(self.materials,'opacity',())) else 1.0)
+                alpha = preview_material_opacity(self.materials, slot)
                 if self.force_opaque_preview:
                     alpha = 1.0
+                glasses = getattr(self.materials, 'glass_materials', ())
+                glass = slot < len(glasses) and bool(glasses[slot])
                 cutoffs = getattr(self.materials, 'alpha_cutoffs', ())
-                cutoff = cutoffs[slot] if not self.force_opaque_preview and slot < len(cutoffs) else 0.
+                cutoff = (cutoffs[slot] if not glass and not self.force_opaque_preview
+                          and slot < len(cutoffs) else 0.)
                 from OpenGL.GL import GL_ALPHA_TEST, GL_GEQUAL, glAlphaFunc
                 if cutoff > 0:
                     glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GEQUAL, cutoff)
