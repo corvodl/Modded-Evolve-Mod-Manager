@@ -195,6 +195,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.full_character_active = False
         self.character_skin_choice = None
+        self.character_faceplate_choice = None
         self._prepared_animation = None
         self.gpu_windows = []
         self._export_native_pool = None
@@ -660,8 +661,10 @@ class QtWorkspaceEditor(QMainWindow):
         action('Edit', 'Import / Replace File…', self.import_raw)
         action('Edit', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('Edit', 'Restore Original', self.restore_original)
-        self.equipment_menu = menus['Model'].addMenu('Equipped Skin')
-        self.equipment_menu.setEnabled(False)
+        # One unobtrusive entry; only show it for a verified CDF assembly.
+        # The category submenus are populated from the character's own CDF.
+        self.character_equipment_menu = menus['Model'].addMenu('Character Equipment')
+        self.character_equipment_menu.menuAction().setVisible(False)
         action('Model', 'Import Same-Layout Model…', self.import_model)
         action('Model', 'Open GPU Viewer in New Window', self.open_gpu_viewer)
         action('Model', 'Compare Models Side by Side…', self.open_model_compare)
@@ -1671,6 +1674,7 @@ class QtWorkspaceEditor(QMainWindow):
             self._capture_playback_preferences()
         if rel != self.current:
             self.character_skin_choice = None
+            self.character_faceplate_choice = None
         self.current = rel
         self.stream = None
         self.mesh = None
@@ -1678,6 +1682,10 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.texture_message = 'No texture lookup has run'
         self.mode = self._category(rel)
+        # Keep the old character's options out of the way while a new model
+        # loads, and never show them in image/file/level views.
+        self.character_equipment_menu.clear()
+        self.character_equipment_menu.menuAction().setVisible(False)
         self._sync_editor_context_actions()
         self.dependency_button.setEnabled(self.mode=='models')
         self.dependency_button.setVisible(self.mode == 'models')
@@ -1924,6 +1932,7 @@ class QtWorkspaceEditor(QMainWindow):
         tex = self.texture_folder
         ani = self.loose_animation_index
         equipment = self.character_skin_choice
+        faceplate = self.character_faceplate_choice
         require_assembly = self.full_character_active
         token = self._model_generation
         cancel = self._model_cancel
@@ -1969,7 +1978,7 @@ class QtWorkspaceEditor(QMainWindow):
             data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
                 projects_root=projects, stage_root=stage,
                 texture_folder=tex, animation_index=ani,
-                equipment=equipment, index=active_index,
+                equipment=equipment, faceplate=faceplate, index=active_index,
                 require_assembly=require_assembly, cancel=cancel.is_set,
                 geometry_ready=geometry_stage,
                 stage_ready=stage_ready)
@@ -2153,30 +2162,96 @@ class QtWorkspaceEditor(QMainWindow):
             (total, count, ', '.join(missing_slots[:12]) or 'None',
              '\n'.join(issues[:8]) or
              'No unresolved DDS references reported.'))
-        self._update_equipment_menu()
+        self._update_character_equipment_menu()
         self._apply_model_texture_choices()
         self._paint_model(view, self.mesh)
         self.status.setText(
             self.current + ' | ' + data['report'] + ' | ' + self.texture_message)
 
-    def _update_equipment_menu(self):
-        self.equipment_menu.clear()
+    def _update_character_equipment_menu(self):
+        """One compact, CDF-backed menu; never create persistent viewer chrome."""
+        menu = self.character_equipment_menu
+        menu.clear()
+        # PySide6's addMenu(str) does not retain a Python wrapper for child
+        # submenus in all Qt builds. Keep them alive while the menu is active.
+        self._character_equipment_submenus = []
         preview = self.character_preview
-        self.equipment_menu.setEnabled(bool(preview and preview.equipment_options))
         if not preview:
+            menu.menuAction().setVisible(False)
             return
-        choices = [('Body only', 'body')] + list(preview.equipment_options)
-        for label, virtual in choices:
-            action = self.equipment_menu.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(virtual.casefold() == preview.selected_equipment.casefold())
-            action.triggered.connect(
-                lambda checked=False, name=virtual: self._select_character_equipment(name))
+        from character_equipment_menu import equipment_menu_groups
+        grouped = equipment_menu_groups(
+            preview.equipment_options,
+            getattr(preview, 'faceplate_options', ()))
+        menu.menuAction().setVisible(bool(grouped))
+        if not grouped:
+            return
+
+        # Current renderer supports one active equipment variant. CDF SkinSets
+        # still control dependencies (e.g. Kala's Rift Device/arm). A faceplate
+        # is a separate independent selection only where the CDF defines one.
+        if preview.equipment_options:
+            none = menu.addAction('Unequip selected item')
+            none.setCheckable(True)
+            none.setChecked(preview.selected_equipment == 'body')
+            none.setToolTip('Show the character body and permanent attachments only.')
+            none.triggered.connect(
+                lambda checked=False: self._select_character_equipment('body'))
+            menu.addSeparator()
+
+        for group_name, entries in grouped:
+            # Explicit QObject parenting avoids a PySide6/C++ ownership bug
+            # observed on Linux offscreen where addMenu(str) produced a
+            # dangling submenu action immediately after returning.
+            subgroup = QMenu(group_name, menu)
+            menu.addMenu(subgroup)
+            self._character_equipment_submenus.append(subgroup)
+            for kind, label, virtual in entries:
+                action = subgroup.addAction(label.replace('_', ' ').title())
+                action.setCheckable(True)
+                active = (preview.selected_faceplate if kind == 'faceplate'
+                          else preview.selected_equipment)
+                action.setChecked(virtual.casefold() == active.casefold())
+                action.setToolTip(
+                    virtual + ('\\nReplaces the current faceplate; equipment is kept.'
+                               if kind == 'faceplate' else
+                               '\\nSwitches the active CDF equipment attachment.'))
+                if kind == 'faceplate':
+                    action.triggered.connect(
+                        lambda checked=False, name=virtual: self._select_faceplate(name))
+                else:
+                    action.triggered.connect(
+                        lambda checked=False, name=virtual: self._select_character_equipment(name))
+        menu.addSeparator()
+        restore = menu.addAction('Restore Default Loadout')
+        restore.setToolTip('Use the CDF default equipment and normal faceplate, if available.')
+        restore.triggered.connect(self._restore_character_loadout)
 
     def _select_character_equipment(self, name):
         if self.mode != 'models' or not self.current:
             return
         self.character_skin_choice = name
+        self.load(self.current, full_character=self.full_character_active)
+
+    def _select_faceplate(self, virtual):
+        if self.mode != 'models' or not self.current:
+            return
+        self.character_faceplate_choice = virtual
+        self.load(self.current, full_character=self.full_character_active)
+
+    def _restore_character_loadout(self):
+        if self.mode != 'models' or not self.current:
+            return
+        preview = self.character_preview
+        self.character_skin_choice = '__default__'
+        self.character_faceplate_choice = None
+        # An explicitly opened alternate face source would otherwise remain
+        # the default when faceplate=None. Restore Emet's normal plate instead.
+        if preview and getattr(preview, 'faceplate_options', ()):
+            for _label, virtual in preview.faceplate_options:
+                if Path(virtual).stem.casefold() == 'emet_3p_face_normal':
+                    self.character_faceplate_choice = virtual
+                    break
         self.load(self.current, full_character=self.full_character_active)
 
     def _paint_model(self, view, mesh):
@@ -2420,6 +2495,9 @@ class QtWorkspaceEditor(QMainWindow):
         self.preview_index = None
         self.character_preview = None
         self.character_skin_choice = None
+        self.character_faceplate_choice = None
+        self.character_equipment_menu.clear()
+        self.character_equipment_menu.menuAction().setVisible(False)
         self.current, self.loaded_text, self.raw = None, '', b''
         self.gfx_view.cancel_pending()
         self._close_gfx_editor()
@@ -2919,7 +2997,8 @@ class QtWorkspaceEditor(QMainWindow):
                     workspace, virtual, asset_index,
                     texture_folder=textures, projects_root=projects,
                     stage_root=stage,
-                    equipment=source_character.selected_equipment)
+                    equipment=source_character.selected_equipment,
+                    faceplate=source_character.selected_faceplate)
                 if fresh_character is None:
                     raise ValueError('Unable to reconstruct full-quality CDF textures; '
                                      'ensure the character and shared texture PAKs '
@@ -3244,7 +3323,7 @@ class QtWorkspaceEditor(QMainWindow):
 
     def _texture_choice_key(self):
         return (str(self.workspace), self.current, self.character_skin_choice,
-                bool(self.full_character_active))
+                self.character_faceplate_choice, bool(self.full_character_active))
 
     def _apply_model_texture_choices(self):
         choices = self.model_texture_choices.get(self._texture_choice_key(), {})

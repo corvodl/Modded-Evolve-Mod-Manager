@@ -64,7 +64,7 @@ def refresh_character_material_index(index, relative, stage_root=None):
 
 def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
                   texture_folder=None, animation_index=None, equipment=None,
-                  index=None, require_assembly=False, cancel=None,
+                  faceplate=None, index=None, require_assembly=False, cancel=None,
                   geometry_ready=None, stage_ready=None):
     def checkpoint():
         if cancel is not None and cancel():
@@ -116,7 +116,7 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
             character = assemble_character(
                 workspace, relative, index, texture_folder=texture_folder,
                 projects_root=projects_root, stage_root=stage_root,
-                equipment=equipment, pre_material_geometry=(
+                equipment=equipment, faceplate=faceplate, pre_material_geometry=(
                     publish_geometry if geometry_ready is not None else None),
                 stage_ready=stage_ready, **downstream_cancel)
     except (ValueError, OSError) as exc:

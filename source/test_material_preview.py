@@ -29,6 +29,56 @@ def uv_mesh():
     return b'CrChF\x07\x00\x00'+struct.pack('<II',chunk_count,16)+b''.join(desc)+b''.join(data for _,data in parts)
 
 class MaterialRenderingTests(unittest.TestCase):
+    def test_shared_verified_mtl_is_decoded_once_and_skips_unused_slots(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            material = root / 'maggiesavage_3p.mtl'
+            material.write_text(
+                '<Material><SubMaterials>'
+                '<Material Name="body" Shader="Illum"><Textures>'
+                '<Texture Map="Diffuse" File="textures/body_diff.tif"/>'
+                '</Textures></Material>'
+                '<Material Name="unused_huge" Shader="Illum"><Textures>'
+                '<Texture Map="Diffuse" File="textures/unused_diff.tif"/>'
+                '</Textures></Material>'
+                '</SubMaterials></Material>', encoding='utf-8')
+            record = {'file': material, 'workspace': root,
+                      'relative': 'characters/hunters/merc_maggiesavage/maggiesavage_3p.mtl'}
+            def external(_folder, name):
+                if name.endswith('body_diff.tif'):
+                    return {'file': root / 'body.dds.0',
+                            'relative': 'characters/hunters/merc_maggiesavage/textures/body_diff.dds.0',
+                            'archive': 'characters_hunters_merc_maggiesavage_ts.pak'}
+                return None
+            cache = {}
+            index = {}
+            with patch('model_material_resolve.find_model_material',
+                       return_value=(record, 'compiled reference', ())), patch(
+                    'material_preview._external_lookup',
+                    side_effect=external), patch(
+                    'material_preview._decode_texture',
+                    return_value=Image.new('RGB', (4, 4), 'red')) as decode:
+                first = load_preview_materials(
+                    root, 'characters/hunters/merc_maggiesavage/maggiesavage_3p.skinm',
+                    index=index, material_cache=cache, used_slots={0})
+                count = decode.call_count
+                second = load_preview_materials(
+                    root, 'characters/hunters/merc_maggiesavage/maggiesavage_3p_headwear.skinm',
+                    index=index, material_cache=cache, used_slots={0})
+                # A different quality setting cannot reuse stale decoded pixels.
+                load_preview_materials(
+                    root, 'characters/hunters/merc_maggiesavage/maggiesavage_3p_flashlight.skinm',
+                    index=index, material_cache=cache, used_slots={0},
+                    texture_quality='balanced')
+            self.assertIsNotNone(first.textures[0])
+            self.assertIsNone(first.textures[1])
+            self.assertTrue(first.hidden[1])
+            self.assertEqual(len(first.original_slot_ids), 2)
+            self.assertIs(first, second)
+            self.assertGreater(count, 0)
+            self.assertGreater(decode.call_count, count)
+            self.assertEqual(len(cache), 2)
+
     def test_uv_stream_and_subset(self):
         mesh=read_preview_mesh(uv_mesh())
         self.assertEqual(len(mesh.uvs),4)

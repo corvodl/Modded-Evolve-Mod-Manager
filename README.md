@@ -1,17 +1,18 @@
-# Evolve Stage 2 Mod Manager — v1.3.1
+# Evolve Stage 2 Mod Manager — v1.3.2
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.3.1 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.3.2 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.3.1
+## Latest Stable — v1.3.2
 
-- Prefer verified third-person character assemblies for main Blender GLB exports instead of accidentally choosing first-person view models.
-- Remove redundant Asset Library read-only header rows; keep a compact inline status and maximize model preview space.
-- Improve character export diagnostics and preserve the protected File Explorer with regression coverage.
-- Keep large CryEngine animation catalogs from aborting character exports; prioritize relevant clips and report skipped references.
+- Reuse shared high-resolution character textures across CDF attachments without charging duplicate images against the 768 MiB preview budget.
+- Decode only referenced material slots while retaining verified texture quality and reporting genuinely oversized assemblies.
+- Display Emet's Normal faceplate by default; switch between his five faceplates independently of equipped weapons.
+- Add a compact Model > Character Equipment menu for CDF-backed weapons, abilities, accessories and head variants.
+- Preserve compatible equipment and faceplate selections in model previews and Blender exports, with a Restore Default Loadout action.
 
 ## Download and install
 

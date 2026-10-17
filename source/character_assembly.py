@@ -29,6 +29,8 @@ class CharacterPreview:
     equipment_options: tuple = ()
     selected_equipment: str = ''
     rig_parts: tuple = ()
+    faceplate_options: tuple = ()
+    selected_faceplate: str = ''
 
 
 def _parse_cdf(raw):
@@ -294,7 +296,8 @@ def _hunter_anatomical_skin(label, binding, cdf):
 
 def assemble_character(workspace, selected, index, *, texture_folder=None,
                        projects_root=None, stage_root=None, equipment=None,
-                       cancel=None, pre_material_geometry=None, stage_ready=None):
+                       faceplate=None, cancel=None, pre_material_geometry=None,
+                       stage_ready=None):
     """Return None when no owning CDF or no renderable bound skin exists.
 
     Only select the character body and explicitly selected weapon/skin. Extra
@@ -309,6 +312,37 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
     selected_skin = normalized_name(selected).casefold()
     if selected_skin.endswith('.skinm'):
         selected_skin = selected_skin[:-1]
+    # Emet's five CDF skin bindings are mutually exclusive facial plates.
+    # The old 'emet_3p_' body-prefix check added all five faces at once.
+    # Do not assume the owning CDF has a particular filename: the
+    # remote-cannon assembly may resolve a different Emet definition.
+    # Exact faceplate skin stems below are the authoritative filter.
+    is_emet_3p = (Path(cdf).parent.as_posix().casefold() ==
+                  'characters/hunters/merc_emet')
+    faceplates = ([(label, rel) for label, rel in skins
+                   if re.fullmatch(
+                       r'emet_3p_face_(normal|oh|evil|healing|broken)',
+                       Path(rel).stem, re.I)]
+                  if is_emet_3p else [])
+    faceplate_paths = {rel.casefold(): (label, rel)
+                       for label, rel in faceplates}
+    if faceplate and not faceplates:
+        raise ValueError('This CDF has no selectable Emet faceplates.')
+    if faceplate:
+        wanted = faceplate.casefold()
+        matching = [(label, rel) for label, rel in faceplates
+                    if rel.casefold() == wanted or
+                    Path(rel).stem.casefold() == wanted or
+                    re.sub(r'[^a-z0-9]', '', label.casefold()) == wanted]
+        if len(matching) != 1:
+            raise ValueError('Unknown or ambiguous Emet faceplate: ' + str(faceplate))
+        chosen_faceplate = matching
+    elif selected_skin in faceplate_paths:
+        chosen_faceplate = [faceplate_paths[selected_skin]]
+    else:
+        # Missing 'normal' is not permission to choose an injured face.
+        chosen_faceplate = [(label, rel) for label, rel in faceplates
+                            if Path(rel).stem.casefold() == 'emet_3p_face_normal']
     # Cockpit is a permanent character mesh (Lennox's head/face/eyes),
     # not a mutually exclusive weapon. Its submaterial table is distinct
     # from the body and must be included even when a rifle is equipped.
@@ -340,18 +374,26 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
               if key.startswith('hiddenwhen') and key.endswith('selected')))
         primary.extend((label, rel) for label, rel in skins
                        if (label, rel) not in primary
+                       and (label, rel) not in faceplates
                        and clean(label) not in hidden_equipment
                        and (any(Path(rel).stem.casefold().startswith(stem)
                                 for stem in body_stems)
                             or _hunter_anatomical_skin(label, rel, cdf)))
-    options = [(label, rel) for label, rel in skins if (label, rel) not in primary]
+    # Faces are independent from weapons: changing Emet's remote cannon must
+    # never add or replace a second faceplate.
+    primary.extend(chosen_faceplate)
+    options = [(label, rel) for label, rel in skins
+               if (label, rel) not in primary and (label, rel) not in faceplates]
     if equipment == 'body':
         chosen = []
-    elif equipment:
+    elif equipment and equipment != '__default__':
         chosen = [(label, rel) for label, rel in options if rel.casefold() == equipment.casefold()]
     else:
-        selected_matches = [(label, rel) for label, rel in options
-                            if rel.casefold() == selected_skin]
+        # Explicit default restoration must disregard a weapon whose source
+        # .skinm is currently open, unlike ordinary initial file selection.
+        selected_matches = ([] if equipment == '__default__' else
+                            [(label, rel) for label, rel in options
+                             if rel.casefold() == selected_skin])
         # Opening a dependent arm mesh must select its owning equipment,
         # not display the arm without its Rift Device. CDF presence and
         # SkinSet membership supply the evidence for this relationship.
@@ -394,6 +436,9 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
         return None
     included, omitted, parts, rig_parts = [], [], [], []
     deferred = []
+    # Local to this CDF: don't share mutable or stale material data with
+    # another model selection, archive, or source edit.
+    shared_materials = {}
     # The viewer may show combined geometry before decoding full-resolution
     # DDS streams. Exporters keep the original all-in-one assembly behavior.
     if stage_ready is not None:
@@ -432,6 +477,7 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
                     materials = load_preview_materials(
                         workspace, render, texture_folder, projects_root=projects_root,
                         stage_root=stage_root, index=index, cdf=cdf,
+                        material_cache=shared_materials,
                         **({'cancel': cancel} if cancel is not None else {}))
                 except (ValueError, OSError) as exc:
                     omitted.append(label + ' textures: ' + str(exc))
@@ -463,8 +509,35 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
             raise InterruptedError('Character assembly cancelled')
         if stage_ready is not None:
             stage_ready('assembly_materials')
+        # Determine a shared MTL's required source leaf indexes across all
+        # bound CDF parts, so we can decode its textures once, without loading
+        # unrelated texture slots from a large shared material table.
+        from model_material_resolve import find_model_material
+        slots_by_material = {}
+        material_by_render = {}
+        for _label, render, part_mesh in deferred:
+            if cancel is not None and cancel():
+                raise InterruptedError('Character assembly cancelled')
+            try:
+                mtl_hit, _reason, _attempts = find_model_material(
+                    index, render, preferred_workspace=workspace, cdf=cdf)
+                if mtl_hit is None:
+                    continue
+                key = str(Path(mtl_hit['file']).resolve())
+                material_by_render[render] = key
+                slots_by_material.setdefault(key, set()).update(
+                    slot for _offset, _size, slot in
+                    (part_mesh.subsets or
+                     ((0, len(part_mesh.triangles) * 3, 0),)))
+            except (ValueError, OSError):
+                # Keep the precise missing/ambiguous MTL error from the loader.
+                continue
         decorated = []
         decoded_budget = 0
+        seen_images = set()
+        texture_roles = (
+            'textures', 'normal_maps', 'specular_maps', 'gloss_maps',
+            'detail_maps', 'detail_normal_maps', 'ao_maps', 'emissive_maps')
         for number, (label, render, part_mesh) in enumerate(deferred, 1):
             if cancel is not None and cancel():
                 raise InterruptedError('Character assembly cancelled')
@@ -476,18 +549,39 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
                     materials = load_preview_materials(
                         workspace, render, texture_folder, projects_root=projects_root,
                         stage_root=stage_root, index=index, cdf=cdf,
+                        material_cache=shared_materials,
+                        used_slots=slots_by_material.get(
+                            material_by_render.get(render)),
                         **({'cancel': cancel} if cancel is not None else {}))
-                    # Preserve full resolution; do not silently downscale
-                    # source textures. Reject excessive combined working sets.
-                    unique = set()
-                    for role in ('textures', 'normal_maps', 'specular_maps',
-                                 'gloss_maps', 'detail_maps', 'emissive_maps'):
-                        for image in getattr(materials, role, ()) or ():
-                            if image is not None and id(image) not in unique:
-                                unique.add(id(image))
-                                decoded_budget += image.width * image.height * 4
-                    if decoded_budget > 768 * 1024 * 1024:
+                    # Count only slot images retained by combine_meshes,
+                    # once per image across all components and all map roles.
+                    # This fixes three Maggie Savage skins sharing one MTL
+                    # each being charged for the same top-resolution pixels.
+                    slots = {slot for _offset, _size, slot in
+                             (part_mesh.subsets or
+                              ((0, len(part_mesh.triangles) * 3, 0),))}
+                    pending = set()
+                    additional = 0
+                    for role in texture_roles:
+                        images = getattr(materials, role, ()) or ()
+                        for slot in slots:
+                            image = images[slot] if 0 <= slot < len(images) else None
+                            if (image is not None and id(image) not in seen_images
+                                    and id(image) not in pending):
+                                pending.add(id(image))
+                                additional += image.width * image.height * 4
+                    for slot in slots:
+                        environments = getattr(materials, 'environment_maps', ()) or ()
+                        faces = environments[slot] if 0 <= slot < len(environments) else None
+                        for image in faces or ():
+                            if (image is not None and id(image) not in seen_images
+                                    and id(image) not in pending):
+                                pending.add(id(image))
+                                additional += image.width * image.height * 4
+                    if decoded_budget + additional > 768 * 1024 * 1024:
                         raise ValueError('CDF preview textures exceed 768 MiB decoded budget')
+                    decoded_budget += additional
+                    seen_images.update(pending)
                 except (ValueError, OSError) as exc:
                     materials = None
                     omitted.append(label + ' textures: ' + str(exc))
@@ -506,4 +600,6 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
             materials, issues=tuple(materials.issues) + tuple(omitted))
     return CharacterPreview(mesh, materials, cdf, skeleton,
                             tuple(included), tuple(omitted),
-                            tuple(options), chosen[0][1] if chosen else 'body', tuple(rig_parts))
+                            tuple(options), chosen[0][1] if chosen else 'body',
+                            tuple(rig_parts), tuple(faceplates),
+                            chosen_faceplate[0][1] if chosen_faceplate else '')

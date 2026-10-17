@@ -137,6 +137,178 @@ class CharacterPipelineTests(unittest.TestCase):
             self.assertFalse(foreign)
             self.assertIsNone(foreign_idle)
 
+    def _maggie_shared_mtl_fixture(self, root):
+        prefix = 'characters/hunters/merc_maggiesavage/'
+        cdf = root / 'maggiesavage_3p.cdf'
+        skins = ('maggiesavage_3p', 'maggiesavage_3p_flashlight',
+                 'maggiesavage_3p_headwear')
+        cdf.write_text(
+            '<CharacterDefinition><Model File="' + prefix +
+            'maggiesavage_3p_skeleton.chr"/><AttachmentList>' +
+            ''.join('<Attachment Type="CA_SKIN" AName="' + label +
+                    '" Binding="' + prefix + stem + '.skin"/>'
+                    for label, stem in zip(
+                        ('maggiebody', 'flashlight', 'headgear'), skins)) +
+            '</AttachmentList></CharacterDefinition>', encoding='utf-8')
+        index = {prefix + 'maggiesavage_3p.cdf': [
+            {'workspace': root, 'file': cdf}]}
+        for stem in skins:
+            file = root / (stem + '.skinm')
+            file.write_bytes(b'fixture')
+            index[prefix + stem + '.skinm'] = [
+                {'workspace': root, 'file': file}]
+        mesh = PreviewMesh(
+            ((0., 0., 0.), (1., 0., 0.), (0., 1., 0.)),
+            ((0, 1, 2),), (.5, .5, 0.), 1., 'synthetic',
+            ((0., 0.), (1., 0.), (0., 1.)), ((0, 3, 0),))
+        return prefix, index, mesh
+
+    def test_maggie_savage_shared_pixels_are_counted_once(self):
+        # A single full-quality 10K image is under 768 MiB, but counting it
+        # three times (body, flashlight, headgear) incorrectly rejects part 3.
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prefix, index, mesh = self._maggie_shared_mtl_fixture(root)
+            image = SimpleNamespace(width=10240, height=10240)
+            mats = PreviewMaterials(
+                (image,), ('shared body',), 'maggiesavage_3p.mtl',
+                normal_maps=(image,), specular_maps=(image,))
+            with patch('character_assembly.read_preview_mesh',
+                       return_value=mesh), patch(
+                    'character_assembly.load_preview_materials',
+                    return_value=mats) as loader:
+                result = assemble_character(
+                    root, prefix + 'maggiesavage_3p.skinm', index,
+                    pre_material_geometry=lambda _mesh: None)
+            self.assertEqual(('maggiebody', 'flashlight', 'headgear'),
+                             result.included)
+            self.assertFalse(result.omitted)
+            self.assertEqual(3, len(result.materials.textures))
+            self.assertTrue(all(tex is image for tex in result.materials.textures))
+            self.assertEqual(loader.call_count, 3)
+            self.assertTrue(all('material_cache' in call.kwargs
+                                for call in loader.call_args_list))
+
+    def test_distinct_oversized_maggie_textures_keep_budget_guard(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prefix, index, mesh = self._maggie_shared_mtl_fixture(root)
+            # Three separate 9K RGBA textures exceed the 768 MiB limit.
+            materials = [
+                PreviewMaterials((SimpleNamespace(width=9216, height=9216),),
+                                 ('part',), 'distinct.mtl')
+                for _ in range(3)]
+            with patch('character_assembly.read_preview_mesh',
+                       return_value=mesh), patch(
+                    'character_assembly.load_preview_materials',
+                    side_effect=materials):
+                result = assemble_character(
+                    root, prefix + 'maggiesavage_3p.skinm', index,
+                    pre_material_geometry=lambda _mesh: None)
+            self.assertEqual(3, len(result.mesh.triangles))
+            self.assertTrue(any(
+                'headgear textures: CDF preview textures exceed 768 MiB'
+                in msg for msg in result.omitted))
+            self.assertIsNone(result.materials.textures[2])
+
+    def test_emet_repeated_face_mtl_and_separate_cannon_stay_textured(self):
+        # Emet's five faceplates are alternatives, NOT five simultaneous
+        # meshes; the normal face is default and the cannon remains separate.
+        # Both faceplate changes and the remote cannon preserve shared pixels.
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix = 'characters/hunters/merc_emet/'
+            models = (
+                ('body', 'emet_3p'),
+                ('oh', 'emet_3p_face_oh'),
+                ('normal', 'emet_3p_face_normal'),
+                ('evil', 'emet_3p_face_evil'),
+                ('healing', 'emet_3p_face_healing'),
+                ('broken', 'emet_3p_face_broken'),
+                ('remotecannon', 'emetremotecannon_3p'))
+            cdf = root / 'emet_3p.cdf'
+            cdf.write_text(
+                '<CharacterDefinition><Model File="' + prefix +
+                'emet_3p_skeleton.chr"/><AttachmentList>' +
+                ''.join('<Attachment Type="CA_SKIN" AName="' + name +
+                        '" Binding="' + prefix + stem + '.skin"/>'
+                        for name, stem in models) +
+                '</AttachmentList></CharacterDefinition>', encoding='utf-8')
+            index = {prefix + 'emet_3p.cdf': [
+                {'workspace': root, 'file': cdf}]}
+            for name, stem in models:
+                source = root / (stem + '.skinm')
+                source.write_bytes(b'fixture')
+                index[prefix + stem + '.skinm'] = [
+                    {'workspace': root, 'file': source}]
+            mesh = PreviewMesh(
+                ((0.,0.,0.), (1.,0.,0.), (0.,1.,0.)),
+                ((0,1,2),), (.5,.5,0.), 1., 'part',
+                ((0.,0.), (1.,0.), (0.,1.)), ((0,3,0),))
+            shared_image = SimpleNamespace(width=11585, height=11585)
+            cannon_image = SimpleNamespace(width=4096, height=4096)
+            # 512 MiB + 64 MiB distinct < 768 MiB. Incorrect per-part
+            # charging would wrongly reject the later facial and gun parts.
+            body_mtl = PreviewMaterials((shared_image,), ('emet',),
+                                        'emet_3p.mtl')
+            cannon_mtl = PreviewMaterials((cannon_image,), ('cannon',),
+                                          'emetremotecannon_3p.mtl')
+            def materials_for(_workspace, render, *_args, **_kwargs):
+                return cannon_mtl if 'remotecannon' in render else body_mtl
+            with patch('character_assembly.read_preview_mesh',
+                       return_value=mesh), patch(
+                    'character_assembly.load_preview_materials',
+                    side_effect=materials_for):
+                character = assemble_character(
+                    root, prefix + 'emetremotecannon_3p.skinm', index,
+                    pre_material_geometry=lambda _mesh: None)
+            self.assertEqual(('body', 'normal', 'remotecannon'),
+                             character.included)
+            self.assertEqual(5, len(character.faceplate_options))
+            self.assertEqual((('remotecannon', prefix + 'emetremotecannon_3p.skin'),),
+                             character.equipment_options)
+            self.assertEqual(character.selected_faceplate,
+                             prefix + 'emet_3p_face_normal.skin')
+            self.assertFalse(any('768 MiB' in item for item in character.omitted))
+            self.assertIs(character.materials.textures[1], shared_image)
+            self.assertIs(character.materials.textures[2], cannon_image)
+
+            for name in ('oh', 'normal', 'evil', 'healing', 'broken'):
+                with self.subTest(faceplate=name), patch(
+                    'character_assembly.read_preview_mesh',
+                    return_value=mesh), patch(
+                    'character_assembly.load_preview_materials',
+                    side_effect=materials_for):
+                    variant = assemble_character(
+                        root, prefix + 'emetremotecannon_3p.skinm', index,
+                        faceplate=name, pre_material_geometry=lambda _mesh: None)
+                    self.assertEqual(('body', name, 'remotecannon'), variant.included)
+                    self.assertEqual(variant.selected_faceplate,
+                                     prefix + 'emet_3p_face_' + name + '.skin')
+                    self.assertEqual(3, len(variant.materials.textures))
+                    self.assertFalse(any('768 MiB' in error
+                                         for error in variant.omitted))
+            with patch('character_assembly.read_preview_mesh',
+                       return_value=mesh), patch(
+                    'character_assembly.load_preview_materials',
+                    side_effect=materials_for):
+                body_only = assemble_character(
+                    root, prefix + 'emet_3p.skinm', index,
+                    equipment='body', faceplate='evil',
+                    pre_material_geometry=lambda _mesh: None)
+                selected_file = assemble_character(
+                    root, prefix + 'emet_3p_face_oh.skinm', index,
+                    pre_material_geometry=lambda _mesh: None)
+            self.assertEqual(('body', 'evil'), body_only.included)
+            self.assertEqual(('body', 'oh', 'remotecannon'),
+                             selected_file.included)
+            with self.assertRaisesRegex(ValueError, 'Unknown or ambiguous'):
+                assemble_character(root, prefix + 'emet_3p.skinm', index,
+                                   faceplate='other_character')
+
     def test_sparse_material_fallback_does_not_exhaust_slots(self):
         first = PreviewMesh(((0,0,0), (1,0,0), (0,1,0)),
             ((0,1,2),), (.5,.5,0),1,'body',

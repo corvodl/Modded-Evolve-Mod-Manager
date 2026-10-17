@@ -4,6 +4,13 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.3.2', (
+        "Reuse shared high-resolution character textures across CDF attachments without charging duplicate images against the 768 MiB preview budget.",
+        "Decode only referenced material slots while retaining verified texture quality and reporting genuinely oversized assemblies.",
+        "Display Emet's Normal faceplate by default; switch between his five faceplates independently of equipped weapons.",
+        "Add a compact Model > Character Equipment menu for CDF-backed weapons, abilities, accessories and head variants.",
+        "Preserve compatible equipment and faceplate selections in model previews and Blender exports, with a Restore Default Loadout action.",
+    )),
     ('1.3.1', (
         "Prefer verified third-person character assemblies for main Blender GLB exports instead of accidentally choosing first-person view models.",
         "Remove redundant Asset Library read-only header rows; keep a compact inline status and maximize model preview space.",

@@ -29,8 +29,8 @@ _cache_lock = threading.RLock()
 
 
 def model_cache_key(workspace, relative, *, projects_root=None, stage_root=None,
-                    texture_folder=None, equipment=None, animation_index=None,
-                    index=None, require_assembly=False):
+                    texture_folder=None, equipment=None, faceplate=None,
+                    animation_index=None, index=None, require_assembly=False):
     """Cheap signature of the project, source asset and optional loose texture tree.
 
     Related extracted workspaces can be edited independently; TTL bounds
@@ -59,7 +59,8 @@ def model_cache_key(workspace, relative, *, projects_root=None, stage_root=None,
     # An explicitly opened external animation index is not cached; it can
     # change without corresponding workspace/manifest updates.
     return (str(root),relative,stat.st_size,stat.st_mtime_ns,
-            manifest.st_size,manifest.st_mtime_ns,str(equipment),id(index) if index is not None else None,
+            manifest.st_size,manifest.st_mtime_ns,str(equipment),str(faceplate),
+            id(index) if index is not None else None,
             folder_marker(texture_folder),folder_marker(projects_root),
             folder_marker(stage_root),animation_index is None,
             bool(require_assembly))
