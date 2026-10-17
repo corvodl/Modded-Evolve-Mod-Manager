@@ -274,7 +274,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             return
         output, _ = QFileDialog.getSaveFileName(
             self, 'Export read-only model for Blender',
-            Path(self.current).stem + '.glb', 'Blender glTF (.glb)')
+            Path(self.current).stem + '.fbx', 'Model FBX (.fbx)')
         if not output:
             return
         from asset_library_preview import _outside_library
@@ -285,8 +285,8 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
             return
         try:
             target = Path(output)
-            if target.suffix.casefold() != '.glb':
-                target = target.with_suffix('.glb')
+            if target.suffix.casefold() != '.fbx':
+                target = target.with_suffix('.fbx')
             target = _outside_library(target)
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, 'Blender export', str(exc))
@@ -304,7 +304,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         def finish(result):
             saved, details = result
             self.status.setText(
-                'Blender GLB exported: %d textures; rig: %s | %s' %
+                'FBX exported: %d textures; rig: %s | %s' %
                 (details['textures'], details['rig'], saved))
 
         begin_file_operation(
@@ -319,7 +319,7 @@ class QtAssetPreviewWindow(QtWorkspaceEditor):
         The former Asset Library override wrote individual GLBs alongside
         Assemblies/ and CDF_assembly_report.json. That legacy layout is
         incompatible with the character-folder export contract. Keep one
-        implementation so both menus export <Character>/<Character>.glb,
+        implementation so both menus export <Character>/<Character>.fbx,
         animations/, textures/, and models/ consistently.
         """
         return super().export_blender_folder()

@@ -550,7 +550,7 @@ class QtMigrationTests(unittest.TestCase):
                                        'Textures', 'Animation', 'Tools', 'Help'])
         menu_texts = {name: [action.text() for action in menu.actions()]
                       for name, menu in menus.items()}
-        for label in ('Export Current Model Only (.glb)…', 'Export Complete Character Folder…',
+        for label in ('Export Current Model Only (.fbx)…', 'Export Complete Character Folder…',
                       'Export Native Model…'):
             self.assertIn(label, menu_texts['File'])
         self.assertIn('Diagnose Texture Links…', menu_texts['Textures'])

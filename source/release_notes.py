@@ -4,6 +4,12 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.3.4', (
+        "Export standalone and complete-character meshes as genuine FBX files, using GLB only as a temporary conversion format.",
+        "Preserve verified character rigs and animation Actions, with separate original-UV material groups for texture editing.",
+        "Keep verified LOD0 geometry, safely clean static meshes, and omit redundant animation sources when Actions are embedded.",
+        "Require Blender 4.2+ for FBX conversion and reject missing or invalid output without changing the source assets.",
+    )),
     ('1.3.3', (
         "Export Emet's verified CDF body, Normal faceplate, and remote-cannon arm together rather than promoting an arm-only GLB.",
         "Validate Emet's final GLB drawable geometry and preserve CDF-bound rigging, textures, animations and selectable faceplates.",

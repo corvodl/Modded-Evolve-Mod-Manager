@@ -37,6 +37,8 @@ def create_character_glb(workspace, relative, index, *, character=None,
         if 'Rigged:' not in details.get('rig_status',''):
             raise ValueError(details.get('rig_status','No compatible native skeleton found'))
     else:
+        from model_export_readiness import ensure_lod0_parts
+        ensure_lod0_parts(character)
         candidates, status = _resolve(index, character.skeleton,
                                       preferred_workspace=workspace)
         if status != 'found':

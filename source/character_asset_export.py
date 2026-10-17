@@ -80,6 +80,8 @@ def assembled_character_glb(character, workspace, relative, index, *,
     """
     if character is None:
         raise ValueError('No CDF-based character assembly was verified.')
+    from model_export_readiness import ensure_lod0_parts, audit_material_uvs
+    lod = ensure_lod0_parts(character)
     try:
         from native_character_glb import create_character_glb
         payload, info = create_character_glb(
@@ -88,21 +90,26 @@ def assembled_character_glb(character, workspace, relative, index, *,
             projects_root=projects_root, stage_root=stage_root)
         info = dict(info)
         info['parts'] = tuple(character.included)
-        return payload, info
     except (ValueError, OSError) as error:
         from model_blender_export import glb_bytes
         from model_textured_export import embed_diffuse_textures
+        # Do not weld this fallback: native CDF vertex positions are still
+        # authoritative for part provenance and potential later rigging.
         payload = glb_bytes(character.mesh, name=Path(character.cdf).stem + '_Full')
         count = 0
         if character.materials is not None:
             payload, count = embed_diffuse_textures(payload, character.materials)
-        return payload, {
+        info = {
             'texture_count': count, 'bone_count': 0,
             'part_count': len(character.included),
             'parts': tuple(character.included),
             'rig_status': 'Unrigged assembled mesh: ' + str(error)[:180],
         }
-
+    # Audit the final payload, after texturing and native rigging. Never
+    # silently export an apparently textured primitive with missing UV0.
+    info['lod_verification'] = lod
+    info['material_uv_verification'] = audit_material_uvs(payload)
+    return payload, info
 
 def build_cdf_folder_glbs(workspace, character_folder, index, *,
                           texture_folder=None, projects_root=None,
@@ -224,11 +231,11 @@ def export_character_asset_folder(workspace, character_folder, destination,
     Never overwrite an existing export, mutate source game assets, or silently
     resolve virtual-path conflicts to arbitrarily chosen texture bytes.
 
-    full_model: optional (GLB bytes, report) for <character>.glb.
-    stage_models: for monsters only, exactly three (GLB bytes, per-CDF report)
+    full_model: internal (GLB bytes, report) converted to <character>.fbx.
+    stage_models: for monsters only, exactly three internal (GLB bytes, per-CDF report)
         pairs keyed 1, 2, 3. All three are written beside models/ and must
         contain only clips verified against that stage's original CDF rig.
-    assemblies: mapping of Assemblies/<cdf relative>.glb to (bytes, report).
+    assemblies: mapping of internal Assemblies/<cdf relative>.glb to (bytes, report).
     Source models (including equipment), animations, and textures are categorized.
     """
     home = Path(workspace).resolve()
@@ -256,6 +263,20 @@ def export_character_asset_folder(workspace, character_folder, destination,
     limit = sum(int(source.stat().st_size) for source, _, _ in records)
     assemblies = dict(assemblies or {})
     stage_models = dict(stage_models or {})
+    # When the root Character/Stage GLB already carries verified Actions,
+    # do not attach the same CAF/DBA sources or make a second animated GLB.
+    # Preserve source assets in the original PAK/workspace, untouched.
+    from model_export_readiness import embedded_action_names
+    if full_model is not None:
+        embedded = {short_name + '.fbx': embedded_action_names(full_model[0])}
+    elif stage_models and set(stage_models) == {1, 2, 3}:
+        embedded = {
+            '%s_Stage%d.fbx' % (short_name, stage):
+            embedded_action_names(stage_models[stage][0])
+            for stage in (1, 2, 3)}
+    else:
+        embedded = {}
+    use_embedded_animations = bool(embedded) and all(embedded.values())
     if stage_models:
         from monster_stage_export import is_monster_character, stage_from_cdf
         if not is_monster_character(virtual) or full_model is not None:
@@ -271,12 +292,12 @@ def export_character_asset_folder(workspace, character_folder, destination,
                 raise ValueError('Monster Stage %d source does not match its CDF.' % stage)
             doc, _ = _unpack_glb(blob)
             declared = tuple(report.get('embedded_animation_clips', ()))
-            embedded = tuple(clip.get('name') for clip in doc.get('animations', ()))
-            if (int(report.get('embedded_animations') or 0) != len(embedded)
-                    or declared != embedded
-                    or (embedded and len(doc.get('skins', ())) != 1)):
+            stage_clips = tuple(clip.get('name') for clip in doc.get('animations', ()))
+            if (int(report.get('embedded_animations') or 0) != len(stage_clips)
+                    or declared != stage_clips
+                    or (stage_clips and len(doc.get('skins', ())) != 1)):
                 raise ValueError('Monster Stage %d GLB has mismatched CDF animations.' % stage)
-            if any(not name for name in embedded):
+            if any(not name for name in stage_clips):
                 raise ValueError('Monster Stage %d contains unnamed motion tracks.' % stage)
             limit += len(blob)
     if len(assemblies) > 48:
@@ -292,6 +313,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
         limit += len(pair[0])
     if limit > MAX_CHARACTER_BYTES:
         raise ValueError('Character assets exceed the 12 GiB export limit.')
+    # Require a real Blender FBX converter before allocating/staging output.
+    from fbx_export_converter import convert_glb_to_fbx
     staging.mkdir()
     manifest_rows = []
     try:
@@ -300,6 +323,12 @@ def export_character_asset_folder(workspace, character_folder, destination,
         for i, (source, game_path, archive) in enumerate(records, 1):
             if cancelled and cancelled():
                 raise InterruptedError('Character export cancelled.')
+            if (use_embedded_animations and
+                    game_path.casefold().endswith(
+                        ('.caf', '.dba', '.adb', '.bspace', '.animevents'))):
+                # Duplicate raw animation attachments are not needed when the
+                # exported character GLB already contains those Actions.
+                continue
             if not game_path.casefold().startswith(prefix):
                 raise ValueError('Companion asset lies outside character virtual path.')
             local = game_path[len(virtual) + 1:]
@@ -334,10 +363,12 @@ def export_character_asset_folder(workspace, character_folder, destination,
             if cancelled and cancelled():
                 raise InterruptedError('Character export cancelled.')
             payload, info = full_model
-            primary_glb = staging / (short_name + '.glb')
-            primary_glb.write_bytes(payload)
+            primary_fbx = staging / (short_name + '.fbx')
+            fbx_info = convert_glb_to_fbx(payload, primary_fbx)
+            info = dict(info)
+            info['fbx_conversion'] = fbx_info
             from blender_texture_folder import write_texture_folder
-            write_texture_folder(payload, primary_glb,
+            write_texture_folder(payload, primary_fbx,
                                  texture_root=staging / 'textures',
                                  model_namespace=short_name)
             if progress:
@@ -349,16 +380,16 @@ def export_character_asset_folder(workspace, character_folder, destination,
             if cancelled and cancelled():
                 raise InterruptedError('Monster stage export cancelled.')
             payload, report = stage_models[stage]
-            filename = '%s_Stage%d.glb' % (short_name, stage)
+            filename = '%s_Stage%d.fbx' % (short_name, stage)
             output = staging / filename
-            with output.open('xb') as stream:
-                stream.write(payload)
+            conversion = convert_glb_to_fbx(payload, output)
             from blender_texture_folder import write_texture_folder
             write_texture_folder(
                 payload, output, texture_root=staging / 'textures',
                 model_namespace='%s__stage%d' % (short_name,stage))
             row = {
-                'stage':stage, 'glb':filename, 'cdf':report['cdf'],
+                'stage':stage, 'fbx':filename, 'cdf':report['cdf'],
+                'fbx_conversion':conversion,
                 'rig_status':report.get('rig_status', 'unknown'),
                 'bone_count':report.get('bone_count', 0),
                 'embedded_animations':report.get('embedded_animations', 0),
@@ -379,28 +410,35 @@ def export_character_asset_folder(workspace, character_folder, destination,
             # Keep all CDF variants and equipment in models/, never beside
             # the canonical character GLB.
             relative_assembly = PurePosixPath(*PurePosixPath(location).parts[1:])
-            out = staging.joinpath('models', *relative_assembly.parts)
+            out = staging.joinpath('models', *relative_assembly.with_suffix('.fbx').parts)
             if not out.resolve().is_relative_to(staging.resolve()):
                 raise ValueError('CDF assembly output escapes destination.')
             out.parent.mkdir(parents=True, exist_ok=True)
-            with out.open('xb') as target_file:
-                target_file.write(payload)
+            conversion = convert_glb_to_fbx(payload, out)
             from blender_texture_folder import write_texture_folder
             write_texture_folder(
                 payload, out, texture_root=staging / 'textures',
                 model_namespace='models__' + '__'.join(relative_assembly.with_suffix('').parts))
-            assembly_rows.append({'glb': out.relative_to(staging).as_posix(), **report})
+            assembly_rows.append({'fbx': out.relative_to(staging).as_posix(),
+                                  'fbx_conversion': conversion, **report})
             if progress:
                 progress('Writing CDF Blender assemblies',
                          len(records) + int(full_model is not None) + position, count)
-        # Collect only the selected skeleton's verified native CAF/DBA
-        # references. Never claim raw database files are decoded Blender clips.
+        # Do not produce a second animated GLB or source CAF folder when all
+        # required root GLBs already carry verified, named animation tracks.
         from character_animation_export import export_character_animation_folder
         animation_report = None
+        if use_embedded_animations:
+            animation_report = {
+                'animations': sum(len(names) for names in embedded.values()),
+                'sources': 0, 'animated_glb': None,
+                'embedded_in': {key: list(value) for key, value in embedded.items()},
+                'note': 'Animation Actions are embedded in the root character FBX; '
+                        'redundant standalone animation files omitted.'}
         representative = full_model or stage_models.get(1)
         if representative is None and assemblies:
             representative = next(iter(assemblies.values()))
-        if representative is not None:
+        if representative is not None and not use_embedded_animations:
             base_blob, base_info = representative
             chosen_cdf = base_info.get('cdf') if isinstance(base_info, dict) else None
             source_character = None
@@ -416,7 +454,21 @@ def export_character_asset_folder(workspace, character_folder, destination,
                 index or {}, home, character=source_character,
                 model_name=short_name, cancelled=cancelled, progress=progress,
                 references=() if not index or not chosen_cdf else None)
-        else:
+            animation_name = animation_report.get('animated_glb')
+            if animation_name:
+                old_model = staging / 'animations' / animation_name
+                new_model = old_model.with_suffix('.fbx')
+                convert_glb_to_fbx(old_model.read_bytes(), new_model)
+                old_model.unlink()
+                animation_report['animated_glb'] = None
+                animation_report['animated_fbx'] = new_model.name
+                manifest = staging / 'animations' / 'animation_manifest.json'
+                if manifest.is_file():
+                    payload = json.loads(manifest.read_text(encoding='utf-8'))
+                    payload['animated_glb'] = None
+                    payload['animated_fbx'] = new_model.name
+                    manifest.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+        elif not use_embedded_animations:
             animation_folder = staging / 'animations'
             animation_folder.mkdir(exist_ok=True)
             (animation_folder / 'animation_manifest.json').write_text(
@@ -431,7 +483,7 @@ def export_character_asset_folder(workspace, character_folder, destination,
         export_verification = {
             'format': 'evolve-character-export-verification-v1',
             'character': short_name, 'virtual_folder': virtual,
-            'root_glb': (short_name + '.glb') if full_model is not None else None,
+            'root_fbx': (short_name + '.fbx') if full_model is not None else None,
             'cdf': (info or {}).get('cdf') if isinstance(info, dict) else None,
             'source_parts': list((info or {}).get('rendered_parts', ())
                                  if isinstance(info, dict) else ()),
@@ -448,6 +500,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
                              if isinstance(info, dict) else 0,
             'unresolved_cdf_assemblies': list(assembly_errors),
             'unresolved_companions': list(conflicts),
+            'embedded_animations': (animation_report.get('embedded_in', {})
+                                    if animation_report else {}),
         }
         (staging / 'export_verification.json').write_text(
             json.dumps(export_verification, indent=2, default=str),

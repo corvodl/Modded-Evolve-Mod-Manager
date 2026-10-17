@@ -1,16 +1,17 @@
-# Evolve Stage 2 Mod Manager — v1.3.3
+# Evolve Stage 2 Mod Manager — v1.3.4
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.3.3 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.3.4 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.3.3
+## Latest Stable — v1.3.4
 
-- Export Emet's verified CDF body, Normal faceplate, and remote-cannon arm together rather than promoting an arm-only GLB.
-- Validate Emet's final GLB drawable geometry and preserve CDF-bound rigging, textures, animations and selectable faceplates.
-- Use consistent complete-character export checks across the Asset Library, Blender and animated GLB paths, with a readable verification report.
+- Export standalone and complete-character meshes as genuine FBX files, using GLB only as a temporary conversion format.
+- Preserve verified character rigs and animation Actions, with separate original-UV material groups for texture editing.
+- Keep verified LOD0 geometry, safely clean static meshes, and omit redundant animation sources when Actions are embedded.
+- Require Blender 4.2+ for FBX conversion and reject missing or invalid output without changing the source assets.
 
 ## Download and install
 
@@ -37,9 +38,9 @@ The portable Windows release bundles Python and its required application depende
 
 ### Blender model export and GPU preview
 
-In **Modding**, choose **Export Model Folder** to convert supported unpacked CryEngine `.skinm`, `.chrm`, and `.cgf` render meshes from a selected folder into separate Blender-compatible `.glb` files in a different folder. Unsupported encodings are skipped with a report; original files remain unchanged.
+In **Modding**, choose **Export Model Folder** to convert supported unpacked CryEngine `.skinm`, `.chrm`, and `.cgf` render meshes from a selected folder into separate Blender-compatible `.fbx` files in a different folder. Unsupported encodings are skipped with a report; original files remain unchanged.
 
-In **Edit Files → Models**, choose **Export for Blender (.glb)** for the currently selected preview mesh, including meshes resolved from a companion file. The native CryEngine export and same-layout native import actions remain available.
+In **Edit Files → Models**, choose **Export for Blender (.fbx)** for the currently selected preview mesh, including meshes resolved from a companion file. The native CryEngine export and same-layout native import actions remain available.
 
 On Windows with a working OpenGL driver, the model pane now tries the embedded GPU viewer by default. It falls back to software preview on unsupported platforms or GL initialization errors; **Open GPU Viewer** retains the dedicated controls. When both the character **Data PAK** and companion **TS/texture PAK** have been unpacked through the manager into compatible projects, GLB export now follows matching CryEngine material references and embeds available diffuse maps as PNG images. In **Edit Files**, a manually chosen texture folder is also accepted. Missing or ambiguous references are left untextured rather than guessed. Some skinm assets have incomplete material tables: confirmed material slots are retained while unmatched faces are preserved with a plain fallback material. This is an approximation of CryEngine's shaders, not an exact material conversion.
 
@@ -158,5 +159,7 @@ Version **1.0.1** marks the application's first official release, **not** a clai
 ## Credits
 
 Project by **@CorvoDL**. [Source repository](https://github.com/corvodl/Modded-Evolve-Mod-Manager) · [Required Modded Evolve client](https://modded-evolve.com/).
+
+**FBX export:** Standalone LOD0 models and complete character exports deliver genuine binary FBX. Blender 4.2+ must be installed and `blender.exe` available on PATH for conversion. GLB is an internal intermediate; characters retain verified rigs and animation Actions, while static exports exclude bones and poses. Welds must preserve UV/material seams; rigged source vertices are never remapped before skinning. Missing Blender or invalid conversion prevents output rather than relabeling a GLB.
 
 **Optional Blender Animation Browser:** Use Settings → Blender Integration to install the verified v1.1.0 ZIP in Blender 4.2+.
