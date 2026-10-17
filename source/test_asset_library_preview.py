@@ -104,6 +104,21 @@ class LibraryPreviewTests(unittest.TestCase):
         self.assertEqual(len(result), len(self.data))
         self.assertEqual(reads.call_count, 2)
 
+    def test_scoped_index_does_not_rescan_selected_pak(self):
+        relative='characters/hunters/merc_maggie/maggie_3p.mtl'
+        file=self.archive/'files'/relative
+        trusted={relative:[{'archive':'fixture','workspace':None,
+                            'file':file,'relative':relative,
+                            '_asset_library':self.identifier,
+                            'build_id':'test'}]}
+        with (patch('build_collections.build_index',return_value=trusted),
+              patch('build_collections.resolve_archive_build',return_value='test'),
+              patch('asset_library_preview.archive_entries',
+                    side_effect=AssertionError('second full file scan'))):
+            index=library_model_index(self.identifier,self.root)
+        self.assertEqual(index[relative][0]['workspace'],self.archive)
+        self.assertEqual(index[relative][0]['file'],file)
+
     def test_complete_export_preserves_virtual_directory_layout(self):
         folder = self.base / 'exports'
         folder.mkdir()

@@ -74,9 +74,15 @@ def prepare_geometry(mesh, shading='faceted'):
             if normals.shape != vertices.shape or not np.isfinite(normals).all():
                 raise ValueError('Invalid authored vertex normals.')
         else:
-            normals = np.zeros_like(vertices)
-            for column in range(3):
-                np.add.at(normals, faces[:, column], face_normals * face_sizes[:,None])
+            # np.add.at serializes every triangle contribution on dense meshes.
+            # Flattened bincount is equivalent area-weighted accumulation.
+            corners = faces.reshape(-1)
+            weighted = face_normals * face_sizes[:,None]
+            normals = np.empty_like(vertices)
+            for axis in range(3):
+                normals[:,axis] = np.bincount(
+                    corners,weights=np.repeat(weighted[:,axis],3),
+                    minlength=len(vertices)).astype(np.float32)
         norms = np.linalg.norm(normals, axis=1)
         np.divide(normals, np.maximum(norms[:,None], 1e-8), out=normals)
         normals = np.ascontiguousarray(normals, dtype=np.float32)
