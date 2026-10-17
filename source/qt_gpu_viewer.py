@@ -45,7 +45,7 @@ class _CompactAnimationList(QListWidget):
         super().__init__(parent)
         self.setObjectName('referencedNativeAnimations')
         self.setMinimumHeight(122)
-        self.setMaximumHeight(184)
+        self.setMaximumHeight(150)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setSpacing(2)
@@ -1449,7 +1449,7 @@ class QtGPUModelPanel(QWidget):
         busy_row.setSpacing(6)
         self.native_loading_label = QLabel('Loading game animation', self.native_loading_footer)
         self.native_loading_label.setObjectName('nativeAnimationLoadingLabel')
-        self.native_loading_label.setMinimumWidth(110)
+        self.native_loading_label.setFixedWidth(170)
         self.native_loading_progress = QProgressBar(self.native_loading_footer)
         self.native_loading_progress.setObjectName('nativeAnimationLoadingProgress')
         self.native_loading_progress.setRange(0, 0)
@@ -2285,6 +2285,7 @@ class QtGPUModelPanel(QWidget):
         if getattr(self.canvas.materials, 'source', None) != 'Embedded GLB textures':
             self._native_source_materials = self.canvas.materials
         self._native_generation += 1
+        self._file_generation += 1  # invalidate imported GLBs for previous model
         self._auto_dba_loading = False
         self._set_native_loading(None)
         self.cancel_native_button.setEnabled(False)
@@ -2516,6 +2517,7 @@ class QtGPUModelPanel(QWidget):
 
     def load_native(self):
         from character_animation_catalog import native_clip_playability
+        self._file_generation += 1  # a manual CAF/DBA load wins over an older GLB import
         i = self.native_clip_select.currentData()
         if (not isinstance(i, int)
                 or i < 0 or i >= len(self._native_references)):
