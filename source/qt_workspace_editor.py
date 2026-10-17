@@ -253,6 +253,11 @@ class QtWorkspaceEditor(QMainWindow):
         # One always-present explorer drives the three internal viewers.
         # Category tabs are implementation details, never exposed to users.
         top = QHBoxLayout()
+        # Library subclasses can add status within this existing breadcrumb
+        # without inserting extra header rows above the viewer.
+        self.workspace_header = top
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(5)
         self.current_file_label = QLabel('Select a file from File Explorer')
         self.current_file_label.setObjectName('currentWorkspaceAsset')
         self.current_file_label.setMaximumHeight(22)
