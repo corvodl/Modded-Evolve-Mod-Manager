@@ -1,16 +1,16 @@
-# Evolve Stage 2 Mod Manager — v1.3.2
+# Evolve Stage 2 Mod Manager — v1.3.3
 
 A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage 2** PAKs, with guided offline launching and recovery of original game files.
 
 > **Required: Install Evolve Stage 2 through the [Modded Evolve website](https://modded-evolve.com/)** and its normal client **before** using this manager. The Mod Manager does **not** download or install the game and does **not** include game assets. A Steam or Evolve Legacy installation is not a substitute for the client-installed Stage 2 game.
 
-**Version:** 1.3.2 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
+**Version:** 1.3.3 · **Platform:** Windows x64 · **Distribution:** Windows installer or self-contained portable ZIP · **Use:** private/offline mod testing
 
-## Latest Stable — v1.3.2
+## Latest Stable — v1.3.3
 
-- Reuse verified high-resolution textures across CDF parts without double-counting preview memory.
-- Use a compact Character Equipment menu and default Emet to his Normal faceplate.
-- Keep each CryEngine material's original relative GlowAmount in GPU previews and Blender GLBs instead of forcing every glow to 100.
+- Export Emet's verified CDF body, Normal faceplate, and remote-cannon arm together rather than promoting an arm-only GLB.
+- Validate Emet's final GLB drawable geometry and preserve CDF-bound rigging, textures, animations and selectable faceplates.
+- Use consistent complete-character export checks across the Asset Library, Blender and animated GLB paths, with a readable verification report.
 
 ## Download and install
 
