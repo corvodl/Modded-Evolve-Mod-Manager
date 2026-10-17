@@ -4,6 +4,14 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.2.8', (
+        "Redesign the GPU character viewer with more viewport space, pictogram toolbars, scrollable Materials and Animation popovers, and a draggable XYZ orbit gizmo.",
+        "Display precise percentage values for lighting, glow, gloss and studio fill; preserve Smooth as the default shading mode.",
+        "Show cancellable, stage-labelled progress when extracting CAF, converting DBA, loading GLB or preparing animation playback; keep progress visible with inspector closed.",
+        "Apply the user-tested reference emission strength of 100 to verified glowing surfaces in GPU previews and Blender GLB exports while preserving authored CryEngine GlowAmount and masks.",
+        "Preserve Blender animated GLB emissive strength above the old 16-unit limit when exporting and importing compatible animations.",
+        "Reclaim wasted space in the Asset Library Full Character view; preserve original game assets as read-only.",
+    )),
     ('1.2.7', (
         "Respect Kala's CDF SkinSets: Banshee Gun, Armor Reducer and Rift Device equipment no longer overlap; the Rift Device arm stays with its owning equipment.",
         "Preserve Kala's authored blue Banshee Gun and purple Rift Device glow separately, without hardcoded color substitutions.",
