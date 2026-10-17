@@ -2380,6 +2380,15 @@ class QtWorkspaceEditor(QMainWindow):
             new_records = self._read_records(target)
         self.dependency_button.setEnabled(False)
         self.media_view.clear()
+        # A pending model from the previous archive must not publish into
+        # the new workspace or leave a long-running decoded copy resident.
+        self._model_cancel.set()
+        self._model_generation += 1
+        self._model_selection_timer.stop()
+        self._queued_model = None
+        self._set_model_loading_phase('', False)
+        if self._model_pool is not None:
+            self._model_pool.clear()
         self.workspace, self.records = target, new_records
         self._search_timer.stop()  # Never install a prior project's search.
         self._search_records_cache_key = None
@@ -3444,6 +3453,11 @@ class QtWorkspaceEditor(QMainWindow):
         self.media_view.clear()
         self._model_cancel.set()
         self._model_generation += 1
+        self._model_selection_timer.stop()
+        self._queued_model = None
+        self._model_elapsed_timer.stop()
+        if self._model_pool is not None:
+            self._model_pool.clear()
         self.gfx_view.cancel_pending()
         self._close_gfx_editor()
         if self.model_panel is not None:
@@ -3451,7 +3465,9 @@ class QtWorkspaceEditor(QMainWindow):
             if isValid(self.model_panel) and not self.model_panel.close():
                 event.ignore()
                 return
-        for timer in (self.recovery_timer, self._search_timer, self._diagnostics_timer):
+        for timer in (self.recovery_timer, self._search_timer,
+                      self._model_selection_timer, self._model_elapsed_timer,
+                      self._diagnostics_timer):
             if timer is not None:
                 from shiboken6 import isValid
                 if isValid(timer):
