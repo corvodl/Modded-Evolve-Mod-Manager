@@ -80,6 +80,92 @@ for obj in tuple(meshes):
 meshes = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
 if not meshes or any(not obj.data.polygons for obj in meshes):
     raise RuntimeError('Splitting FBX material groups produced an empty mesh.')
+# UV0 stays texture-facing. UV1 is an additional non-destructive painting
+# atlas; never alter vertex order, per-vertex weights, existing textures,
+# or source UV coordinates in order to make an attractive new layout.
+def _prepare_paint_uv(obj):
+    mesh = obj.data
+    original = mesh.uv_layers[0] if mesh.uv_layers else None
+    if original is None:
+        # Textureless source geometry may have no UV0. Do not invent a map
+        # and misleadingly call it "Original"; UV1 can still be unwrapped.
+        original_values = None
+    else:
+        original_values = [tuple(loop.uv) for loop in original.data]
+        if len(original_values) != len(mesh.loops):
+            raise RuntimeError('Original UV0 stream is incomplete: ' + obj.name)
+        if any(not math.isfinite(v) for uv in original_values for v in uv):
+            raise RuntimeError('Original UV0 contains nonfinite coordinates: ' + obj.name)
+        source_name = original.name
+        collision = mesh.uv_layers.get('UV0_Original')
+        if collision is not None and collision != original:
+            collision.name = 'UV0_Source_Additional'
+        original.name = 'UV0_Original'
+        # glTF imports may use explicit ShaderNodeUVMap references instead of
+        # the render-active UV layer. Rename those references with UV0.
+        for material in mesh.materials:
+            if material and material.use_nodes:
+                for node in material.node_tree.nodes:
+                    if node.type == 'UVMAP' and node.uv_map == source_name:
+                        node.uv_map = 'UV0_Original'
+    prior = [(layer.name, [tuple(loop.uv) for loop in layer.data])
+             for layer in mesh.uv_layers]
+    vertices_before = [(tuple(v.co), tuple(sorted(
+        (g.group, round(g.weight, 9)) for g in v.groups)))
+        for v in mesh.vertices]
+    faces_before = tuple(tuple(face.vertices) for face in mesh.polygons)
+    modifiers_before = tuple((m.type, m.object.name if m.type == 'ARMATURE'
+                              and m.object else None) for m in obj.modifiers)
+    existing = mesh.uv_layers.get('UV1_Texturing')
+    if existing is not None:
+        existing.name = 'UV1_Source_Preexisting'
+    clean = mesh.uv_layers.new(name='UV1_Texturing', do_init=False)
+    mesh.uv_layers.active = clean
+    bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    # Generate a new non-overlapping per-material UV atlas in [0,1].
+    # This edits UV1 only; no mesh modifier, merge, reindex or texture rebind.
+    bpy.ops.uv.smart_project(island_margin=0.015)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    clean = mesh.uv_layers.get('UV1_Texturing')
+    if clean is None or len(clean.data) != len(mesh.loops):
+        raise RuntimeError('Painting UV1 generation produced an incomplete map: ' + obj.name)
+    painted = [tuple(loop.uv) for loop in clean.data]
+    if any(not math.isfinite(v) or v < -0.0001 or v > 1.0001
+           for uv in painted for v in uv):
+        raise RuntimeError('Painting UV1 coordinates escaped the unit tile: ' + obj.name)
+    for name, values in prior:
+        layer = mesh.uv_layers.get(name)
+        if (layer is None or len(layer.data) != len(values)
+                or any(any(abs(a - b) > 0.000001 for a, b in zip(
+                    tuple(loop.uv), uv)) for loop, uv in zip(layer.data, values))):
+            raise RuntimeError('Painting UV1 modified an original UV set: ' + obj.name)
+    after_vertices = [(tuple(v.co), tuple(sorted(
+        (g.group, round(g.weight, 9)) for g in v.groups)))
+        for v in mesh.vertices]
+    if (after_vertices != vertices_before
+            or tuple(tuple(face.vertices) for face in mesh.polygons) != faces_before
+            or tuple((m.type, m.object.name if m.type == 'ARMATURE'
+                       and m.object else None) for m in obj.modifiers) != modifiers_before):
+        raise RuntimeError('Painting UV1 unexpectedly modified rig or topology: ' + obj.name)
+    if original is not None:
+        mesh.uv_layers.active = mesh.uv_layers['UV0_Original']
+        mesh.uv_layers['UV0_Original'].active_render = True
+    else:
+        mesh.uv_layers.active = clean
+        clean.active_render = True
+    return {
+        'object': obj.name, 'original': 'UV0_Original' if original else None,
+        'texturing': 'UV1_Texturing', 'uv_loops': len(painted),
+        'source_uvs_preserved': True, 'topology_preserved': True,
+        'weights_preserved': True,
+        'unwrap': 'Smart UV Project, 0.015 island margin, per material',
+    }
+
+uv_maps = []
 material_groups = []
 for obj in meshes:
     used = {polygon.material_index for polygon in obj.data.polygons}
@@ -96,6 +182,7 @@ for obj in meshes:
         uv = obj.data.uv_layers.active
         if len(uv.data) != len(obj.data.loops):
             raise RuntimeError('Material-specific UV set is incomplete.')
+    uv_maps.append(_prepare_paint_uv(obj))
     material_groups.append({
         'object':obj.name,
         'material':material.name if material else 'No material',
@@ -129,6 +216,7 @@ Path(receipt).write_text(json.dumps({
     'materials':sum(len(obj.data.materials) for obj in meshes),
     'uv_meshes':sum(bool(obj.data.uv_layers) for obj in meshes),
     'material_groups':material_groups,
+    'uv_maps':uv_maps,
 }), encoding='utf-8')
 '''
 
@@ -185,9 +273,22 @@ def convert_glb_to_fbx(blob, destination, *, static=False, blender=None, timeout
             raise ValueError('FBX conversion dropped verified skin or animations.')
         if static and verified.get('armatures'):
             raise ValueError('Static FBX must not include an armature.')
+        uv_maps = verified.get('uv_maps')
+        if (not isinstance(uv_maps, list) or
+                len(uv_maps) != verified['meshes'] or
+                any(not isinstance(row, dict)
+                    or row.get('texturing') != 'UV1_Texturing'
+                    or not row.get('source_uvs_preserved')
+                    or not row.get('topology_preserved')
+                    or not row.get('weights_preserved')
+                    or not isinstance(row.get('uv_loops'), int)
+                    or row['uv_loops'] < 3
+                    for row in uv_maps)):
+            raise ValueError('FBX UV1 texturing atlas or rig-preservation validation failed.')
         os.replace(output, target)
     return {'format':'FBX Binary', 'profile':'static' if static else 'character',
             'mesh_count':verified['meshes'], 'armatures':verified['armatures'],
             'actions':verified['actions'],
             'material_groups':verified.get('material_groups', []),
+            'uv_maps':verified['uv_maps'],
             'material_uv_verification':uv_report}
