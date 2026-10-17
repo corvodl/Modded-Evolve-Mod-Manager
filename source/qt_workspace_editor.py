@@ -554,8 +554,8 @@ class QtWorkspaceEditor(QMainWindow):
             'File': {'Open File Folder', 'Export Rendered GFX PNG…',
                      'Export Texture as PNG…',
                      'Export Native Model…',
-                     'Export Current Model Only (.glb)…',
-                     'Export Animated Character (.glb)…',
+                     'Export Current Model Only (.fbx)…',
+                     'Export Animated Character (.fbx)…',
                      'Export Complete Character Folder…'},
             'Edit': {'Find Text'},
             'View': None,
@@ -640,11 +640,11 @@ class QtWorkspaceEditor(QMainWindow):
         action('File', 'Export Texture as PNG…', self.export_png)
         action('File', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('File', 'Export Native Model…', self.export_model)
-        action('File', 'Export Current Model Only (.glb)…', self.export_blender_model)
+        action('File', 'Export Current Model Only (.fbx)…', self.export_blender_model)
         action('File', 'Export Blender Project (.blend)…', lambda: self.export_blender_model(native=True))
-        action('File', 'Export Animated Character (.glb)…', self.export_animated_character)
+        action('File', 'Export Animated Character (.fbx)…', self.export_animated_character)
         action('File', 'Export Complete Character Folder…', self.export_blender_folder)
-        action('File', 'Export Individual Meshes as GLB…', self.export_individual_glbs)
+        action('File', 'Export Individual Meshes as FBX…', self.export_individual_glbs)
         action('File', 'Batch Asset Export…', self.open_asset_search)
         action('File', 'Project History & Undo…', self.open_project_history)
         action('Edit', 'Save Text', self.save)
@@ -2878,11 +2878,11 @@ class QtWorkspaceEditor(QMainWindow):
         target, _ = QFileDialog.getSaveFileName(
             self, 'Export complete character with native animations',
             str(Path(self.manager.projects_path)/
-                (Path(self.current).stem + '-animated.glb')),
-            'Blender animated glTF 2.0 (*.glb)')
+                (Path(self.current).stem + '-animated.fbx')),
+            'Animated FBX (*.fbx)')
         if not target:
             return
-        target = Path(target).resolve().with_suffix('.glb')
+        target = Path(target).resolve().with_suffix('.fbx')
         if self.read_only_library:
             from asset_library_preview import _outside_library
             try:
@@ -2931,18 +2931,10 @@ class QtWorkspaceEditor(QMainWindow):
             if active is not None and is_emet_assembly(active):
                 report = dict(report)
                 report['geometry_verification'] = verify_emet_glb(payload, active)
-            import os
-            import tempfile
-            # Atomic export: never leave a half-written GLB on failure.
-            fd, temporary = tempfile.mkstemp(
-                prefix='.evolve-animation-',suffix='.glb',dir=target.parent)
-            try:
-                with os.fdopen(fd,'wb') as output:
-                    output.write(payload)
-                os.replace(temporary,target)
-            finally:
-                if os.path.exists(temporary):
-                    os.unlink(temporary)
+            from fbx_export_converter import convert_glb_to_fbx
+            converted = convert_glb_to_fbx(payload, target, static=False)
+            report = dict(report)
+            report['fbx_conversion'] = converted
             return b'', report
 
         self.status.setText('Exporting %d original CryEngine animations…' % len(clips))
@@ -2967,13 +2959,13 @@ class QtWorkspaceEditor(QMainWindow):
             QMessageBox.information(
                 self, 'Export for Blender', 'Select a supported model first.')
             return
-        extension = '.blend' if native else '.glb'
+        extension = '.blend' if native else '.fbx'
         name = ((Path(self.current).stem + '_Full_Character' if self.character_preview
                  else Path(self.current).stem) + extension)
         destination, _ = QFileDialog.getSaveFileName(
             self, 'Export Blender model (geometry and available textures)',
             str(Path(self.manager.projects_path) / name),
-            'Blender project (*.blend)' if native else 'Blender glTF 2.0 (*.glb)')
+            'Blender project (*.blend)' if native else 'FBX model (*.fbx)')
         if not destination:
             return
         from qt_background_exports import begin_file_operation, exports_busy
@@ -3040,7 +3032,7 @@ class QtWorkspaceEditor(QMainWindow):
                     projects_root=projects, stage_root=stage, index=asset_index,
                     materials=None)
             if cancelled():
-                raise InterruptedError('Export cancelled before writing the GLB.')
+                raise InterruptedError('Export cancelled before converting the FBX.')
             temporary = None
             try:
                 with tempfile.NamedTemporaryFile(
@@ -3055,7 +3047,12 @@ class QtWorkspaceEditor(QMainWindow):
                     convert_glb_to_blend(temporary,target)
                     temporary.unlink(missing_ok=True)
                 else:
-                    os.replace(temporary, target)
+                    from fbx_export_converter import convert_glb_to_fbx
+                    conversion = convert_glb_to_fbx(payload, target,
+                                                    static=not bool(report.get('bone_count')))
+                    report = dict(report)
+                    report['fbx_conversion'] = conversion
+                    temporary.unlink(missing_ok=True)
                 temporary = None
             finally:
                 if temporary is not None:
@@ -3064,7 +3061,7 @@ class QtWorkspaceEditor(QMainWindow):
             texture_files = write_texture_folder(payload, target)
             report['external_texture_files'] = len(texture_files)
             if report.get('texture_count') and not texture_files:
-                raise ValueError('GLB claims textures but none were written to Textures/.')
+                raise ValueError('Model claims textures but none were written to Textures/.')
             progress('Blender model exported', 1, 1)
             return (len(export_mesh.vertices), len(export_mesh.triangles), report)
 
@@ -3152,7 +3149,7 @@ class QtWorkspaceEditor(QMainWindow):
             return
         from PySide6.QtWidgets import QFileDialog
         destination = QFileDialog.getExistingDirectory(
-            self, 'Choose PARENT folder for new ' + selected_root + '/' + selected_root + '.glb',
+            self, 'Choose PARENT folder for new ' + selected_root + '/' + selected_root + '.fbx',
             str(Path(self.manager.projects_path)))
         if not destination:
             return
@@ -3190,10 +3187,10 @@ class QtWorkspaceEditor(QMainWindow):
                     (report['files'], report['folder']))
             converted = len(report['cdf_assemblies'])
             skipped = len(report['cdf_assembly_errors'])
-            note += ' • %d additional CDF Blender GLB(s) in models/' % converted
+            note += ' • %d additional CDF FBX model(s) in models/' % converted
             monster_stages = report.get('monster_stages', ())
             if monster_stages:
-                note += ' • 3 root monster stage GLBs with stage-specific rig/animation metadata'
+                note += ' • 3 root monster stage FBX files with stage-specific rigs/animations'
                 for stage_row in monster_stages:
                     clips = tuple(stage_row.get('embedded_animation_clips', ()))
                     note += ' • Stage %d: %d verified animation(s)' % (
@@ -3201,7 +3198,7 @@ class QtWorkspaceEditor(QMainWindow):
                     if not clips:
                         note += ' (see asset_sources.json for unavailable motion)'
             elif report['full_model'] is not None:
-                note += ' • ' + Path(report['folder']).name + '.glb included'
+                note += ' • ' + Path(report['folder']).name + '.fbx included'
             else:
                 note += ' • no verified full CDF assembly'
             if skipped:
@@ -3221,7 +3218,7 @@ class QtWorkspaceEditor(QMainWindow):
             lines = []
             for row in assembly_rows[:12]:
                 clips = tuple(row.get('embedded_animation_clips', ()))
-                location = row['glb']
+                location = row['fbx']
                 if clips:
                     listing = ', '.join(str(name) for name in clips[:8])
                     if len(clips) > 8:
@@ -3247,7 +3244,7 @@ class QtWorkspaceEditor(QMainWindow):
                 self, 'Complete character export stopped', error))
 
     def export_individual_glbs(self):
-        """Legacy individual-GLB conversion, retained as a separate option."""
+        """Standalone FBX conversion for LOD0 meshes."""
         try:
             source = self._current_model_source_folder()
         except (OSError, ValueError) as exc:
@@ -3279,7 +3276,7 @@ class QtWorkspaceEditor(QMainWindow):
             results, skipped = result
             textured = sum(bool(d['texture_count']) for _, _, _, d in results)
             rigged = sum(bool(d.get('bone_count')) for _, _, _, d in results)
-            note = ('%d GLB exports (%d textured, %d rigged); %d skipped. '
+            note = ('%d FBX exports (%d textured, %d rigged); %d skipped. '
                     'CAF/DBA tracks not exported.' %
                     (len(results), textured, rigged, len(skipped)))
             if skipped:
