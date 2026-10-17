@@ -228,8 +228,10 @@ class QtGLModelCanvas(QOpenGLWidget):
         # Progressive workers normally stage buffers for the default Smooth
         # mode. If an older/cached Faceted batch arrives, rebuild to prevent
         # a mismatch between UI selection and the actual GPU index layout.
+        expected_vertices = (len(mesh.vertices) if self.shading == 'smooth'
+                             else len(mesh.triangles) * 3)
         if (prepared_geometry is not None and
-                len(prepared_geometry.vertices) == len(mesh.vertices)):
+                len(prepared_geometry.vertices) == expected_vertices):
             return prepared_geometry
         return prepare_geometry(mesh, shading=self.shading)
 
