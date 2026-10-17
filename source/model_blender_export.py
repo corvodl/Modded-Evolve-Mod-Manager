@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from pathlib import Path
 import struct
 
@@ -34,10 +35,12 @@ def _pack_vertices(mesh):
     return bytes(data), mins, maxs
 
 
-def glb_bytes(mesh, *, name='CryEngine Mesh'):
+def glb_bytes(mesh, *, name='CryEngine Mesh', static_weld=False):
     """Build spec-conforming GLB with POSITION, indices and optional TEXCOORD_0."""
-    from model_export_repair import prepare_export_mesh
+    from model_export_repair import prepare_export_mesh, prepare_static_texturing_mesh
     mesh, repair_report = prepare_export_mesh(mesh)
+    if static_weld:
+        mesh, repair_report = prepare_static_texturing_mesh(mesh, repair_report)
     vertices = len(mesh.vertices)
     triangles = len(mesh.triangles)
     if not 3 <= vertices <= 250000 or not 1 <= triangles <= 500000:
@@ -138,6 +141,8 @@ def glb_bytes(mesh, *, name='CryEngine Mesh'):
                                    'openBoundaryEdges': repair_report.boundary_edges,
                                    'disconnectedTinyPartsRetained': repair_report.disconnected_triangles,
                                    'uvCoordinatesSnapped': repair_report.uv_coordinates_snapped,
+                                   'weldedStaticVertices': repair_report.welded_vertices,
+                                   'unusedStaticVerticesRemoved': repair_report.unused_vertices_removed,
                                    'notes': list(repair_report.notes)}}
     }
     payload = json.dumps(document, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
@@ -158,6 +163,142 @@ def convert_model(source: Path, destination: Path):
         raise ValueError('Select a regular CryEngine model file (.skinm, .chrm, .cgf, etc.).')
     if source.stat().st_size > MAX_MODEL_BYTES:
         raise ValueError('Model exceeds 256 MiB safety limit.')
+    if re.search(r'_lod[1-9][0-9]*
+    if destination.suffix.lower() != '.glb':
+        raise ValueError('Export filename must end with .glb.')
+    if destination.resolve() == source:
+        raise ValueError('Cannot overwrite the source CryEngine model.')
+    mesh = read_preview_mesh(source.read_bytes(), source.name)
+    data = glb_bytes(mesh, name=source.stem, static_weld=True)
+    if destination.parent.is_dir():
+        with destination.open('wb') as output:
+            output.write(data)
+    else:
+        raise FileNotFoundError('Export destination folder does not exist.')
+    return (len(mesh.vertices), len(mesh.triangles))
+
+
+def convert_folder(folder: Path, destination: Path):
+    """Export supported render meshes from an existing folder tree.
+
+    Unsupported types (.skin skeletons, variant stream encodings) are reported
+    and skipped, never exported as misleading empty models. Source unchanged.
+    """
+    folder, destination = Path(folder).resolve(), Path(destination).resolve()
+    if not folder.is_dir() or not destination.is_dir():
+        raise FileNotFoundError('Choose existing input and output folders.')
+    if folder == destination or destination.is_relative_to(folder):
+        raise ValueError('Output folder must be outside the original model folder.')
+    candidates = sorted(
+        (p for p in folder.rglob('*') if p.is_file() and not p.is_symlink()
+         and p.suffix.lower() in ('.skinm', '.chrm', '.cgfm', '.cgam', '.cgf', '.cga')),
+        key=lambda p: str(p).casefold())
+    if len(candidates) > MAX_FOLDER_FILES:
+        raise ValueError('Folder contains more than 500 model files.')
+    results = []
+    skipped = []
+    for source in candidates:
+        relative = source.relative_to(folder)
+        if re.search(r'_lod[1-9][0-9]*
+        out = destination / relative.with_suffix('.glb')
+        if source.stat().st_size > MAX_MODEL_BYTES:
+            skipped.append((str(relative), 'Model exceeds 256 MiB'))
+            continue
+        try:
+            # A .chrm and .skinm with the same name are not equivalent. If both
+            # exist, keep .skinm's rendered mesh as the preferred export.
+            if out.exists() and relative.suffix.lower() == '.chrm' and \
+                    relative.with_suffix('.skinm').exists():
+                continue
+            if relative.suffix.lower() == '.chrm' and \
+                    relative.with_suffix('.skinm').is_file():
+                continue
+            out.parent.mkdir(parents=True, exist_ok=True)
+            count = convert_model(source, out)
+            results.append((str(relative), str(out.relative_to(destination)), count))
+        except (OSError, ValueError) as error:
+            skipped.append((str(relative), str(error)))
+    return results, skipped
+, source.stem, flags=re.IGNORECASE):
+        raise ValueError('Texturing export uses LOD0 only; select the LOD0/base mesh.')
+    if destination.suffix.lower() != '.glb':
+        raise ValueError('Export filename must end with .glb.')
+    if destination.resolve() == source:
+        raise ValueError('Cannot overwrite the source CryEngine model.')
+    mesh = read_preview_mesh(source.read_bytes(), source.name)
+    data = glb_bytes(mesh, name=source.stem)
+    if destination.parent.is_dir():
+        with destination.open('wb') as output:
+            output.write(data)
+    else:
+        raise FileNotFoundError('Export destination folder does not exist.')
+    return (len(mesh.vertices), len(mesh.triangles))
+
+
+def convert_folder(folder: Path, destination: Path):
+    """Export supported render meshes from an existing folder tree.
+
+    Unsupported types (.skin skeletons, variant stream encodings) are reported
+    and skipped, never exported as misleading empty models. Source unchanged.
+    """
+    folder, destination = Path(folder).resolve(), Path(destination).resolve()
+    if not folder.is_dir() or not destination.is_dir():
+        raise FileNotFoundError('Choose existing input and output folders.')
+    if folder == destination or destination.is_relative_to(folder):
+        raise ValueError('Output folder must be outside the original model folder.')
+    candidates = sorted(
+        (p for p in folder.rglob('*') if p.is_file() and not p.is_symlink()
+         and p.suffix.lower() in ('.skinm', '.chrm', '.cgfm', '.cgam', '.cgf', '.cga')),
+        key=lambda p: str(p).casefold())
+    if len(candidates) > MAX_FOLDER_FILES:
+        raise ValueError('Folder contains more than 500 model files.')
+    results = []
+    skipped = []
+    for source in candidates:
+        relative = source.relative_to(folder)
+        out = destination / relative.with_suffix('.glb')
+        if source.stat().st_size > MAX_MODEL_BYTES:
+            skipped.append((str(relative), 'Model exceeds 256 MiB'))
+            continue
+        try:
+            # A .chrm and .skinm with the same name are not equivalent. If both
+            # exist, keep .skinm's rendered mesh as the preferred export.
+            if out.exists() and relative.suffix.lower() == '.chrm' and \
+                    relative.with_suffix('.skinm').exists():
+                continue
+            if relative.suffix.lower() == '.chrm' and \
+                    relative.with_suffix('.skinm').is_file():
+                continue
+            out.parent.mkdir(parents=True, exist_ok=True)
+            count = convert_model(source, out)
+            results.append((str(relative), str(out.relative_to(destination)), count))
+        except (OSError, ValueError) as error:
+            skipped.append((str(relative), str(error)))
+    return results, skipped
+, source.stem, flags=re.IGNORECASE):
+            skipped.append((str(relative), 'LOD0 only: lower-resolution LOD skipped'))
+            continue
+        out = destination / relative.with_suffix('.glb')
+        if source.stat().st_size > MAX_MODEL_BYTES:
+            skipped.append((str(relative), 'Model exceeds 256 MiB'))
+            continue
+        try:
+            # A .chrm and .skinm with the same name are not equivalent. If both
+            # exist, keep .skinm's rendered mesh as the preferred export.
+            if out.exists() and relative.suffix.lower() == '.chrm' and \
+                    relative.with_suffix('.skinm').exists():
+                continue
+            if relative.suffix.lower() == '.chrm' and \
+                    relative.with_suffix('.skinm').is_file():
+                continue
+            out.parent.mkdir(parents=True, exist_ok=True)
+            count = convert_model(source, out)
+            results.append((str(relative), str(out.relative_to(destination)), count))
+        except (OSError, ValueError) as error:
+            skipped.append((str(relative), str(error)))
+    return results, skipped
+, source.stem, flags=re.IGNORECASE):
+        raise ValueError('Texturing export uses LOD0 only; select the LOD0/base mesh.')
     if destination.suffix.lower() != '.glb':
         raise ValueError('Export filename must end with .glb.')
     if destination.resolve() == source:
