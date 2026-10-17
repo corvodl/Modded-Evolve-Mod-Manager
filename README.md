@@ -10,7 +10,7 @@ A portable Windows manager for inspecting, editing and rebuilding Evolve **Stage
 
 - Redesign the GPU character viewer with more viewport space, pictogram toolbars, scrollable Materials and Animation popovers, and a draggable XYZ orbit gizmo.
 - Display precise percentage values for lighting, glow, gloss and studio fill; preserve Smooth as the default shading mode.
-- Show cancellable, stage-labelled progress when extracting CAF, converting DBA, loading GLB or preparing animation playback; keep progress visible with inspector closed.
+- Show cancellable, stage-labelled animation loading; export separately validated DBA Actions alongside compatible CAF clips instead of skipping databases when CAFs are present.
 - Apply the user-tested reference emission strength of 100 to verified glowing surfaces in GPU previews and Blender GLB exports while preserving authored CryEngine GlowAmount and masks.
 - Preserve Blender animated GLB emissive strength above the old 16-unit limit when exporting and importing compatible animations.
 - Reclaim wasted space in the Asset Library Full Character view; preserve original game assets as read-only.
