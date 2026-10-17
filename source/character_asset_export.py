@@ -292,12 +292,12 @@ def export_character_asset_folder(workspace, character_folder, destination,
                 raise ValueError('Monster Stage %d source does not match its CDF.' % stage)
             doc, _ = _unpack_glb(blob)
             declared = tuple(report.get('embedded_animation_clips', ()))
-            embedded = tuple(clip.get('name') for clip in doc.get('animations', ()))
-            if (int(report.get('embedded_animations') or 0) != len(embedded)
-                    or declared != embedded
-                    or (embedded and len(doc.get('skins', ())) != 1)):
+            stage_clips = tuple(clip.get('name') for clip in doc.get('animations', ()))
+            if (int(report.get('embedded_animations') or 0) != len(stage_clips)
+                    or declared != stage_clips
+                    or (stage_clips and len(doc.get('skins', ())) != 1)):
                 raise ValueError('Monster Stage %d GLB has mismatched CDF animations.' % stage)
-            if any(not name for name in embedded):
+            if any(not name for name in stage_clips):
                 raise ValueError('Monster Stage %d contains unnamed motion tracks.' % stage)
             limit += len(blob)
     if len(assemblies) > 48:
