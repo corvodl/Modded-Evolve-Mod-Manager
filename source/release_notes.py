@@ -4,6 +4,11 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.3.3', (
+        "Export Emet's verified CDF body, Normal faceplate, and remote-cannon arm together rather than promoting an arm-only GLB.",
+        "Validate Emet's final GLB drawable geometry and preserve CDF-bound rigging, textures, animations and selectable faceplates.",
+        "Use consistent complete-character export checks across the Asset Library, Blender and animated GLB paths, with a readable verification report.",
+    )),
     ('1.3.2', (
         "Reuse verified high-resolution textures across CDF parts without double-counting preview memory.",
         "Use a compact Character Equipment menu and default Emet to his Normal faceplate.",

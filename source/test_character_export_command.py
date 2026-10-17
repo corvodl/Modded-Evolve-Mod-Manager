@@ -25,28 +25,68 @@ class CharacterExportCommandTests(unittest.TestCase):
         self.assertEqual(workspace, self.workspace)
         self.assertEqual(virtual, 'characters/hunters/merc_emet')
 
-    def test_preserves_canonical_complete_body_and_friendly_name(self):
+    def test_emet_root_glb_uses_body_and_cannon_composite(self):
         from character_export_command import export_character_directory
-        rig = (b'glTF-rig', {'cdf': 'characters/hunters/merc_emet/full.cdf',
-                            'bone_count': 27, 'embedded_animations': 2,
-                            'part_count': 4})
-        other = (b'glTF-unrigged', {'cdf': '', 'bone_count': 0,
-                                  'preferred_full_character': True})
+        base = 'characters/hunters/merc_emet/'
+        complete = (b'glTF-body-cannon', {
+            'cdf': base + 'emet_3p.cdf',
+            'bone_count': 27, 'part_count': 3, 'embedded_animations': 2,
+            'parts': ('body', 'normal', 'remotecannon'),
+            'rendered_parts': (
+                base + 'emet_3p.skinm',
+                base + 'emet_3p_face_normal.skinm',
+                base + 'emetremotecannon_3p.skinm'),
+            'geometry_verification': {
+                'status': 'verified_body_and_remote_cannon',
+                'part_drawn_triangles': (2, 1, 1)}})
+        # Even an explicitly preferred, rigged cannon-only export cannot
+        # override a verified CDF that actually contains the character body.
+        cannon = (b'glTF-arm-only', {
+            'cdf': '', 'bone_count': 50, 'part_count': 1,
+            'preferred_full_character': True,
+            'original_3p_model': base + 'emetremotecannon_3p.skinm',
+            'rendered_parts': (base + 'emetremotecannon_3p.skinm',)})
         with (patch('character_export_command.build_cdf_folder_glbs',
-                    return_value=({'Assemblies/full.glb': rig,
-                                   'Assemblies/cannon.glb': other}, ())),
+                    return_value=({'Assemblies/emet_3p.glb': complete,
+                                   'Assemblies/cannon.glb': cannon}, ())),
               patch('character_export_command.export_character_asset_folder',
                     return_value={'folder': str(self.destination / 'Emet')}) as export):
-            report = export_character_directory(
-                self.base, self.destination, index={})
-        self.assertEqual(Path(report['folder']).name, 'Emet')
-        self.assertIs(export.call_args.kwargs['full_model'], other)
+            result = export_character_directory(
+                self.base, self.destination, index={},
+                selected_cdf=base + 'emetremotecannon_3p.cdf')
+        self.assertEqual(Path(result['folder']).name, 'Emet')
+        self.assertIs(export.call_args.kwargs['full_model'], complete)
         self.assertEqual(export.call_args.kwargs['output_name'], 'Emet')
-        self.assertEqual(len(export.call_args.kwargs['assemblies']), 1)
-        self.assertIn('Assemblies/full.glb',
+        self.assertIn('Assemblies/cannon.glb',
                       export.call_args.kwargs['assemblies'])
-        self.assertNotIn('Assemblies/cannon.glb',
+        self.assertNotIn('Assemblies/emet_3p.glb',
                          export.call_args.kwargs['assemblies'])
+
+    def test_emet_cannon_only_never_exports_character_glb(self):
+        from character_export_command import export_character_directory
+        arm = (b'glTF-arm-only', {
+            'cdf': '', 'part_count': 1, 'bone_count': 50,
+            'preferred_full_character': True,
+            'original_3p_model': 'characters/hunters/merc_emet/emetremotecannon_3p.skinm',
+            'rendered_parts': ('characters/hunters/merc_emet/emetremotecannon_3p.skinm',)})
+        with patch('character_export_command.build_cdf_folder_glbs',
+                   return_value=({'Assemblies/cannon.glb': arm}, ())):
+            with self.assertRaisesRegex(ValueError, 'both emet_3p.skinm body'):
+                export_character_directory(self.base, self.destination, index={})
+        self.assertEqual(list(self.destination.iterdir()), [])
+
+    def test_emet_other_character_cdf_cannot_be_primary(self):
+        from character_export_command import export_character_directory
+        base = 'characters/hunters/merc_emet/'
+        deployable = (b'glTF-deployable', {
+            'cdf': base + 'emethealingtotemworld_3p.cdf',
+            'part_count': 4, 'bone_count': 32,
+            'rendered_parts': (base + 'emethealingtotemworld_3p.skinm',)})
+        with patch('character_export_command.build_cdf_folder_glbs',
+                   return_value=({'Assemblies/deployable.glb': deployable}, ())):
+            with self.assertRaisesRegex(ValueError, 'both emet_3p.skinm body'):
+                export_character_directory(self.base, self.destination, index={})
+        self.assertEqual(list(self.destination.iterdir()), [])
 
     def test_sunny_full_character_prefers_third_person_over_larger_fp(self):
         from character_export_command import _preferred_full_assembly
