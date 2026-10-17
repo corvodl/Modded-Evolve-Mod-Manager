@@ -147,29 +147,14 @@ def build_cdf_folder_glbs(workspace, character_folder, index, *,
                 projects_root=projects_root, stage_root=stage_root)
             if character is None or character.cdf.casefold() != name.casefold():
                 raise ValueError('No verified assembly belonging to this CDF')
-            # If the owning Emet CDF offers a remote-cannon attachment but a
-            # different equipment skin is currently its default, explicitly
-            # select the cannon in the *same verified CDF*. Never synthesize
-            # an arbitrary body/cannon merge outside CryEngine's bindings.
-            emet_actor = (virtual.casefold().split('/')[:3] in
-                          (['characters', 'hunters', 'merc_emet'],
-                           ['characters', 'hunters', 'medic_emet'],
-                           ['characters', 'hunters', 'emet']))
-            rendered = {PurePosixPath(str(part[0]).replace('\\', '/')).name.casefold()
-                        for part in getattr(character, 'rig_parts', ())}
-            if (emet_actor and 'emet_3p.skinm' in rendered
-                    and 'emetremotecannon_3p.skinm' not in rendered):
-                candidates = [
-                    path for _label, path in getattr(character, 'equipment_options', ())
-                    if PurePosixPath(str(path).replace('\\', '/')).name.casefold()
-                    == 'emetremotecannon_3p.skin']
-                if len(candidates) == 1:
-                    character = assemble_character(
-                        workspace, name, index, texture_folder=texture_folder,
-                        projects_root=projects_root, stage_root=stage_root,
-                        equipment=candidates[0], cancel=cancelled)
-                    if character is None or character.cdf.casefold() != name.casefold():
-                        raise ValueError('Cannot assemble verified Emet body and cannon.')
+            from character_export_verification import (
+                is_emet_assembly, prepare_emet_full_character, verify_emet_glb)
+            emet = is_emet_assembly(character)
+            if emet:
+                character = prepare_emet_full_character(
+                    workspace, name, index, character=character,
+                    texture_folder=texture_folder, projects_root=projects_root,
+                    stage_root=stage_root, cancelled=cancelled)
             blob, info = assembled_character_glb(
                 character, workspace, name, index,
                 texture_folder=texture_folder, projects_root=projects_root,
@@ -184,6 +169,12 @@ def build_cdf_folder_glbs(workspace, character_folder, index, *,
             # root character GLB. An Emet arm-only .skinm is not the body.
             info['rendered_parts'] = tuple(
                 str(part[0]) for part in getattr(character, 'rig_parts', ()))
+            info['selected_faceplate'] = str(getattr(character, 'selected_faceplate', '') or '')
+            info['included_parts'] = tuple(getattr(character, 'included', ()))
+            info['unresolved_parts'] = tuple(getattr(character, 'omitted', ()))
+            if emet:
+                info['geometry_verification'] = verify_emet_glb(
+                    blob, character, require_default_faceplate=True)
             # Put animations in the SAME Assemblies/<CDF>.glb as the mesh.
             # Each variant is validated against its own CDF skeleton; importing
             # one GLB into Blender now exposes its named Actions immediately.
@@ -204,6 +195,9 @@ def build_cdf_folder_glbs(workspace, character_folder, index, *,
                 info['embedded_animations'] = 0
                 info['embedded_animation_clips'] = ()
                 info['animation_note'] = 'Animation embedding unavailable: ' + str(exc)[:180]
+            if emet:
+                info['geometry_verification'] = verify_emet_glb(
+                    blob, character, require_default_faceplate=True)
             if total + len(blob) > max_total:
                 raise ValueError('Assembled GLB output exceeds 512 MiB safety budget.')
             total += len(blob)
@@ -432,6 +426,32 @@ def export_character_asset_folder(workspace, character_folder, destination,
                     'note': 'No verified CDF rig available. Original animation '
                             'source assets in this directory remain unconverted.'
                 }, indent=2), encoding='utf-8')
+        full_verification = (info.get('geometry_verification', {})
+                             if isinstance(info, dict) else {})
+        export_verification = {
+            'format': 'evolve-character-export-verification-v1',
+            'character': short_name, 'virtual_folder': virtual,
+            'root_glb': (short_name + '.glb') if full_model is not None else None,
+            'cdf': (info or {}).get('cdf') if isinstance(info, dict) else None,
+            'source_parts': list((info or {}).get('rendered_parts', ())
+                                 if isinstance(info, dict) else ()),
+            'included_parts': list((info or {}).get('included_parts', ())
+                                   if isinstance(info, dict) else ()),
+            'faceplate': (info or {}).get('selected_faceplate', '')
+                         if isinstance(info, dict) else '',
+            'geometry': full_verification,
+            'bone_count': (info or {}).get('bone_count', 0)
+                          if isinstance(info, dict) else 0,
+            'rig_status': (info or {}).get('rig_status', 'unknown')
+                          if isinstance(info, dict) else 'unknown',
+            'texture_count': (info or {}).get('texture_count', 0)
+                             if isinstance(info, dict) else 0,
+            'unresolved_cdf_assemblies': list(assembly_errors),
+            'unresolved_companions': list(conflicts),
+        }
+        (staging / 'export_verification.json').write_text(
+            json.dumps(export_verification, indent=2, default=str),
+            encoding='utf-8')
         # Provenance preserves full virtual game paths without adding redundant
         # directories to the user-visible output.
         (staging / 'asset_sources.json').write_text(
@@ -451,6 +471,7 @@ def export_character_asset_folder(workspace, character_folder, destination,
             'monster_stages': tuple(stage_rows),
             'cdf_assemblies': tuple(assembly_rows),
             'cdf_assembly_errors': tuple(assembly_errors),
+            'export_verification': export_verification,
             'animations': animation_report,
         }
     except BaseException:
