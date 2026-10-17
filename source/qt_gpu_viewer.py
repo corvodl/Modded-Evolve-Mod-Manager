@@ -293,6 +293,33 @@ class QtGLModelCanvas(QOpenGLWidget):
         self._queue_texture_uploads()
         self.update()
 
+    def _cleanup_gpu_context(self):
+        """Delete obsolete full-resolution GL textures in their owning context.
+
+        Model switches already release old textures. Do the same on viewer
+        close/context teardown; otherwise rapidly opening and closing a model
+        panel can leave driver allocations resident until process exit.
+        """
+        self._uv_motion_timer.stop()
+        self._pending_texture_uploads = []
+        if self.isValid():
+            try:
+                self.makeCurrent()
+                self._release_textures()
+            finally:
+                self.doneCurrent()
+        else:
+            for name in ('textures','normal_textures','specular_textures',
+                         'gloss_textures','detail_textures',
+                         'detail_normal_textures','ao_textures',
+                         'emissive_textures','environment_textures'):
+                setattr(self, name, [])
+        self._batch_sort_cache = None
+
+    def closeEvent(self, event):
+        self._cleanup_gpu_context()
+        super().closeEvent(event)
+
     def set_enhanced_materials(self, enabled):
         self.enhanced_materials = bool(enabled)
         self.update()
