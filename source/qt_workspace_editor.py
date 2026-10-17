@@ -195,6 +195,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_preview = None
         self.full_character_active = False
         self.character_skin_choice = None
+        self.character_faceplate_choice = None
         self._prepared_animation = None
         self.gpu_windows = []
         self._export_native_pool = None
@@ -662,6 +663,8 @@ class QtWorkspaceEditor(QMainWindow):
         action('Edit', 'Restore Original', self.restore_original)
         self.equipment_menu = menus['Model'].addMenu('Equipped Skin')
         self.equipment_menu.setEnabled(False)
+        self.faceplate_menu = menus['Model'].addMenu('Emet Faceplate')
+        self.faceplate_menu.setEnabled(False)
         action('Model', 'Import Same-Layout Model…', self.import_model)
         action('Model', 'Open GPU Viewer in New Window', self.open_gpu_viewer)
         action('Model', 'Compare Models Side by Side…', self.open_model_compare)
@@ -1671,6 +1674,7 @@ class QtWorkspaceEditor(QMainWindow):
             self._capture_playback_preferences()
         if rel != self.current:
             self.character_skin_choice = None
+            self.character_faceplate_choice = None
         self.current = rel
         self.stream = None
         self.mesh = None
@@ -1924,6 +1928,7 @@ class QtWorkspaceEditor(QMainWindow):
         tex = self.texture_folder
         ani = self.loose_animation_index
         equipment = self.character_skin_choice
+        faceplate = self.character_faceplate_choice
         require_assembly = self.full_character_active
         token = self._model_generation
         cancel = self._model_cancel
@@ -1969,7 +1974,7 @@ class QtWorkspaceEditor(QMainWindow):
             data,cache_hit,load_ms = prepare_model_cached(source_workspace, rel,
                 projects_root=projects, stage_root=stage,
                 texture_folder=tex, animation_index=ani,
-                equipment=equipment, index=active_index,
+                equipment=equipment, faceplate=faceplate, index=active_index,
                 require_assembly=require_assembly, cancel=cancel.is_set,
                 geometry_ready=geometry_stage,
                 stage_ready=stage_ready)
@@ -2154,6 +2159,7 @@ class QtWorkspaceEditor(QMainWindow):
              '\n'.join(issues[:8]) or
              'No unresolved DDS references reported.'))
         self._update_equipment_menu()
+        self._update_faceplate_menu()
         self._apply_model_texture_choices()
         self._paint_model(view, self.mesh)
         self.status.setText(
@@ -2177,6 +2183,25 @@ class QtWorkspaceEditor(QMainWindow):
         if self.mode != 'models' or not self.current:
             return
         self.character_skin_choice = name
+        self.load(self.current, full_character=self.full_character_active)
+
+    def _update_faceplate_menu(self):
+        self.faceplate_menu.clear()
+        preview = self.character_preview
+        choices = tuple(getattr(preview, 'faceplate_options', ()) or ())
+        self.faceplate_menu.setEnabled(bool(choices))
+        for label, virtual in choices:
+            action = self.faceplate_menu.addAction(label.title())
+            action.setCheckable(True)
+            action.setChecked(
+                virtual.casefold() == preview.selected_faceplate.casefold())
+            action.triggered.connect(
+                lambda checked=False, name=virtual: self._select_faceplate(name))
+
+    def _select_faceplate(self, virtual):
+        if self.mode != 'models' or not self.current:
+            return
+        self.character_faceplate_choice = virtual
         self.load(self.current, full_character=self.full_character_active)
 
     def _paint_model(self, view, mesh):
@@ -2420,6 +2445,7 @@ class QtWorkspaceEditor(QMainWindow):
         self.preview_index = None
         self.character_preview = None
         self.character_skin_choice = None
+        self.character_faceplate_choice = None
         self.current, self.loaded_text, self.raw = None, '', b''
         self.gfx_view.cancel_pending()
         self._close_gfx_editor()
@@ -2919,7 +2945,8 @@ class QtWorkspaceEditor(QMainWindow):
                     workspace, virtual, asset_index,
                     texture_folder=textures, projects_root=projects,
                     stage_root=stage,
-                    equipment=source_character.selected_equipment)
+                    equipment=source_character.selected_equipment,
+                    faceplate=source_character.selected_faceplate)
                 if fresh_character is None:
                     raise ValueError('Unable to reconstruct full-quality CDF textures; '
                                      'ensure the character and shared texture PAKs '
@@ -3244,7 +3271,7 @@ class QtWorkspaceEditor(QMainWindow):
 
     def _texture_choice_key(self):
         return (str(self.workspace), self.current, self.character_skin_choice,
-                bool(self.full_character_active))
+                self.character_faceplate_choice, bool(self.full_character_active))
 
     def _apply_model_texture_choices(self):
         choices = self.model_texture_choices.get(self._texture_choice_key(), {})
