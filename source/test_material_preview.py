@@ -51,6 +51,7 @@ class MaterialRenderingTests(unittest.TestCase):
                             'archive': 'characters_hunters_merc_maggiesavage_ts.pak'}
                 return None
             cache = {}
+            index = {}
             with patch('model_material_resolve.find_model_material',
                        return_value=(record, 'compiled reference', ())), patch(
                     'material_preview._external_lookup',
@@ -59,15 +60,15 @@ class MaterialRenderingTests(unittest.TestCase):
                     return_value=Image.new('RGB', (4, 4), 'red')) as decode:
                 first = load_preview_materials(
                     root, 'characters/hunters/merc_maggiesavage/maggiesavage_3p.skinm',
-                    index={}, material_cache=cache, used_slots={0})
+                    index=index, material_cache=cache, used_slots={0})
                 count = decode.call_count
                 second = load_preview_materials(
                     root, 'characters/hunters/merc_maggiesavage/maggiesavage_3p_headwear.skinm',
-                    index={}, material_cache=cache, used_slots={0})
+                    index=index, material_cache=cache, used_slots={0})
                 # A different quality setting cannot reuse stale decoded pixels.
                 load_preview_materials(
                     root, 'characters/hunters/merc_maggiesavage/maggiesavage_3p_flashlight.skinm',
-                    index={}, material_cache=cache, used_slots={0},
+                    index=index, material_cache=cache, used_slots={0},
                     texture_quality='balanced')
             self.assertIsNotNone(first.textures[0])
             self.assertIsNone(first.textures[1])
