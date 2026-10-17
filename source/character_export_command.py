@@ -132,13 +132,42 @@ def _assembly_perspective(info):
     return '3p' if '3p' in kinds else ''
 
 
+def _is_emet_character_folder(virtual):
+    parts = PurePosixPath(str(virtual).replace('\\', '/')).parts
+    return (len(parts) == 3 and parts[0].casefold() == 'characters'
+            and parts[1].casefold() == 'hunters'
+            and (parts[2].casefold() == 'emet'
+                 or parts[2].casefold().endswith('_emet')))
+
+
+def _verified_emet_complete_assembly(info):
+    """Require both *loaded* Emet body and remote-cannon meshes from a CDF.
+
+    Merely finding a 3P filename or a rigged arm does not verify a complete
+    assembled GLB. Source paths originate from character.rig_parts after
+    the CDF resolver actually loads every selected mesh.
+    """
+    if not info.get('cdf') or _assembly_perspective(info) == 'fp':
+        return False
+    rendered = set()
+    for virtual in info.get('rendered_parts') or ():
+        parts = PurePosixPath(str(virtual).replace('\\', '/')).parts
+        if (len(parts) >= 4 and parts[0].casefold() == 'characters'
+                and parts[1].casefold() == 'hunters'
+                and (parts[2].casefold() == 'emet'
+                     or parts[2].casefold().endswith('_emet'))):
+            rendered.add(parts[-1].casefold())
+    return {'emet_3p.skinm', 'emetremotecannon_3p.skinm'} <= rendered
+
+
 def _preferred_full_assembly(assemblies, selected_cdf=None):
     """Prefer a complete verified body; never promote a rigged accessory as main."""
     # The primary root GLB represents the complete player-visible body.
     # FP/view-model CDFs remain available under models/ as variants but must
     # never win the root export just because they have more parts or bones.
     entries = [pair for pair in assemblies.values()
-               if _assembly_perspective(pair[1]) != 'fp']
+               if not pair[1].get('standalone_equipment')
+               and _assembly_perspective(pair[1]) != 'fp']
     if not entries:
         return None
     selected = str(selected_cdf or '').casefold()
@@ -146,10 +175,8 @@ def _preferred_full_assembly(assemblies, selected_cdf=None):
     def score(pair):
         _, info = pair
         bones = int(info.get('bone_count') or 0)
-        # A designated canonical complete body (Emet's original 3P arm)
-        # must not be replaced with a rigged but incomplete equipment CDF.
-        # When no canonical source exists, favor verified multi-part bodies
-        # and rigging over stand-alone accessory meshes.
+        # Prefer verified third-person composites over rigs that only
+        # belong to an accessory or first-person weapon.
         parts = int(info.get('part_count') or 0)
         return (
             bool(info.get('preferred_full_character')),
@@ -212,7 +239,26 @@ def export_character_directory(source_folder, destination, *, projects_root=None
             stage_models=stages, full_model=None, assemblies=other_assemblies,
             assembly_errors=errors, output_name=display_name,
             progress=progress, cancelled=cancelled)
-    chosen = _preferred_full_assembly(assemblies, selected_cdf)
+    # Emet's remote cannon is an arm attachment. Select only CDF composites
+    # that actually loaded the verified third-person body *and* the cannon.
+    # Never substitute the standalone equipment mesh for character.glb.
+    if _is_emet_character_folder(virtual):
+        complete = {name: pair for name, pair in assemblies.items()
+                    if _verified_emet_complete_assembly(pair[1])}
+        if not complete and any(_assembly_perspective(pair[1]) != 'fp'
+                                for pair in assemblies.values()):
+            details = '; '.join(
+                '%s: %s' % (PurePosixPath(str(name)).name, str(reason)[:120])
+                for name, reason in errors[:2])
+            raise ValueError(
+                'Emet full-character export requires a verified CDF with '
+                'both emet_3p.skinm body and emetremotecannon_3p.skinm arm. '
+                'The standalone cannon cannot be used as character.glb. '
+                + (details or 'Check the Emet CDF and model dependencies.'))
+        candidates = complete
+    else:
+        candidates = assemblies
+    chosen = _preferred_full_assembly(candidates, selected_cdf)
     if chosen is None and assemblies:
         raise ValueError(
             'No verified third-person character body was found. '
