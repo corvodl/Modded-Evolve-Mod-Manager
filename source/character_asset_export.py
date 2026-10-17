@@ -263,6 +263,20 @@ def export_character_asset_folder(workspace, character_folder, destination,
     limit = sum(int(source.stat().st_size) for source, _, _ in records)
     assemblies = dict(assemblies or {})
     stage_models = dict(stage_models or {})
+    # When the root Character/Stage GLB already carries verified Actions,
+    # do not attach the same CAF/DBA sources or make a second animated GLB.
+    # Preserve source assets in the original PAK/workspace, untouched.
+    from model_export_readiness import embedded_action_names
+    if full_model is not None:
+        embedded = {short_name + '.glb': embedded_action_names(full_model[0])}
+    elif stage_models and set(stage_models) == {1, 2, 3}:
+        embedded = {
+            '%s_Stage%d.glb' % (short_name, stage):
+            embedded_action_names(stage_models[stage][0])
+            for stage in (1, 2, 3)}
+    else:
+        embedded = {}
+    use_embedded_animations = bool(embedded) and all(embedded.values())
     if stage_models:
         from monster_stage_export import is_monster_character, stage_from_cdf
         if not is_monster_character(virtual) or full_model is not None:
@@ -307,6 +321,12 @@ def export_character_asset_folder(workspace, character_folder, destination,
         for i, (source, game_path, archive) in enumerate(records, 1):
             if cancelled and cancelled():
                 raise InterruptedError('Character export cancelled.')
+            if (use_embedded_animations and
+                    game_path.casefold().endswith(
+                        ('.caf', '.dba', '.adb', '.bspace', '.animevents'))):
+                # Duplicate raw animation attachments are not needed when the
+                # exported character GLB already contains those Actions.
+                continue
             if not game_path.casefold().startswith(prefix):
                 raise ValueError('Companion asset lies outside character virtual path.')
             local = game_path[len(virtual) + 1:]
@@ -400,14 +420,21 @@ def export_character_asset_folder(workspace, character_folder, destination,
             if progress:
                 progress('Writing CDF Blender assemblies',
                          len(records) + int(full_model is not None) + position, count)
-        # Collect only the selected skeleton's verified native CAF/DBA
-        # references. Never claim raw database files are decoded Blender clips.
+        # Do not produce a second animated GLB or source CAF folder when all
+        # required root GLBs already carry verified, named animation tracks.
         from character_animation_export import export_character_animation_folder
         animation_report = None
+        if use_embedded_animations:
+            animation_report = {
+                'animations': sum(len(names) for names in embedded.values()),
+                'sources': 0, 'animated_glb': None,
+                'embedded_in': {key: list(value) for key, value in embedded.items()},
+                'note': 'Animation Actions are embedded in the root character GLB; '
+                        'redundant standalone animation files omitted.'}
         representative = full_model or stage_models.get(1)
         if representative is None and assemblies:
             representative = next(iter(assemblies.values()))
-        if representative is not None:
+        if representative is not None and not use_embedded_animations:
             base_blob, base_info = representative
             chosen_cdf = base_info.get('cdf') if isinstance(base_info, dict) else None
             source_character = None
@@ -423,7 +450,7 @@ def export_character_asset_folder(workspace, character_folder, destination,
                 index or {}, home, character=source_character,
                 model_name=short_name, cancelled=cancelled, progress=progress,
                 references=() if not index or not chosen_cdf else None)
-        else:
+        elif not use_embedded_animations:
             animation_folder = staging / 'animations'
             animation_folder.mkdir(exist_ok=True)
             (animation_folder / 'animation_manifest.json').write_text(
@@ -455,6 +482,8 @@ def export_character_asset_folder(workspace, character_folder, destination,
                              if isinstance(info, dict) else 0,
             'unresolved_cdf_assemblies': list(assembly_errors),
             'unresolved_companions': list(conflicts),
+            'embedded_animations': (animation_report.get('embedded_in', {})
+                                    if animation_report else {}),
         }
         (staging / 'export_verification.json').write_text(
             json.dumps(export_verification, indent=2, default=str),
