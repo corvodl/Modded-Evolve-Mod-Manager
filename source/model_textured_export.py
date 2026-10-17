@@ -144,6 +144,14 @@ def embed_diffuse_textures(blob, materials):
                                  ('emissive', getattr(materials, 'emissive_maps', ()))):
             if slot < 0 or slot >= len(collection) or collection[slot] is None:
                 continue
+            if role == 'emissive':
+                # Do not turn a disabled source glow into an emitting GLB
+                # just because a map was available to the texture resolver.
+                strengths = getattr(materials, 'emissive_strengths', ())
+                authored = strengths[slot] if slot < len(strengths) else 0.
+                from emissive_materials import preview_emission_strength
+                if preview_emission_strength(authored) <= 0.:
+                    continue
             if len(images) >= MAX_TEXTURES:
                 raise ValueError('Exceeded texture export safety limit.')
             source = collection[slot]
@@ -252,14 +260,20 @@ def embed_diffuse_textures(blob, materials):
                         'emissiveUvTransform': list(transform),
                         'requiresBakingForBlender': True,
                     }
-                strengths = getattr(materials, 'emissive_strengths', ())
-                strength = strengths[slot] if slot < len(strengths) else 1.
-                if strength > 1.:
-                    material.setdefault('extensions', {})['KHR_materials_emissive_strength'] = {
-                        'emissiveStrength': min(16., float(strength))}
-                    used = doc.setdefault('extensionsUsed', [])
-                    if 'KHR_materials_emissive_strength' not in used:
-                        used.append('KHR_materials_emissive_strength')
+                # The original CryEngine GlowAmount is not Blender's unit.
+                # Preserve the untouched authored value for inspection while
+                # using the game-reference-tested display intensity of 100.
+                # glTF KHR_materials_emissive_strength allows values >16:
+                # clamping here previously prevented accurate Blender glow.
+                strength = strengths[slot] if slot < len(strengths) else 0.
+                calibrated = preview_emission_strength(strength)
+                material.setdefault('extras', {})['cryEngineAuthoredEmissiveStrength'] = float(strength)
+                material.setdefault('extras', {})['evolveReferenceEmissiveStrength'] = calibrated
+                material.setdefault('extensions', {})['KHR_materials_emissive_strength'] = {
+                    'emissiveStrength': calibrated}
+                used = doc.setdefault('extensionsUsed', [])
+                if 'KHR_materials_emissive_strength' not in used:
+                    used.append('KHR_materials_emissive_strength')
             # Specular maps remain named optional resources; CryEngine
             # specular tint cannot safely be guessed as glTF metalness.
         # Preserve six environment faces as separately editable named PNGs.
