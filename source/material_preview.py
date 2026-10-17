@@ -96,6 +96,29 @@ class PreviewMaterials:
                      for im in self.textures)
 
 
+# Glass shaders refract the scene even with CryEngine Opacity=1. The Qt
+# preview cannot reproduce CryEngine's screen-space refraction yet; approximate
+# light transmission in a single blended pass, WITHOUT changing the source
+# MTL Opacity/Diffuse values or assuming diffuse alpha is transparency.
+GLASS_PREVIEW_SURFACE_OPACITY = 0.40
+
+
+def preview_material_opacity(materials, slot):
+    """Display opacity. Preserve source MTL opacity in PreviewMaterials.
+
+    CRYENGINE Glass is always refractive. If the source did not supply a
+    sub-unity opacity, a neutral 40%-surface / 60%-transmission approximation
+    keeps the underlying face visible. Explicit values win, and non-glass
+    materials (including masks on armor) are unchanged.
+    """
+    opacities = getattr(materials, 'opacity', ())
+    opacity = float(opacities[slot]) if slot < len(opacities) else 1.0
+    glasses = getattr(materials, 'glass_materials', ())
+    if slot < len(glasses) and glasses[slot] and opacity >= 0.999:
+        return GLASS_PREVIEW_SURFACE_OPACITY
+    return max(0., min(1., opacity))
+
+
 def material_color(image, value):
     """Bake linear MTL diffuse tint into sRGB RGB, preserving texture alpha."""
     import numpy as np
@@ -707,8 +730,19 @@ def load_preview_materials(workspace, model_relative, texture_folder=None, *, pr
             alpha_test = False
         cutoffs.append(float(alpha_test))
         explicitly_packed_opacity = bool(diffuse_node is not None and diffuse_node.get('OpacityChannel'))
-        alpha_modes.append(bool(alpha_test) or opacity < 0.999 or explicitly_packed_opacity or
-                           any(word in shader for word in ('glass', 'transparent', 'translucent', 'decal')))
+        # A Glass diffuse alpha channel is a dirt/fog mask in CryEngine,
+        # NOT automatic geometric transparency. Glass transmission is handled
+        # independently using the authored opacity + refractive shader flag.
+        # Preserve explicitly selected opacity channels when provided.
+        glass_shader = glasses[-1]
+        alpha_modes.append(
+            explicitly_packed_opacity or
+            (not glass_shader and (bool(alpha_test) or opacity < .999 or
+             any(word in shader for word in ('transparent','translucent','decal')))))
+        if glass_shader and opacity >= .999:
+            issues.append(
+                name + ': Glass refractive surface uses approximate preview '
+                'transmission; original MTL opacity and tint are unchanged')
         for target,keys in ((normals,('bumpmap','normal','normalmap')),
                             (speculars,('specular','specularcolor')),
                             (glosses,('gloss','glossiness','smoothness')),
@@ -1005,7 +1039,7 @@ def render_textured_mesh(mesh, materials, width=720, height=480, yaw=-.5, elevat
         lighting=.50+.50*abs(float(np.dot(normal,light)/norm)) if norm>1e-12 else .65
         color=np.clip(tex[ty,tx].astype(np.float32)*lighting,0,255).astype(np.uint8)
         dest=buffer[y0:y1,x0:x1]
-        opacity = materials.opacity[texno] if texno < len(materials.opacity) else 1.
+        opacity = preview_material_opacity(materials, texno)
         cutoff = materials.alpha_cutoffs[texno] if texno < len(materials.alpha_cutoffs) else 0.
         uses_alpha = texno < len(materials.alpha_modes) and materials.alpha_modes[texno]
         alpha = materials.alpha_arrays[texno][ty,tx] / 255. * opacity if uses_alpha else np.full(tx.shape, opacity)
