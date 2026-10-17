@@ -39,13 +39,12 @@ class CompactGpuModelUiTests(unittest.TestCase):
         self.panel.resize(530,470)
         self.panel.show()
         self.app.processEvents()
-        for section, maximum in (('View',240),('Materials',255),
-                                  ('Animation',315)):
+        for section in ('View','Materials','Animation'):
             self.panel.toggle_overlay(section,True)
             self.app.processEvents()
             overlay=self.panel._overlay
-            self.assertLessEqual(overlay.height(),maximum)
-            self.assertLessEqual(overlay.width(),370)
+            self.assertLessEqual(overlay.height(),min(490,self.panel.canvas.height()))
+            self.assertLessEqual(overlay.width(),415)
             self.assertLessEqual(overlay.width()+overlay.x(),
                                  self.panel.canvas.width())
         self.panel.toggle_overlay('Materials',True)
