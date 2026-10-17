@@ -413,8 +413,12 @@ def start_character_catalog(stage, selected):
         return True
 
 
-def shared_asset_index(stage):
-    """Snapshot shared metadata without waiting for an in-progress scan."""
+def shared_asset_index(stage, *, include_library=True):
+    """Snapshot shared metadata without waiting for an in-progress scan.
+
+    Build-scoped callers already have their own verified library entries.
+    Rescanning all imported archives risks both latency and cross-build data.
+    """
     with _lock:
         stage = Path(stage).resolve()
         combined = defaultdict(list)
@@ -433,9 +437,10 @@ def shared_asset_index(stage):
         # not lazy archive records. Prefer its immutable imported versions to
         # transient indexed PAK entries. Editable project files remain the
         # strongest preference inside multi_pak_assets._resolve.
-        from asset_library import extracted_index
-        for key, records in extracted_index().items():
-            combined[key] = list(records)
+        if include_library:
+            from asset_library import extracted_index
+            for key, records in extracted_index().items():
+                combined[key] = list(records)
         return dict(combined)
 
 

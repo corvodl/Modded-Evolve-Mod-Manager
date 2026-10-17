@@ -206,22 +206,34 @@ def library_gfx_imports(identifier, relative, *, root=None, build_id=None):
 
 def library_model_index(identifier, root=None, *, build_id=None):
     """Include all imported dependencies while prioritizing the selected PAK."""
-    own = archive_entries(identifier, root)
     from build_collections import build_index, resolve_archive_build
     context = resolve_archive_build(identifier, root=root, build_id=build_id)
+    # Already verified by the scoped build index. Revalidating every file
+    # in the selected archive delayed the first viewport frame dramatically.
     index = build_index(context, root=root)
     root_folder = archive_folder(identifier, root)
-    archive_name = _load_manifest(root_folder)['name']
-    for relative, path in own.items():
-        key = relative.casefold()
-        record = {'archive': archive_name,
-                  'workspace': root_folder,
-                  'file': path, 'relative': relative, '_asset_library': identifier,
-                  'build_id': context}
-        records = index.setdefault(key, [])
-        # The selected PAK has verified material and texture ownership.
-        records[:] = [r for r in records if str(r.get('file')) != str(path)]
-        records.insert(0, record)
+    found = False
+    for key, records in index.items():
+        selected = [row for row in records
+                    if row.get('_asset_library') == identifier]
+        if not selected:
+            continue
+        found = True
+        for row in selected:
+            row['workspace'] = root_folder
+            row['build_id'] = context
+        records[:] = selected + [row for row in records
+                                 if row.get('_asset_library') != identifier]
+    if not found:
+        # Older/unassigned archives still undergo exact file verification.
+        own = archive_entries(identifier, root)
+        archive_name = _load_manifest(root_folder)['name']
+        for relative, path in own.items():
+            key = relative.casefold()
+            record = {'archive': archive_name, 'workspace': root_folder,
+                      'file': path, 'relative': relative,
+                      '_asset_library': identifier, 'build_id': context}
+            index.setdefault(key, []).insert(0, record)
     return index
 
 

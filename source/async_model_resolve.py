@@ -39,8 +39,13 @@ def refresh_character_material_index(index, relative, stage_root=None):
     actor = '/'.join(parts[:3]) + '/'
     category_shared = '/'.join(parts[:2]) + '/shared/'
     from shared_pak_cache import shared_asset_index
-    supplementary = (shared_asset_index(stage_root) if stage_root is not None
-                     else extracted_index())
+    # Do not scan or inject unscoped libraries into a verified build index.
+    selected_hits = index.get(normalized_name(relative).casefold(), ())
+    scoped = any(isinstance(hit, dict) and hit.get('build_id') is not None
+                 for hit in selected_hits)
+    supplementary = (shared_asset_index(
+        stage_root, include_library=not scoped) if stage_root is not None
+        else ({} if scoped else extracted_index()))
     if not supplementary:
         return index
     merged = {key:list(values) for key, values in index.items()}
@@ -96,7 +101,8 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
             if projects_root is not None:
                 from asset_geometry_cache import cached_geometry
                 geometry, cached = cached_geometry(
-                    mesh, Path(projects_root)/'.asset-cache'/'gpu', shading='smooth')
+                    mesh, Path(projects_root)/'.asset-cache'/'gpu',
+                    shading='smooth', defer_write=geometry_ready is not None)
             else:
                 geometry, cached = prepare_geometry(mesh, shading='smooth'), False
         checkpoint()
