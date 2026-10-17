@@ -231,16 +231,26 @@ class QtWorkspaceEditor(QMainWindow):
         center = QWidget(self)
         self.setCentralWidget(center)
         main = QVBoxLayout(center)
+        # Do not sacrifice two padded header rows to show an asset filename.
+        # The GPU canvas should own the unused space, especially in the
+        # read-only Asset Library's Full Character preview.
+        main.setContentsMargins(4, 2, 4, 2)
+        main.setSpacing(2)
         self._build_editor_menus()
         # One always-present explorer drives the three internal viewers.
         # Category tabs are implementation details, never exposed to users.
         top = QHBoxLayout()
         self.current_file_label = QLabel('Select a file from File Explorer')
         self.current_file_label.setObjectName('currentWorkspaceAsset')
+        self.current_file_label.setMaximumHeight(22)
+        self.current_file_label.setToolTip('Selected asset path; full path on hover')
         top.addWidget(self.current_file_label, 1)
         self.sidebar_button = QPushButton('Hide File Explorer')
         self.sidebar_button.setIcon(navigation_icon('folder', size=18))
         self.sidebar_button.setObjectName('fileExplorerToggle')
+        self.sidebar_button.setFixedSize(36, 28)
+        self.sidebar_button.setAccessibleName('Toggle file explorer')
+        self.sidebar_button.setText('')
         self.sidebar_button.setCheckable(True)
         self.sidebar_button.setChecked(True)
         self.sidebar_button.setToolTip('Show / hide the asset explorer (Ctrl+B)')
@@ -462,7 +472,12 @@ class QtWorkspaceEditor(QMainWindow):
             'Asset Library: preview and export only; editing and importing are disabled.'
             if self.read_only_library else
             'Files remain inside the extracted project; build and add each PAK separately.')
-        self.status.setWordWrap(True)
+        self.status.setWordWrap(False)
+        self.status.setMaximumHeight(20)
+        self.status.setToolTip(
+            'Asset Library originals are read-only; Edit / Add to Mod Project '
+            'makes separate editable copies.' if self.read_only_library else
+            'Edit extracted workspace files; signed originals stay protected.')
         bottom = QHBoxLayout()
         bottom.addWidget(self.status, 1)
         self.dependency_button=QPushButton('Dependencies…')
@@ -677,7 +692,9 @@ class QtWorkspaceEditor(QMainWindow):
         showing = self._explorer_visible
         self.sidebar_button.blockSignals(True)
         self.sidebar_button.setChecked(showing)
-        self.sidebar_button.setText('Hide File Explorer' if showing else 'Show File Explorer')
+        self.sidebar_button.setText('')
+        self.sidebar_button.setToolTip(
+            ('Hide' if showing else 'Show') + ' File Explorer (Ctrl+B)')
         self.sidebar_button.blockSignals(False)
         if hasattr(self, '_file_explorer_action'):
             self._file_explorer_action.blockSignals(True)
