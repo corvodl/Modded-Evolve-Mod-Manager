@@ -213,6 +213,66 @@ class CharacterPipelineTests(unittest.TestCase):
                 in msg for msg in result.omitted))
             self.assertIsNone(result.materials.textures[2])
 
+    def test_emet_repeated_face_mtl_and_separate_cannon_stay_textured(self):
+        # Emet's diagnostic lists five facial states sharing emet_3p.mtl
+        # with the body, plus a separate remote-cannon MTL. Repeating that
+        # same 512 MiB image for each face must not exhaust the budget.
+        # This tests budget accounting, not which expressions a CDF enables.
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix = 'characters/hunters/merc_emet/'
+            models = (
+                ('body', 'emet_3p'),
+                ('oh', 'emet_3p_face_oh'),
+                ('normal', 'emet_3p_face_normal'),
+                ('evil', 'emet_3p_face_evil'),
+                ('healing', 'emet_3p_face_healing'),
+                ('broken', 'emet_3p_face_broken'),
+                ('remotecannon', 'emetremotecannon_3p'))
+            cdf = root / 'emet_3p.cdf'
+            cdf.write_text(
+                '<CharacterDefinition><Model File="' + prefix +
+                'emet_3p_skeleton.chr"/><AttachmentList>' +
+                ''.join('<Attachment Type="CA_SKIN" AName="' + name +
+                        '" Binding="' + prefix + stem + '.skin"/>'
+                        for name, stem in models) +
+                '</AttachmentList></CharacterDefinition>', encoding='utf-8')
+            index = {prefix + 'emet_3p.cdf': [
+                {'workspace': root, 'file': cdf}]}
+            for name, stem in models:
+                source = root / (stem + '.skinm')
+                source.write_bytes(b'fixture')
+                index[prefix + stem + '.skinm'] = [
+                    {'workspace': root, 'file': source}]
+            mesh = PreviewMesh(
+                ((0.,0.,0.), (1.,0.,0.), (0.,1.,0.)),
+                ((0,1,2),), (.5,.5,0.), 1., 'part',
+                ((0.,0.), (1.,0.), (0.,1.)), ((0,3,0),))
+            shared_image = SimpleNamespace(width=11585, height=11585)
+            cannon_image = SimpleNamespace(width=4096, height=4096)
+            # 512 MiB + 64 MiB distinct < 768 MiB. Incorrect per-part
+            # charging would wrongly reject the later facial and gun parts.
+            body_mtl = PreviewMaterials((shared_image,), ('emet',),
+                                        'emet_3p.mtl')
+            cannon_mtl = PreviewMaterials((cannon_image,), ('cannon',),
+                                          'emetremotecannon_3p.mtl')
+            def materials_for(_workspace, render, *_args, **_kwargs):
+                return cannon_mtl if 'remotecannon' in render else body_mtl
+            with patch('character_assembly.read_preview_mesh',
+                       return_value=mesh), patch(
+                    'character_assembly.load_preview_materials',
+                    side_effect=materials_for):
+                character = assemble_character(
+                    root, prefix + 'emetremotecannon_3p.skinm', index,
+                    pre_material_geometry=lambda _mesh: None)
+            self.assertEqual(tuple(label for label, _ in models),
+                             character.included)
+            self.assertFalse(any('768 MiB' in item for item in character.omitted))
+            self.assertIs(character.materials.textures[4], shared_image)
+            self.assertIs(character.materials.textures[5], shared_image)
+            self.assertIs(character.materials.textures[6], cannon_image)
+
     def test_sparse_material_fallback_does_not_exhaust_slots(self):
         first = PreviewMesh(((0,0,0), (1,0,0), (0,1,0)),
             ((0,1,2),), (.5,.5,0),1,'body',
