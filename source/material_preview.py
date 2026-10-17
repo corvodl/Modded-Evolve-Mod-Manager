@@ -138,6 +138,39 @@ def source_glass_public_params(item):
     return result
 
 
+def glass_preview_report(materials, slot):
+    """Source-grounded Glass inspector; exact CryEngine fog is not simulated."""
+    glasses = getattr(materials, 'glass_materials', ())
+    if slot < 0 or slot >= len(glasses) or not glasses[slot]:
+        return ''
+    names = getattr(materials, 'names', ())
+    name = names[slot] if slot < len(names) else 'Material %d' % slot
+    authored = getattr(materials, 'opacity', ())
+    original = authored[slot] if slot < len(authored) else 1.
+    iors = getattr(materials, 'refraction_indices', ())
+    ior = iors[slot] if slot < len(iors) else None
+    params = getattr(materials, 'glass_public_params', ())
+    settings = params[slot] if slot < len(params) else {}
+    envs = getattr(materials, 'environment_maps', ())
+    env = 'resolved cubemap' if slot < len(envs) and envs[slot] is not None else 'runtime nearest cubemap / unavailable'
+    def fmt(value):
+        if isinstance(value, (tuple, list)):
+            return ', '.join('%.3g' % v for v in value)
+        return '%.4g' % value if isinstance(value, (float,int)) else str(value)
+    details = [
+        'Glass shader · %s (slot %d)' % (name, slot),
+        'Original MTL opacity: %.2f%%; preview surface: %.0f%% (approximate)'
+        % (float(original)*100, preview_material_opacity(materials, slot)*100),
+        'Refraction index: %s; environment: %s' %
+        (fmt(ior) if ior is not None else 'not authored', env)]
+    for name in ('FogDensity','FogColor','FogCutoffEnd',
+                 'TintColor','TintCloudiness','FresnelScale','FresnelBias'):
+        if name in settings:
+            details.append(name + ': ' + fmt(settings[name]))
+    details.append('Preview transparency approximates CryEngine; original MTL unchanged.')
+    return '\\n'.join(details)
+
+
 def preview_material_opacity(materials, slot):
     """Display opacity. Preserve source MTL opacity in PreviewMaterials.
 
