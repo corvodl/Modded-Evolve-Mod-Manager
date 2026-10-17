@@ -65,6 +65,19 @@ class CharacterExportCommandTests(unittest.TestCase):
         }, selected_cdf=first_person[1]['cdf'])
         self.assertIs(result, third_person)
 
+    def test_explicit_sunny_3p_beats_untagged_multi_part_variant(self):
+        from character_export_command import _preferred_full_assembly
+        neutral = (b'glTF-neutral', {
+            'cdf': 'characters/hunters/merc_sunny/sunny_equipment.cdf',
+            'bone_count': 64, 'part_count': 6})
+        third_person = (b'glTF-3p', {
+            'cdf': 'characters/hunters/merc_sunny/sunny_3p.cdf',
+            'part_count': 1, 'bone_count': 28})
+        self.assertIs(_preferred_full_assembly({
+            'Assemblies/neutral.glb': neutral,
+            'Assemblies/sunny_3p.glb': third_person,
+        }), third_person)
+
     def test_first_person_only_never_becomes_main_character(self):
         from character_export_command import _preferred_full_assembly
         fp = (b'glTF', {'cdf': 'characters/hunters/merc_sunny/sunny_1p.cdf',

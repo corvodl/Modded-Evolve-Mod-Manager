@@ -153,8 +153,8 @@ def _preferred_full_assembly(assemblies, selected_cdf=None):
         parts = int(info.get('part_count') or 0)
         return (
             bool(info.get('preferred_full_character')),
-            parts > 1,
             _assembly_perspective(info) == '3p',
+            parts > 1,
             bones > 0,
             parts,
             bool(selected and str(info.get('cdf', '')).casefold() == selected),

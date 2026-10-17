@@ -154,7 +154,9 @@ def build_cdf_folder_glbs(workspace, character_folder, index, *,
             if not blob.startswith(b'glTF'):
                 raise ValueError('CDF assembly did not produce Blender-compatible GLB.')
             info = dict(info)
-            info['skeleton'] = character.skeleton
+            # Synthetic fixtures and some legacy preview sources may not
+            # expose skeleton metadata; keep their existing export behavior.
+            info['skeleton'] = getattr(character, 'skeleton', info.get('skeleton', ''))
             # Put animations in the SAME Assemblies/<CDF>.glb as the mesh.
             # Each variant is validated against its own CDF skeleton; importing
             # one GLB into Blender now exposes its named Actions immediately.

@@ -4,6 +4,11 @@ Earlier versions use short bullets; stable 1.2 is a curated feature summary. Int
 never appear here or in update names. Do not generate notes from commit logs.
 """
 RELEASE_NOTES = (
+    ('1.3.1', (
+        "Prefer verified third-person character assemblies for main Blender GLB exports instead of accidentally choosing first-person view models.",
+        "Remove redundant Asset Library read-only header rows; keep a compact inline status and maximize model preview space.",
+        "Improve character export diagnostics and preserve the protected File Explorer with regression coverage.",
+    )),
     ('1.3.0', (
         "Render verified CryEngine Glass visors as translucent in the GPU viewer, preserving source opacity, tint, fog, Fresnel and refraction settings.",
         "Export verified Glass materials to Blender GLB with optical transmission, original IOR and source material metadata instead of treating them as opaque.",
