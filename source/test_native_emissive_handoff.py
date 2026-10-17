@@ -113,7 +113,12 @@ class EmbeddedAnimationMaterialsTests(TestCase):
         restored=AnimatedGLB._embedded_materials(
             SimpleNamespace(doc=doc,binary=binary))
         self.assertEqual(restored.source,'Embedded GLB textures')
-        self.assertEqual(restored.emissive_strengths,(3.,))
+        self.assertEqual(restored.emissive_strengths,(100.,))
+        self.assertEqual(
+            doc['materials'][0]['extras']['cryEngineAuthoredEmissiveStrength'], 3.)
+        self.assertEqual(
+            doc['materials'][0]['extensions']['KHR_materials_emissive_strength']['emissiveStrength'],
+            100.)
         self.assertEqual(restored.map_uv_transforms[0][1][0],(3.,4.,0.,0.,0.))
         self.assertEqual(restored.emissive_maps[0].getpixel((0,0)),(15,50,165))
 
