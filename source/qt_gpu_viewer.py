@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QMessageBox, QSlider, QToolButton, QFrame, QScrollArea, QButtonGroup, QLineEdit, QLayout, QListWidget, QListWidgetItem, QAbstractItemView, QPlainTextEdit, QProgressBar)
 
 from gpu_model_preview import prepare_geometry, GPUUnavailable
+from emissive_materials import preview_emission_strength
 
 
 from qt_navigation_icons import navigation_icon
@@ -706,8 +707,9 @@ class QtGLModelCanvas(QOpenGLWidget):
                     continue
                 if slot < len(getattr(self.materials, 'hidden', ())) and self.materials.hidden[slot]:
                     continue
-                amount = (self.materials.emissive_strengths[slot] if
-                          slot < len(getattr(self.materials, 'emissive_strengths', ())) else 0.)
+                authored = (self.materials.emissive_strengths[slot] if
+                            slot < len(getattr(self.materials, 'emissive_strengths', ())) else 0.)
+                amount = preview_emission_strength(authored, has_emissive_map=bool(handle))
                 if amount <= 0.:
                     continue
                 from texture_transform import transform_for, gl_matrix
@@ -915,7 +917,12 @@ class QtGLModelCanvas(QOpenGLWidget):
                                 emissive=slot<len(self.emissive_textures) and bool(self.emissive_textures[slot]),
                                 emissive_alpha_mask=(slot<len(getattr(self.materials,'emissive_masks',()))
                                   and self.materials.emissive_masks[slot]=='diffuse_alpha'),
-                                emissive_strength=self.glow_strength * (self.materials.emissive_strengths[slot] if self.materials and slot<len(getattr(self.materials,'emissive_strengths',())) else 0.),
+                                emissive_strength=self.glow_strength * preview_emission_strength(
+                                    self.materials.emissive_strengths[slot]
+                                    if self.materials and slot < len(getattr(self.materials, 'emissive_strengths', ()))
+                                    else 0.,
+                                    has_emissive_map=slot < len(self.emissive_textures)
+                                    and bool(self.emissive_textures[slot])),
                                 emission_enabled=self.emission_enabled)
                 if tex:
                     glEnable(GL_TEXTURE_2D)
@@ -1316,6 +1323,10 @@ class QtGPUModelPanel(QWidget):
         self.glow_slider = QSlider(Qt.Horizontal)
         self.glow_slider.setRange(0,300)
         self.glow_slider.setValue(100)
+        self.glow_slider.setToolTip(
+            '100% corresponds to the game-reference-tested Blender emission '
+            'strength of 100 for verified glowing materials. Source MTL '
+            'GlowAmount, texture hue, masks and DDS pixels are unchanged.')
         self.glow_slider.valueChanged.connect(lambda value: (
             setattr(self.canvas, 'glow_strength', value/100.), self.canvas.update()))
         glow_row=QHBoxLayout()
@@ -1890,7 +1901,9 @@ class QtGPUModelPanel(QWidget):
             if materials and slot < len(getattr(materials, 'emissive_strengths', ())):
                 value = materials.emissive_strengths[slot]
                 if value > 0 and slot < len(getattr(materials, 'emissive_maps', ())) and materials.emissive_maps[slot] is not None:
-                    tip += '\nEmissive glow: %.2fx' % value
+                    tip += ('\nOriginal CryEngine glow: %.2f; '
+                            'calibrated viewer strength: %.0f (at 100%% slider)' %
+                            (value, preview_emission_strength(value)))
                     origin = (materials.emissive_sources[slot]
                               if slot < len(getattr(materials, 'emissive_sources', ())) else None)
                     if origin:
