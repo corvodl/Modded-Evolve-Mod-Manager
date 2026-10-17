@@ -103,7 +103,7 @@ class MonsterStageSelectionTests(TestCase):
             [elder + '/krakenelder%d.cdf' % n for n in (1,2,3)])
         # No replacement or synthetic Stage 3 when its GLB is not verified.
         assemblies.pop('Assemblies/krakenelder3.glb')
-        with self.assertRaisesRegex(ValueError, r'missing stage\\(s\\): 3'):
+        with self.assertRaisesRegex(ValueError, r'missing stage\(s\): 3'):
             select_monster_stage_models(assemblies, elder)
 
     def test_three_distinct_exact_cdf_sources_selected(self):
@@ -177,7 +177,9 @@ class MonsterRootExportTests(TestCase):
     def test_krakenelder_root_export_accepts_verified_numbered_cdfs(self):
         from character_export_command import export_character_directory
         elder = 'characters/monsters/krakenelder'
-        (self.home/'files'/elder).mkdir(parents=True)
+        elder_source = self.home/'files'/elder
+        elder_source.mkdir(parents=True)
+        (elder_source/'readme.txt').write_text('original')
         assemblies = {}
         for stage in (1, 2, 3):
             blob, original = animated_stage(stage)
