@@ -661,10 +661,10 @@ class QtWorkspaceEditor(QMainWindow):
         action('Edit', 'Import / Replace File…', self.import_raw)
         action('Edit', 'Edit Scaleform GFX Movie…', self.edit_gfx)
         action('Edit', 'Restore Original', self.restore_original)
-        self.equipment_menu = menus['Model'].addMenu('Equipped Skin')
-        self.equipment_menu.setEnabled(False)
-        self.faceplate_menu = menus['Model'].addMenu('Emet Faceplate')
-        self.faceplate_menu.setEnabled(False)
+        # One unobtrusive entry; only show it for a verified CDF assembly.
+        # The category submenus are populated from the character's own CDF.
+        self.character_equipment_menu = menus['Model'].addMenu('Character Equipment')
+        self.character_equipment_menu.menuAction().setVisible(False)
         action('Model', 'Import Same-Layout Model…', self.import_model)
         action('Model', 'Open GPU Viewer in New Window', self.open_gpu_viewer)
         action('Model', 'Compare Models Side by Side…', self.open_model_compare)
@@ -2158,26 +2158,63 @@ class QtWorkspaceEditor(QMainWindow):
             (total, count, ', '.join(missing_slots[:12]) or 'None',
              '\n'.join(issues[:8]) or
              'No unresolved DDS references reported.'))
-        self._update_equipment_menu()
-        self._update_faceplate_menu()
+        self._update_character_equipment_menu()
         self._apply_model_texture_choices()
         self._paint_model(view, self.mesh)
         self.status.setText(
             self.current + ' | ' + data['report'] + ' | ' + self.texture_message)
 
-    def _update_equipment_menu(self):
-        self.equipment_menu.clear()
+    def _update_character_equipment_menu(self):
+        """One compact, CDF-backed menu; never create persistent viewer chrome."""
+        menu = self.character_equipment_menu
+        menu.clear()
         preview = self.character_preview
-        self.equipment_menu.setEnabled(bool(preview and preview.equipment_options))
         if not preview:
+            menu.menuAction().setVisible(False)
             return
-        choices = [('Body only', 'body')] + list(preview.equipment_options)
-        for label, virtual in choices:
-            action = self.equipment_menu.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(virtual.casefold() == preview.selected_equipment.casefold())
-            action.triggered.connect(
-                lambda checked=False, name=virtual: self._select_character_equipment(name))
+        from character_equipment_menu import equipment_menu_groups
+        grouped = equipment_menu_groups(
+            preview.equipment_options,
+            getattr(preview, 'faceplate_options', ()))
+        menu.menuAction().setVisible(bool(grouped))
+        if not grouped:
+            return
+
+        # Current renderer supports one active equipment variant. CDF SkinSets
+        # still control dependencies (e.g. Kala's Rift Device/arm). A faceplate
+        # is a separate independent selection only where the CDF defines one.
+        if preview.equipment_options:
+            none = menu.addAction('Unequip selected item')
+            none.setCheckable(True)
+            none.setChecked(preview.selected_equipment == 'body')
+            none.setToolTip('Show the character body and permanent attachments only.')
+            none.triggered.connect(
+                lambda checked=False: self._select_character_equipment('body'))
+            menu.addSeparator()
+
+        for group_name, kind, entries in grouped:
+            subgroup = menu.addMenu(group_name)
+            for label, virtual in entries:
+                action = subgroup.addAction(label.replace('_', ' ').title())
+                action.setCheckable(True)
+                active = (preview.selected_faceplate if kind == 'faceplate'
+                          else preview.selected_equipment)
+                action.setChecked(virtual.casefold() == active.casefold())
+                action.setToolTip(
+                    virtual + ('\\nReplaces the current faceplate; equipment is kept.'
+                               if kind == 'faceplate' else
+                               '\\nSwitches the active CDF equipment attachment.'))
+                if kind == 'faceplate':
+                    action.triggered.connect(
+                        lambda checked=False, name=virtual: self._select_faceplate(name))
+                else:
+                    action.triggered.connect(
+                        lambda checked=False, name=virtual: self._select_character_equipment(name))
+        menu.addSeparator()
+        restore = menu.addAction('Restore Default Loadout')
+        restore.setEnabled(bool(self.character_skin_choice or
+                                self.character_faceplate_choice))
+        restore.triggered.connect(self._restore_character_loadout)
 
     def _select_character_equipment(self, name):
         if self.mode != 'models' or not self.current:
@@ -2185,23 +2222,25 @@ class QtWorkspaceEditor(QMainWindow):
         self.character_skin_choice = name
         self.load(self.current, full_character=self.full_character_active)
 
-    def _update_faceplate_menu(self):
-        self.faceplate_menu.clear()
-        preview = self.character_preview
-        choices = tuple(getattr(preview, 'faceplate_options', ()) or ())
-        self.faceplate_menu.setEnabled(bool(choices))
-        for label, virtual in choices:
-            action = self.faceplate_menu.addAction(label.title())
-            action.setCheckable(True)
-            action.setChecked(
-                virtual.casefold() == preview.selected_faceplate.casefold())
-            action.triggered.connect(
-                lambda checked=False, name=virtual: self._select_faceplate(name))
-
     def _select_faceplate(self, virtual):
         if self.mode != 'models' or not self.current:
             return
         self.character_faceplate_choice = virtual
+        self.load(self.current, full_character=self.full_character_active)
+
+    def _restore_character_loadout(self):
+        if self.mode != 'models' or not self.current:
+            return
+        preview = self.character_preview
+        self.character_skin_choice = None
+        self.character_faceplate_choice = None
+        # An explicitly opened alternate face source would otherwise remain
+        # the default when faceplate=None. Restore Emet's normal plate instead.
+        if preview and getattr(preview, 'faceplate_options', ()):
+            for _label, virtual in preview.faceplate_options:
+                if Path(virtual).stem.casefold() == 'emet_3p_face_normal':
+                    self.character_faceplate_choice = virtual
+                    break
         self.load(self.current, full_character=self.full_character_active)
 
     def _paint_model(self, view, mesh):
