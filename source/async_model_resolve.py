@@ -89,8 +89,9 @@ def resolve_model(workspace, relative, *, projects_root=None, stage_root=None,
     preliminary = {}
     def publish_geometry(mesh):
         checkpoint()
-        record('model', 'geometry_prepare_started', vertices=len(mesh.vertices),
-               triangles=len(mesh.triangles))
+        record('model', 'geometry_prepare_started',
+               vertices=len(getattr(mesh, 'vertices', ()) or ()),
+               triangles=len(getattr(mesh, 'triangles', ()) or ()))
         with span('model', 'geometry_prepare'):
             if projects_root is not None:
                 from asset_geometry_cache import cached_geometry
