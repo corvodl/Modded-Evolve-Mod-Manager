@@ -197,6 +197,26 @@ class MonsterRootExportTests(TestCase):
             {row['cdf'] for row in result['monster_stages']},
             {elder+'/krakenelder%d.cdf'%n for n in (1,2,3)})
 
+    def test_actual_missing_monster_dependency_is_reported(self):
+        from character_export_command import export_character_directory
+        elder = 'characters/monsters/krakenelder'
+        (self.home/'files'/elder).mkdir(parents=True)
+        errors = (
+            (elder+'/krakenelder1.cdf','exact krakenelder1_skeleton.chr unavailable'),
+            (elder+'/krakenelder2.cdf','krakenelder2.skin was ambiguous'),
+        )
+        with patch('character_export_command.build_cdf_folder_glbs',
+                   return_value=({}, errors)):
+            with self.assertRaisesRegex(
+                    ValueError, 'krakenelder1_skeleton.chr unavailable') as raised:
+                export_character_directory(
+                    self.home/'files'/elder,self.output,index={})
+        self.assertIn('missing stage(s): 1, 2, 3',str(raised.exception))
+        self.assertIn('krakenelder2.skin was ambiguous',str(raised.exception))
+        # An aborted export cannot create a misleading partial "Complete"
+        # folder or modify source files.
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_stage_animation_mismatch_refused_before_writing(self):
         from character_asset_export import export_character_asset_folder
         models={stage:animated_stage(stage) for stage in (1,2,3)}
