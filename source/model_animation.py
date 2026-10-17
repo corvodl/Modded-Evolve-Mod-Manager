@@ -259,46 +259,112 @@ class AnimatedGLB:
         self.materials=self._embedded_materials()
 
     def _embedded_materials(self):
-        """Decode PNG/JPEG images embedded within this local GLB; no URL loading."""
+        """Decode verified embedded GLB images, including real glTF emission.
+
+        The GLB animation importer is independent from native CDF source-MTL
+        restoration. Imported user GLBs preserve their own emissive RGB, UV,
+        strength and alpha semantics; original CryEngine materials can still
+        override these when provenance proves an exact submaterial mapping.
+        """
         from io import BytesIO
         from PIL import Image
         from material_preview import PreviewMaterials
-        materials = self.doc.get('materials', [])
+        from emissive_materials import bake_emission_map
+        materials = self.doc.get('materials', [])[:64]
         embedded = self.doc.get('images', [])
         textures = self.doc.get('textures', [])
+
+        def decoded_texture(info, *, rgba=False):
+            if not isinstance(info, dict):
+                return None
+            index = info.get('index', -1)
+            if not isinstance(index, int) or not 0 <= index < len(textures):
+                return None
+            image_id = textures[index].get('source', -1)
+            if not isinstance(image_id, int) or not 0 <= image_id < len(embedded):
+                return None
+            item = embedded[image_id]
+            if item.get('mimeType') not in ('image/png', 'image/jpeg') or 'bufferView' not in item:
+                return None
+            view_id = item['bufferView']
+            if not isinstance(view_id, int) or not 0 <= view_id < len(self.doc['bufferViews']):
+                return None
+            view = self.doc['bufferViews'][view_id]
+            start = int(view.get('byteOffset', 0))
+            length = int(view['byteLength'])
+            if not 0 < length <= 16*1024*1024 or start < 0 or start+length > len(self.binary):
+                return None
+            try:
+                with Image.open(BytesIO(self.binary[start:start+length])) as im:
+                    if im.width * im.height > 8_000_000:
+                        return None
+                    im.load()
+                    return im.convert('RGBA' if rgba else 'RGB')
+            except (OSError, ValueError):
+                return None
+
+        def uv_matrix(info):
+            ext = info.get('extensions', {}).get('KHR_texture_transform', {}) if isinstance(info,dict) else {}
+            scale = ext.get('scale', [1., 1.])
+            offset = ext.get('offset', [0., 0.])
+            return (*scale, *offset, ext.get('rotation', 0.))
+
         used = []
-        transforms = []; opacities = []; alpha_modes = []; cutoffs = []
-        for material in materials[:64]:
+        emit = []
+        strengths = []
+        masks = []
+        emissive_status = []
+        diffuse_transforms = []
+        emission_transforms = []
+        opacities = []
+        alpha_modes = []
+        cutoffs = []
+        for material in materials:
             mode = material.get('alphaMode', 'OPAQUE')
             alpha_modes.append(mode in ('MASK', 'BLEND'))
             cutoffs.append(float(material.get('alphaCutoff', .5)) if mode == 'MASK' else 0.)
-            opacities.append(float(material.get('pbrMetallicRoughness', {}).get('baseColorFactor', [1,1,1,1])[3]) if mode != 'OPAQUE' else 1.)
-            transform = material.get('pbrMetallicRoughness', {}).get('baseColorTexture', {}).get('extensions', {}).get('KHR_texture_transform', {})
-            transforms.append((*transform.get('scale', [1., 1.]), *transform.get('offset', [0., 0.]), transform.get('rotation', 0.)))
-            index = material.get('pbrMetallicRoughness',{}).get(
-                'baseColorTexture',{}).get('index', -1)
-            image = None
-            if isinstance(index,int) and 0<=index<len(textures):
-                image_id = textures[index].get('source',-1)
-                if isinstance(image_id,int) and 0<=image_id<len(embedded):
-                    item = embedded[image_id]
-                    if item.get('mimeType') in ('image/png','image/jpeg') and 'bufferView' in item:
-                        view = self.doc['bufferViews'][item['bufferView']]
-                        start=int(view.get('byteOffset',0))
-                        length=int(view['byteLength'])
-                        if 0 < length <= 16*1024*1024 and start>=0 and start+length<=len(self.binary):
-                            try:
-                                with Image.open(BytesIO(self.binary[start:start+length])) as im:
-                                    if im.width*im.height<=8_000_000:
-                                        im.load()
-                                        image=im.convert('RGBA' if mode in ('MASK', 'BLEND') else 'RGB')
-                            except (OSError,ValueError):
-                                pass
-            used.append(image)
-        return PreviewMaterials(tuple(used),
-            tuple(m.get('name','Material %d'%i) for i,m in enumerate(materials[:64])),
-            'Embedded GLB textures', uv_transforms=tuple(transforms), opacity=tuple(opacities),
-            alpha_modes=tuple(alpha_modes), alpha_cutoffs=tuple(cutoffs))
+            pbr = material.get('pbrMetallicRoughness', {})
+            opacities.append(float(pbr.get('baseColorFactor', [1,1,1,1])[3]) if mode != 'OPAQUE' else 1.)
+            diffuse = pbr.get('baseColorTexture', {})
+            diffuse_transforms.append(uv_matrix(diffuse))
+            used.append(decoded_texture(diffuse, rgba=mode in ('MASK', 'BLEND')))
+
+            emission_info = material.get('emissiveTexture', {})
+            emission_transforms.append(uv_matrix(emission_info))
+            raw_factor = material.get('emissiveFactor', [0., 0., 0.])
+            try:
+                factor = tuple(max(0., min(1., float(v))) for v in raw_factor)
+                if len(factor) != 3:
+                    raise ValueError('Invalid emissive factor length')
+                strength = float(material.get('extensions', {}).get(
+                    'KHR_materials_emissive_strength', {}).get('emissiveStrength', 1.))
+                if not 0. <= strength <= 16.:
+                    raise ValueError('Invalid emissive strength')
+            except (ValueError, TypeError, OverflowError):
+                factor, strength = (0., 0., 0.), 0.
+            image = decoded_texture(emission_info)
+            if image is None and any(factor) and not emission_info:
+                image = Image.new('RGB', (1, 1), 'white')
+            glow = (bake_emission_map(None, color=factor, emission=image,
+                                      diffuse_alpha_mask=False)
+                    if image is not None and strength > 0. and any(factor) else None)
+            emit.append(glow)
+            strengths.append(strength if glow is not None else 0.)
+            masks.append('none')
+            emissive_status.append('Embedded glTF emissive texture decoded'
+                                   if glow is not None else 'No usable embedded glTF emission')
+        return PreviewMaterials(
+            tuple(used),
+            tuple(m.get('name', 'Material %d' % i) for i, m in enumerate(materials)),
+            'Embedded GLB textures',
+            uv_transforms=tuple(diffuse_transforms),
+            opacity=tuple(opacities), alpha_modes=tuple(alpha_modes),
+            alpha_cutoffs=tuple(cutoffs), emissive_maps=tuple(emit),
+            emissive_strengths=tuple(strengths), emissive_masks=tuple(masks),
+            emissive_status=tuple(emissive_status),
+            emissive_black=tuple(
+                glow is not None and glow.getbbox() is None for glow in emit),
+            map_uv_transforms=(('emissive', tuple(emission_transforms)),))
 
     @classmethod
     def from_file(cls,path):
