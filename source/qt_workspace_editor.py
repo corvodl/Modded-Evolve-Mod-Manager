@@ -2172,6 +2172,9 @@ class QtWorkspaceEditor(QMainWindow):
         """One compact, CDF-backed menu; never create persistent viewer chrome."""
         menu = self.character_equipment_menu
         menu.clear()
+        # PySide6's addMenu(str) does not retain a Python wrapper for child
+        # submenus in all Qt builds. Keep them alive while the menu is active.
+        self._character_equipment_submenus = []
         preview = self.character_preview
         if not preview:
             menu.menuAction().setVisible(False)
@@ -2198,6 +2201,7 @@ class QtWorkspaceEditor(QMainWindow):
 
         for group_name, entries in grouped:
             subgroup = menu.addMenu(group_name)
+            self._character_equipment_submenus.append(subgroup)
             for kind, label, virtual in entries:
                 action = subgroup.addAction(label.replace('_', ' ').title())
                 action.setCheckable(True)
