@@ -29,6 +29,8 @@ class CharacterPreview:
     equipment_options: tuple = ()
     selected_equipment: str = ''
     rig_parts: tuple = ()
+    faceplate_options: tuple = ()
+    selected_faceplate: str = ''
 
 
 def _parse_cdf(raw):
@@ -294,7 +296,8 @@ def _hunter_anatomical_skin(label, binding, cdf):
 
 def assemble_character(workspace, selected, index, *, texture_folder=None,
                        projects_root=None, stage_root=None, equipment=None,
-                       cancel=None, pre_material_geometry=None, stage_ready=None):
+                       faceplate=None, cancel=None, pre_material_geometry=None,
+                       stage_ready=None):
     """Return None when no owning CDF or no renderable bound skin exists.
 
     Only select the character body and explicitly selected weapon/skin. Extra
@@ -309,6 +312,34 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
     selected_skin = normalized_name(selected).casefold()
     if selected_skin.endswith('.skinm'):
         selected_skin = selected_skin[:-1]
+    # Emet's five CDF skin bindings are mutually exclusive facial plates.
+    # The old 'emet_3p_' body-prefix check added all five faces at once.
+    is_emet_3p = cdf.casefold().replace('\\', '/').endswith(
+        'characters/hunters/merc_emet/emet_3p.cdf')
+    faceplates = ([(label, rel) for label, rel in skins
+                   if re.fullmatch(
+                       r'emet_3p_face_(normal|oh|evil|healing|broken)',
+                       Path(rel).stem, re.I)]
+                  if is_emet_3p else [])
+    faceplate_paths = {rel.casefold(): (label, rel)
+                       for label, rel in faceplates}
+    if faceplate and not faceplates:
+        raise ValueError('This CDF has no selectable Emet faceplates.')
+    if faceplate:
+        wanted = faceplate.casefold()
+        matching = [(label, rel) for label, rel in faceplates
+                    if rel.casefold() == wanted or
+                    Path(rel).stem.casefold() == wanted or
+                    re.sub(r'[^a-z0-9]', '', label.casefold()) == wanted]
+        if len(matching) != 1:
+            raise ValueError('Unknown or ambiguous Emet faceplate: ' + str(faceplate))
+        chosen_faceplate = matching
+    elif selected_skin in faceplate_paths:
+        chosen_faceplate = [faceplate_paths[selected_skin]]
+    else:
+        # Missing 'normal' is not permission to choose an injured face.
+        chosen_faceplate = [(label, rel) for label, rel in faceplates
+                            if Path(rel).stem.casefold() == 'emet_3p_face_normal']
     # Cockpit is a permanent character mesh (Lennox's head/face/eyes),
     # not a mutually exclusive weapon. Its submaterial table is distinct
     # from the body and must be included even when a rifle is equipped.
@@ -340,11 +371,16 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
               if key.startswith('hiddenwhen') and key.endswith('selected')))
         primary.extend((label, rel) for label, rel in skins
                        if (label, rel) not in primary
+                       and (label, rel) not in faceplates
                        and clean(label) not in hidden_equipment
                        and (any(Path(rel).stem.casefold().startswith(stem)
                                 for stem in body_stems)
                             or _hunter_anatomical_skin(label, rel, cdf)))
-    options = [(label, rel) for label, rel in skins if (label, rel) not in primary]
+    # Faces are independent from weapons: changing Emet's remote cannon must
+    # never add or replace a second faceplate.
+    primary.extend(chosen_faceplate)
+    options = [(label, rel) for label, rel in skins
+               if (label, rel) not in primary and (label, rel) not in faceplates]
     if equipment == 'body':
         chosen = []
     elif equipment:
@@ -558,4 +594,6 @@ def assemble_character(workspace, selected, index, *, texture_folder=None,
             materials, issues=tuple(materials.issues) + tuple(omitted))
     return CharacterPreview(mesh, materials, cdf, skeleton,
                             tuple(included), tuple(omitted),
-                            tuple(options), chosen[0][1] if chosen else 'body', tuple(rig_parts))
+                            tuple(options), chosen[0][1] if chosen else 'body',
+                            tuple(rig_parts), tuple(faceplates),
+                            chosen_faceplate[0][1] if chosen_faceplate else '')
